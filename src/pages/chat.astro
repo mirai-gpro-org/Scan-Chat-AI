@@ -1,0 +1,76 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import ChatToggle from '../components/ChatToggle.astro';
+import ProgressBar from '../components/ProgressBar.astro';
+import SuggestChips from '../components/SuggestChips.astro';
+---
+
+<BaseLayout title="チャット | Scan-Chat Medical AI">
+  <header class="flex items-center justify-between px-5 pt-6 pb-3">
+    <a href="/" class="text-sm text-brand-600 hover:underline">‹ 戻る</a>
+    <h1 class="text-lg font-semibold">問診チャット</h1>
+    <span class="w-10"></span>
+  </header>
+
+  <div class="px-5 pb-2">
+    <ProgressBar value={0} label="問診の進捗" id="chat-progress" />
+  </div>
+
+  <div
+    id="chat-resume"
+    class="mx-5 mb-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/60 dark:bg-amber-900/30 dark:text-amber-100"
+    hidden
+  >
+    前回の問診を復元しました。続きから入力できます。
+  </div>
+
+  <div class="flex items-center justify-between px-5 pb-2">
+    <ChatToggle initial="text" />
+    <span class="text-xs text-slate-500">Gemini REST</span>
+  </div>
+
+  <main class="flex flex-1 flex-col gap-3 px-5 pb-3">
+    <div
+      id="chat-log"
+      class="card flex-1 space-y-3 overflow-y-auto"
+      style="min-height: 50vh;"
+    >
+    </div>
+
+    <SuggestChips id="chat-suggest" />
+
+    <div class="flex items-end gap-2">
+      <textarea
+        id="chat-input"
+        class="min-h-[44px] flex-1 resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900"
+        rows="1"
+        placeholder="症状を入力（Enter で送信）"
+      ></textarea>
+      <button id="chat-send" class="btn-primary shrink-0">送信</button>
+    </div>
+  </main>
+</BaseLayout>
+
+<script>
+  import { initChatController } from '../scripts/chat-controller';
+
+  function $<T extends HTMLElement = HTMLElement>(id: string): T {
+    const el = document.getElementById(id);
+    if (!el) throw new Error(`Element #${id} not found`);
+    return el as T;
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const progressRoot = document.querySelector<HTMLElement>('[data-progress-root="chat-progress"]');
+    initChatController({
+      log: $('chat-log'),
+      input: $<HTMLTextAreaElement>('chat-input'),
+      send: $<HTMLButtonElement>('chat-send'),
+      progressFill: progressRoot?.querySelector<HTMLElement>('[data-progress-fill]') ?? null,
+      progressText: progressRoot?.querySelector<HTMLElement>('[data-progress-text]') ?? null,
+      resumeBanner: document.getElementById('chat-resume'),
+      toggleRoot: document.querySelector<HTMLElement>('[data-chat-toggle]'),
+      suggestRoot: document.getElementById('chat-suggest'),
+    });
+  });
+</script>

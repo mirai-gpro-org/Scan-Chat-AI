@@ -1,0 +1,24 @@
+{
+  "name": "scan-chat-ai",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Scan-Chat Medical AI — pilot scaffold (Astro + Tailwind + Vercel + Gemini)",
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/check": "^0.9.4",
+    "@astrojs/tailwind": "^5.1.4",
+    "@astrojs/vercel": "^7.8.2",
+    "@supabase/supabase-js": "^2.46.1",
+    "astro": "^4.16.18",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2"
+  }
+}

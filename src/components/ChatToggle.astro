@@ -1,0 +1,73 @@
+---
+interface Props {
+  /** 初期モード */
+  initial?: 'text' | 'voice';
+}
+
+const { initial = 'text' } = Astro.props;
+---
+
+<div
+  class="inline-flex items-center rounded-full border border-slate-300 bg-white p-1 text-sm font-medium dark:border-slate-700 dark:bg-slate-900"
+  role="tablist"
+  aria-label="入力モード"
+  data-chat-toggle
+  data-mode={initial}
+>
+  <button
+    type="button"
+    role="tab"
+    data-mode-button="text"
+    aria-selected={initial === 'text'}
+    class:list={[
+      'rounded-full px-4 py-1.5 transition',
+      initial === 'text'
+        ? 'bg-brand-600 text-white'
+        : 'text-slate-700 dark:text-slate-200',
+    ]}
+  >
+    テキスト
+  </button>
+  <button
+    type="button"
+    role="tab"
+    data-mode-button="voice"
+    aria-selected={initial === 'voice'}
+    class:list={[
+      'rounded-full px-4 py-1.5 transition',
+      initial === 'voice'
+        ? 'bg-brand-600 text-white'
+        : 'text-slate-700 dark:text-slate-200',
+    ]}
+  >
+    音声
+  </button>
+</div>
+
+<script>
+  type Mode = 'text' | 'voice';
+  const roots = document.querySelectorAll<HTMLElement>('[data-chat-toggle]');
+  roots.forEach((root) => {
+    const buttons = root.querySelectorAll<HTMLButtonElement>('[data-mode-button]');
+    buttons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const next = btn.dataset.modeButton as Mode;
+        root.dataset.mode = next;
+        buttons.forEach((b) => {
+          const active = b.dataset.modeButton === next;
+          b.setAttribute('aria-selected', String(active));
+          b.classList.toggle('bg-brand-600', active);
+          b.classList.toggle('text-white', active);
+          b.classList.toggle('text-slate-700', !active);
+          b.classList.toggle('dark:text-slate-200', !active);
+        });
+        root.dispatchEvent(
+          new CustomEvent<{ mode: Mode }>('chat-toggle:change', {
+            detail: { mode: next },
+            bubbles: true,
+          }),
+        );
+      });
+    });
+  });
+</script>

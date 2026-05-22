@@ -1,0 +1,77 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="スキャン | Scan-Chat Medical AI">
+  <header class="flex items-center justify-between px-5 pt-6 pb-3">
+    <a href="/" class="text-sm text-brand-600 hover:underline">‹ 戻る</a>
+    <h1 class="text-lg font-semibold">スキャン</h1>
+    <span class="w-10"></span>
+  </header>
+
+  <main class="flex flex-1 flex-col gap-4 px-5 pb-8">
+    <div class="relative aspect-[3/4] w-full overflow-hidden rounded-2xl bg-black">
+      <video
+        id="scan-video"
+        class="h-full w-full object-cover"
+        playsinline
+        muted
+        autoplay></video>
+      <canvas id="scan-canvas" class="hidden"></canvas>
+      <div class="pointer-events-none absolute inset-4 rounded-xl border-2 border-white/70"></div>
+    </div>
+
+    <div class="flex flex-col gap-2">
+      <label class="text-xs font-medium text-slate-600 dark:text-slate-300" for="scan-hint">
+        補足（任意）：部位や状況など
+      </label>
+      <input
+        id="scan-hint"
+        type="text"
+        class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900"
+        placeholder="例: 右前腕、3日前から赤み"
+      />
+    </div>
+
+    <div class="flex flex-wrap gap-2">
+      <button id="scan-start" class="btn-primary">カメラ起動</button>
+      <button id="scan-shot" class="btn-primary">撮影 & 解析</button>
+      <button id="scan-stop" class="btn-secondary">停止</button>
+    </div>
+
+    <p id="scan-status" class="text-sm text-slate-600 dark:text-slate-300" aria-live="polite">
+      準備中…
+    </p>
+
+    <section class="card">
+      <h2 class="mb-2 text-sm font-semibold">解析結果（JSON）</h2>
+      <pre
+        id="scan-result"
+        class="max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs text-slate-700 dark:text-slate-200"
+      ></pre>
+    </section>
+  </main>
+</BaseLayout>
+
+<script>
+  import { initCameraScan } from '../scripts/camera-scan';
+
+  function $<T extends HTMLElement = HTMLElement>(id: string): T {
+    const el = document.getElementById(id);
+    if (!el) throw new Error(`Element #${id} not found`);
+    return el as T;
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    initCameraScan({
+      video: $<HTMLVideoElement>('scan-video'),
+      canvas: $<HTMLCanvasElement>('scan-canvas'),
+      startBtn: $<HTMLButtonElement>('scan-start'),
+      shotBtn: $<HTMLButtonElement>('scan-shot'),
+      stopBtn: $<HTMLButtonElement>('scan-stop'),
+      status: $('scan-status'),
+      result: $('scan-result'),
+      hint: $<HTMLInputElement>('scan-hint'),
+    });
+  });
+</script>

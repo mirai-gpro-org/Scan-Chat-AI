@@ -1,0 +1,47 @@
+---
+interface Props {
+  suggestions?: string[];
+  id?: string;
+}
+
+const {
+  suggestions = [
+    '頭が痛い',
+    '熱がある',
+    '咳が止まらない',
+    '腹痛がある',
+    'めまいがする',
+  ],
+  id = 'suggest-chips',
+} = Astro.props;
+---
+
+<div
+  class="flex flex-wrap gap-2"
+  data-suggest-chips
+  id={id}
+>
+  {
+    suggestions.map((s) => (
+      <button type="button" class="chip" data-suggest-chip={s}>
+        {s}
+      </button>
+    ))
+  }
+</div>
+
+<script>
+  document.querySelectorAll<HTMLElement>('[data-suggest-chips]').forEach((root) => {
+    root.querySelectorAll<HTMLButtonElement>('[data-suggest-chip]').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const value = chip.dataset.suggestChip ?? '';
+        root.dispatchEvent(
+          new CustomEvent<{ value: string }>('suggest-chip:select', {
+            detail: { value },
+            bubbles: true,
+          }),
+        );
+      });
+    });
+  });
+</script>
