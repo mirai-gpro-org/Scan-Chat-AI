@@ -8,28 +8,60 @@ import {
 
 export const prerender = false;
 
+type ScanMode = 'detect' | 'analyze';
+
 interface ScanRequestBody {
   /** data: URL もしくは生 base64 */
   image: string;
   /** 補足プロンプト（部位・状況など） */
   hint?: string;
+  /**
+   * detect: AR 用の軽量 bbox 検知（連続呼出）
+   * analyze: 撮影確定時のフル解析（既定）
+   */
+  mode?: ScanMode;
 }
 
-const SCAN_SYSTEM = `あなたは医療画像補助 AI です。
+const DETECT_SYSTEM = `あなたは医療文書スキャン補助 AI です。
+入力画像から検査値・項目ラベル・手書きメモを検知し、各バウンディングボックスを返してください。
+出力は以下の JSON スキーマに厳密に従ってください:
+{
+  "items": [
+    {
+      "label": string,            // 項目名（例: 血圧、Hb、所見）
+      "value": string,            // 認識した値（手書きで判読不能なら空文字）
+      "bbox": [number, number, number, number], // [ymin, xmin, ymax, xmax] 0-1000 で正規化
+      "confidence": "high" | "low", // low は手書き / かすれ等
+      "kind": "printed" | "handwritten"
+    }
+  ]
+}
+JSON 以外の文字（前後のコメントや code fence）は出力しないこと。最大 12 項目まで。`;
+
+const ANALYZE_SYSTEM = `あなたは医療画像補助 AI です。
 画像から観察できる所見のみを記述し、診断や処方は行いません。
 出力は以下の JSON スキーマに厳密に従ってください:
 {
-  "observations": string[],     // 観察された所見（短文の配列）
-  "regions": string[],          // 注目すべき体表部位（例: 右前腕、口腔内）
-  "follow_up_questions": string[], // 医療者が次に確認すべき質問
-  "urgent": boolean             // 緊急性が示唆される場合 true
+  "observations": string[],
+  "regions": string[],
+  "follow_up_questions": string[],
+  "items": [
+    {
+      "label": string,
+      "value": string,
+      "bbox": [number, number, number, number], // [ymin, xmin, ymax, xmax] 0-1000 で正規化
+      "confidence": "high" | "low",
+      "kind": "printed" | "handwritten"
+    }
+  ],
+  "priority_flags": string[], // 後続チャットで重点的に確認すべき項目（label 名）
+  "urgent": boolean
 }
 JSON 以外の文字（前後のコメントや code fence）は出力しないこと。`;
 
 function parseDataUrl(input: string): { mime: string; data: string } {
   const m = /^data:([^;]+);base64,(.+)$/i.exec(input.trim());
   if (m) return { mime: m[1], data: m[2] };
-  // 生 base64 として扱う（既定 image/jpeg）
   return { mime: 'image/jpeg', data: input.trim() };
 }
 
@@ -44,19 +76,29 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ error: 'image is required (data URL or base64)' }, 400);
   }
 
+  const mode: ScanMode = body.mode === 'detect' ? 'detect' : 'analyze';
   const { mime, data } = parseDataUrl(body.image);
   const userParts: GeminiContent['parts'] = [
     { inline_data: { mime_type: mime, data } },
-    { text: body.hint ? `補足: ${body.hint}` : '画像を解析してください。' },
+    {
+      text:
+        mode === 'detect'
+          ? '画像から項目を検知し bbox 配列を返してください。'
+          : body.hint
+            ? `補足: ${body.hint}`
+            : '画像を解析してください。',
+    },
   ];
 
   try {
     const res = await callGemini(import.meta.env.GEMINI_API_KEY, {
-      systemInstruction: { parts: [{ text: SCAN_SYSTEM }] },
+      systemInstruction: {
+        parts: [{ text: mode === 'detect' ? DETECT_SYSTEM : ANALYZE_SYSTEM }],
+      },
       contents: [{ role: 'user', parts: userParts }],
       generationConfig: {
-        temperature: 0.2,
-        maxOutputTokens: 1024,
+        temperature: mode === 'detect' ? 0.1 : 0.2,
+        maxOutputTokens: mode === 'detect' ? 512 : 1024,
         responseMimeType: 'application/json',
       },
     });
@@ -65,9 +107,9 @@ export const POST: APIRoute = async ({ request }) => {
     try {
       parsed = JSON.parse(raw);
     } catch {
-      // フォールバック：生テキストも返す
+      // 構造化失敗時は raw を返してフロントで対応
     }
-    return json({ raw, json: parsed });
+    return json({ mode, raw, json: parsed });
   } catch (err) {
     return handleGeminiError(err);
   }

@@ -1,7 +1,7 @@
 /**
  * チャット雛形コントローラ。
- * - Chatty-sp の構造を踏襲しつつ、テキスト/音声切替・サジェスト・進捗・レジュームを管理。
- * - 音声 LiveAPI への接続は次フェーズ（PUBLIC_VOICE_BACKEND_URL を使う WebSocket 実装）。
+ * /api/chat は構造化レスポンス { text, section:{id,title,percent}, suggestions[], completed } を返す。
+ * 音声 LiveAPI への接続は次フェーズ（PUBLIC_VOICE_BACKEND_URL）。
  */
 
 import {
@@ -18,17 +18,25 @@ interface ChatRefs {
   send: HTMLButtonElement;
   progressFill: HTMLElement | null;
   progressText: HTMLElement | null;
+  progressSection: HTMLElement | null;
   resumeBanner: HTMLElement | null;
   toggleRoot: HTMLElement | null;
   suggestRoot: HTMLElement | null;
 }
 
+interface ChatResponse {
+  text: string;
+  section?: { id: string; title: string; percent: number };
+  suggestions?: string[];
+  completed?: boolean;
+}
+
 const SESSION_ID = 'default';
-const TURN_TARGET = 6; // 進捗バー算出用：6 ターンで 100%
 
 export function initChatController(refs: ChatRefs): void {
   const session: ChatSession = loadChatSession(SESSION_ID) ?? createEmptySession(SESSION_ID);
   let mode: 'text' | 'voice' = 'text';
+  let currentSectionId = 'basic';
 
   if (session.messages.length > 0 && refs.resumeBanner) {
     refs.resumeBanner.hidden = false;
@@ -54,7 +62,8 @@ export function initChatController(refs: ChatRefs): void {
   refs.suggestRoot?.addEventListener('suggest-chip:select', (e) => {
     const detail = (e as CustomEvent<{ value: string }>).detail;
     refs.input.value = detail.value;
-    refs.input.focus();
+    // チップ選択は即送信（提案書「親指1つでポンポンと選択」UX）
+    handleSubmit();
   });
 
   async function handleSubmit(): Promise<void> {
@@ -69,6 +78,7 @@ export function initChatController(refs: ChatRefs): void {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           messages: session.messages.map(({ role, text }) => ({ role, text })),
+          currentSection: currentSectionId,
         }),
       });
       if (!res.ok) {
@@ -76,9 +86,17 @@ export function initChatController(refs: ChatRefs): void {
         appendSystem(`通信エラー (${res.status}): ${detail?.error ?? '不明'}`);
         return;
       }
-      const data = (await res.json()) as { text?: string };
-      const reply = data.text?.trim() || '（応答が空でした）';
+      const data = (await res.json()) as ChatResponse;
+      const reply = (data.text ?? '').trim() || '（応答が空でした）';
       appendMessage({ role: 'assistant', text: reply, ts: Date.now() });
+
+      if (data.section) {
+        currentSectionId = data.section.id;
+        session.progress = Math.max(0, Math.min(100, Math.round(data.section.percent ?? 0)));
+        saveChatSession(session);
+        renderProgress(`${data.section.title}`);
+      }
+      updateSuggestions(data.suggestions ?? []);
     } catch (err) {
       appendSystem(`通信エラー: ${String(err)}`);
     } finally {
@@ -88,15 +106,8 @@ export function initChatController(refs: ChatRefs): void {
 
   function appendMessage(msg: ChatMessage): void {
     session.messages.push(msg);
-    session.progress = Math.min(
-      100,
-      Math.round(
-        (session.messages.filter((m) => m.role === 'user').length / TURN_TARGET) * 100,
-      ),
-    );
     saveChatSession(session);
     renderMessage(msg);
-    renderProgress();
     refs.log.scrollTop = refs.log.scrollHeight;
   }
 
@@ -129,13 +140,23 @@ export function initChatController(refs: ChatRefs): void {
     refs.log.appendChild(wrap);
   }
 
-  function renderProgress(): void {
+  function renderProgress(sectionTitle?: string): void {
     if (refs.progressFill) {
       refs.progressFill.style.width = `${session.progress}%`;
     }
     if (refs.progressText) {
       refs.progressText.textContent = `${session.progress}%`;
     }
+    if (refs.progressSection && sectionTitle !== undefined) {
+      refs.progressSection.textContent = sectionTitle ? ` — ${sectionTitle}` : '';
+    }
+  }
+
+  function updateSuggestions(items: string[]): void {
+    if (!refs.suggestRoot) return;
+    refs.suggestRoot.dispatchEvent(
+      new CustomEvent<{ items: string[] }>('suggest-chips:set', { detail: { items } }),
+    );
   }
 }
 

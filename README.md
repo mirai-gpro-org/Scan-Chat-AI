@@ -61,9 +61,18 @@ src/
 
 - [x] Astro + Tailwind + Vercel スケルトン
 - [x] Gemini REST / Vision プロキシ API
-- [x] チャット雛形（サジェスト・進捗・レジューム）
-- [x] スキャン雛形（getUserMedia + Vision 呼出）
+- [x] チャット（構造化サジェスト・セクション付き進捗・レジューム）
+- [x] スキャン（AR 連続検知 + bbox 重畳 + 撮影確定時のデジタル・オーバーレイ）
 - [ ] Supabase スキーマ & RLS
-- [ ] 音声 LiveAPI (Cloud Run) 接続
-- [ ] AR ハイライト / 部位推定
+- [ ] 音声 LiveAPI バックエンド（Cloud Run + WebSocket・別リポジトリ予定）
 - [ ] 外部 AI 診断 API 連携
+
+## 音声 LiveAPI バックエンドの方針
+
+提案書「機能2-① 音声/テキスト シームレス切替」では、自宅モードで Gemini Live API（双方向ストリーミング）を使う前提です。Vercel serverless では WebSocket 長時間接続が困難なため、Chatty-sp と同様に **Cloud Run + WebSocket** の常駐バックエンドを別途用意する方針とします。
+
+- 想定リポジトリ: `mirai-gpro/scan-chat-backend`（Chatty-sp とは独立、医療コンテキスト要件を分離）
+- フロント接続点: `PUBLIC_VOICE_BACKEND_URL` の WebSocket
+- 役割分担:
+  - **このリポジトリ（Astro on Vercel）**: テキストチャット / Vision / 外部診断 API 中継
+  - **scan-chat-backend（Cloud Run）**: 音声 Live API ストリーミング / 音声⇔テキスト共通ステート保持

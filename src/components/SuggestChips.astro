@@ -5,13 +5,7 @@ interface Props {
 }
 
 const {
-  suggestions = [
-    '頭が痛い',
-    '熱がある',
-    '咳が止まらない',
-    '腹痛がある',
-    'めまいがする',
-  ],
+  suggestions = ['頭が痛い', '熱がある', '咳が止まらない', '腹痛がある', 'めまいがする'],
   id = 'suggest-chips',
 } = Astro.props;
 ---
@@ -20,18 +14,42 @@ const {
   class="flex flex-wrap gap-2"
   data-suggest-chips
   id={id}
+  data-initial={JSON.stringify(suggestions)}
 >
-  {
-    suggestions.map((s) => (
-      <button type="button" class="chip" data-suggest-chip={s}>
-        {s}
-      </button>
-    ))
-  }
+  {suggestions.map((s) => (
+    <button type="button" class="chip" data-suggest-chip={s}>{s}</button>
+  ))}
 </div>
 
 <script>
-  document.querySelectorAll<HTMLElement>('[data-suggest-chips]').forEach((root) => {
+  /**
+   * 動的更新 API:
+   *   const root = document.querySelector('[data-suggest-chips]');
+   *   root.dispatchEvent(new CustomEvent('suggest-chips:set', { detail: { items: [...] } }));
+   * チップクリックは `suggest-chip:select` カスタムイベントを bubble させる。
+   */
+  function bind(root: HTMLElement): void {
+    root.addEventListener('suggest-chips:set', (e) => {
+      const detail = (e as CustomEvent<{ items: string[] }>).detail;
+      render(root, detail?.items ?? []);
+    });
+    rebind(root);
+  }
+
+  function render(root: HTMLElement, items: string[]): void {
+    root.innerHTML = '';
+    items.forEach((value) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chip';
+      btn.dataset.suggestChip = value;
+      btn.textContent = value;
+      root.appendChild(btn);
+    });
+    rebind(root);
+  }
+
+  function rebind(root: HTMLElement): void {
     root.querySelectorAll<HTMLButtonElement>('[data-suggest-chip]').forEach((chip) => {
       chip.addEventListener('click', () => {
         const value = chip.dataset.suggestChip ?? '';
@@ -43,5 +61,7 @@ const {
         );
       });
     });
-  });
+  }
+
+  document.querySelectorAll<HTMLElement>('[data-suggest-chips]').forEach(bind);
 </script>

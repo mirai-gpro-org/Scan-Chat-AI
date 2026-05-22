@@ -1,5 +1,6 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+import ScanOverlay from '../components/ScanOverlay.astro';
 ---
 
 <BaseLayout title="スキャン | Scan-Chat Medical AI">
@@ -17,9 +18,26 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         playsinline
         muted
         autoplay></video>
+      <ScanOverlay id="scan-overlay" />
       <canvas id="scan-canvas" class="hidden"></canvas>
       <div class="pointer-events-none absolute inset-4 rounded-xl border-2 border-white/70"></div>
+      <div class="pointer-events-none absolute left-3 top-3 rounded-full bg-black/50 px-2.5 py-1 text-xs text-white">
+        <span class="mr-1 inline-block h-2 w-2 rounded-full bg-emerald-400 align-middle"></span>
+        高信頼
+        <span class="ml-2 mr-1 inline-block h-2 w-2 rounded-full bg-amber-300 align-middle"></span>
+        要確認
+      </div>
     </div>
+
+    <label class="inline-flex items-center gap-2 text-sm">
+      <input
+        id="scan-detect-toggle"
+        type="checkbox"
+        class="h-4 w-4 rounded border-slate-400 text-brand-600 focus:ring-brand-500"
+        checked
+      />
+      AR 検知（連続スキャン）
+    </label>
 
     <div class="flex flex-col gap-2">
       <label class="text-xs font-medium text-slate-600 dark:text-slate-300" for="scan-hint">
@@ -66,9 +84,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     initCameraScan({
       video: $<HTMLVideoElement>('scan-video'),
       canvas: $<HTMLCanvasElement>('scan-canvas'),
+      overlay: $<HTMLCanvasElement>('scan-overlay'),
       startBtn: $<HTMLButtonElement>('scan-start'),
       shotBtn: $<HTMLButtonElement>('scan-shot'),
       stopBtn: $<HTMLButtonElement>('scan-stop'),
+      detectToggle: $<HTMLInputElement>('scan-detect-toggle'),
       status: $('scan-status'),
       result: $('scan-result'),
       hint: $<HTMLInputElement>('scan-hint'),

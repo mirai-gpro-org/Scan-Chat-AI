@@ -13,7 +13,7 @@ import SuggestChips from '../components/SuggestChips.astro';
   </header>
 
   <div class="px-5 pb-2">
-    <ProgressBar value={0} label="問診の進捗" id="chat-progress" />
+    <ProgressBar value={0} label="問診の進捗状況" section="" id="chat-progress" />
   </div>
 
   <div
@@ -21,7 +21,7 @@ import SuggestChips from '../components/SuggestChips.astro';
     class="mx-5 mb-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/60 dark:bg-amber-900/30 dark:text-amber-100"
     hidden
   >
-    前回の問診を復元しました。続きから入力できます。
+    前回の続きから再開しました。
   </div>
 
   <div class="flex items-center justify-between px-5 pb-2">
@@ -37,7 +37,7 @@ import SuggestChips from '../components/SuggestChips.astro';
     >
     </div>
 
-    <SuggestChips id="chat-suggest" />
+    <SuggestChips id="chat-suggest" suggestions={["こんにちは", "問診を始めたい", "前回の続きから"]} />
 
     <div class="flex items-end gap-2">
       <textarea
@@ -68,6 +68,7 @@ import SuggestChips from '../components/SuggestChips.astro';
       send: $<HTMLButtonElement>('chat-send'),
       progressFill: progressRoot?.querySelector<HTMLElement>('[data-progress-fill]') ?? null,
       progressText: progressRoot?.querySelector<HTMLElement>('[data-progress-text]') ?? null,
+      progressSection: progressRoot?.querySelector<HTMLElement>('[data-progress-section]') ?? null,
       resumeBanner: document.getElementById('chat-resume'),
       toggleRoot: document.querySelector<HTMLElement>('[data-chat-toggle]'),
       suggestRoot: document.getElementById('chat-suggest'),
