@@ -5,74 +5,191 @@ import ScanOverlay from '../components/ScanOverlay.astro';
 
 <BaseLayout title="スキャン | Scan-Chat Medical AI">
   <header class="flex items-center justify-between px-5 pt-6 pb-3">
-    <a href="/" class="text-sm text-brand-600 hover:underline">‹ 戻る</a>
-    <h1 class="text-lg font-semibold">スキャン</h1>
-    <span class="w-10"></span>
+    <a href="/" class="-ml-2 inline-flex h-10 w-10 items-center justify-center text-2xl text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200" aria-label="戻る">‹</a>
+    <h1 class="text-base font-semibold">スキャン</h1>
+    <span class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+      1 / 3
+    </span>
   </header>
 
-  <main class="flex flex-1 flex-col gap-4 px-5 pb-8">
-    <div class="relative aspect-[3/4] w-full overflow-hidden rounded-2xl bg-black">
-      <video
-        id="scan-video"
-        class="h-full w-full object-cover"
-        playsinline
-        muted
-        autoplay></video>
-      <ScanOverlay id="scan-overlay" />
-      <canvas id="scan-canvas" class="hidden"></canvas>
-      <div class="pointer-events-none absolute inset-4 rounded-xl border-2 border-white/70"></div>
-      <div class="pointer-events-none absolute left-3 top-3 rounded-full bg-black/50 px-2.5 py-1 text-xs text-white">
-        <span class="mr-1 inline-block h-2 w-2 rounded-full bg-emerald-400 align-middle"></span>
-        高信頼
-        <span class="ml-2 mr-1 inline-block h-2 w-2 rounded-full bg-amber-300 align-middle"></span>
-        要確認
+  <main class="flex flex-1 flex-col px-5 pb-8">
+
+    <!-- ============================================================== -->
+    <!-- パネル: ready（カメラ起動前のオンボーディング）                  -->
+    <!-- ============================================================== -->
+    <section id="panel-ready" class="flex flex-1 flex-col items-center justify-center gap-6 text-center">
+      <div class="flex h-24 w-24 items-center justify-center rounded-3xl bg-brand-50 text-5xl dark:bg-brand-600/10">
+        📋
       </div>
-    </div>
+      <div class="space-y-2">
+        <h2 class="text-xl font-bold">健診結果をスキャン</h2>
+        <p class="text-sm text-slate-600 dark:text-slate-300">
+          検査用紙をカメラで読み取り、AI が項目を自動で認識します。
+        </p>
+      </div>
+      <ul class="w-full space-y-2 rounded-2xl bg-slate-50 p-4 text-left text-sm text-slate-700 dark:bg-slate-900 dark:text-slate-200">
+        <li class="flex gap-2"><span aria-hidden>💡</span>明るい場所で撮影してください</li>
+        <li class="flex gap-2"><span aria-hidden>📄</span>用紙全体が枠に収まるようにかざします</li>
+        <li class="flex gap-2"><span aria-hidden>🔒</span>画像はサーバに保存されません</li>
+      </ul>
+      <div class="mt-auto flex w-full flex-col gap-2">
+        <button id="scan-start" class="btn-primary w-full !py-4 text-lg">
+          📷 スキャンを開始
+        </button>
+        <p class="text-center text-xs text-slate-500">
+          タップするとカメラへのアクセス許可を求めます
+        </p>
+      </div>
+    </section>
 
-    <label class="inline-flex items-center gap-2 text-sm">
-      <input
-        id="scan-detect-toggle"
-        type="checkbox"
-        class="h-4 w-4 rounded border-slate-400 text-brand-600 focus:ring-brand-500"
-        checked
-      />
-      AR 検知（連続スキャン）
-    </label>
+    <!-- ============================================================== -->
+    <!-- パネル: active / busy（カメラ起動中・解析中）                   -->
+    <!-- ============================================================== -->
+    <section id="panel-active" class="flex flex-1 flex-col gap-4" hidden>
+      <div class="relative aspect-[3/4] w-full overflow-hidden rounded-2xl bg-black">
+        <video
+          id="scan-video"
+          class="h-full w-full object-cover"
+          playsinline
+          muted
+          autoplay></video>
+        <ScanOverlay id="scan-overlay" />
+        <canvas id="scan-canvas" class="hidden"></canvas>
 
-    <div class="flex flex-col gap-2">
-      <label class="text-xs font-medium text-slate-600 dark:text-slate-300" for="scan-hint">
-        補足（任意）：部位や状況など
-      </label>
-      <input
-        id="scan-hint"
-        type="text"
-        class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900"
-        placeholder="例: 右前腕、3日前から赤み"
-      />
-    </div>
+        <!-- 撮影ガイド枠 -->
+        <div class="pointer-events-none absolute inset-4 rounded-xl border-2 border-white/70"></div>
 
-    <div class="flex flex-wrap gap-2">
-      <button id="scan-start" class="btn-primary">カメラ起動</button>
-      <button id="scan-shot" class="btn-primary">撮影 & 解析</button>
-      <button id="scan-stop" class="btn-secondary">停止</button>
-    </div>
+        <!-- 信頼度の凡例 -->
+        <div class="pointer-events-none absolute left-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-xs text-white backdrop-blur-sm">
+          <span class="mr-1 inline-block h-2 w-2 rounded-full bg-emerald-400 align-middle"></span>
+          高信頼
+          <span class="ml-2 mr-1 inline-block h-2 w-2 rounded-full bg-amber-300 align-middle"></span>
+          要確認
+        </div>
 
-    <p id="scan-status" class="text-sm text-slate-600 dark:text-slate-300" aria-live="polite">
-      準備中…
-    </p>
+        <!-- 解析中オーバーレイ -->
+        <div id="busy-overlay" class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/60 text-white backdrop-blur-sm" hidden>
+          <div class="h-10 w-10 animate-spin rounded-full border-2 border-white/30 border-t-white"></div>
+          <p class="text-sm font-medium">AI が解析しています…</p>
+        </div>
+      </div>
 
-    <section class="card">
-      <h2 class="mb-2 text-sm font-semibold">解析結果（JSON）</h2>
-      <pre
-        id="scan-result"
-        class="max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs text-slate-700 dark:text-slate-200"
-      ></pre>
+      <!-- セカンダリ操作行 -->
+      <div class="flex items-center justify-between gap-2">
+        <label class="inline-flex items-center gap-2 text-sm">
+          <input
+            id="scan-detect-toggle"
+            type="checkbox"
+            class="h-4 w-4 rounded border-slate-400 text-brand-600 focus:ring-brand-500"
+            checked
+          />
+          AR 検知
+        </label>
+        <button id="hint-toggle" type="button" class="chip text-xs">
+          💡 補足を追加
+        </button>
+      </div>
+
+      <!-- ヒント入力（折りたたみ） -->
+      <div id="hint-panel" hidden>
+        <input
+          id="scan-hint"
+          type="text"
+          class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900"
+          placeholder="例: 右前腕、3 日前から赤み"
+          maxlength="200"
+        />
+      </div>
+
+      <p id="scan-status" class="min-h-5 text-center text-xs text-slate-500 dark:text-slate-400" aria-live="polite"></p>
+
+      <!-- プライマリ CTA -->
+      <button id="scan-shot" class="btn-primary !py-4 text-lg">
+        📷 撮影 & 解析
+      </button>
+    </section>
+
+    <!-- ============================================================== -->
+    <!-- パネル: result（解析結果）                                      -->
+    <!-- ============================================================== -->
+    <section id="panel-result" class="flex flex-1 flex-col gap-4" hidden>
+      <div class="flex items-center gap-3 rounded-2xl bg-emerald-50 px-4 py-3 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200">
+        <span class="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500 text-white">✓</span>
+        <p id="result-count" class="text-sm font-semibold">解析が完了しました</p>
+      </div>
+
+      <!-- 重大所見 -->
+      <div id="urgent-banner" class="flex items-start gap-3 rounded-2xl border border-rose-300 bg-rose-50 px-4 py-3 text-rose-800 dark:border-rose-700 dark:bg-rose-900/30 dark:text-rose-200" hidden>
+        <span aria-hidden class="text-xl">⚠</span>
+        <div>
+          <p class="text-sm font-semibold">重要な所見が検出されました</p>
+          <p class="text-xs">次の問診で詳しく確認します</p>
+        </div>
+      </div>
+
+      <!-- 重点項目 -->
+      <section id="priority-section" class="card !p-4" hidden>
+        <h3 class="mb-2 text-sm font-semibold text-amber-700 dark:text-amber-300">
+          ⚠ 重点的に確認すべき項目
+        </h3>
+        <ul id="priority-list" class="flex flex-wrap gap-1.5"></ul>
+      </section>
+
+      <!-- 認識項目 -->
+      <section class="card !p-0">
+        <h3 class="border-b border-slate-100 px-4 py-3 text-sm font-semibold dark:border-slate-800">
+          認識項目
+        </h3>
+        <ul id="items-list" class="divide-y divide-slate-100 dark:divide-slate-800">
+          <li class="px-4 py-6 text-center text-sm text-slate-500">項目は検出されませんでした</li>
+        </ul>
+      </section>
+
+      <!-- 観察所見・問診質問 -->
+      <details class="card !p-4">
+        <summary class="cursor-pointer text-sm font-semibold">その他の所見</summary>
+        <div id="obs-section" class="mt-3 space-y-2 text-sm"></div>
+      </details>
+
+      <!-- Raw JSON（開発用） -->
+      <details class="rounded-2xl border border-dashed border-slate-300 p-3 dark:border-slate-700">
+        <summary class="cursor-pointer text-xs font-medium text-slate-500">詳細データ (JSON)</summary>
+        <pre id="scan-result" class="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs text-slate-600 dark:text-slate-300"></pre>
+      </details>
+
+      <!-- CTA -->
+      <div class="mt-auto flex flex-col gap-2 pt-2">
+        <a href="/chat" class="btn-primary !py-4 text-lg">
+          問診を開始する →
+        </a>
+        <button id="scan-retake" type="button" class="btn-secondary">
+          もう一度撮影する
+        </button>
+      </div>
+    </section>
+
+    <!-- ============================================================== -->
+    <!-- パネル: error                                                   -->
+    <!-- ============================================================== -->
+    <section id="panel-error" class="flex flex-1 flex-col items-center justify-center gap-6 text-center" hidden>
+      <div class="flex h-20 w-20 items-center justify-center rounded-3xl bg-rose-50 text-4xl dark:bg-rose-900/30">
+        ⚠
+      </div>
+      <div class="space-y-2">
+        <h2 class="text-lg font-bold">スキャンを開始できません</h2>
+        <p id="error-message" class="text-sm text-slate-600 dark:text-slate-300"></p>
+      </div>
+      <div class="mt-auto flex w-full flex-col gap-2">
+        <button id="error-retry" class="btn-primary w-full !py-4 text-lg">再試行</button>
+        <a href="/" class="btn-secondary text-center">トップへ戻る</a>
+      </div>
     </section>
   </main>
 </BaseLayout>
 
 <script>
   import { initCameraScan } from '../scripts/camera-scan';
+  import type { AnalyzeResult, ScanItem, ScanState } from '../scripts/camera-scan';
 
   function $<T extends HTMLElement = HTMLElement>(id: string): T {
     const el = document.getElementById(id);
@@ -80,18 +197,153 @@ import ScanOverlay from '../components/ScanOverlay.astro';
     return el as T;
   }
 
+  type Panel = 'ready' | 'active' | 'result' | 'error';
+  const panels: Record<Panel, HTMLElement> = {
+    ready: $('panel-ready'),
+    active: $('panel-active'),
+    result: $('panel-result'),
+    error: $('panel-error'),
+  };
+
+  function show(panel: Panel): void {
+    (Object.keys(panels) as Panel[]).forEach((key) => {
+      panels[key].hidden = key !== panel;
+    });
+  }
+
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function renderResult(r: AnalyzeResult): void {
+    const items: ScanItem[] = r.items ?? [];
+    $('result-count').textContent = items.length
+      ? `${items.length} 項目を読み取りました`
+      : '解析が完了しました';
+
+    // priority flags
+    const priorityList = $('priority-list') as HTMLUListElement;
+    const prioritySection = $('priority-section');
+    if (r.priority_flags?.length) {
+      priorityList.innerHTML = r.priority_flags
+        .map(
+          (f) =>
+            `<li class="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">${escapeHtml(f)}</li>`,
+        )
+        .join('');
+      prioritySection.hidden = false;
+    } else {
+      prioritySection.hidden = true;
+    }
+
+    // urgent
+    $('urgent-banner').hidden = !r.urgent;
+
+    // items
+    const itemsList = $('items-list') as HTMLUListElement;
+    if (items.length) {
+      itemsList.innerHTML = items
+        .map((it) => {
+          const low = it.confidence === 'low' || it.kind === 'handwritten';
+          const badge = low ? '⚠ 要確認' : '✓ 高信頼';
+          const badgeClass = low
+            ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200'
+            : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200';
+          return `
+            <li class="flex items-center justify-between gap-3 px-4 py-3">
+              <div class="min-w-0 flex-1">
+                <p class="truncate text-sm font-medium">${escapeHtml(it.label)}</p>
+                <p class="truncate text-sm text-slate-600 dark:text-slate-300">${escapeHtml(it.value) || '<span class="italic text-slate-400">（読み取り不可）</span>'}</p>
+              </div>
+              <span class="shrink-0 rounded-full ${badgeClass} px-2 py-0.5 text-xs font-medium">${badge}</span>
+            </li>
+          `;
+        })
+        .join('');
+    } else {
+      itemsList.innerHTML =
+        '<li class="px-4 py-6 text-center text-sm text-slate-500">項目は検出されませんでした</li>';
+    }
+
+    // observations / regions / follow-ups
+    const obsSection = $('obs-section');
+    const parts: string[] = [];
+    if (r.observations?.length) {
+      parts.push('<h4 class="text-xs font-semibold text-slate-500">観察所見</h4>');
+      parts.push(
+        `<ul class="list-disc space-y-1 pl-5">${r.observations.map((o) => `<li>${escapeHtml(o)}</li>`).join('')}</ul>`,
+      );
+    }
+    if (r.regions?.length) {
+      parts.push('<h4 class="text-xs font-semibold text-slate-500">部位</h4>');
+      parts.push(`<p>${r.regions.map((x) => escapeHtml(x)).join('、')}</p>`);
+    }
+    if (r.follow_up_questions?.length) {
+      parts.push('<h4 class="text-xs font-semibold text-slate-500">問診で確認する質問</h4>');
+      parts.push(
+        `<ul class="list-disc space-y-1 pl-5">${r.follow_up_questions.map((q) => `<li>${escapeHtml(q)}</li>`).join('')}</ul>`,
+      );
+    }
+    obsSection.innerHTML =
+      parts.join('') ||
+      '<p class="text-sm text-slate-500">追加の所見はありません</p>';
+
+    // raw JSON
+    ($('scan-result') as HTMLPreElement).textContent = JSON.stringify(r, null, 2);
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
-    initCameraScan({
+    const controller = initCameraScan({
       video: $<HTMLVideoElement>('scan-video'),
       canvas: $<HTMLCanvasElement>('scan-canvas'),
       overlay: $<HTMLCanvasElement>('scan-overlay'),
-      startBtn: $<HTMLButtonElement>('scan-start'),
       shotBtn: $<HTMLButtonElement>('scan-shot'),
-      stopBtn: $<HTMLButtonElement>('scan-stop'),
       detectToggle: $<HTMLInputElement>('scan-detect-toggle'),
       status: $('scan-status'),
-      result: $('scan-result'),
       hint: $<HTMLInputElement>('scan-hint'),
+      onStateChange: (state: ScanState) => {
+        $('busy-overlay').hidden = state !== 'busy';
+        const shot = $<HTMLButtonElement>('scan-shot');
+        shot.textContent = state === 'busy' ? '解析中…' : '📷 撮影 & 解析';
+      },
+      onAnalyze: (result) => {
+        renderResult(result);
+        controller.stop();
+        show('result');
+      },
+      onError: (msg) => {
+        $('error-message').textContent = msg;
+        show('error');
+      },
     });
+
+    $('scan-start').addEventListener('click', async () => {
+      show('active');
+      await controller.start();
+    });
+
+    $('scan-retake').addEventListener('click', async () => {
+      show('active');
+      await controller.start();
+    });
+
+    $('error-retry').addEventListener('click', () => {
+      $('error-message').textContent = '';
+      show('ready');
+    });
+
+    $('hint-toggle').addEventListener('click', () => {
+      const h = $('hint-panel');
+      h.hidden = !h.hidden;
+      if (!h.hidden) ($('scan-hint') as HTMLInputElement).focus();
+    });
+
+    window.addEventListener('pagehide', () => controller.stop());
+
+    show('ready');
   });
 </script>

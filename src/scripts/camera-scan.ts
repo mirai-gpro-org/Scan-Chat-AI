@@ -5,6 +5,8 @@
  * 提案書 機能1:
  *  - AR リアルタイム・ハイライト: 確信度が高い項目は緑、手書きや低信頼は黄。
  *  - デジタル・オーバーレイ: 撮影確定後、画像の真上に構造化値を半透明で重ねる。
+ *
+ * UI 統合は呼び出し側に委ねるため、状態変化と解析結果はコールバックで通知する。
  */
 
 export interface ScanItem {
@@ -15,32 +17,50 @@ export interface ScanItem {
   kind: 'printed' | 'handwritten';
 }
 
-interface CameraRefs {
+export interface AnalyzeResult {
+  observations?: string[];
+  regions?: string[];
+  follow_up_questions?: string[];
+  items?: ScanItem[];
+  priority_flags?: string[];
+  urgent?: boolean;
+  raw?: string;
+}
+
+export type ScanState = 'idle' | 'running' | 'busy';
+
+export interface CameraRefs {
   video: HTMLVideoElement;
   canvas: HTMLCanvasElement; // 撮影用（非表示）
   overlay: HTMLCanvasElement; // ライブ video の上に重ねる検知枠用
-  startBtn: HTMLButtonElement;
-  shotBtn: HTMLButtonElement;
-  stopBtn: HTMLButtonElement;
   detectToggle: HTMLInputElement;
   status: HTMLElement;
-  result: HTMLElement;
-  hint: HTMLInputElement | null;
+  hint?: HTMLInputElement | null;
+  shotBtn?: HTMLButtonElement;
+  onStateChange?: (state: ScanState) => void;
+  onAnalyze?: (result: AnalyzeResult) => void;
+  onError?: (message: string) => void;
+}
+
+export interface CameraScanController {
+  start: () => Promise<void>;
+  stop: () => void;
+  capture: () => Promise<void>;
+  clearOverlay: () => void;
+  isRunning: () => boolean;
 }
 
 const DETECT_INTERVAL_MS = 1800; // AR 連続検知の間隔（APIコスト抑制）
 const DETECT_JPEG_QUALITY = 0.6;
 const DETECT_MAX_EDGE = 720; // 検知用は縮小して送る
 
-export function initCameraScan(refs: CameraRefs): void {
+export function initCameraScan(refs: CameraRefs): CameraScanController {
   let stream: MediaStream | null = null;
   let detectTimer: number | null = null;
   let detectBusy = false;
   let lastItems: ScanItem[] = [];
 
-  refs.startBtn.addEventListener('click', start);
-  refs.stopBtn.addEventListener('click', stop);
-  refs.shotBtn.addEventListener('click', capture);
+  refs.shotBtn?.addEventListener('click', capture);
   refs.detectToggle.addEventListener('change', () => {
     if (refs.detectToggle.checked && stream) startDetectLoop();
     else stopDetectLoop();
@@ -48,9 +68,10 @@ export function initCameraScan(refs: CameraRefs): void {
   refs.video.addEventListener('loadedmetadata', syncOverlaySize);
   window.addEventListener('resize', syncOverlaySize);
 
-  setControls('idle');
+  setState('idle');
 
   async function start(): Promise<void> {
+    if (stream) return;
     setStatus('カメラを起動中…');
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -60,12 +81,14 @@ export function initCameraScan(refs: CameraRefs): void {
       refs.video.srcObject = stream;
       await refs.video.play();
       syncOverlaySize();
-      setControls('running');
-      setStatus('カメラ起動中。AR 検知を ON にすると連続スキャンを開始します。');
+      setState('running');
+      setStatus('用紙が枠に収まるようにかざしてください');
       if (refs.detectToggle.checked) startDetectLoop();
     } catch (err) {
-      setControls('idle');
-      setStatus(`カメラを起動できませんでした: ${String(err)}`);
+      setState('idle');
+      const msg = describeMediaError(err);
+      setStatus(msg);
+      refs.onError?.(msg);
     }
   }
 
@@ -76,41 +99,45 @@ export function initCameraScan(refs: CameraRefs): void {
     refs.video.srcObject = null;
     clearOverlay();
     lastItems = [];
-    setControls('idle');
-    setStatus('停止中。');
+    setState('idle');
+    setStatus('停止中');
   }
 
   function startDetectLoop(): void {
     if (detectTimer !== null) return;
-    setStatus('AR 検知 ON: 連続スキャン中…');
-    const tick = async (): Promise<void> => {
-      if (!stream || detectBusy) return scheduleNext();
-      detectBusy = true;
-      try {
-        const dataUrl = grabFrame({ maxEdge: DETECT_MAX_EDGE, quality: DETECT_JPEG_QUALITY });
-        if (!dataUrl) return;
-        const res = await fetch('/api/scan', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ image: dataUrl, mode: 'detect' }),
-        });
-        const data = (await res.json()) as { json?: { items?: ScanItem[] }; error?: string };
-        if (res.ok && data.json?.items) {
-          lastItems = data.json.items;
-          drawLiveOverlay(lastItems);
-        }
-      } catch {
-        // 一過性の失敗は次フレームで取り戻す
-      } finally {
-        detectBusy = false;
-        scheduleNext();
-      }
-    };
-    const scheduleNext = (): void => {
-      if (detectTimer === null) return;
-      detectTimer = window.setTimeout(tick, DETECT_INTERVAL_MS);
-    };
     detectTimer = window.setTimeout(tick, 100);
+  }
+
+  async function tick(): Promise<void> {
+    if (!stream || detectBusy) {
+      scheduleNext();
+      return;
+    }
+    detectBusy = true;
+    try {
+      const dataUrl = grabFrame({ maxEdge: DETECT_MAX_EDGE, quality: DETECT_JPEG_QUALITY });
+      if (!dataUrl) return;
+      const res = await fetch('/api/scan', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ image: dataUrl, mode: 'detect' }),
+      });
+      const data = (await res.json()) as { json?: { items?: ScanItem[] }; error?: string };
+      if (res.ok && data.json?.items) {
+        lastItems = data.json.items;
+        drawLiveOverlay(lastItems);
+      }
+    } catch {
+      // 一過性の失敗は次フレームで取り戻す
+    } finally {
+      detectBusy = false;
+      scheduleNext();
+    }
+  }
+
+  function scheduleNext(): void {
+    if (detectTimer === null) return;
+    detectTimer = window.setTimeout(tick, DETECT_INTERVAL_MS);
   }
 
   function stopDetectLoop(): void {
@@ -125,38 +152,48 @@ export function initCameraScan(refs: CameraRefs): void {
     if (!stream) return;
     const dataUrl = grabFrame({ maxEdge: 1280, quality: 0.85 });
     if (!dataUrl) {
-      setStatus('まだ映像が取得できていません。');
+      setStatus('まだ映像が取得できていません');
       return;
     }
 
-    setControls('busy');
-    setStatus('Gemini Vision に送信中…');
-    refs.result.textContent = '';
+    setState('busy');
+    setStatus('AI が解析しています…');
 
     try {
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ image: dataUrl, mode: 'analyze', hint: refs.hint?.value ?? '' }),
+        body: JSON.stringify({
+          image: dataUrl,
+          mode: 'analyze',
+          hint: refs.hint?.value?.trim() || '',
+        }),
       });
       const data = (await res.json()) as {
         raw?: string;
-        json?: { items?: ScanItem[] } & Record<string, unknown>;
+        json?: AnalyzeResult;
         error?: string;
       };
       if (!res.ok) {
-        setStatus(`解析エラー (${res.status}): ${data.error ?? '不明'}`);
+        const msg = `解析エラー (${res.status}): ${data.error ?? '不明'}`;
+        setStatus(msg);
+        refs.onError?.(msg);
+        setState(stream ? 'running' : 'idle');
         return;
       }
-      const items = data.json?.items ?? [];
-      lastItems = items;
-      drawDigitalOverlay(items);
-      refs.result.textContent = JSON.stringify(data.json ?? data.raw ?? data, null, 2);
-      setStatus(items.length ? `解析完了：${items.length} 項目` : '解析完了。');
+      const result: AnalyzeResult = { ...(data.json ?? {}), raw: data.raw };
+      if (result.items?.length) {
+        lastItems = result.items;
+        drawDigitalOverlay(result.items);
+      }
+      setState(stream ? 'running' : 'idle');
+      setStatus(result.items?.length ? `${result.items.length} 項目を読み取りました` : '解析が完了しました');
+      refs.onAnalyze?.(result);
     } catch (err) {
-      setStatus(`通信エラー: ${String(err)}`);
-    } finally {
-      setControls(stream ? 'running' : 'idle');
+      const msg = `通信エラー: ${String(err)}`;
+      setStatus(msg);
+      refs.onError?.(msg);
+      setState(stream ? 'running' : 'idle');
     }
   }
 
@@ -220,7 +257,8 @@ export function initCameraScan(refs: CameraRefs): void {
       ctx.stroke();
 
       const text = it.value ? `${it.label}: ${it.value}` : `${it.label} (要確認)`;
-      const fontSize = Math.max(12, Math.min(20, w / Math.max(8, text.length)) * 1.2) * window.devicePixelRatio;
+      const fontSize =
+        Math.max(12, Math.min(20, w / Math.max(8, text.length)) * 1.2) * window.devicePixelRatio;
       ctx.font = `${fontSize}px system-ui, -apple-system, sans-serif`;
       const padding = 6 * window.devicePixelRatio;
       const metrics = ctx.measureText(text);
@@ -270,14 +308,35 @@ export function initCameraScan(refs: CameraRefs): void {
     ctx.closePath();
   }
 
-  function setControls(state: 'idle' | 'running' | 'busy'): void {
-    refs.startBtn.disabled = state !== 'idle';
-    refs.stopBtn.disabled = state === 'idle';
-    refs.shotBtn.disabled = state !== 'running';
+  function setState(state: ScanState): void {
+    if (refs.shotBtn) refs.shotBtn.disabled = state !== 'running';
     refs.detectToggle.disabled = state === 'idle' || state === 'busy';
+    refs.onStateChange?.(state);
   }
 
   function setStatus(text: string): void {
     refs.status.textContent = text;
   }
+
+  function describeMediaError(err: unknown): string {
+    const name = (err as { name?: string })?.name ?? '';
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+      return 'カメラへのアクセスが許可されていません。ブラウザの設定から許可してください。';
+    }
+    if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+      return 'カメラが見つかりませんでした。';
+    }
+    if (name === 'NotReadableError') {
+      return 'カメラを他のアプリが使用中です。';
+    }
+    return `カメラを起動できませんでした: ${String(err)}`;
+  }
+
+  return {
+    start,
+    stop,
+    capture,
+    clearOverlay,
+    isRunning: () => stream !== null,
+  };
 }

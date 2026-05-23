@@ -17,6 +17,11 @@
     font-feature-settings: 'palt';
   }
 
+  /* Tailwind の display utility が HTML 標準の [hidden] を上書きしてしまうのを抑制 */
+  [hidden] {
+    display: none !important;
+  }
+
   /* iOS Safari の safe-area 対応 */
   .safe-top {
     padding-top: env(safe-area-inset-top);
