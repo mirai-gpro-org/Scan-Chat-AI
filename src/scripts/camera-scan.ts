@@ -173,9 +173,12 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         raw?: string;
         json?: AnalyzeResult;
         error?: string;
+        detail?: string;
       };
       if (!res.ok) {
-        const msg = `解析エラー (${res.status}): ${data.error ?? '不明'}`;
+        const msg = `解析エラー (${res.status}): ${data.error ?? '不明'}${
+          data.detail ? `\n${summarizeGoogleError(data.detail)}` : ''
+        }`;
         setStatus(msg);
         refs.onError?.(msg);
         setState(stream ? 'running' : 'idle');
@@ -339,4 +342,40 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     clearOverlay,
     isRunning: () => stream !== null,
   };
+}
+
+/**
+ * Google Generative Language API のエラーレスポンス本文から
+ * 人間が読みやすい 1 行サマリを作る。
+ * 期待される形:
+ *   {"error":{"code":429,"message":"...","status":"RESOURCE_EXHAUSTED",
+ *             "details":[{"@type":".../QuotaFailure","violations":[{"quotaMetric":"...","quotaId":"..."}]}]}}
+ */
+function summarizeGoogleError(detail: string): string {
+  try {
+    const obj = JSON.parse(detail) as {
+      error?: {
+        status?: string;
+        message?: string;
+        details?: Array<{
+          '@type'?: string;
+          violations?: Array<{ quotaMetric?: string; quotaId?: string }>;
+          retryDelay?: string;
+        }>;
+      };
+    };
+    const e = obj.error;
+    if (!e) return detail.slice(0, 300);
+    const parts: string[] = [];
+    if (e.status) parts.push(e.status);
+    if (e.message) parts.push(e.message);
+    const quota = e.details?.find((d) => d.violations?.length)?.violations?.[0];
+    if (quota?.quotaMetric) parts.push(`metric: ${quota.quotaMetric}`);
+    if (quota?.quotaId) parts.push(`id: ${quota.quotaId}`);
+    const retry = e.details?.find((d) => d.retryDelay)?.retryDelay;
+    if (retry) parts.push(`retry in ${retry}`);
+    return parts.join(' / ');
+  } catch {
+    return detail.slice(0, 300);
+  }
 }
