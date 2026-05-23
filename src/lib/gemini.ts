@@ -4,11 +4,10 @@
  */
 
 export const MODELS = {
-  // REST generateContent: 軽量モード（連続検知 / プレビュー）
+  // 撮影画像のネイティブマルチモーダル転記（OCR + 構造化）。
+  // 解釈や臨床推論は下流の診断 AI が担当するため、ここでは速度を優先。
+  // flash は thinking を完全停止できる点でも転記タスクに最適。
   scan: 'gemini-2.5-flash',
-  // REST generateContent: 撮影確定時のネイティブマルチモーダル画像理解
-  // （表構造・手書き・強調マークを統合的に読み取るので精度優先）
-  scanPrecise: 'gemini-2.5-pro',
   // Live API 専用 (WebSocket / audio-to-audio)。REST には渡さないこと
   liveChat: 'gemini-3.1-flash-live-preview',
 } as const;

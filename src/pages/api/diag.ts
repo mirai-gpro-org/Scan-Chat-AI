@@ -22,7 +22,7 @@ export const GET: APIRoute = async () => {
   if (!apiKey) {
     return json({ error: 'GEMINI_API_KEY is not configured' }, 500);
   }
-  const model = MODELS.scanPrecise;
+  const model = MODELS.scan;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const res = await fetch(url, {
     method: 'POST',
