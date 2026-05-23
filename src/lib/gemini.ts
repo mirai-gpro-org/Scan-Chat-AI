@@ -36,6 +36,12 @@ export interface GeminiGenerationConfig {
   responseMimeType?: string;
   /** Thinking 予算 (token)。0 で無効化 (flash/lite のみ)、pro は最小 128 程度。 */
   thinkingConfig?: { thinkingBudget?: number };
+  /**
+   * 出力 JSON の構造を OpenAPI 風スキーマで強制する。
+   * responseMimeType: "application/json" と併用すると、モデルがフォーマットに
+   * 迷う時間が削れ、生成速度と安定性が改善する。
+   */
+  responseSchema?: Record<string, unknown>;
 }
 
 export interface GeminiRequest {

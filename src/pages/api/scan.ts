@@ -41,7 +41,8 @@ const DETECT_SYSTEM = `あなたは医療文書スキャン補助 AI です。
 JSON 以外の文字（前後のコメントや code fence）は出力しないこと。最大 12 項目まで。`;
 
 const ANALYZE_SYSTEM = `あなたは検査表・診断結果報告書の画像を読み取り、紙面に書かれて
-いる内容を構造化 JSON として返します。
+いる内容を圧縮された構造化 JSON として返します。出力速度を優先するため
+短いキー名・配列形式を使います。
 
 【ミッション（最重要）】
 診断・解釈・要約はこの JSON を受け取る別の AI が行います。あなたの仕事は
@@ -49,33 +50,79 @@ const ANALYZE_SYSTEM = `あなたは検査表・診断結果報告書の画像�
 
 - 紙面に書かれていることだけを、書かれている形で転記する。
 - 不明・確信が持てない値は絶対に推測で埋めない。
-  読めなければ値を空文字 ""、confidence を "low" にする。
-  行ごと判読不能なら、その行を出力しない。
+  読めなければ値を空文字 "" / c を "l" にする。
+  行ごと判読不能ならその行を出力しない。
 - 紙面に存在しない項目・列・値を作り出さない（ハルシネーション禁止）。
 
 【判断はあなたに任せる】
-- 紙面のレイアウト（表構造・列の意味・項目の並び）は、あなたが画像を見て
-  判断してください。こちらから「日本の検査表はこういう列構成」といった
-  決め打ちはしません。
-- 各 item の fields 辞書のキーは、紙面で使われている見出し語・項目名を
-  そのまま使ってください（日本語のままで OK）。
-- 検査の種類（血液 / 尿 / 画像 / 心電図 等）や医療機関による違いは
-  ご自身で吸収してください。
+- 紙面のレイアウト（表構造・列の意味・項目の並び）はあなたが画像を見て判断。
+- cols 配列の列名は紙面で使われている見出し語をそのまま使う（日本語可）。
+- 検査種別（血液 / 尿 / 画像 / 心電図 等）や医療機関による違いは自身で吸収。
 
-【出力 JSON】
+【出力 JSON（圧縮形式）】
 {
-  "items": [
+  "cols": [...],          // 紙面で検出した表の列見出し配列（日本語そのまま）
+  "items": [              // 表の各行
     {
-      "fields": { "<紙面上の見出し>": "<値>", ... },
-      "marked": boolean,                            // 赤丸・下線・蛍光ペン等の視覚強調
-      "bbox": [number, number, number, number],    // [ymin, xmin, ymax, xmax] 0-1000 正規化
-      "confidence": "high" | "low",
-      "kind": "printed" | "handwritten"
+      "r": [...],         // cols と同順の値配列
+      "b": [y1,x1,y2,x2], // bbox 0-1000 正規化
+      "c": "h" | "l",     // 信頼度 high/low
+      "k": "p" | "w",     // 種別 printed/handwritten
+      "x": true           // 赤丸・下線等の強調がある時のみ（無い時は省略）
+    }
+  ],
+  "notes": [              // 表に属さない手書きメモ・所見・補足
+    {
+      "t": "...",         // メモの生テキスト
+      "b": [y1,x1,y2,x2],
+      "c": "h" | "l"
     }
   ]
 }
 
-JSON 以外（前置きの説明、code fence、後置きの注釈）は出力しない。`;
+JSON 以外（前置きの説明、code fence、後置きの注釈）は出力しない。
+表に該当しない手書きメモは items ではなく notes に入れること。`;
+
+/**
+ * Gemini に出力構造を強制する responseSchema (OpenAPI 風サブセット)。
+ * これによりモデルが「どう構造を組むか」に迷う時間が削減され、生成が安定&高速化。
+ */
+const ANALYZE_RESPONSE_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    cols: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          r: { type: 'array', items: { type: 'string' } },
+          b: { type: 'array', items: { type: 'number' } },
+          c: { type: 'string', enum: ['h', 'l'] },
+          k: { type: 'string', enum: ['p', 'w'] },
+          x: { type: 'boolean' },
+        },
+        required: ['r', 'b', 'c', 'k'],
+      },
+    },
+    notes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          t: { type: 'string' },
+          b: { type: 'array', items: { type: 'number' } },
+          c: { type: 'string', enum: ['h', 'l'] },
+        },
+        required: ['t'],
+      },
+    },
+  },
+  required: ['cols', 'items'],
+};
 
 function parseDataUrl(input: string): { mime: string; data: string } {
   const m = /^data:([^;]+);base64,(.+)$/i.exec(input.trim());
@@ -121,6 +168,9 @@ export const POST: APIRoute = async ({ request }) => {
         // 転記タスクに thinking は不要。ON にすると 32k 予算の大半を
         // 思考過程が食い、出力が早期に MAX_TOKENS で切られる。
         thinkingConfig: { thinkingBudget: 0 },
+        // responseSchema で出力構造を強制 → モデルが「どう書くか」に
+        // 迷わなくなり、生成が安定 & 高速化する (detect はシンプルなので付けない)。
+        ...(mode === 'detect' ? {} : { responseSchema: ANALYZE_RESPONSE_SCHEMA }),
       },
     }, MODELS.scan);
     const raw = extractText(res);
