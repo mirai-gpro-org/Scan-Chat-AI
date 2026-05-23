@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import {
   callGemini,
+  streamGemini,
   MODELS,
   extractText,
   stripJsonCodeFence,
@@ -121,36 +122,81 @@ export const POST: APIRoute = async ({ request }) => {
     },
   ];
 
-  try {
-    // analyze は表構造の視覚理解精度を優先して gemini-2.5-pro、
-    // detect は連続検知用に軽量 flash を継続使用。
-    // pro の思考予算を絞ることで応答速度を確保（典型 8-15s 想定）。
-    const model = mode === 'detect' ? MODELS.scan : MODELS.scanPrecise;
-    const res = await callGemini(import.meta.env.GEMINI_API_KEY, {
-      systemInstruction: {
-        parts: [{ text: mode === 'detect' ? DETECT_SYSTEM : ANALYZE_SYSTEM }],
-      },
-      contents: [{ role: 'user', parts: userParts }],
-      generationConfig: {
-        temperature: mode === 'detect' ? 0.1 : 0.0,
-        maxOutputTokens: mode === 'detect' ? 2048 : 16384,
-        responseMimeType: 'application/json',
-        thinkingConfig: { thinkingBudget: mode === 'detect' ? 0 : 1024 },
-      },
-    }, model);
-    const raw = extractText(res);
-    const cleaned = stripJsonCodeFence(raw);
-    let parsed: unknown = null;
+  // analyze は表構造の視覚理解精度を優先して gemini-2.5-pro、
+  // detect は連続検知用に軽量 flash を継続使用。
+  // pro の思考予算を絞ることで応答速度を確保（典型 8-15s 想定）。
+  const model = mode === 'detect' ? MODELS.scan : MODELS.scanPrecise;
+  const apiKey = import.meta.env.GEMINI_API_KEY;
+  const geminiRequest = {
+    systemInstruction: {
+      parts: [{ text: mode === 'detect' ? DETECT_SYSTEM : ANALYZE_SYSTEM }],
+    },
+    contents: [{ role: 'user' as const, parts: userParts }],
+    generationConfig: {
+      temperature: mode === 'detect' ? 0.1 : 0.0,
+      maxOutputTokens: mode === 'detect' ? 2048 : 16384,
+      responseMimeType: 'application/json',
+      thinkingConfig: { thinkingBudget: mode === 'detect' ? 0 : 1024 },
+    },
+  };
+
+  // detect は連続呼出なのでストリーミングしない（一括 JSON 応答）。
+  if (mode === 'detect') {
     try {
-      parsed = JSON.parse(cleaned);
-    } catch {
-      // 構造化失敗時は raw を返してフロントで対応
+      const res = await callGemini(apiKey, geminiRequest, model);
+      const raw = extractText(res);
+      const cleaned = stripJsonCodeFence(raw);
+      let parsed: unknown = null;
+      try { parsed = JSON.parse(cleaned); } catch { /* noop */ }
+      const finishReason = res.candidates?.[0]?.finishReason;
+      return json({ mode, model, raw, json: parsed, finishReason });
+    } catch (err) {
+      return handleGeminiError(err);
     }
-    const finishReason = res.candidates?.[0]?.finishReason;
-    return json({ mode, model, raw, json: parsed, finishReason });
-  } catch (err) {
-    return handleGeminiError(err);
   }
+
+  // analyze: NDJSON でストリーミング (chunked)。
+  // クライアントは 1 行ずつ JSON.parse して進捗 / 最終結果を扱う。
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const enc = new TextEncoder();
+      const emit = (obj: unknown): void => {
+        controller.enqueue(enc.encode(JSON.stringify(obj) + '\n'));
+      };
+      let acc = '';
+      let lastFinish: string | undefined;
+      try {
+        emit({ type: 'start', model });
+        for await (const ev of streamGemini(apiKey, geminiRequest, model)) {
+          if (ev.text) {
+            acc += ev.text;
+            emit({ type: 'chunk', text: ev.text, totalLen: acc.length });
+          }
+          if (ev.finishReason) lastFinish = ev.finishReason;
+        }
+        const cleaned = stripJsonCodeFence(acc);
+        let parsed: unknown = null;
+        try { parsed = JSON.parse(cleaned); } catch { /* noop */ }
+        emit({ type: 'done', raw: acc, json: parsed, finishReason: lastFinish });
+      } catch (err) {
+        if (err instanceof GeminiError) {
+          emit({ type: 'error', error: err.message, detail: err.body, status: err.status });
+        } else {
+          emit({ type: 'error', error: 'Unexpected error', detail: String(err) });
+        }
+      } finally {
+        controller.close();
+      }
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      'content-type': 'application/x-ndjson; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-accel-buffering': 'no', // バッファリング無効化（プロキシ側）
+    },
+  });
 };
 
 function json(data: unknown, status = 200): Response {

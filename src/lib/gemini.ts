@@ -92,6 +92,57 @@ export async function callGemini(
   }
 }
 
+/**
+ * streamGenerateContent を SSE で叩き、chunk ごとに { text, finishReason? } を yield する。
+ * AsyncGenerator なので呼び出し側で `for await (const ev of streamGemini(...))` できる。
+ */
+export async function* streamGemini(
+  apiKey: string,
+  request: GeminiRequest,
+  model: string = MODELS.scan,
+): AsyncGenerator<{ text: string; finishReason?: string }> {
+  if (!apiKey) {
+    throw new GeminiError('GEMINI_API_KEY is not configured', 500, '');
+  }
+  const url = `${ENDPOINT_BASE}/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!res.ok || !res.body) {
+    const body = await res.text().catch(() => '');
+    throw new GeminiError(`Gemini stream failed: ${res.status}`, res.status, body);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    // SSE は "data: {...}\n\n" 区切り。\n\n が来た部分まで処理し、未完は buf に残す。
+    let idx: number;
+    while ((idx = buf.indexOf('\n\n')) !== -1) {
+      const frame = buf.slice(0, idx).trim();
+      buf = buf.slice(idx + 2);
+      if (!frame.startsWith('data:')) continue;
+      const json = frame.slice(5).trim();
+      if (!json || json === '[DONE]') continue;
+      try {
+        const obj = JSON.parse(json) as GeminiResponse;
+        const parts = obj.candidates?.[0]?.content?.parts ?? [];
+        const text = parts.map((p) => p.text ?? '').join('');
+        const finishReason = obj.candidates?.[0]?.finishReason;
+        if (text || finishReason) yield { text, finishReason };
+      } catch {
+        // 部分パース失敗は無視（次フレームで揃う）
+      }
+    }
+  }
+}
+
 /** candidates から最初のテキストを取り出す。なければ空文字。 */
 export function extractText(res: GeminiResponse): string {
   const parts = res.candidates?.[0]?.content?.parts ?? [];

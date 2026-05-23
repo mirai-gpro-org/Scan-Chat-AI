@@ -4,40 +4,40 @@ import ScanOverlay from '../components/ScanOverlay.astro';
 ---
 
 <BaseLayout title="スキャン | Scan-Chat Medical AI">
-  <header class="flex items-center justify-between px-5 pt-6 pb-3">
+  <header class="mx-auto flex w-full max-w-3xl items-center justify-between px-5 pt-6 pb-3 md:max-w-6xl">
     <a href="/" class="-ml-2 inline-flex h-10 w-10 items-center justify-center text-2xl text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200" aria-label="戻る">‹</a>
-    <h1 class="text-base font-semibold">スキャン</h1>
-    <span class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+    <h1 class="text-base font-semibold md:text-lg">スキャン</h1>
+    <span class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300 md:text-sm">
       1 / 3
     </span>
   </header>
 
-  <main class="flex flex-1 flex-col px-5 pb-8">
+  <main class="mx-auto flex w-full max-w-3xl flex-1 flex-col px-5 pb-8 md:max-w-6xl">
 
     <!-- ============================================================== -->
     <!-- パネル: ready（カメラ起動前のオンボーディング）                  -->
     <!-- ============================================================== -->
-    <section id="panel-ready" class="flex flex-1 flex-col items-center justify-center gap-6 text-center">
-      <div class="flex h-24 w-24 items-center justify-center rounded-3xl bg-brand-50 text-5xl dark:bg-brand-600/10">
+    <section id="panel-ready" class="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center gap-6 text-center md:max-w-lg md:gap-8">
+      <div class="flex h-24 w-24 items-center justify-center rounded-3xl bg-brand-50 text-5xl dark:bg-brand-600/10 md:h-32 md:w-32 md:text-6xl">
         📋
       </div>
       <div class="space-y-2">
-        <h2 class="text-xl font-bold">健診結果をスキャン</h2>
-        <p class="text-sm text-slate-600 dark:text-slate-300">
+        <h2 class="text-xl font-bold md:text-2xl">健診結果をスキャン</h2>
+        <p class="text-sm text-slate-600 dark:text-slate-300 md:text-base">
           検査用紙をカメラで読み取り、ネイティブマルチモーダル AI が
           表構造・手書き・強調マークを統合的に理解して値を抽出します。
         </p>
       </div>
-      <ul class="w-full space-y-2 rounded-2xl bg-slate-50 p-4 text-left text-sm text-slate-700 dark:bg-slate-900 dark:text-slate-200">
+      <ul class="w-full space-y-2 rounded-2xl bg-slate-50 p-4 text-left text-sm text-slate-700 dark:bg-slate-900 dark:text-slate-200 md:p-5 md:text-base">
         <li class="flex gap-2"><span aria-hidden>💡</span>明るい場所で撮影してください</li>
         <li class="flex gap-2"><span aria-hidden>📄</span>用紙全体が枠に収まるようにかざします</li>
         <li class="flex gap-2"><span aria-hidden>🔒</span>画像はサーバに保存されません</li>
       </ul>
       <div class="mt-auto flex w-full flex-col gap-2">
-        <button id="scan-start" class="btn-primary w-full !py-4 text-lg">
+        <button id="scan-start" class="btn-primary w-full !py-4 text-lg md:!py-5 md:text-xl">
           📷 スキャンを開始
         </button>
-        <p class="text-center text-xs text-slate-500">
+        <p class="text-center text-xs text-slate-500 md:text-sm">
           タップするとカメラへのアクセス許可を求めます
         </p>
       </div>
@@ -46,8 +46,8 @@ import ScanOverlay from '../components/ScanOverlay.astro';
     <!-- ============================================================== -->
     <!-- パネル: active / busy（カメラ起動中・解析中）                   -->
     <!-- ============================================================== -->
-    <section id="panel-active" class="flex flex-1 flex-col gap-4" hidden>
-      <div class="relative aspect-[3/4] w-full overflow-hidden rounded-2xl bg-black">
+    <section id="panel-active" class="mx-auto flex w-full max-w-xl flex-1 flex-col gap-4 md:max-w-3xl" hidden>
+      <div class="relative aspect-[3/4] w-full overflow-hidden rounded-2xl bg-black md:aspect-[4/3]">
         <video
           id="scan-video"
           class="h-full w-full object-cover"
@@ -58,35 +58,36 @@ import ScanOverlay from '../components/ScanOverlay.astro';
         <canvas id="scan-canvas" class="hidden"></canvas>
 
         <!-- 撮影ガイド枠 -->
-        <div class="pointer-events-none absolute inset-4 rounded-xl border-2 border-white/70"></div>
+        <div class="pointer-events-none absolute inset-4 rounded-xl border-2 border-white/70 md:inset-6"></div>
 
         <!-- 信頼度の凡例 -->
-        <div class="pointer-events-none absolute left-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-xs text-white backdrop-blur-sm">
+        <div class="pointer-events-none absolute left-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-xs text-white backdrop-blur-sm md:left-4 md:top-4 md:px-3 md:py-1.5 md:text-sm">
           <span class="mr-1 inline-block h-2 w-2 rounded-full bg-emerald-400 align-middle"></span>
           高信頼
           <span class="ml-2 mr-1 inline-block h-2 w-2 rounded-full bg-amber-300 align-middle"></span>
           要確認
         </div>
 
-        <!-- 解析中オーバーレイ -->
-        <div id="busy-overlay" class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/60 text-white backdrop-blur-sm" hidden>
-          <div class="h-10 w-10 animate-spin rounded-full border-2 border-white/30 border-t-white"></div>
-          <p class="text-sm font-medium">AI が解析しています…</p>
+        <!-- 解析中オーバーレイ（ストリーミング進捗付き）-->
+        <div id="busy-overlay" class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/60 text-white backdrop-blur-sm md:gap-4" hidden>
+          <div class="h-10 w-10 animate-spin rounded-full border-2 border-white/30 border-t-white md:h-14 md:w-14"></div>
+          <p id="busy-label" class="text-sm font-medium md:text-base">AI が解析しています…</p>
+          <p id="busy-progress" class="text-xs text-white/70 md:text-sm"></p>
         </div>
       </div>
 
       <!-- セカンダリ操作行 -->
-      <div class="flex items-center justify-between gap-2">
-        <label class="inline-flex items-center gap-2 text-sm">
+      <div class="flex items-center justify-between gap-2 md:gap-3">
+        <label class="inline-flex items-center gap-2 text-sm md:text-base">
           <input
             id="scan-detect-toggle"
             type="checkbox"
-            class="h-4 w-4 rounded border-slate-400 text-brand-600 focus:ring-brand-500"
+            class="h-4 w-4 rounded border-slate-400 text-brand-600 focus:ring-brand-500 md:h-5 md:w-5"
             checked
           />
           AR 検知
         </label>
-        <button id="hint-toggle" type="button" class="chip text-xs">
+        <button id="hint-toggle" type="button" class="chip text-xs md:text-sm">
           💡 補足を追加
         </button>
       </div>
@@ -96,62 +97,75 @@ import ScanOverlay from '../components/ScanOverlay.astro';
         <input
           id="scan-hint"
           type="text"
-          class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900"
+          class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 md:text-base"
           placeholder="例: 右前腕、3 日前から赤み"
           maxlength="200"
         />
       </div>
 
-      <p id="scan-status" class="min-h-5 text-center text-xs text-slate-500 dark:text-slate-400" aria-live="polite"></p>
+      <p id="scan-status" class="min-h-5 text-center text-xs text-slate-500 dark:text-slate-400 md:text-sm" aria-live="polite"></p>
 
       <!-- プライマリ CTA -->
-      <button id="scan-shot" class="btn-primary !py-4 text-lg">
+      <button id="scan-shot" class="btn-primary !py-4 text-lg md:!py-5 md:text-xl">
         📷 撮影 & 解析
       </button>
     </section>
 
     <!-- ============================================================== -->
-    <!-- パネル: result（解析結果）                                      -->
+    <!-- パネル: result（解析結果・タブレットでは 2 カラム）             -->
     <!-- ============================================================== -->
-    <section id="panel-result" class="flex flex-1 flex-col gap-4" hidden>
-      <div class="flex items-center gap-3 rounded-2xl bg-emerald-50 px-4 py-3 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200">
-        <span class="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500 text-white">✓</span>
-        <p id="result-count" class="text-sm font-semibold">解析が完了しました</p>
+    <section id="panel-result" class="flex flex-1 flex-col gap-4 md:gap-6" hidden>
+      <div class="flex items-center gap-3 rounded-2xl bg-emerald-50 px-4 py-3 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200 md:px-5 md:py-4">
+        <span class="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500 text-white md:h-10 md:w-10 md:text-lg">✓</span>
+        <p id="result-count" class="text-sm font-semibold md:text-base">解析が完了しました</p>
       </div>
 
-      <!-- 認識項目（OCR ベリファイ用） -->
-      <section class="card !p-0">
-        <h3 class="border-b border-slate-100 px-4 py-3 text-sm font-semibold dark:border-slate-800">
-          認識項目
-        </h3>
-        <ul id="items-list" class="divide-y divide-slate-100 dark:divide-slate-800">
-          <li class="px-4 py-6 text-center text-sm text-slate-500">項目は検出されませんでした</li>
-        </ul>
-      </section>
+      <!-- 2 カラム: タブレット以上で画像と項目を横並びに -->
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] md:gap-6">
+        <!-- 左: 撮影画像プレビュー（ベリファイ用に紙原本と並べて見られる） -->
+        <section class="card !p-3 md:sticky md:top-4 md:self-start md:!p-4">
+          <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 md:text-sm">
+            撮影画像（原本との照合用）
+          </h3>
+          <div class="overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-900">
+            <img id="result-image" alt="撮影した検査用紙" class="block w-full" />
+          </div>
+        </section>
+
+        <!-- 右: 認識項目 -->
+        <section class="card !p-0">
+          <h3 class="border-b border-slate-100 px-4 py-3 text-sm font-semibold dark:border-slate-800 md:px-5 md:py-4 md:text-base">
+            認識項目
+          </h3>
+          <ul id="items-list" class="divide-y divide-slate-100 dark:divide-slate-800">
+            <li class="px-4 py-6 text-center text-sm text-slate-500 md:py-8 md:text-base">項目は検出されませんでした</li>
+          </ul>
+        </section>
+      </div>
 
       <!-- Raw JSON（開発用） -->
-      <details open class="rounded-2xl border border-dashed border-slate-300 p-3 dark:border-slate-700">
-        <summary class="cursor-pointer text-xs font-medium text-slate-500">詳細データ (JSON)</summary>
-        <div class="mt-2 space-y-3">
+      <details open class="rounded-2xl border border-dashed border-slate-300 p-3 dark:border-slate-700 md:p-4">
+        <summary class="cursor-pointer text-xs font-medium text-slate-500 md:text-sm">詳細データ (JSON)</summary>
+        <div class="mt-2 space-y-3 md:mt-3">
           <div>
-            <p class="mb-1 text-[10px] uppercase tracking-wide text-slate-400">
-              Gemini raw response <span id="scan-finish" class="ml-1 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-normal text-slate-700 dark:bg-slate-700 dark:text-slate-200"></span>
+            <p class="mb-1 text-[10px] uppercase tracking-wide text-slate-400 md:text-xs">
+              Gemini raw response <span id="scan-finish" class="ml-1 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-normal text-slate-700 dark:bg-slate-700 dark:text-slate-200 md:text-xs"></span>
             </p>
-            <pre id="scan-raw" class="max-h-[480px] overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-200"></pre>
+            <pre id="scan-raw" class="max-h-[480px] overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-200 md:p-3 md:text-sm"></pre>
           </div>
           <div>
-            <p class="mb-1 text-[10px] uppercase tracking-wide text-slate-400">Parsed result</p>
-            <pre id="scan-result" class="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-200"></pre>
+            <p class="mb-1 text-[10px] uppercase tracking-wide text-slate-400 md:text-xs">Parsed result</p>
+            <pre id="scan-result" class="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-200 md:p-3 md:text-sm"></pre>
           </div>
         </div>
       </details>
 
       <!-- CTA -->
-      <div class="mt-auto flex flex-col gap-2 pt-2">
-        <a href="/chat" class="btn-primary !py-4 text-lg">
+      <div class="mt-auto flex flex-col gap-2 pt-2 md:flex-row-reverse md:gap-3">
+        <a href="/chat" class="btn-primary !py-4 text-lg md:flex-1 md:!py-5 md:text-xl">
           問診を開始する →
         </a>
-        <button id="scan-retake" type="button" class="btn-secondary">
+        <button id="scan-retake" type="button" class="btn-secondary md:flex-1 md:!py-5 md:text-lg">
           もう一度撮影する
         </button>
       </div>
@@ -160,16 +174,16 @@ import ScanOverlay from '../components/ScanOverlay.astro';
     <!-- ============================================================== -->
     <!-- パネル: error                                                   -->
     <!-- ============================================================== -->
-    <section id="panel-error" class="flex flex-1 flex-col items-center justify-center gap-6 text-center" hidden>
-      <div class="flex h-20 w-20 items-center justify-center rounded-3xl bg-rose-50 text-4xl dark:bg-rose-900/30">
+    <section id="panel-error" class="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center gap-6 text-center md:max-w-lg" hidden>
+      <div class="flex h-20 w-20 items-center justify-center rounded-3xl bg-rose-50 text-4xl dark:bg-rose-900/30 md:h-24 md:w-24 md:text-5xl">
         ⚠
       </div>
       <div class="space-y-2">
-        <h2 class="text-lg font-bold">スキャンを開始できません</h2>
-        <p id="error-message" class="text-sm text-slate-600 dark:text-slate-300"></p>
+        <h2 class="text-lg font-bold md:text-xl">スキャンを開始できません</h2>
+        <p id="error-message" class="whitespace-pre-wrap text-sm text-slate-600 dark:text-slate-300 md:text-base"></p>
       </div>
       <div class="mt-auto flex w-full flex-col gap-2">
-        <button id="error-retry" class="btn-primary w-full !py-4 text-lg">再試行</button>
+        <button id="error-retry" class="btn-primary w-full !py-4 text-lg md:!py-5 md:text-xl">再試行</button>
         <a href="/" class="btn-secondary text-center">トップへ戻る</a>
       </div>
     </section>
@@ -213,46 +227,46 @@ import ScanOverlay from '../components/ScanOverlay.astro';
     const lowConf = it.confidence === 'low';
     const flagBadge =
       it.flag === 'H'
-        ? '<span class="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-800 dark:bg-rose-900/40 dark:text-rose-200">H</span>'
+        ? '<span class="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-800 dark:bg-rose-900/40 dark:text-rose-200 md:text-xs">H</span>'
         : it.flag === 'L'
-          ? '<span class="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-800 dark:bg-sky-900/40 dark:text-sky-200">L</span>'
+          ? '<span class="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-800 dark:bg-sky-900/40 dark:text-sky-200 md:text-xs">L</span>'
           : '';
     const kindBadge = handwritten
-      ? '<span class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">✍ 手書</span>'
-      : '<span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200">印字</span>';
+      ? '<span class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 md:text-xs">✍ 手書</span>'
+      : '<span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200 md:text-xs">印字</span>';
     const markedBadge = it.marked
-      ? '<span class="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-800 dark:bg-rose-900/40 dark:text-rose-200">⬤ 強調</span>'
+      ? '<span class="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-800 dark:bg-rose-900/40 dark:text-rose-200 md:text-xs">⬤ 強調</span>'
       : '';
     const confBadge = lowConf
-      ? '<span class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">要確認</span>'
+      ? '<span class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 md:text-xs">要確認</span>'
       : '';
     const ref =
       it.ref_low || it.ref_high
-        ? `<span class="text-[11px] text-slate-500">基準 ${escapeHtml(it.ref_low ?? '')} – ${escapeHtml(it.ref_high ?? '')}</span>`
+        ? `<span class="text-[11px] text-slate-500 md:text-xs">基準 ${escapeHtml(it.ref_low ?? '')} – ${escapeHtml(it.ref_high ?? '')}</span>`
         : '';
     const unit = it.unit
-      ? `<span class="ml-1 text-xs text-slate-500">${escapeHtml(it.unit)}</span>`
+      ? `<span class="ml-1 text-xs text-slate-500 md:text-sm">${escapeHtml(it.unit)}</span>`
       : '';
     const labelDetail = it.label_detail
-      ? `<span class="ml-1 text-xs text-slate-500">${escapeHtml(it.label_detail)}</span>`
+      ? `<span class="ml-1 text-xs text-slate-500 md:text-sm">${escapeHtml(it.label_detail)}</span>`
       : '';
     const no = it.no
-      ? `<span class="mr-1 inline-block w-6 text-right text-[10px] text-slate-400">${escapeHtml(it.no)}</span>`
+      ? `<span class="mr-1 inline-block w-6 text-right text-[10px] text-slate-400 md:w-8 md:text-xs">${escapeHtml(it.no)}</span>`
       : '';
     const valueDisplay = it.value
-      ? `<span class="text-base font-semibold">${escapeHtml(it.value)}</span>${unit}`
+      ? `<span class="text-base font-semibold md:text-lg">${escapeHtml(it.value)}</span>${unit}`
       : '<span class="italic text-slate-400">（読み取り不可）</span>';
     return `
-      <li class="px-4 py-3">
-        <div class="flex items-center gap-2">
+      <li class="px-4 py-3 md:px-5 md:py-4">
+        <div class="flex flex-wrap items-center gap-1.5 md:gap-2">
           ${no}
-          <p class="min-w-0 flex-1 truncate text-sm font-medium">${escapeHtml(it.label)}${labelDetail}</p>
+          <p class="min-w-0 flex-1 truncate text-sm font-medium md:text-base">${escapeHtml(it.label)}${labelDetail}</p>
           ${flagBadge}
           ${kindBadge}
           ${markedBadge}
           ${confBadge}
         </div>
-        <div class="mt-1 flex items-baseline justify-between gap-3 pl-7">
+        <div class="mt-1 flex flex-wrap items-baseline justify-between gap-3 pl-7 md:pl-9">
           <div>${valueDisplay}</div>
           ${ref}
         </div>
@@ -272,7 +286,7 @@ import ScanOverlay from '../components/ScanOverlay.astro';
       itemsList.innerHTML = items.map(renderItem).join('');
     } else {
       itemsList.innerHTML =
-        '<li class="px-4 py-6 text-center text-sm text-slate-500">項目は検出されませんでした</li>';
+        '<li class="px-4 py-6 text-center text-sm text-slate-500 md:text-base">項目は検出されませんでした</li>';
     }
 
     // debug panes
@@ -299,6 +313,15 @@ import ScanOverlay from '../components/ScanOverlay.astro';
         $('busy-overlay').hidden = state !== 'busy';
         const shot = $<HTMLButtonElement>('scan-shot');
         shot.textContent = state === 'busy' ? '解析中…' : '📷 撮影 & 解析';
+        if (state !== 'busy') {
+          $('busy-progress').textContent = '';
+        }
+      },
+      onCapture: (dataUrl) => {
+        ($('result-image') as HTMLImageElement).src = dataUrl;
+      },
+      onStreamProgress: (progress) => {
+        $('busy-progress').textContent = `${progress.totalLen.toLocaleString()} 文字`;
       },
       onAnalyze: (result) => {
         renderResult(result);

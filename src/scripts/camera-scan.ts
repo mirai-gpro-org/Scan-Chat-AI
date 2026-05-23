@@ -42,8 +42,23 @@ export interface CameraRefs {
   hint?: HTMLInputElement | null;
   shotBtn?: HTMLButtonElement;
   onStateChange?: (state: ScanState) => void;
+  onCapture?: (dataUrl: string) => void; // 撮影直後の dataURL を渡す
+  onStreamProgress?: (progress: { totalLen: number }) => void;
   onAnalyze?: (result: AnalyzeResult) => void;
   onError?: (message: string) => void;
+}
+
+interface StreamEvent {
+  type: 'start' | 'chunk' | 'done' | 'error';
+  model?: string;
+  text?: string;
+  totalLen?: number;
+  raw?: string;
+  json?: AnalyzeResult;
+  finishReason?: string;
+  error?: string;
+  detail?: string;
+  status?: number;
 }
 
 export interface CameraScanController {
@@ -162,6 +177,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
 
     setState('busy');
     setStatus('AI が解析しています…');
+    refs.onCapture?.(dataUrl);
 
     try {
       const res = await fetch('/api/scan', {
@@ -173,36 +189,92 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
           hint: refs.hint?.value?.trim() || '',
         }),
       });
-      const data = (await res.json()) as {
-        raw?: string;
-        json?: AnalyzeResult;
-        error?: string;
-        detail?: string;
-        finishReason?: string;
-        model?: string;
-      };
-      if (!res.ok) {
-        const msg = `解析エラー (${res.status}): ${data.error ?? '不明'}${
-          data.detail ? `\n${summarizeGoogleError(data.detail)}` : ''
+      if (!res.ok || !res.body) {
+        // ストリーム未開始のエラー (4xx/5xx は JSON で返す)
+        const text = await res.text();
+        const data = safeJson(text) as
+          | { error?: string; detail?: string }
+          | null;
+        const msg = `解析エラー (${res.status}): ${data?.error ?? text}${
+          data?.detail ? `\n${summarizeGoogleError(data.detail)}` : ''
         }`;
         setStatus(msg);
         refs.onError?.(msg);
         setState(stream ? 'running' : 'idle');
         return;
       }
-      const result: AnalyzeResult = {
-        ...(data.json ?? {}),
-        raw: data.raw,
-        finishReason: data.finishReason,
-        model: data.model,
+
+      // NDJSON ストリームを 1 行ずつ処理。
+      // TS の制御フロー解析が closure 内の代入で narrow を更新しない仕様回避のため、
+      // mutable な holder オブジェクトで結果を集約する。
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      const holder: {
+        result: AnalyzeResult | null;
+        err: { msg: string } | null;
+        totalLen: number;
+      } = { result: null, err: null, totalLen: 0 };
+      let buf = '';
+
+      const pump = async (): Promise<void> => {
+        const { value, done } = await reader.read();
+        if (done) return;
+        buf += dec.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf('\n')) !== -1) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          const ev = safeJson(line) as StreamEvent | null;
+          if (!ev) continue;
+          if (ev.type === 'start') {
+            setStatus(`📥 ${ev.model ?? ''} 接続`);
+          } else if (ev.type === 'chunk') {
+            holder.totalLen = ev.totalLen ?? holder.totalLen + (ev.text?.length ?? 0);
+            setStatus(`📝 読み取り中… ${holder.totalLen.toLocaleString()} 文字`);
+            refs.onStreamProgress?.({ totalLen: holder.totalLen });
+          } else if (ev.type === 'done') {
+            holder.result = {
+              ...(ev.json ?? {}),
+              raw: ev.raw,
+              finishReason: ev.finishReason,
+            };
+          } else if (ev.type === 'error') {
+            const detail = ev.detail ? `\n${summarizeGoogleError(ev.detail)}` : '';
+            holder.err = {
+              msg: `解析エラー (${ev.status ?? '?'}): ${ev.error ?? '不明'}${detail}`,
+            };
+          }
+        }
+        await pump();
       };
-      if (result.items?.length) {
-        lastItems = result.items;
-        drawDigitalOverlay(result.items);
+      await pump();
+
+      if (holder.err) {
+        setStatus(holder.err.msg);
+        refs.onError?.(holder.err.msg);
+        setState(stream ? 'running' : 'idle');
+        return;
+      }
+      const finalResult = holder.result;
+      if (!finalResult) {
+        const msg = '解析エラー: 応答が完了しませんでした';
+        setStatus(msg);
+        refs.onError?.(msg);
+        setState(stream ? 'running' : 'idle');
+        return;
+      }
+      if (finalResult.items?.length) {
+        lastItems = finalResult.items;
+        drawDigitalOverlay(finalResult.items);
       }
       setState(stream ? 'running' : 'idle');
-      setStatus(result.items?.length ? `${result.items.length} 項目を読み取りました` : '解析が完了しました');
-      refs.onAnalyze?.(result);
+      setStatus(
+        finalResult.items?.length
+          ? `${finalResult.items.length} 項目を読み取りました`
+          : '解析が完了しました',
+      );
+      refs.onAnalyze?.(finalResult);
     } catch (err) {
       const msg = `通信エラー: ${String(err)}`;
       setStatus(msg);
@@ -388,5 +460,13 @@ function summarizeGoogleError(detail: string): string {
     return parts.join(' / ');
   } catch {
     return detail.slice(0, 300);
+  }
+}
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
   }
 }
