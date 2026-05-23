@@ -59,14 +59,20 @@ interface StreamEvent {
 export interface CameraScanController {
   start: () => Promise<void>;
   stop: () => void;
-  capture: () => Promise<void>;
+  capture: (opts?: CaptureOptions) => Promise<void>;
   isRunning: () => boolean;
+}
+
+export interface CaptureOptions {
+  /** 指定すると「この項目だけ拡大撮影」モードのプロンプトを送る */
+  focusLabel?: string;
 }
 
 export function initCameraScan(refs: CameraRefs): CameraScanController {
   let stream: MediaStream | null = null;
 
-  refs.shotBtn?.addEventListener('click', capture);
+  // shot ボタンの click は scan.astro 側で focusLabel を判断するため、
+  // ここでは登録しない（呼び出し側が controller.capture(...) を直接叩く）。
 
   setState('idle');
 
@@ -98,7 +104,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     setStatus('停止中');
   }
 
-  async function capture(): Promise<void> {
+  async function capture(opts?: CaptureOptions): Promise<void> {
     if (!stream) return;
     const dataUrl = grabFrame({ maxEdge: 1280, quality: 0.85 });
     if (!dataUrl) {
@@ -107,8 +113,15 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     }
 
     setState('busy');
-    setStatus('AI が解析しています…');
+    setStatus(opts?.focusLabel ? `「${opts.focusLabel}」を再解析中…` : 'AI が解析しています…');
     refs.onCapture?.(dataUrl);
+
+    // フォーカス再撮影モードでは、その項目に集中するよう AI に指示
+    const focusHint = opts?.focusLabel
+      ? `これは「${opts.focusLabel}」という検査項目だけを画面いっぱいに拡大して再撮影した画像です。この 1 項目（または周辺の関連項目）の値を、結果列の値として正確に転記してください。`
+      : '';
+    const userHint = refs.hint?.value?.trim() || '';
+    const hint = focusHint || userHint || undefined;
 
     try {
       const res = await fetch('/api/scan', {
@@ -117,7 +130,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         body: JSON.stringify({
           image: dataUrl,
           mode: 'analyze',
-          hint: refs.hint?.value?.trim() || '',
+          hint,
         }),
       });
       if (!res.ok || !res.body) {

@@ -46,19 +46,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     <!-- パネル: active / busy                                           -->
     <!-- ============================================================== -->
     <section id="panel-active" class="mx-auto flex w-full max-w-xl flex-1 flex-col gap-4 md:max-w-3xl" hidden>
+      <!-- フォーカス再撮影モードの案内バナー -->
+      <div id="focus-banner" class="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700/60 dark:bg-amber-900/30 dark:text-amber-100 md:px-5 md:py-4 md:text-base" hidden>
+        <p class="font-semibold">📷 「<span id="focus-label"></span>」を画面いっぱいに撮影してください</p>
+        <p class="mt-1 text-xs md:text-sm">該当項目だけが大きく写るように紙に近づけて撮影 → AI がその値だけ再解析します。</p>
+      </div>
+
       <div class="relative aspect-[3/4] w-full overflow-hidden rounded-2xl bg-black md:aspect-[4/3]">
-        <video
-          id="scan-video"
-          class="h-full w-full object-cover"
-          playsinline
-          muted
-          autoplay></video>
+        <video id="scan-video" class="h-full w-full object-cover" playsinline muted autoplay></video>
         <canvas id="scan-canvas" class="hidden"></canvas>
-
-        <!-- 撮影ガイド枠 -->
         <div class="pointer-events-none absolute inset-4 rounded-xl border-2 border-white/70 md:inset-6"></div>
-
-        <!-- 解析中オーバーレイ（ストリーミング進捗付き）-->
         <div id="busy-overlay" class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/60 text-white backdrop-blur-sm md:gap-4" hidden>
           <div class="h-10 w-10 animate-spin rounded-full border-2 border-white/30 border-t-white md:h-14 md:w-14"></div>
           <p id="busy-label" class="text-sm font-medium md:text-base">AI が解析しています…</p>
@@ -66,22 +63,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         </div>
       </div>
 
-      <!-- セカンダリ操作行 -->
       <div class="flex items-center justify-end gap-2 md:gap-3">
         <button id="hint-toggle" type="button" class="chip text-xs md:text-sm">
           💡 補足を追加
         </button>
       </div>
 
-      <!-- ヒント入力（折りたたみ） -->
       <div id="hint-panel" hidden>
-        <input
-          id="scan-hint"
-          type="text"
+        <input id="scan-hint" type="text"
           class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 md:text-base"
-          placeholder="例: 化学療法前の血液検査結果"
-          maxlength="200"
-        />
+          placeholder="例: 化学療法前の血液検査結果" maxlength="200" />
       </div>
 
       <p id="scan-status" class="min-h-5 text-center text-xs text-slate-500 dark:text-slate-400 md:text-sm" aria-live="polite"></p>
@@ -92,57 +83,71 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     </section>
 
     <!-- ============================================================== -->
-    <!-- パネル: result（撮影画像にピンを重ねて、リストと双方向ハイライト）-->
+    <!-- パネル: result                                                  -->
     <!-- ============================================================== -->
     <section id="panel-result" class="flex flex-1 flex-col gap-4 md:gap-6" hidden>
+      <!-- toast -->
+      <div id="toast" class="rounded-2xl bg-slate-900 px-4 py-2 text-sm text-white shadow-md dark:bg-slate-100 dark:text-slate-900 md:text-base" hidden></div>
+
       <div class="flex items-center gap-3 rounded-2xl bg-emerald-50 px-4 py-3 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200 md:px-5 md:py-4">
         <span class="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500 text-white md:h-10 md:w-10 md:text-lg">✓</span>
         <p id="result-count" class="text-sm font-semibold md:text-base">解析が完了しました</p>
       </div>
 
-      <!-- フィルタチップ -->
-      <div class="flex flex-wrap items-center gap-1.5 text-xs md:gap-2 md:text-sm">
-        <span class="text-slate-500">表示:</span>
-        <button data-filter="all" class="chip chip-on" type="button">すべて</button>
-        <button data-filter="marked" class="chip" type="button">⬤ 強調</button>
-        <button data-filter="flag" class="chip" type="button">H / L</button>
-        <button data-filter="handwritten" class="chip" type="button">✍ 手書</button>
-        <button data-filter="low" class="chip" type="button">要確認</button>
+      <!-- 色凡例 + フィルタ -->
+      <div class="flex flex-wrap items-center gap-2 text-xs md:text-sm">
+        <div class="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500 md:text-xs">
+          <span class="inline-flex items-center gap-1"><span class="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500"></span>高信頼（自動 OK）</span>
+          <span class="inline-flex items-center gap-1"><span class="inline-block h-2.5 w-2.5 rounded-full bg-amber-500"></span>要確認</span>
+          <span class="inline-flex items-center gap-1"><span class="inline-block h-2.5 w-2.5 rounded-full bg-rose-500"></span>未認識</span>
+        </div>
+        <div class="ml-auto flex flex-wrap items-center gap-1.5 md:gap-2">
+          <span class="text-slate-500">表示:</span>
+          <button data-filter="needs-check" class="chip chip-on" type="button">要確認のみ</button>
+          <button data-filter="all" class="chip" type="button">全項目</button>
+        </div>
       </div>
 
-      <!-- 2 カラム: タブレット以上で画像と項目を横並びに -->
+      <!-- 2 カラム -->
       <div class="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] md:gap-6">
-        <!-- 左: 撮影画像 + ピン/bbox オーバーレイ -->
+        <!-- 左: 撮影画像 + オーバーレイ -->
         <section class="card !p-3 md:sticky md:top-4 md:self-start md:!p-4">
           <h3 class="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500 md:text-sm">
-            <span>撮影画像（原本との照合用）</span>
-            <span class="text-[10px] font-normal normal-case text-slate-400 md:text-xs">タップで詳細</span>
+            <span>撮影画像</span>
+            <span class="text-[10px] font-normal normal-case text-slate-400 md:text-xs">エリアをタップで詳細</span>
           </h3>
           <div id="result-image-wrap" class="relative overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-900">
             <img id="result-image" alt="撮影した検査用紙" class="block w-full" />
             <!-- ピン/bbox の DOM はここに JS で挿入される -->
             <div id="result-overlay" class="pointer-events-none absolute inset-0"></div>
           </div>
-          <!-- 凡例 -->
-          <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500 md:mt-3 md:text-xs">
-            <span class="inline-flex items-center gap-1"><span class="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500"></span>印字</span>
-            <span class="inline-flex items-center gap-1"><span class="inline-block h-2.5 w-2.5 rounded-full bg-amber-500"></span>手書</span>
-            <span class="inline-flex items-center gap-1"><span class="inline-block h-2.5 w-2.5 rounded-full bg-rose-500"></span>強調マーク</span>
-          </div>
         </section>
 
-        <!-- 右: 認識項目リスト（ピン番号付き） -->
+        <!-- 右: 認識項目リスト -->
         <section class="card !p-0">
-          <h3 class="border-b border-slate-100 px-4 py-3 text-sm font-semibold dark:border-slate-800 md:px-5 md:py-4 md:text-base">
-            認識項目
+          <h3 class="flex items-center justify-between border-b border-slate-100 px-4 py-3 text-sm font-semibold dark:border-slate-800 md:px-5 md:py-4 md:text-base">
+            <span>認識項目</span>
+            <span id="check-progress" class="text-[11px] font-normal text-slate-500 md:text-xs"></span>
           </h3>
           <ul id="items-list" class="divide-y divide-slate-100 dark:divide-slate-800">
             <li class="px-4 py-6 text-center text-sm text-slate-500 md:py-8 md:text-base">項目は検出されませんでした</li>
           </ul>
+          <!-- 手動追加 -->
+          <details id="manual-add" class="border-t border-slate-100 px-4 py-3 dark:border-slate-800 md:px-5">
+            <summary class="cursor-pointer select-none text-sm font-medium text-brand-600 hover:text-brand-700 md:text-base">
+              + 認識されなかった項目を追加
+            </summary>
+            <div class="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[2fr_1fr_1fr_auto]">
+              <input id="manual-label" type="text" placeholder="項目名 (例: TSH)" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 md:text-base" />
+              <input id="manual-value" type="text" placeholder="値" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 md:text-base" />
+              <input id="manual-unit" type="text" placeholder="単位" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 md:text-base" />
+              <button id="manual-add-btn" type="button" class="btn-primary text-sm md:text-base">追加</button>
+            </div>
+          </details>
         </section>
       </div>
 
-      <!-- Raw JSON（開発用） -->
+      <!-- Raw JSON -->
       <details class="rounded-2xl border border-dashed border-slate-300 p-3 dark:border-slate-700 md:p-4">
         <summary class="cursor-pointer text-xs font-medium text-slate-500 md:text-sm">詳細データ (JSON)</summary>
         <div class="mt-2 space-y-3 md:mt-3">
@@ -153,13 +158,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             <pre id="scan-raw" class="max-h-[480px] overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-200 md:p-3 md:text-sm"></pre>
           </div>
           <div>
-            <p class="mb-1 text-[10px] uppercase tracking-wide text-slate-400 md:text-xs">Parsed result</p>
+            <p class="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wide text-slate-400 md:text-xs">
+              <span>編集済み JSON（下流診断システムへ渡す形）</span>
+              <button id="copy-json" type="button" class="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 md:text-xs">📋 コピー</button>
+            </p>
             <pre id="scan-result" class="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-200 md:p-3 md:text-sm"></pre>
           </div>
         </div>
       </details>
 
-      <!-- CTA -->
       <div class="mt-auto flex flex-col gap-2 pt-2 md:flex-row-reverse md:gap-3">
         <a href="/chat" class="btn-primary !py-4 text-lg md:flex-1 md:!py-5 md:text-xl">
           問診を開始する →
@@ -174,9 +181,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     <!-- パネル: error                                                   -->
     <!-- ============================================================== -->
     <section id="panel-error" class="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center gap-6 text-center md:max-w-lg" hidden>
-      <div class="flex h-20 w-20 items-center justify-center rounded-3xl bg-rose-50 text-4xl dark:bg-rose-900/30 md:h-24 md:w-24 md:text-5xl">
-        ⚠
-      </div>
+      <div class="flex h-20 w-20 items-center justify-center rounded-3xl bg-rose-50 text-4xl dark:bg-rose-900/30 md:h-24 md:w-24 md:text-5xl">⚠</div>
       <div class="space-y-2">
         <h2 class="text-lg font-bold md:text-xl">スキャンを開始できません</h2>
         <p id="error-message" class="whitespace-pre-wrap text-sm text-slate-600 dark:text-slate-300 md:text-base"></p>
@@ -190,27 +195,33 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 </BaseLayout>
 
 <style>
-  /* ピンと bbox の色分けは Tailwind の通常クラスでまかなえるが、
-     ハイライト時のアニメ等で扱いやすいよう一部だけ宣言 */
-  .pin-highlight {
-    transform: translate(-50%, -50%) scale(1.25);
-    z-index: 30;
-  }
-  .bbox-highlight {
-    outline: 3px solid currentColor;
-    outline-offset: -1px;
-  }
-  .item-highlight {
+  /* オーバーレイの色・ハイライト状態 */
+  .bbox { transition: all 0.15s ease; }
+  .bbox-green   { background: rgb(16 185 129 / 0.18); border: 2px solid rgb(16 185 129 / 0.7); }
+  .bbox-yellow  { background: rgb(245 158 11 / 0.20); border: 2px solid rgb(245 158 11 / 0.85); }
+  .bbox-red     { background: rgb(244 63 94 / 0.20);  border: 2px solid rgb(244 63 94 / 0.9);  }
+  .bbox-verified { opacity: 0.35; }
+  .bbox-active   { box-shadow: 0 0 0 4px rgb(59 130 246 / 0.4); z-index: 20; }
+
+  .pin { transition: transform 0.15s ease; }
+  .pin-green   { background: rgb(16 185 129); }
+  .pin-yellow  { background: rgb(245 158 11); }
+  .pin-red     { background: rgb(244 63 94);  }
+  .pin-verified { opacity: 0.5; }
+  .pin-active   { transform: translate(-50%, -50%) scale(1.3); box-shadow: 0 0 0 4px rgb(59 130 246 / 0.4); z-index: 30; }
+
+  .item-row { transition: background-color 0.15s; }
+  .item-row.item-active {
     background-color: rgb(254 252 232 / 0.7);
   }
-  :is(.dark) .item-highlight {
+  :is(.dark) .item-row.item-active {
     background-color: rgb(120 53 15 / 0.35);
   }
 </style>
 
 <script>
   import { initCameraScan } from '../scripts/camera-scan';
-  import type { AnalyzeResult, ScanItem, ScanState } from '../scripts/camera-scan';
+  import type { AnalyzeResult, CameraScanController, ScanItem, ScanState } from '../scripts/camera-scan';
 
   function $<T extends HTMLElement = HTMLElement>(id: string): T {
     const el = document.getElementById(id);
@@ -225,11 +236,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     result: $('panel-result'),
     error: $('panel-error'),
   };
-
   function show(panel: Panel): void {
-    (Object.keys(panels) as Panel[]).forEach((key) => {
-      panels[key].hidden = key !== panel;
-    });
+    (Object.keys(panels) as Panel[]).forEach((k) => (panels[k].hidden = k !== panel));
   }
 
   function escapeHtml(s: unknown): string {
@@ -240,260 +248,502 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       .replace(/"/g, '&quot;');
   }
 
-  // item の "色グループ" を決める（marked > handwritten > printed の優先度）
-  type ColorGroup = 'marked' | 'handwritten' | 'printed';
-  function colorOf(it: ScanItem): ColorGroup {
-    if (it.marked) return 'marked';
-    if (it.kind === 'handwritten') return 'handwritten';
-    return 'printed';
+  // ============================================================
+  // 各 item の UI 状態
+  // ============================================================
+  interface ItemUI {
+    base: ScanItem;
+    verified: boolean;
+    override: Partial<ScanItem>;
+    manuallyAdded: boolean;
   }
 
-  // Tailwind の色をグループから取得
-  const COLOR_CLASSES: Record<ColorGroup, {
-    pinBg: string; pinText: string; bboxBorder: string; bboxBg: string; ringText: string;
-  }> = {
-    marked: {
-      pinBg: 'bg-rose-500',
-      pinText: 'text-white',
-      bboxBorder: 'border-rose-500/80',
-      bboxBg: 'bg-rose-500/10',
-      ringText: 'text-rose-500',
-    },
-    handwritten: {
-      pinBg: 'bg-amber-500',
-      pinText: 'text-white',
-      bboxBorder: 'border-amber-500/80',
-      bboxBg: 'bg-amber-500/10',
-      ringText: 'text-amber-500',
-    },
-    printed: {
-      pinBg: 'bg-emerald-600',
-      pinText: 'text-white',
-      bboxBorder: 'border-emerald-500/70',
-      bboxBg: 'bg-emerald-500/10',
-      ringText: 'text-emerald-500',
-    },
+  type Status = 'green' | 'yellow' | 'red';
+
+  const state = {
+    items: [] as ItemUI[],
+    filter: 'needs-check' as 'needs-check' | 'all',
+    expandedIdx: null as number | null,
+    activeIdx: null as number | null,
+    rawText: '',
+    finishReason: '' as string,
+    // フォーカス再撮影
+    pendingRescanIdx: null as number | null,
   };
 
-  function renderItem(it: ScanItem, idx: number): string {
-    const c = COLOR_CLASSES[colorOf(it)];
-    const handwritten = it.kind === 'handwritten';
-    const lowConf = it.confidence === 'low';
-    const flagBadge =
-      it.flag === 'H'
-        ? '<span class="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-800 dark:bg-rose-900/40 dark:text-rose-200 md:text-xs">H</span>'
-        : it.flag === 'L'
-          ? '<span class="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-800 dark:bg-sky-900/40 dark:text-sky-200 md:text-xs">L</span>'
-          : '';
-    const kindBadge = handwritten
-      ? '<span class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 md:text-xs">✍ 手書</span>'
-      : '<span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200 md:text-xs">印字</span>';
-    const markedBadge = it.marked
-      ? '<span class="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-800 dark:bg-rose-900/40 dark:text-rose-200 md:text-xs">⬤ 強調</span>'
-      : '';
-    const confBadge = lowConf
-      ? '<span class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 md:text-xs">要確認</span>'
-      : '';
-    const ref =
-      it.ref_low || it.ref_high
-        ? `<span class="text-[11px] text-slate-500 md:text-xs">基準 ${escapeHtml(it.ref_low ?? '')} – ${escapeHtml(it.ref_high ?? '')}</span>`
-        : '';
-    const unit = it.unit
-      ? `<span class="ml-1 text-xs text-slate-500 md:text-sm">${escapeHtml(it.unit)}</span>`
-      : '';
-    const labelDetail = it.label_detail
-      ? `<span class="ml-1 text-xs text-slate-500 md:text-sm">${escapeHtml(it.label_detail)}</span>`
-      : '';
-    const valueDisplay = it.value
-      ? `<span class="text-base font-semibold md:text-lg">${escapeHtml(it.value)}</span>${unit}`
-      : '<span class="italic text-slate-400">（読み取り不可）</span>';
-    // ピン番号（リスト先頭のチップ）
-    const pin = `<span class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${c.pinBg} text-[10px] font-bold ${c.pinText} md:h-7 md:w-7 md:text-xs">${idx + 1}</span>`;
-    return `
-      <li class="cursor-pointer px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 md:px-5 md:py-4" data-item-no="${idx}">
-        <div class="flex flex-wrap items-center gap-1.5 md:gap-2">
-          ${pin}
-          <p class="min-w-0 flex-1 truncate text-sm font-medium md:text-base">${escapeHtml(it.label)}${labelDetail}</p>
-          ${flagBadge}
-          ${kindBadge}
-          ${markedBadge}
-          ${confBadge}
-        </div>
-        <div class="mt-1 flex flex-wrap items-baseline justify-between gap-3 pl-8 md:pl-9">
-          <div>${valueDisplay}</div>
-          ${ref}
-        </div>
-      </li>
-    `;
+  function effective<K extends keyof ScanItem>(ui: ItemUI, key: K): ScanItem[K] {
+    return (ui.override[key] ?? ui.base[key]) as ScanItem[K];
   }
 
-  function renderOverlay(items: ScanItem[]): void {
+  function statusOf(ui: ItemUI): Status {
+    const value = String(effective(ui, 'value') ?? '').trim();
+    if (!value) return 'red';
+    const conf = effective(ui, 'confidence');
+    if (conf === 'low') return 'yellow';
+    const kind = effective(ui, 'kind');
+    if (kind === 'handwritten' || effective(ui, 'marked')) return 'yellow';
+    return 'green';
+  }
+
+  function needsCheck(ui: ItemUI): boolean {
+    if (ui.verified) return false;
+    return statusOf(ui) !== 'green';
+  }
+
+  // ============================================================
+  // レンダリング
+  // ============================================================
+  function renderOverlay(): void {
     const overlay = $('result-overlay');
-    overlay.innerHTML = items
-      .map((it, idx) => {
-        const [ymin, xmin, ymax, xmax] = it.bbox;
-        // 0-1000 正規化座標 → % 指定。CSS が画像のアスペクト比に追従する
+    overlay.innerHTML = state.items
+      .map((ui, idx) => {
+        // 手動追加項目には bbox が無い → オーバーレイには出さない
+        if (ui.manuallyAdded) return '';
+        const [ymin, xmin, ymax, xmax] = ui.base.bbox;
+        if (xmax <= xmin || ymax <= ymin) return '';
         const left = (xmin / 1000) * 100;
         const top = (ymin / 1000) * 100;
         const width = ((xmax - xmin) / 1000) * 100;
         const height = ((ymax - ymin) / 1000) * 100;
         const cx = ((xmin + xmax) / 2 / 1000) * 100;
         const cy = ((ymin + ymax) / 2 / 1000) * 100;
-        const c = COLOR_CLASSES[colorOf(it)];
+        const s = statusOf(ui);
+        const verifiedCls = ui.verified ? ' bbox-verified' : '';
+        const verifiedPinCls = ui.verified ? ' pin-verified' : '';
+        const visible = state.filter === 'all' || needsCheck(ui);
+        const display = visible ? '' : 'display:none;';
         return `
-          <div class="bbox pointer-events-none absolute rounded-sm border ${c.bboxBorder} ${c.bboxBg} transition-all"
+          <div class="bbox bbox-${s}${verifiedCls} pointer-events-none absolute rounded-sm"
                data-item-no="${idx}"
-               style="left:${left}%;top:${top}%;width:${width}%;height:${height}%;"></div>
+               style="${display}left:${left}%;top:${top}%;width:${width}%;height:${height}%;"></div>
           <button type="button"
-                  class="pin pointer-events-auto absolute inline-flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full ${c.pinBg} text-[11px] font-bold ${c.pinText} shadow-md ring-2 ring-white transition-transform hover:scale-110 md:h-8 md:w-8 md:text-xs"
+                  class="pin pin-${s}${verifiedPinCls} pointer-events-auto absolute inline-flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-md ring-2 ring-white md:h-8 md:w-8 md:text-xs"
                   data-item-no="${idx}"
-                  style="left:${cx}%;top:${cy}%;"
-                  aria-label="項目 ${idx + 1}: ${escapeHtml(it.label)}">${idx + 1}</button>
+                  style="${display}left:${cx}%;top:${cy}%;"
+                  aria-label="項目 ${idx + 1}: ${escapeHtml(effective(ui, 'label'))}">${ui.verified ? '✓' : idx + 1}</button>
         `;
       })
       .join('');
-  }
-
-  let currentHighlight: number | null = null;
-
-  function setHighlight(no: number | null): void {
-    // 既存ハイライトを解除
-    document
-      .querySelectorAll<HTMLElement>('.pin-highlight, .bbox-highlight, .item-highlight')
-      .forEach((el) => {
-        el.classList.remove('pin-highlight', 'bbox-highlight', 'item-highlight');
+    // ピンのクリックハンドラ
+    overlay.querySelectorAll<HTMLElement>('.pin').forEach((pin) => {
+      pin.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const no = Number(pin.dataset.itemNo);
+        toggleExpand(no);
       });
-    currentHighlight = no;
-    if (no === null) return;
-    document
-      .querySelectorAll<HTMLElement>(`[data-item-no="${no}"]`)
-      .forEach((el) => {
-        if (el.classList.contains('pin')) el.classList.add('pin-highlight');
-        else if (el.classList.contains('bbox')) el.classList.add('bbox-highlight');
-        else el.classList.add('item-highlight');
-      });
-  }
-
-  function attachInteractions(items: ScanItem[]): void {
-    // ピン: タップで対応するリスト項目にスクロール
-    document.querySelectorAll<HTMLElement>('.pin').forEach((pin) => {
-      const no = Number(pin.dataset.itemNo);
-      pin.addEventListener('mouseenter', () => setHighlight(no));
-      pin.addEventListener('click', () => {
-        setHighlight(no);
-        const li = document.querySelector<HTMLElement>(`#items-list [data-item-no="${no}"]`);
-        li?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      });
-    });
-    // リスト: タップで対応するピンを点滅
-    document.querySelectorAll<HTMLElement>('#items-list [data-item-no]').forEach((li) => {
-      const no = Number(li.dataset.itemNo);
-      li.addEventListener('mouseenter', () => setHighlight(no));
-      li.addEventListener('click', () => {
-        setHighlight(no);
-        const pin = document.querySelector<HTMLElement>(`.pin[data-item-no="${no}"]`);
-        // 画像が画面外なら見える位置にスクロール
-        const wrap = $('result-image-wrap');
-        const rect = wrap.getBoundingClientRect();
-        if (rect.bottom < 100 || rect.top > window.innerHeight - 100) {
-          wrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-        pin?.animate(
-          [{ transform: 'translate(-50%, -50%) scale(1)' }, { transform: 'translate(-50%, -50%) scale(1.5)' }, { transform: 'translate(-50%, -50%) scale(1.25)' }],
-          { duration: 400, fill: 'forwards' },
-        );
-      });
-    });
-    // 画像コンテナ外をタップでハイライト解除
-    document.addEventListener('click', (e) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest('.pin, #items-list [data-item-no]')) {
-        setHighlight(null);
-      }
+      pin.addEventListener('mouseenter', () => setActive(Number(pin.dataset.itemNo)));
+      pin.addEventListener('mouseleave', () => setActive(null));
     });
   }
 
-  function attachFilters(items: ScanItem[]): void {
-    const buttons = document.querySelectorAll<HTMLButtonElement>('[data-filter]');
-    buttons.forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const filter = btn.dataset.filter ?? 'all';
-        buttons.forEach((b) => b.classList.toggle('chip-on', b === btn));
-        applyFilter(items, filter);
-      });
-    });
-  }
-
-  function applyFilter(items: ScanItem[], filter: string): void {
-    items.forEach((it, idx) => {
-      const visible =
-        filter === 'all' ||
-        (filter === 'marked' && it.marked) ||
-        (filter === 'flag' && (it.flag === 'H' || it.flag === 'L')) ||
-        (filter === 'handwritten' && it.kind === 'handwritten') ||
-        (filter === 'low' && it.confidence === 'low');
-      document
-        .querySelectorAll<HTMLElement>(`[data-item-no="${idx}"]`)
-        .forEach((el) => {
-          el.style.display = visible ? '' : 'none';
-        });
-    });
-  }
-
-  function renderResult(r: AnalyzeResult): void {
-    const items: ScanItem[] = r.items ?? [];
-    $('result-count').textContent = items.length
-      ? `${items.length} 項目を読み取りました`
-      : '解析が完了しました';
-
-    const itemsList = $('items-list') as HTMLUListElement;
-    if (items.length) {
-      itemsList.innerHTML = items.map(renderItem).join('');
-      renderOverlay(items);
-      attachInteractions(items);
-      attachFilters(items);
-    } else {
-      itemsList.innerHTML =
-        '<li class="px-4 py-6 text-center text-sm text-slate-500 md:text-base">項目は検出されませんでした</li>';
-      $('result-overlay').innerHTML = '';
+  function renderList(): void {
+    const ul = $('items-list') as HTMLUListElement;
+    if (state.items.length === 0) {
+      ul.innerHTML = '<li class="px-4 py-6 text-center text-sm text-slate-500 md:text-base">項目は検出されませんでした</li>';
+      return;
     }
+    ul.innerHTML = state.items.map((ui, idx) => renderItemRow(ui, idx)).join('');
+    // 行クリック (詳細トグル) + hover (cross-highlight)
+    ul.querySelectorAll<HTMLElement>('[data-item-no]').forEach((row) => {
+      const no = Number(row.dataset.itemNo);
+      row.addEventListener('mouseenter', () => setActive(no));
+      row.addEventListener('mouseleave', () => setActive(null));
+    });
+    // インライン詳細内のアクションを attach
+    ul.querySelectorAll<HTMLElement>('[data-action]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const action = btn.dataset.action;
+        const no = Number(btn.dataset.itemNo);
+        if (action === 'verify') markVerified(no);
+        else if (action === 'edit') beginEdit(no);
+        else if (action === 'save-edit') saveEdit(no);
+        else if (action === 'cancel-edit') cancelEdit(no);
+        else if (action === 'rescan') startRescan(no);
+        else if (action === 'remove') removeItem(no);
+      });
+    });
+    ul.querySelectorAll<HTMLElement>('[data-toggle]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const no = Number(el.dataset.itemNo);
+        toggleExpand(no);
+      });
+    });
+    updateProgress();
+  }
 
-    // debug panes
-    ($('scan-raw') as HTMLPreElement).textContent = r.raw ?? '(empty)';
-    const finish = r.finishReason ?? '';
+  function renderItemRow(ui: ItemUI, idx: number): string {
+    const s = statusOf(ui);
+    const visible = state.filter === 'all' || needsCheck(ui);
+    const hidden = visible ? '' : 'hidden';
+    const expanded = state.expandedIdx === idx;
+    const label = effective(ui, 'label');
+    const labelDetail = effective(ui, 'label_detail');
+    const value = effective(ui, 'value');
+    const flag = effective(ui, 'flag');
+    const unit = effective(ui, 'unit');
+    const refLow = effective(ui, 'ref_low');
+    const refHigh = effective(ui, 'ref_high');
+    const marked = effective(ui, 'marked');
+    const kind = effective(ui, 'kind');
+    const conf = effective(ui, 'confidence');
+
+    const pinCls = ui.verified ? `pin-${s} pin-verified` : `pin-${s}`;
+    const pin = `<span class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${pinCls} text-[10px] font-bold text-white md:h-7 md:w-7 md:text-xs">${ui.verified ? '✓' : idx + 1}</span>`;
+    const flagBadge =
+      flag === 'H'
+        ? '<span class="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-800 dark:bg-rose-900/40 dark:text-rose-200 md:text-xs">H</span>'
+        : flag === 'L'
+          ? '<span class="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-800 dark:bg-sky-900/40 dark:text-sky-200 md:text-xs">L</span>'
+          : '';
+    const kindBadge =
+      kind === 'handwritten'
+        ? '<span class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 md:text-xs">✍ 手書</span>'
+        : '<span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200 md:text-xs">印字</span>';
+    const markedBadge = marked
+      ? '<span class="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-800 dark:bg-rose-900/40 dark:text-rose-200 md:text-xs">⬤ 強調</span>'
+      : '';
+    const confBadge =
+      conf === 'low'
+        ? '<span class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 md:text-xs">要確認</span>'
+        : '';
+    const manualBadge = ui.manuallyAdded
+      ? '<span class="rounded bg-brand-100 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 dark:bg-brand-500/20 dark:text-brand-200 md:text-xs">⌨ 手入力</span>'
+      : '';
+    const editedBadge = !ui.manuallyAdded && Object.keys(ui.override).length > 0
+      ? '<span class="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200 md:text-xs">✏️ 編集済</span>'
+      : '';
+    const verifiedBadge = ui.verified
+      ? '<span class="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200 md:text-xs">✓ 確認済</span>'
+      : '';
+    const ref =
+      refLow || refHigh
+        ? `<span class="text-[11px] text-slate-500 md:text-xs">基準 ${escapeHtml(refLow ?? '')} – ${escapeHtml(refHigh ?? '')}</span>`
+        : '';
+    const unitInline = unit
+      ? `<span class="ml-1 text-xs text-slate-500 md:text-sm">${escapeHtml(unit)}</span>`
+      : '';
+    const labelDetailInline = labelDetail
+      ? `<span class="ml-1 text-xs text-slate-500 md:text-sm">${escapeHtml(labelDetail)}</span>`
+      : '';
+    const valueDisplay = value
+      ? `<span class="text-base font-semibold md:text-lg">${escapeHtml(value)}</span>${unitInline}`
+      : '<span class="italic text-rose-500 dark:text-rose-400">（読み取り不可・要入力）</span>';
+
+    // 詳細部分
+    const detail = expanded ? renderExpandedDetail(ui, idx) : '';
+
+    return `
+      <li class="item-row ${hidden}" data-item-no="${idx}">
+        <div class="cursor-pointer px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 md:px-5 md:py-4" data-toggle="1" data-item-no="${idx}">
+          <div class="flex flex-wrap items-center gap-1.5 md:gap-2">
+            ${pin}
+            <p class="min-w-0 flex-1 truncate text-sm font-medium md:text-base">${escapeHtml(label)}${labelDetailInline}</p>
+            ${flagBadge}${kindBadge}${markedBadge}${confBadge}${manualBadge}${editedBadge}${verifiedBadge}
+          </div>
+          <div class="mt-1 flex flex-wrap items-baseline justify-between gap-3 pl-8 md:pl-9">
+            <div>${valueDisplay}</div>
+            ${ref}
+          </div>
+        </div>
+        ${detail}
+      </li>
+    `;
+  }
+
+  function renderExpandedDetail(ui: ItemUI, idx: number): string {
+    const editing = (ui as ItemUI & { _editing?: boolean })._editing;
+    const value = effective(ui, 'value');
+    const unit = effective(ui, 'unit') ?? '';
+    const editForm = editing
+      ? `
+        <div class="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[1fr_120px_auto_auto]">
+          <input data-edit-field="value" type="text" value="${escapeHtml(value)}" placeholder="値" class="rounded-lg border border-brand-400 bg-white px-3 py-2 text-sm dark:bg-slate-900 md:text-base" />
+          <input data-edit-field="unit" type="text" value="${escapeHtml(unit)}" placeholder="単位" class="rounded-lg border border-brand-400 bg-white px-3 py-2 text-sm dark:bg-slate-900 md:text-base" />
+          <button type="button" data-action="save-edit" data-item-no="${idx}" class="btn-primary !py-2 text-sm md:text-base">保存</button>
+          <button type="button" data-action="cancel-edit" data-item-no="${idx}" class="btn-secondary !py-2 text-sm md:text-base">キャンセル</button>
+        </div>
+      `
+      : '';
+    const removable = ui.manuallyAdded
+      ? `<button type="button" data-action="remove" data-item-no="${idx}" class="text-xs text-rose-600 hover:text-rose-700 md:text-sm">削除</button>`
+      : '';
+    return `
+      <div class="border-t border-slate-100 bg-slate-50/60 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/40 md:px-5 md:py-4">
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="button" data-action="verify" data-item-no="${idx}" class="btn-secondary !py-2 text-sm md:text-base" ${ui.verified ? 'disabled' : ''}>
+            ${ui.verified ? '✓ 確認済' : '✓ 確認済みにする'}
+          </button>
+          ${editing ? '' : `<button type="button" data-action="edit" data-item-no="${idx}" class="btn-secondary !py-2 text-sm md:text-base">✏️ 値を編集</button>`}
+          ${ui.manuallyAdded ? '' : `<button type="button" data-action="rescan" data-item-no="${idx}" class="btn-secondary !py-2 text-sm md:text-base">📷 ここだけ再撮影</button>`}
+          ${removable}
+        </div>
+        ${editForm}
+      </div>
+    `;
+  }
+
+  function updateProgress(): void {
+    const total = state.items.length;
+    const verified = state.items.filter((u) => u.verified).length;
+    const remaining = state.items.filter((u) => needsCheck(u)).length;
+    $('check-progress').textContent = total > 0
+      ? `${verified} / ${total} 確認済 (要チェック ${remaining})`
+      : '';
+  }
+
+  // ============================================================
+  // インタラクション
+  // ============================================================
+  function toggleExpand(idx: number): void {
+    state.expandedIdx = state.expandedIdx === idx ? null : idx;
+    renderList();
+    setActive(idx);
+    if (state.expandedIdx === idx) {
+      // 該当行を画面内に
+      document.querySelector<HTMLElement>(`#items-list [data-item-no="${idx}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }
+
+  function setActive(no: number | null): void {
+    if (state.activeIdx === no) return;
+    state.activeIdx = no;
+    // ピンと行の active クラス更新
+    document.querySelectorAll<HTMLElement>('.pin, .bbox').forEach((el) => {
+      el.classList.toggle('pin-active', el.classList.contains('pin') && Number(el.dataset.itemNo) === no);
+      el.classList.toggle('bbox-active', el.classList.contains('bbox') && Number(el.dataset.itemNo) === no);
+    });
+    document.querySelectorAll<HTMLElement>('#items-list .item-row').forEach((el) => {
+      el.classList.toggle('item-active', Number(el.dataset.itemNo) === no);
+    });
+  }
+
+  function markVerified(idx: number): void {
+    const ui = state.items[idx];
+    if (!ui) return;
+    ui.verified = true;
+    renderAll();
+  }
+
+  function beginEdit(idx: number): void {
+    const ui = state.items[idx] as ItemUI & { _editing?: boolean };
+    if (!ui) return;
+    ui._editing = true;
+    renderList();
+    // 入力フォーカス
+    setTimeout(() => {
+      document.querySelector<HTMLInputElement>(
+        `#items-list [data-item-no="${idx}"] [data-edit-field="value"]`,
+      )?.focus();
+    }, 0);
+  }
+
+  function saveEdit(idx: number): void {
+    const ui = state.items[idx] as ItemUI & { _editing?: boolean };
+    if (!ui) return;
+    const li = document.querySelector<HTMLElement>(`#items-list [data-item-no="${idx}"]`);
+    const newValue = li?.querySelector<HTMLInputElement>('[data-edit-field="value"]')?.value ?? '';
+    const newUnit = li?.querySelector<HTMLInputElement>('[data-edit-field="unit"]')?.value ?? '';
+    ui.override = { ...ui.override, value: newValue, unit: newUnit };
+    ui._editing = false;
+    renderAll();
+    showToast('値を更新しました');
+  }
+
+  function cancelEdit(idx: number): void {
+    const ui = state.items[idx] as ItemUI & { _editing?: boolean };
+    if (!ui) return;
+    ui._editing = false;
+    renderList();
+  }
+
+  function removeItem(idx: number): void {
+    if (!confirm('この項目を削除します。よろしいですか？')) return;
+    state.items.splice(idx, 1);
+    if (state.expandedIdx === idx) state.expandedIdx = null;
+    renderAll();
+  }
+
+  function addManualItem(): void {
+    const label = ($('manual-label') as HTMLInputElement).value.trim();
+    const value = ($('manual-value') as HTMLInputElement).value.trim();
+    const unit = ($('manual-unit') as HTMLInputElement).value.trim();
+    if (!label && !value) {
+      showToast('項目名または値を入力してください');
+      return;
+    }
+    const base: ScanItem = {
+      no: '',
+      label: label || '（無題）',
+      label_detail: '',
+      value,
+      flag: '',
+      unit,
+      ref_low: '',
+      ref_high: '',
+      marked: false,
+      bbox: [0, 0, 0, 0],
+      confidence: 'high',
+      kind: 'printed',
+    };
+    state.items.push({ base, verified: true, override: {}, manuallyAdded: true });
+    ($('manual-label') as HTMLInputElement).value = '';
+    ($('manual-value') as HTMLInputElement).value = '';
+    ($('manual-unit') as HTMLInputElement).value = '';
+    renderAll();
+    showToast('項目を追加しました');
+  }
+
+  // ============================================================
+  // フォーカス再撮影
+  // ============================================================
+  let controller: CameraScanController;
+
+  function startRescan(idx: number): void {
+    const ui = state.items[idx];
+    if (!ui) return;
+    const label = String(effective(ui, 'label'));
+    state.pendingRescanIdx = idx;
+    $('focus-label').textContent = label;
+    $('focus-banner').hidden = false;
+    show('active');
+    void controller.start();
+  }
+
+  function mergeRescan(targetIdx: number, focused: ScanItem[]): void {
+    const target = state.items[targetIdx];
+    if (!target || focused.length === 0) {
+      showToast('再撮影結果から値を読み取れませんでした');
+      return;
+    }
+    const norm = (s: string | undefined): string =>
+      (s ?? '').toLowerCase().replace(/[\s　]/g, '');
+    const targetLabel = String(effective(target, 'label'));
+    const targetDetail = String(effective(target, 'label_detail') ?? '');
+    let match = focused.find((it) => norm(it.label) === norm(targetLabel));
+    if (!match) match = focused.find((it) => norm(it.label_detail ?? '') === norm(targetDetail));
+    if (!match && focused.length === 1) match = focused[0];
+    if (!match) {
+      showToast(`「${targetLabel}」に対応する値が見つかりませんでした`);
+      return;
+    }
+    // bbox は元のまま（再撮影画像はクロップされているので bbox が変わる）
+    state.items[targetIdx] = {
+      base: {
+        ...target.base,
+        value: match.value,
+        flag: match.flag,
+        unit: match.unit,
+        ref_low: match.ref_low,
+        ref_high: match.ref_high,
+        confidence: match.confidence,
+      },
+      verified: false, // 値が変わったので未確認に
+      override: {},
+      manuallyAdded: false,
+    };
+    showToast(`「${targetLabel}」を更新: ${match.value ?? '（空）'}`);
+  }
+
+  // ============================================================
+  // Toast
+  // ============================================================
+  let toastTimer: number | null = null;
+  function showToast(msg: string): void {
+    const t = $('toast');
+    t.textContent = msg;
+    t.hidden = false;
+    if (toastTimer !== null) window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => {
+      t.hidden = true;
+    }, 2400);
+  }
+
+  // ============================================================
+  // 全体再描画
+  // ============================================================
+  function renderAll(): void {
+    renderOverlay();
+    renderList();
+    renderJson();
+  }
+
+  function renderJson(): void {
+    ($('scan-raw') as HTMLPreElement).textContent = state.rawText || '(empty)';
     const finishEl = $('scan-finish');
-    finishEl.textContent = finish ? `finish: ${finish}` : '';
-    finishEl.classList.toggle('bg-rose-200', finish === 'MAX_TOKENS' || finish === 'SAFETY');
-    finishEl.classList.toggle('text-rose-900', finish === 'MAX_TOKENS' || finish === 'SAFETY');
-    const { raw: _omit, finishReason: _omit2, ...withoutRaw } = r;
-    ($('scan-result') as HTMLPreElement).textContent = JSON.stringify(withoutRaw, null, 2);
+    finishEl.textContent = state.finishReason ? `finish: ${state.finishReason}` : '';
+    finishEl.classList.toggle('bg-rose-200', state.finishReason === 'MAX_TOKENS' || state.finishReason === 'SAFETY');
+    finishEl.classList.toggle('text-rose-900', state.finishReason === 'MAX_TOKENS' || state.finishReason === 'SAFETY');
+    // 編集済み結果を JSON で出力
+    const out = {
+      items: state.items.map((ui) => ({
+        ...ui.base,
+        ...ui.override,
+        ...(ui.manuallyAdded ? { source: 'manual' } : {}),
+        ...(ui.verified ? { verified: true } : {}),
+        ...(Object.keys(ui.override).length > 0 ? { edited: true } : {}),
+      })),
+    };
+    ($('scan-result') as HTMLPreElement).textContent = JSON.stringify(out, null, 2);
+  }
+
+  // ============================================================
+  // 初期化
+  // ============================================================
+  function applyAnalyzeResult(result: AnalyzeResult): void {
+    state.rawText = result.raw ?? '';
+    state.finishReason = result.finishReason ?? '';
+    const incoming = result.items ?? [];
+
+    if (state.pendingRescanIdx !== null) {
+      // フォーカス再撮影: 該当項目だけマージ
+      const idx = state.pendingRescanIdx;
+      state.pendingRescanIdx = null;
+      $('focus-banner').hidden = true;
+      mergeRescan(idx, incoming);
+    } else {
+      // 通常スキャン: 全置き換え
+      state.items = incoming.map((it) => ({
+        base: it,
+        verified: false,
+        override: {},
+        manuallyAdded: false,
+      }));
+      state.expandedIdx = null;
+    }
+    renderAll();
   }
 
   document.addEventListener('DOMContentLoaded', () => {
-    const controller = initCameraScan({
+    controller = initCameraScan({
       video: $<HTMLVideoElement>('scan-video'),
       canvas: $<HTMLCanvasElement>('scan-canvas'),
       shotBtn: $<HTMLButtonElement>('scan-shot'),
       status: $('scan-status'),
       hint: $<HTMLInputElement>('scan-hint'),
-      onStateChange: (state: ScanState) => {
-        $('busy-overlay').hidden = state !== 'busy';
+      onStateChange: (s: ScanState) => {
+        $('busy-overlay').hidden = s !== 'busy';
         const shot = $<HTMLButtonElement>('scan-shot');
-        shot.textContent = state === 'busy' ? '解析中…' : '📷 撮影 & 解析';
-        if (state !== 'busy') {
-          $('busy-progress').textContent = '';
-        }
+        shot.textContent = s === 'busy' ? '解析中…' : '📷 撮影 & 解析';
+        if (s !== 'busy') $('busy-progress').textContent = '';
       },
       onCapture: (dataUrl) => {
-        ($('result-image') as HTMLImageElement).src = dataUrl;
+        // 通常スキャンの時だけ画像差し替え（フォーカス再撮影ではクロップ画像なので元画像維持）
+        if (state.pendingRescanIdx === null) {
+          ($('result-image') as HTMLImageElement).src = dataUrl;
+        }
       },
-      onStreamProgress: (progress) => {
-        $('busy-progress').textContent = `${progress.totalLen.toLocaleString()} 文字`;
+      onStreamProgress: (p) => {
+        $('busy-progress').textContent = `${p.totalLen.toLocaleString()} 文字`;
       },
       onAnalyze: (result) => {
-        renderResult(result);
         controller.stop();
+        applyAnalyzeResult(result);
         show('result');
+        $('result-count').textContent = state.items.length
+          ? `${state.items.length} 項目を読み取りました`
+          : '解析が完了しました';
       },
       onError: (msg) => {
         $('error-message').textContent = msg;
@@ -501,12 +751,27 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       },
     });
 
+    // shot button: capture (フォーカス再撮影の場合は焦点ラベル付与)
+    $('scan-shot').addEventListener('click', () => {
+      const idx = state.pendingRescanIdx;
+      const ui = idx !== null ? state.items[idx] : null;
+      const focusLabel = ui ? String(effective(ui, 'label')) : undefined;
+      void controller.capture(focusLabel ? { focusLabel } : undefined);
+    });
+
     $('scan-start').addEventListener('click', async () => {
+      state.pendingRescanIdx = null;
+      $('focus-banner').hidden = true;
       show('active');
       await controller.start();
     });
 
     $('scan-retake').addEventListener('click', async () => {
+      state.pendingRescanIdx = null;
+      $('focus-banner').hidden = true;
+      // 通常の retake は state クリア
+      state.items = [];
+      renderAll();
       show('active');
       await controller.start();
     });
@@ -520,6 +785,41 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       const h = $('hint-panel');
       h.hidden = !h.hidden;
       if (!h.hidden) ($('scan-hint') as HTMLInputElement).focus();
+    });
+
+    // フィルタチップ
+    document.querySelectorAll<HTMLButtonElement>('[data-filter]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll<HTMLButtonElement>('[data-filter]').forEach((b) =>
+          b.classList.toggle('chip-on', b === btn),
+        );
+        state.filter = (btn.dataset.filter ?? 'all') as typeof state.filter;
+        renderAll();
+      });
+    });
+
+    // 手動追加
+    $('manual-add-btn').addEventListener('click', addManualItem);
+
+    // JSON コピー
+    $('copy-json').addEventListener('click', async () => {
+      const text = ($('scan-result') as HTMLPreElement).textContent ?? '';
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast('JSON をクリップボードにコピーしました');
+      } catch {
+        showToast('コピーに失敗しました');
+      }
+    });
+
+    // 画像コンテナ外をクリックで詳細を閉じる
+    document.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('.pin, #items-list, #manual-add, #toast, [data-action]')) return;
+      if (state.expandedIdx !== null) {
+        state.expandedIdx = null;
+        renderList();
+      }
     });
 
     window.addEventListener('pagehide', () => controller.stop());
