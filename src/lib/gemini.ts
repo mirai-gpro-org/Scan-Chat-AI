@@ -3,7 +3,7 @@
  * クライアントには公開しない（API キーが必要なため必ずサーバから呼ぶ）。
  */
 
-const DEFAULT_MODEL = 'gemini-1.5-flash';
+const DEFAULT_MODEL = 'gemini-2.5-flash';
 const ENDPOINT_BASE =
   'https://generativelanguage.googleapis.com/v1beta/models';
 
