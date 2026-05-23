@@ -25,6 +25,8 @@
 export interface RegionMeta {
   id: string;
   label: string;
+  /** 後続転記 AI 向けのタスクヒント（layout LLM が生成） */
+  task?: string;
   /** 元画像座標系での 0-1000 正規化 bbox [ymin, xmin, ymax, xmax] */
   bbox: [number, number, number, number];
 }
@@ -203,11 +205,15 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
 
   async function capture(): Promise<void> {
     if (!stream) return;
+    // 転記用の高解像度版（クロップ後にこれをサーバへ送る）
     const fullImage = grabFrame({ maxEdge: 1500, quality: 0.78 });
     if (!fullImage) {
       setStatus('まだ映像が取得できていません');
       return;
     }
+    // レイアウト検出用の軽量版（領域の位置検出だけなので低解像度で十分）
+    // → 司令塔 LLM への送信が軽くなり Phase 1 が高速化する
+    const layoutImage = grabFrame({ maxEdge: 1000, quality: 0.7 });
 
     setState('busy');
 
@@ -217,7 +223,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
       const layoutFetch = await fetch('/api/scan-layout', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ image: fullImage }),
+        body: JSON.stringify({ image: layoutImage ?? fullImage }),
       });
       const layoutData = await readJsonResponse(layoutFetch);
       if (!layoutFetch.ok || !layoutData) {
@@ -249,6 +255,11 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
       const userHint = refs.hint?.value?.trim() || '';
       const transcriptions = await Promise.all(
         regions.map(async (region, i): Promise<RegionResult> => {
+          // 司令塔 LLM が生成した task ヒントを per-region prompt に組み込む。
+          // task が無ければ label を fallback として使う。
+          const taskHint = region.task?.trim() || region.label;
+          const hintParts = [`領域「${region.label}」の転記: ${taskHint}`];
+          if (userHint) hintParts.push(userHint);
           try {
             const res = await fetch('/api/scan', {
               method: 'POST',
@@ -256,7 +267,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
               body: JSON.stringify({
                 image: cropped[i],
                 mode: 'analyze',
-                hint: `領域「${region.label}」の転記です。${userHint}`,
+                hint: hintParts.join('\n'),
               }),
             });
             const data = await readJsonResponse(res);
