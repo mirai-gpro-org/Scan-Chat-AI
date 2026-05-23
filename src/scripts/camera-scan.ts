@@ -260,17 +260,13 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
           const taskHint = region.task?.trim() || region.label;
           const hintParts = [`領域「${region.label}」の転記: ${taskHint}`];
           if (userHint) hintParts.push(userHint);
+          const body = JSON.stringify({
+            image: cropped[i],
+            mode: 'analyze',
+            hint: hintParts.join('\n'),
+          });
           try {
-            const res = await fetch('/api/scan', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({
-                image: cropped[i],
-                mode: 'analyze',
-                hint: hintParts.join('\n'),
-              }),
-            });
-            const data = await readJsonResponse(res);
+            const { res, data } = await fetchWithRetry('/api/scan', body, region.label);
             if (!res.ok || !data) {
               return {
                 ...region,
@@ -575,4 +571,56 @@ function formatError(prefix: string, status: number, data: ScanResponseBody | nu
         : '不明';
   const detail = data?.detail ? `\n${summarizeGoogleError(data.detail)}` : '';
   return `${prefix} (${status}): ${errorText}${detail}`;
+}
+
+/**
+ * 429 RESOURCE_EXHAUSTED を Google が返してきた場合に、レスポンスから
+ * retryDelay を抽出して待ち時間を返す。無ければ既定のフォールバック値。
+ */
+function extractRetryDelayMs(data: ScanResponseBody | null, fallbackMs: number): number {
+  try {
+    const detailStr = typeof data?.detail === 'string' ? data.detail : '';
+    if (!detailStr) return fallbackMs;
+    const obj = JSON.parse(detailStr) as {
+      error?: { details?: Array<{ retryDelay?: string }> };
+    };
+    const retry = obj.error?.details?.find((d) => d.retryDelay)?.retryDelay;
+    if (!retry) return fallbackMs;
+    // "32.5s" や "6s" 形式 → ms
+    const m = /^(\d+(?:\.\d+)?)s$/.exec(retry);
+    if (!m) return fallbackMs;
+    return Math.ceil(parseFloat(m[1]) * 1000);
+  } catch {
+    return fallbackMs;
+  }
+}
+
+/**
+ * 429 (RESOURCE_EXHAUSTED) を Google の retryDelay に従って自動再試行する。
+ * これにより FreeTier の 5 RPM 制限で並列リクエストが瞬間的に弾かれる
+ * ケースを救済できる（quota 自体が枯渇しているなら何度やっても失敗するが、
+ * その時はエラーをそのまま返す）。
+ */
+async function fetchWithRetry(
+  url: string,
+  body: string,
+  label: string,
+): Promise<{ res: Response; data: ScanResponseBody | null }> {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+    const data = await readJsonResponse(res);
+    if (res.status !== 429 || attempt === maxAttempts) {
+      return { res, data };
+    }
+    const waitMs = Math.min(extractRetryDelayMs(data, 5000) + 500, 30000);
+    console.warn(`[scan] 429 on "${label}" (attempt ${attempt}/${maxAttempts}). retry in ${waitMs}ms`);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+  // 到達不可（ループ内で必ず return する）が、TS の型のため
+  throw new Error('fetchWithRetry: unreachable');
 }
