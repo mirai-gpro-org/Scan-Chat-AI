@@ -9,23 +9,75 @@
  * UI 統合は呼び出し側に委ねるため、状態変化と解析結果はコールバックで通知する。
  */
 
-export interface ScanItem {
+/**
+ * 並列分割パイプライン:
+ *   1. 撮影 → フル画像 dataURL
+ *   2. POST /api/scan-layout で領域 (regions) を検出
+ *   3. クライアントで各領域を canvas で切り出し
+ *   4. POST /api/scan を全領域分 並列に投げる
+ *   5. 結果をマージ
+ *
+ * これで 1 撮影あたりの体感時間が 1/N (N = 領域数) に縮み、
+ * 同時にユーザー確認の単位 = 領域になる。
+ */
+
+/** /api/scan-layout が返す領域メタ */
+export interface RegionMeta {
+  id: string;
   label: string;
-  value: string;
-  bbox: [number, number, number, number]; // [ymin, xmin, ymax, xmax] 0-1000 で正規化
-  confidence: 'high' | 'low';
-  kind: 'printed' | 'handwritten';
+  /** 元画像座標系での 0-1000 正規化 bbox [ymin, xmin, ymax, xmax] */
+  bbox: [number, number, number, number];
+}
+
+/** /api/scan が領域ごとに返す圧縮スキーマの items[] */
+export interface RegionItem {
+  /** cols と同順の値配列 */
+  r: string[];
+  /** クロップ後画像内での bbox (0-1000) */
+  b: [number, number, number, number];
+  /** 信頼度: high / low */
+  c: 'h' | 'l';
+  /** 種別: printed / handwritten */
+  k: 'p' | 'w';
+  /** 赤丸・下線等の強調 (true 時のみ) */
+  x?: boolean;
+}
+
+/** /api/scan が領域ごとに返す表外メモ */
+export interface RegionNote {
+  t: string;
+  b?: [number, number, number, number];
+  c?: 'h' | 'l';
+}
+
+/** 1 領域分の完成データ (メタ + 転記結果) */
+export interface RegionResult extends RegionMeta {
+  /** 切り出した画像 (UI 表示・再撮影用) */
+  croppedImage?: string;
+  cols?: string[];
+  items?: RegionItem[];
+  notes?: RegionNote[];
+  /** その領域の生 raw / finishReason / エラー */
+  raw?: string;
+  finishReason?: string;
+  error?: string;
 }
 
 export interface AnalyzeResult {
-  observations?: string[];
-  regions?: string[];
-  follow_up_questions?: string[];
-  items?: ScanItem[];
-  priority_flags?: string[];
-  urgent?: boolean;
-  raw?: string;
-  finishReason?: string;
+  regions: RegionResult[];
+  /** フル画像 (UI 表示用) */
+  fullImage?: string;
+  /** レイアウト検出フェーズの raw (デバッグ用) */
+  layoutRaw?: string;
+}
+
+// 旧 ScanItem は AR detect モードでまだ使われるので残す
+export interface ScanItem {
+  label: string;
+  value: string;
+  bbox: [number, number, number, number];
+  confidence: 'high' | 'low';
+  kind: 'printed' | 'handwritten';
 }
 
 export type ScanState = 'idle' | 'running' | 'busy';
@@ -151,66 +203,103 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
 
   async function capture(): Promise<void> {
     if (!stream) return;
-    const dataUrl = grabFrame({ maxEdge: 1280, quality: 0.85 });
-    if (!dataUrl) {
+    const fullImage = grabFrame({ maxEdge: 1500, quality: 0.78 });
+    if (!fullImage) {
       setStatus('まだ映像が取得できていません');
       return;
     }
 
     setState('busy');
-    setStatus('AI が解析しています…');
 
     try {
-      const res = await fetch('/api/scan', {
+      // ===== Phase 1: レイアウト検出 =====
+      setStatus('🗺️ レイアウト検出中…');
+      const layoutFetch = await fetch('/api/scan-layout', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          image: dataUrl,
-          mode: 'analyze',
-          hint: refs.hint?.value?.trim() || '',
-        }),
+        body: JSON.stringify({ image: fullImage }),
       });
-      // Vercel タイムアウトやプロキシ層エラーで body が JSON でないことがあるので
-      // text → JSON.parse の順で安全に拾う。
-      const responseText = await res.text();
-      let data: {
-        raw?: string;
-        json?: AnalyzeResult;
-        error?: unknown;
-        detail?: string;
-        finishReason?: string;
-      } = {};
-      try {
-        data = JSON.parse(responseText) as typeof data;
-      } catch {
-        data = { error: responseText.slice(0, 500) };
-      }
-      if (!res.ok) {
-        const errorText =
-          typeof data.error === 'string'
-            ? data.error
-            : data.error
-              ? JSON.stringify(data.error)
-              : responseText.slice(0, 200) || '不明';
-        const msg = `解析エラー (${res.status}): ${errorText}${
-          data.detail ? `\n${summarizeGoogleError(data.detail)}` : ''
-        }`;
+      const layoutData = await readJsonResponse(layoutFetch);
+      if (!layoutFetch.ok || !layoutData) {
+        const msg = formatError('レイアウト検出エラー', layoutFetch.status, layoutData);
         setStatus(msg);
         refs.onError?.(msg);
         setState(stream ? 'running' : 'idle');
         return;
       }
-      const result: AnalyzeResult = {
-        ...(data.json ?? {}),
-        raw: data.raw,
-        finishReason: data.finishReason,
-      };
-      if (result.items?.length) {
-        lastItems = result.items;
-        drawDigitalOverlay(result.items);
+      const regions: RegionMeta[] = Array.isArray(layoutData.json?.regions)
+        ? layoutData.json.regions
+        : [];
+      if (regions.length === 0) {
+        const msg = '領域が検出されませんでした。撮影し直してください。';
+        setStatus(msg);
+        refs.onError?.(msg);
+        setState(stream ? 'running' : 'idle');
+        return;
       }
+
+      // ===== Phase 2: 各領域をクライアントでクロップ =====
+      setStatus(`✂️ ${regions.length} 領域に分割中…`);
+      const cropped = await Promise.all(
+        regions.map((region) => cropFromDataUrl(fullImage, region.bbox)),
+      );
+
+      // ===== Phase 3: 並列で /api/scan に投げる =====
+      setStatus(`⚡ ${regions.length} 領域を並列解析中…`);
+      const userHint = refs.hint?.value?.trim() || '';
+      const transcriptions = await Promise.all(
+        regions.map(async (region, i): Promise<RegionResult> => {
+          try {
+            const res = await fetch('/api/scan', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                image: cropped[i],
+                mode: 'analyze',
+                hint: `領域「${region.label}」の転記です。${userHint}`,
+              }),
+            });
+            const data = await readJsonResponse(res);
+            if (!res.ok || !data) {
+              return {
+                ...region,
+                croppedImage: cropped[i],
+                error: formatError('転記エラー', res.status, data),
+              };
+            }
+            return {
+              ...region,
+              croppedImage: cropped[i],
+              cols: data.json?.cols,
+              items: data.json?.items,
+              notes: data.json?.notes,
+              raw: typeof data.raw === 'string' ? data.raw : undefined,
+              finishReason:
+                typeof data.finishReason === 'string' ? data.finishReason : undefined,
+            };
+          } catch (err) {
+            return {
+              ...region,
+              croppedImage: cropped[i],
+              error: `通信エラー: ${String(err)}`,
+            };
+          }
+        }),
+      );
+
+      // ===== Phase 4: マージして UI へ =====
+      const totalItems = transcriptions.reduce((sum, r) => sum + (r.items?.length ?? 0), 0);
+      const result: AnalyzeResult = {
+        regions: transcriptions,
+        fullImage,
+        layoutRaw: typeof layoutData.raw === 'string' ? layoutData.raw : undefined,
+      };
       setState(stream ? 'running' : 'idle');
-      setStatus(result.items?.length ? `${result.items.length} 項目を読み取りました` : '解析が完了しました');
+      setStatus(
+        totalItems
+          ? `${transcriptions.length} 領域 / ${totalItems} 項目を読み取りました`
+          : '解析が完了しました',
+      );
       refs.onAnalyze?.(result);
     } catch (err) {
       const msg = `通信エラー: ${String(err)}`;
@@ -398,4 +487,81 @@ function summarizeGoogleError(detail: string): string {
   } catch {
     return detail.slice(0, 300);
   }
+}
+
+/**
+ * dataURL の画像を、0-1000 正規化された bbox 領域だけ切り出して
+ * 新しい dataURL を返す。並列分割パイプライン Phase 2 で使用。
+ */
+async function cropFromDataUrl(
+  dataUrl: string,
+  bbox: [number, number, number, number],
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = (): void => {
+      const [ymin, xmin, ymax, xmax] = bbox;
+      const sx = Math.max(0, (xmin / 1000) * img.naturalWidth);
+      const sy = Math.max(0, (ymin / 1000) * img.naturalHeight);
+      const sw = Math.min(img.naturalWidth - sx, ((xmax - xmin) / 1000) * img.naturalWidth);
+      const sh = Math.min(img.naturalHeight - sy, ((ymax - ymin) / 1000) * img.naturalHeight);
+      if (sw <= 0 || sh <= 0) {
+        reject(new Error('invalid bbox dimensions'));
+        return;
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(sw);
+      canvas.height = Math.round(sh);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('canvas context unavailable'));
+        return;
+      }
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+      resolve(canvas.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = (): void => reject(new Error('image load failed'));
+    img.src = dataUrl;
+  });
+}
+
+/**
+ * fetch のレスポンスを安全に JSON として読む。
+ * Vercel タイムアウト等で body が JSON でない場合は { error: <truncated text> } を返す。
+ */
+interface ScanResponseBody {
+  raw?: unknown;
+  json?: {
+    cols?: string[];
+    items?: RegionItem[];
+    notes?: RegionNote[];
+    regions?: RegionMeta[];
+  };
+  error?: unknown;
+  detail?: string;
+  finishReason?: unknown;
+}
+
+async function readJsonResponse(res: Response): Promise<ScanResponseBody | null> {
+  try {
+    const text = await res.text();
+    try {
+      return JSON.parse(text) as ScanResponseBody;
+    } catch {
+      return { error: text.slice(0, 500) };
+    }
+  } catch {
+    return null;
+  }
+}
+
+function formatError(prefix: string, status: number, data: ScanResponseBody | null): string {
+  const errorText =
+    typeof data?.error === 'string'
+      ? data.error
+      : data?.error
+        ? JSON.stringify(data.error).slice(0, 300)
+        : '不明';
+  const detail = data?.detail ? `\n${summarizeGoogleError(data.detail)}` : '';
+  return `${prefix} (${status}): ${errorText}${detail}`;
 }

@@ -199,7 +199,7 @@ import ScanOverlay from '../components/ScanOverlay.astro';
 
 <script>
   import { initCameraScan } from '../scripts/camera-scan';
-  import type { AnalyzeResult, ScanItem, ScanState } from '../scripts/camera-scan';
+  import type { AnalyzeResult, ScanState } from '../scripts/camera-scan';
 
   function $<T extends HTMLElement = HTMLElement>(id: string): T {
     const el = document.getElementById(id);
@@ -229,88 +229,156 @@ import ScanOverlay from '../components/ScanOverlay.astro';
       .replace(/"/g, '&quot;');
   }
 
+  function regionStatus(region: AnalyzeResult['regions'][number]): 'green' | 'yellow' | 'red' {
+    if (region.error) return 'red';
+    const items = region.items ?? [];
+    if (items.length === 0 && !(region.notes && region.notes.length > 0)) return 'red';
+    const anyMissing = items.some((it) => !(it.r ?? []).some((v) => String(v ?? '').trim() !== ''));
+    if (anyMissing) return 'red';
+    const anyUncertain = items.some((it) => it.c === 'l' || it.k === 'w' || it.x === true);
+    if (anyUncertain) return 'yellow';
+    return 'green';
+  }
+
+  const STATUS_COLORS = {
+    green: 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200',
+    yellow: 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-200',
+    red: 'border-rose-300 bg-rose-50 text-rose-800 dark:border-rose-700 dark:bg-rose-900/30 dark:text-rose-200',
+  } as const;
+
+  const STATUS_LABEL = { green: '✓ OK', yellow: '⚠ 要確認', red: '✗ 要対応' } as const;
+
+  function renderRegionCard(region: AnalyzeResult['regions'][number], idx: number): string {
+    const status = regionStatus(region);
+    const items = region.items ?? [];
+    const notes = region.notes ?? [];
+    const cols = region.cols ?? [];
+
+    const errorBlock = region.error
+      ? `<p class="rounded bg-rose-100 px-3 py-2 text-xs text-rose-900 dark:bg-rose-900/40 dark:text-rose-200">${escapeHtml(region.error)}</p>`
+      : '';
+
+    const tableBlock =
+      items.length > 0 && cols.length > 0
+        ? `
+        <div class="overflow-x-auto">
+          <table class="w-full border-collapse text-xs">
+            <thead>
+              <tr class="bg-slate-100 dark:bg-slate-800">
+                ${cols.map((c) => `<th class="border border-slate-200 px-2 py-1 text-left font-medium dark:border-slate-700">${escapeHtml(c)}</th>`).join('')}
+                <th class="border border-slate-200 px-2 py-1 text-left font-medium dark:border-slate-700">badges</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${items
+                .map((it) => {
+                  const row = it.r ?? [];
+                  const cells = cols
+                    .map((_, i) => `<td class="border border-slate-200 px-2 py-1 dark:border-slate-700">${escapeHtml(row[i] ?? '')}</td>`)
+                    .join('');
+                  const tags = [
+                    it.c === 'l' ? '<span class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">low</span>' : '',
+                    it.k === 'w' ? '<span class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">✍</span>' : '',
+                    it.x ? '<span class="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] text-rose-800 dark:bg-rose-900/40 dark:text-rose-200">⬤</span>' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ');
+                  return `<tr>${cells}<td class="border border-slate-200 px-2 py-1 dark:border-slate-700">${tags}</td></tr>`;
+                })
+                .join('')}
+            </tbody>
+          </table>
+        </div>`
+        : '';
+
+    const notesBlock =
+      notes.length > 0
+        ? `
+        <div class="mt-2 space-y-1 text-xs">
+          <p class="font-semibold text-slate-500">手書き / 表外メモ</p>
+          ${notes
+            .map(
+              (n) =>
+                `<p class="rounded bg-amber-50 px-2 py-1 text-amber-900 dark:bg-amber-900/30 dark:text-amber-100">✍ ${escapeHtml(n.t)}${n.c === 'l' ? ' <span class="text-[10px] text-amber-700">(low)</span>' : ''}</p>`,
+            )
+            .join('')}
+        </div>`
+        : '';
+
+    const cropImg = region.croppedImage
+      ? `<img src="${region.croppedImage}" alt="${escapeHtml(region.label)}" class="block w-full rounded border border-slate-200 dark:border-slate-700" />`
+      : '';
+
+    const summary =
+      items.length || notes.length
+        ? `${items.length} 項目 / ${notes.length} メモ`
+        : '内容なし';
+
+    return `
+      <article class="rounded-2xl border ${STATUS_COLORS[status]} p-3 md:p-4">
+        <header class="mb-2 flex items-center justify-between gap-2">
+          <h4 class="text-sm font-semibold md:text-base">
+            <span class="mr-2 text-xs text-slate-500">#${idx + 1}</span>${escapeHtml(region.label)}
+          </h4>
+          <span class="rounded-full bg-white/70 px-2 py-0.5 text-xs font-medium dark:bg-slate-900/60">
+            ${STATUS_LABEL[status]} · ${summary}
+          </span>
+        </header>
+        <div class="grid grid-cols-1 gap-3 md:grid-cols-[180px_1fr] md:gap-4">
+          <div>${cropImg}</div>
+          <div class="min-w-0 space-y-2">
+            ${errorBlock}
+            ${tableBlock || (region.error ? '' : '<p class="text-xs text-slate-500">表項目はありません</p>')}
+            ${notesBlock}
+          </div>
+        </div>
+      </article>
+    `;
+  }
+
   function renderResult(r: AnalyzeResult): void {
-    const items: ScanItem[] = r.items ?? [];
-    $('result-count').textContent = items.length
-      ? `${items.length} 項目を読み取りました`
+    const regions = r.regions ?? [];
+    const totalItems = regions.reduce((s, region) => s + (region.items?.length ?? 0), 0);
+    $('result-count').textContent = regions.length
+      ? `${regions.length} 領域 / ${totalItems} 項目を読み取りました`
       : '解析が完了しました';
 
-    // priority flags
-    const priorityList = $('priority-list') as HTMLUListElement;
-    const prioritySection = $('priority-section');
-    if (r.priority_flags?.length) {
-      priorityList.innerHTML = r.priority_flags
-        .map(
-          (f) =>
-            `<li class="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">${escapeHtml(f)}</li>`,
-        )
-        .join('');
-      prioritySection.hidden = false;
-    } else {
-      prioritySection.hidden = true;
-    }
+    // 旧 UI 要素は非表示
+    $('urgent-banner').hidden = true;
+    $('priority-section').hidden = true;
+    $('obs-section').innerHTML = '';
 
-    // urgent
-    $('urgent-banner').hidden = !r.urgent;
-
-    // items
+    // 領域カード一覧
     const itemsList = $('items-list') as HTMLUListElement;
-    if (items.length) {
-      itemsList.innerHTML = items
-        .map((it) => {
-          const low = it.confidence === 'low' || it.kind === 'handwritten';
-          const badge = low ? '⚠ 要確認' : '✓ 高信頼';
-          const badgeClass = low
-            ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200'
-            : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200';
-          return `
-            <li class="flex items-center justify-between gap-3 px-4 py-3">
-              <div class="min-w-0 flex-1">
-                <p class="truncate text-sm font-medium">${escapeHtml(it.label)}</p>
-                <p class="truncate text-sm text-slate-600 dark:text-slate-300">${escapeHtml(it.value) || '<span class="italic text-slate-400">（読み取り不可）</span>'}</p>
-              </div>
-              <span class="shrink-0 rounded-full ${badgeClass} px-2 py-0.5 text-xs font-medium">${badge}</span>
-            </li>
-          `;
-        })
-        .join('');
-    } else {
+    if (regions.length === 0) {
       itemsList.innerHTML =
-        '<li class="px-4 py-6 text-center text-sm text-slate-500">項目は検出されませんでした</li>';
+        '<li class="px-4 py-6 text-center text-sm text-slate-500">領域は検出されませんでした</li>';
+    } else {
+      itemsList.innerHTML = regions
+        .map((region, idx) => `<li class="px-3 py-3 md:px-4">${renderRegionCard(region, idx)}</li>`)
+        .join('');
     }
 
-    // observations / regions / follow-ups
-    const obsSection = $('obs-section');
-    const parts: string[] = [];
-    if (r.observations?.length) {
-      parts.push('<h4 class="text-xs font-semibold text-slate-500">観察所見</h4>');
-      parts.push(
-        `<ul class="list-disc space-y-1 pl-5">${r.observations.map((o) => `<li>${escapeHtml(o)}</li>`).join('')}</ul>`,
-      );
-    }
-    if (r.regions?.length) {
-      parts.push('<h4 class="text-xs font-semibold text-slate-500">部位</h4>');
-      parts.push(`<p>${r.regions.map((x) => escapeHtml(x)).join('、')}</p>`);
-    }
-    if (r.follow_up_questions?.length) {
-      parts.push('<h4 class="text-xs font-semibold text-slate-500">問診で確認する質問</h4>');
-      parts.push(
-        `<ul class="list-disc space-y-1 pl-5">${r.follow_up_questions.map((q) => `<li>${escapeHtml(q)}</li>`).join('')}</ul>`,
-      );
-    }
-    obsSection.innerHTML =
-      parts.join('') ||
-      '<p class="text-sm text-slate-500">追加の所見はありません</p>';
-
-    // debug panes
-    ($('scan-raw') as HTMLPreElement).textContent = r.raw ?? '(empty)';
-    const finish = r.finishReason ?? '';
+    // debug panes: 領域ごとの raw を結合表示
+    const rawCombined = regions
+      .map((reg, i) => `=== Region #${i + 1}: ${reg.label} ===\n${reg.raw ?? '(empty)'}\n`)
+      .join('\n');
+    ($('scan-raw') as HTMLPreElement).textContent = rawCombined || '(empty)';
+    const finishReasons = regions.map((reg) => reg.finishReason).filter(Boolean);
     const finishEl = $('scan-finish');
-    finishEl.textContent = finish ? `finish: ${finish}` : '';
-    finishEl.classList.toggle('bg-rose-200', finish === 'MAX_TOKENS' || finish === 'SAFETY');
-    finishEl.classList.toggle('text-rose-900', finish === 'MAX_TOKENS' || finish === 'SAFETY');
-    const { raw: _omit, finishReason: _omit2, ...withoutRaw } = r;
-    ($('scan-result') as HTMLPreElement).textContent = JSON.stringify(withoutRaw, null, 2);
+    finishEl.textContent = finishReasons.length ? `finish: ${finishReasons.join(', ')}` : '';
+    const hasBadFinish = finishReasons.some((f) => f === 'MAX_TOKENS' || f === 'SAFETY');
+    finishEl.classList.toggle('bg-rose-200', hasBadFinish);
+    finishEl.classList.toggle('text-rose-900', hasBadFinish);
+
+    // Parsed result: croppedImage / raw を除外して構造を見やすく
+    const stripped = {
+      regions: regions.map((reg) => {
+        const { croppedImage: _ci, raw: _r, ...rest } = reg;
+        return rest;
+      }),
+    };
+    ($('scan-result') as HTMLPreElement).textContent = JSON.stringify(stripped, null, 2);
   }
 
   document.addEventListener('DOMContentLoaded', () => {
