@@ -40,35 +40,73 @@ const DETECT_SYSTEM = `あなたは医療文書スキャン補助 AI です。
 }
 JSON 以外の文字（前後のコメントや code fence）は出力しないこと。最大 12 項目まで。`;
 
-const ANALYZE_SYSTEM = `あなたは医療画像補助 AI です。
-画像から観察できる所見のみを記述し、診断や処方は行いません。
+const ANALYZE_SYSTEM = `あなたは検査結果用紙の画像から、紙面に印字・記入されている内容を
+全項目分そのまま構造化 JSON に転記します。解釈・診断・要約は行いません。
 
-【出力の長さ厳守（トークン超過防止）】
-- observations: 最大 5 件、各 60 字以内・要点のみ・重複や言い換え禁止
-- regions: 最大 3 件
-- follow_up_questions: 最大 5 件、各 60 字以内
-- items: 最大 20 項目、特に基準値外・赤丸・手書き等の優先項目から選ぶ
-- priority_flags: 最大 3 件
-- urgent は明確な異常値があるときのみ true
+【日本の検査表の典型レイアウト】
+左から右へ:
+  検査項目（略称）| 結果 | 検査項目詳細（フルネーム）| 下限値 | 上限値 | 単位名称
+※ 用紙は左半分・右半分の 2 カラム構成のことが多い（同じレイアウトが 2 列並ぶ）。
 
-出力は以下の JSON スキーマに厳密に従ってください:
+【検査表独特の落とし穴 — ここを間違えないこと】
+"value" には「結果」列の数値だけを入れる。
+「下限値」「上限値」「単位」を value に混入させないこと。
+紙面の H / L マーク（基準値超 / 下回）は "flag" に分ける。
+
+【正しい解釈の例】
+ある行が次のように印字されていたら:
+
+  "23 Hgb 8.1 L ヘモグロビン量 13.7 16.8 g/dl"
+
+正解は:
+  {
+    "no": "23",
+    "label": "Hgb",
+    "label_detail": "ヘモグロビン量",
+    "value": "8.1",         ← 結果列
+    "flag": "L",            ← 結果直後の H/L マーク
+    "ref_low": "13.7",      ← 下限値
+    "ref_high": "16.8",     ← 上限値
+    "unit": "g/dl",
+    "marked": false,
+    "confidence": "high",
+    "kind": "printed",
+    "bbox": [...]
+  }
+
+誤り例:
+  - value="16.8"（上限値を結果と取り違え）
+  - value="13.7-16.8"（基準範囲を結果と取り違え）
+  - value="8.1 g/dl"（単位を結果に混入）
+
+【手書き・強調・読み取り不能】
+- 手書きメモは kind="handwritten" として独立した item に分けて格納
+- 赤丸・下線・蛍光ペン等で強調されている項目は marked: true
+- 読み取り不能なら value="" / confidence="low"
+- 紙面に存在しない値・項目は絶対に出力しない（ハルシネーション禁止）
+
+【出力 JSON】
 {
-  "observations": string[],
-  "regions": string[],
-  "follow_up_questions": string[],
   "items": [
     {
-      "label": string,
-      "value": string,
-      "bbox": [number, number, number, number], // [ymin, xmin, ymax, xmax] 0-1000 で正規化
+      "no": string,              // 項目番号（無ければ ""）
+      "label": string,           // 検査項目の略称
+      "label_detail": string,    // 検査項目詳細（無ければ ""）
+      "value": string,           // 結果列の値
+      "unit": string,            // 単位（無ければ ""）
+      "flag": string,            // "H" / "L" / ""
+      "ref_low": string,         // 下限値（無ければ ""）
+      "ref_high": string,        // 上限値（無ければ ""）
+      "marked": boolean,         // 赤丸・下線・蛍光等の強調
+      "bbox": [number, number, number, number],  // [ymin, xmin, ymax, xmax] 0-1000 正規化
       "confidence": "high" | "low",
       "kind": "printed" | "handwritten"
     }
-  ],
-  "priority_flags": string[], // 後続チャットで重点的に確認すべき項目（label 名）
-  "urgent": boolean
+  ]
 }
-JSON 以外の文字（前後のコメントや code fence）は出力しないこと。`;
+
+JSON 以外（前置きの説明文、code fence、後置きの注釈）は一切出力しないこと。
+表の全項目を漏らさず転記すること（行数を恐れない）。`;
 
 function parseDataUrl(input: string): { mime: string; data: string } {
   const m = /^data:([^;]+);base64,(.+)$/i.exec(input.trim());
@@ -96,8 +134,8 @@ export const POST: APIRoute = async ({ request }) => {
         mode === 'detect'
           ? '画像から項目を検知し bbox 配列を返してください。'
           : body.hint
-            ? `補足: ${body.hint}`
-            : '画像を解析してください。',
+            ? `補足: ${body.hint}\n紙面の全項目を、結果列・下限値・上限値を厳密に区別して JSON に転記してください。`
+            : '紙面の全項目を、結果列・下限値・上限値を厳密に区別して JSON に転記してください。',
     },
   ];
 
