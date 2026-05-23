@@ -24,7 +24,8 @@ import ScanOverlay from '../components/ScanOverlay.astro';
       <div class="space-y-2">
         <h2 class="text-xl font-bold">健診結果をスキャン</h2>
         <p class="text-sm text-slate-600 dark:text-slate-300">
-          検査用紙をカメラで読み取り、AI が項目を自動で認識します。
+          検査用紙をカメラで読み取り、ネイティブマルチモーダル AI が
+          表構造・手書き・強調マークを統合的に理解して値を抽出します。
         </p>
       </div>
       <ul class="w-full space-y-2 rounded-2xl bg-slate-50 p-4 text-left text-sm text-slate-700 dark:bg-slate-900 dark:text-slate-200">
@@ -118,24 +119,7 @@ import ScanOverlay from '../components/ScanOverlay.astro';
         <p id="result-count" class="text-sm font-semibold">解析が完了しました</p>
       </div>
 
-      <!-- 重大所見 -->
-      <div id="urgent-banner" class="flex items-start gap-3 rounded-2xl border border-rose-300 bg-rose-50 px-4 py-3 text-rose-800 dark:border-rose-700 dark:bg-rose-900/30 dark:text-rose-200" hidden>
-        <span aria-hidden class="text-xl">⚠</span>
-        <div>
-          <p class="text-sm font-semibold">重要な所見が検出されました</p>
-          <p class="text-xs">次の問診で詳しく確認します</p>
-        </div>
-      </div>
-
-      <!-- 重点項目 -->
-      <section id="priority-section" class="card !p-4" hidden>
-        <h3 class="mb-2 text-sm font-semibold text-amber-700 dark:text-amber-300">
-          ⚠ 重点的に確認すべき項目
-        </h3>
-        <ul id="priority-list" class="flex flex-wrap gap-1.5"></ul>
-      </section>
-
-      <!-- 認識項目 -->
+      <!-- 認識項目（OCR ベリファイ用） -->
       <section class="card !p-0">
         <h3 class="border-b border-slate-100 px-4 py-3 text-sm font-semibold dark:border-slate-800">
           認識項目
@@ -144,12 +128,6 @@ import ScanOverlay from '../components/ScanOverlay.astro';
           <li class="px-4 py-6 text-center text-sm text-slate-500">項目は検出されませんでした</li>
         </ul>
       </section>
-
-      <!-- 観察所見・問診質問 -->
-      <details class="card !p-4">
-        <summary class="cursor-pointer text-sm font-semibold">その他の所見</summary>
-        <div id="obs-section" class="mt-3 space-y-2 text-sm"></div>
-      </details>
 
       <!-- Raw JSON（開発用） -->
       <details open class="rounded-2xl border border-dashed border-slate-300 p-3 dark:border-slate-700">
@@ -230,78 +208,72 @@ import ScanOverlay from '../components/ScanOverlay.astro';
       .replace(/"/g, '&quot;');
   }
 
+  function renderItem(it: ScanItem): string {
+    const handwritten = it.kind === 'handwritten';
+    const lowConf = it.confidence === 'low';
+    const flagBadge =
+      it.flag === 'H'
+        ? '<span class="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-800 dark:bg-rose-900/40 dark:text-rose-200">H</span>'
+        : it.flag === 'L'
+          ? '<span class="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-800 dark:bg-sky-900/40 dark:text-sky-200">L</span>'
+          : '';
+    const kindBadge = handwritten
+      ? '<span class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">✍ 手書</span>'
+      : '<span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200">印字</span>';
+    const markedBadge = it.marked
+      ? '<span class="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-800 dark:bg-rose-900/40 dark:text-rose-200">⬤ 強調</span>'
+      : '';
+    const confBadge = lowConf
+      ? '<span class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">要確認</span>'
+      : '';
+    const ref =
+      it.ref_low || it.ref_high
+        ? `<span class="text-[11px] text-slate-500">基準 ${escapeHtml(it.ref_low ?? '')} – ${escapeHtml(it.ref_high ?? '')}</span>`
+        : '';
+    const unit = it.unit
+      ? `<span class="ml-1 text-xs text-slate-500">${escapeHtml(it.unit)}</span>`
+      : '';
+    const labelDetail = it.label_detail
+      ? `<span class="ml-1 text-xs text-slate-500">${escapeHtml(it.label_detail)}</span>`
+      : '';
+    const no = it.no
+      ? `<span class="mr-1 inline-block w-6 text-right text-[10px] text-slate-400">${escapeHtml(it.no)}</span>`
+      : '';
+    const valueDisplay = it.value
+      ? `<span class="text-base font-semibold">${escapeHtml(it.value)}</span>${unit}`
+      : '<span class="italic text-slate-400">（読み取り不可）</span>';
+    return `
+      <li class="px-4 py-3">
+        <div class="flex items-center gap-2">
+          ${no}
+          <p class="min-w-0 flex-1 truncate text-sm font-medium">${escapeHtml(it.label)}${labelDetail}</p>
+          ${flagBadge}
+          ${kindBadge}
+          ${markedBadge}
+          ${confBadge}
+        </div>
+        <div class="mt-1 flex items-baseline justify-between gap-3 pl-7">
+          <div>${valueDisplay}</div>
+          ${ref}
+        </div>
+      </li>
+    `;
+  }
+
   function renderResult(r: AnalyzeResult): void {
     const items: ScanItem[] = r.items ?? [];
     $('result-count').textContent = items.length
       ? `${items.length} 項目を読み取りました`
       : '解析が完了しました';
 
-    // priority flags
-    const priorityList = $('priority-list') as HTMLUListElement;
-    const prioritySection = $('priority-section');
-    if (r.priority_flags?.length) {
-      priorityList.innerHTML = r.priority_flags
-        .map(
-          (f) =>
-            `<li class="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">${escapeHtml(f)}</li>`,
-        )
-        .join('');
-      prioritySection.hidden = false;
-    } else {
-      prioritySection.hidden = true;
-    }
-
-    // urgent
-    $('urgent-banner').hidden = !r.urgent;
-
-    // items
+    // items（ベリファイ表示: 結果 / 単位 / 基準範囲 / 強調マーク / 信頼度）
     const itemsList = $('items-list') as HTMLUListElement;
     if (items.length) {
-      itemsList.innerHTML = items
-        .map((it) => {
-          const low = it.confidence === 'low' || it.kind === 'handwritten';
-          const badge = low ? '⚠ 要確認' : '✓ 高信頼';
-          const badgeClass = low
-            ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200'
-            : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200';
-          return `
-            <li class="flex items-center justify-between gap-3 px-4 py-3">
-              <div class="min-w-0 flex-1">
-                <p class="truncate text-sm font-medium">${escapeHtml(it.label)}</p>
-                <p class="truncate text-sm text-slate-600 dark:text-slate-300">${escapeHtml(it.value) || '<span class="italic text-slate-400">（読み取り不可）</span>'}</p>
-              </div>
-              <span class="shrink-0 rounded-full ${badgeClass} px-2 py-0.5 text-xs font-medium">${badge}</span>
-            </li>
-          `;
-        })
-        .join('');
+      itemsList.innerHTML = items.map(renderItem).join('');
     } else {
       itemsList.innerHTML =
         '<li class="px-4 py-6 text-center text-sm text-slate-500">項目は検出されませんでした</li>';
     }
-
-    // observations / regions / follow-ups
-    const obsSection = $('obs-section');
-    const parts: string[] = [];
-    if (r.observations?.length) {
-      parts.push('<h4 class="text-xs font-semibold text-slate-500">観察所見</h4>');
-      parts.push(
-        `<ul class="list-disc space-y-1 pl-5">${r.observations.map((o) => `<li>${escapeHtml(o)}</li>`).join('')}</ul>`,
-      );
-    }
-    if (r.regions?.length) {
-      parts.push('<h4 class="text-xs font-semibold text-slate-500">部位</h4>');
-      parts.push(`<p>${r.regions.map((x) => escapeHtml(x)).join('、')}</p>`);
-    }
-    if (r.follow_up_questions?.length) {
-      parts.push('<h4 class="text-xs font-semibold text-slate-500">問診で確認する質問</h4>');
-      parts.push(
-        `<ul class="list-disc space-y-1 pl-5">${r.follow_up_questions.map((q) => `<li>${escapeHtml(q)}</li>`).join('')}</ul>`,
-      );
-    }
-    obsSection.innerHTML =
-      parts.join('') ||
-      '<p class="text-sm text-slate-500">追加の所見はありません</p>';
 
     // debug panes
     ($('scan-raw') as HTMLPreElement).textContent = r.raw ?? '(empty)';

@@ -4,8 +4,11 @@
  */
 
 export const MODELS = {
-  // REST generateContent (画像解析・テキスト応答)
+  // REST generateContent: 軽量モード（連続検知 / プレビュー）
   scan: 'gemini-2.5-flash',
+  // REST generateContent: 撮影確定時のネイティブマルチモーダル画像理解
+  // （表構造・手書き・強調マークを統合的に読み取るので精度優先）
+  scanPrecise: 'gemini-2.5-pro',
   // Live API 専用 (WebSocket / audio-to-audio)。REST には渡さないこと
   liveChat: 'gemini-3.1-flash-live-preview',
 } as const;
@@ -32,6 +35,8 @@ export interface GeminiGenerationConfig {
   topK?: number;
   maxOutputTokens?: number;
   responseMimeType?: string;
+  /** Thinking 予算 (token)。0 で無効化 (flash/lite のみ)、pro は最小 128 程度。 */
+  thinkingConfig?: { thinkingBudget?: number };
 }
 
 export interface GeminiRequest {

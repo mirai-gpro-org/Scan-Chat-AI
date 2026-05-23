@@ -10,22 +10,25 @@
  */
 
 export interface ScanItem {
+  no?: string;
   label: string;
+  label_detail?: string;
   value: string;
+  flag?: 'H' | 'L' | '';
+  unit?: string;
+  ref_low?: string;
+  ref_high?: string;
+  marked?: boolean;
   bbox: [number, number, number, number]; // [ymin, xmin, ymax, xmax] 0-1000 で正規化
   confidence: 'high' | 'low';
   kind: 'printed' | 'handwritten';
 }
 
 export interface AnalyzeResult {
-  observations?: string[];
-  regions?: string[];
-  follow_up_questions?: string[];
   items?: ScanItem[];
-  priority_flags?: string[];
-  urgent?: boolean;
   raw?: string;
   finishReason?: string;
+  model?: string;
 }
 
 export type ScanState = 'idle' | 'running' | 'busy';
@@ -176,6 +179,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         error?: string;
         detail?: string;
         finishReason?: string;
+        model?: string;
       };
       if (!res.ok) {
         const msg = `解析エラー (${res.status}): ${data.error ?? '不明'}${
@@ -190,6 +194,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         ...(data.json ?? {}),
         raw: data.raw,
         finishReason: data.finishReason,
+        model: data.model,
       };
       if (result.items?.length) {
         lastItems = result.items;
