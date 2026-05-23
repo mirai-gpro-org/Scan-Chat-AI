@@ -3,9 +3,9 @@
 | 項目 | 内容 |
 |---|---|
 | 文書名 | Scan-Chat Medical AI — データ連携要件定義書 |
-| バージョン | 0.1 (Draft) |
+| バージョン | 0.2 (Draft) |
 | 作成日 | 2026-05-22 |
-| 対象 | Scan-Chat-AI Supabase ↔ Wellfort HP Supabase の連携 |
+| 対象 | Scan-Chat-AI Supabase ↔ Wellfort HP Supabase ↔ 外部診断 AI (Elith) ↔ 将来の結果閲覧アプリ の連携 |
 | 関連文書 | `docs/device_and_auth_requirements.md`, `docs/scan_feature_requirements.md` |
 | 参考実装 | `mirai-gpro/wellfort-site` の `customer_profiles` テーブル / Supabase Auth 連携 |
 
@@ -17,7 +17,7 @@
 
 Scan-Chat-AI の診断データを **HP 側（Wellfort EC）の顧客マスタとは別の Supabase で管理**しつつ、両者を **アプリ専用の一意 ID（`diagnosis_user_id`）でリンク**する。ユーザーは Google アカウントのみを意識し、内部 ID は意識しない。
 
-### 1.2 アーキテクチャ概念図
+### 1.2 アーキテクチャ概念図（全体像）
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -27,20 +27,25 @@ Scan-Chat-AI の診断データを **HP 側（Wellfort EC）の顧客マスタ�
             │ Google ID Token                  │
             ▼                                  │
 ┌──────────────────────────────────┐           │
-│  App Supabase (Scan-Chat-AI)     │           │
-│  - auth.users (Supabase Auth)    │           │
-│  - app_users (diagnosis_user_id) │           │
-│  - sessions / messages           │           │
-│  - scan_results / diagnosis_results│         │
-│                                  │           │
-│  Edge Functions (App 側に集約):  │           │
-│   ・verify-eligibility           │──┐        │
-│   ・get-customer-profile         │──┤        │
-│   ・sync-customer-profile        │──┤        │
-└──────────────────────────────────┘  │        │
-                                       │        │
-              service_role HTTP        │        │
-              (App→HP)                 ▼        │
+│  App Supabase (Scan-Chat-AI)     │◀──────────┘
+│  - auth.users (Supabase Auth)    │
+│  - app_users (diagnosis_user_id) │
+│  - sessions / messages           │
+│  - scan_results                  │
+│  - diagnosis_inputs              │   外部 AI 送信ペイロード保管（監査用）
+│  - diagnosis_results             │   ← 診断 AI 戻り、結果保管の一次ソース
+│                                  │
+│  Edge Functions (App 側に集約):  │
+│   ・verify-eligibility           │──┐
+│   ・get-customer-profile         │──┤
+│   ・submit-to-diagnosis-ai       │──┼─▶ 外部診断 AI へ送信
+│   ・diagnosis-ai-callback        │◀─┤    （非同期 webhook 受け）
+│   ・sync-customer-profile        │──┘
+└──────────────────────────────────┘
+        │                        ▲
+        │ service_role HTTP      │ (将来) 別アプリから
+        │ (App→HP)               │ diagnosis_user_id をキーに read
+        ▼                        │
 ┌──────────────────────────────────────────────────────┐
 │  HP Supabase (Wellfort EC, mirai-gpro/wellfort-site) │
 │  - auth.users                                        │
@@ -49,6 +54,27 @@ Scan-Chat-AI の診断データを **HP 側（Wellfort EC）の顧客マスタ�
 │     ├─ 氏名 / カナ / 性別 / 生年月日 / 住所 等       │
 │     └─ diagnosis_user_id (NEW: 追加カラム)           │
 │  - orders (対象検査商品の購入履歴)                   │
+└──────────────────────────────────────────────────────┘
+                ▲
+                │ HP マイページ拡張
+                │
+┌──────────────────────────────────────────────────────┐
+│ [将来] 診断結果閲覧アプリ (Scan-Chat とは別アプリ)   │
+│  - HP マイページの拡張機能的位置づけ                 │
+│  - App Supabase の diagnosis_results を表示          │
+│  - 詳細仕様は Scan-Chat 完了後に別途要件定義         │
+│  - 本書では「将来の読者」として制約条件のみ規定      │
+└──────────────────────────────────────────────────────┘
+              ▲
+              │ 入力ペイロード（PII を含まず、
+              │ diagnosis_user_id のみで識別）
+              │
+┌──────────────────────────────────────────────────────┐
+│ 外部診断 AI                                          │
+│ 株式会社 Elith（東大松尾研母体ベンチャー）           │
+│ 現状: Elith 側 AWS で稼働                            │
+│ 将来: クライアント側 AWS アカウントへ移植予定        │
+│ 戻り: diagnosis_user_id + 結果 JSON                  │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -59,6 +85,8 @@ Scan-Chat-AI の診断データを **HP 側（Wellfort EC）の顧客マスタ�
 3. **ユーザーには非開示** — `diagnosis_user_id` はシステム内部および外部 AI 診断 API 連携のキーであり、ユーザーには見せない。
 4. **入場ゲート** — 原則として **Wellfort EC で対象検査商品を購入済**でないとアプリ利用不可。未購入者は HP/EC の新規登録・購入ページへ誘導する。
 5. **Edge Function は App 側に集約** — Wellfort HP 側の Supabase は service_role key で App-side Edge Function から参照・更新する。
+6. **診断結果は App-side Supabase が一次ソース** — 外部診断 AI（Elith）からの戻りは App-side `diagnosis_results` に保存し、将来の閲覧アプリは同テーブルを参照する。Elith 側 AWS / クライアント AWS は計算リソースであり、結果データの永続ストアではない。
+7. **外部 AI への送信ペイロードに PII を含めない** — 識別子は `diagnosis_user_id` のみ。氏名・住所・連絡先は送らない。
 
 ---
 
@@ -72,7 +100,8 @@ Scan-Chat-AI の診断データを **HP 側（Wellfort EC）の顧客マスタ�
 | 連携キー `diagnosis_user_id` | **App Supabase**: `app_users` | App → HP (write once) | App で発行、HP の `customer_profiles.diagnosis_user_id` に同期 |
 | スキャン結果 | **App Supabase**: `scan_results` | App のみ | 画像は基本永続化しない |
 | 問診チャット履歴 | **App Supabase**: `messages` | App のみ | |
-| 診断結果（外部 AI 解析の戻り） | **App Supabase**: `diagnosis_results` | App のみ | |
+| 外部 AI 送信ペイロード（監査用） | **App Supabase**: `diagnosis_inputs` | App → Elith AI（送信時のみ） | 送信した内容を再現可能な形で保管。PII は含まない |
+| 診断結果（外部 AI 解析の戻り） | **App Supabase**: `diagnosis_results` | Elith AI → App (callback) → 将来の閲覧アプリ (read) | App-side が一次ソース。Elith 側 AWS には永続化されない想定 |
 
 ---
 
@@ -254,6 +283,26 @@ CREATE INDEX idx_customer_profiles_diagnosis_user_id
 |---|---|
 | 用途 | HP 側で会員資格喪失 / 返金等が発生した場合に App-side セッションを無効化 |
 
+### EF-5: `submit-to-diagnosis-ai`
+
+| 項目 | 内容 |
+|---|---|
+| パス | `POST /functions/v1/submit-to-diagnosis-ai` |
+| 認証 | App-side JWT |
+| 入力 | `{ session_id }`（JWT から diagnosis_user_id を解決） |
+| 処理 | 1. `sessions` / `messages` / `scan_results` を集約してペイロード生成<br>2. `diagnosis_inputs` に監査用に保存<br>3. Elith AI のエンドポイントへ HTTPS POST（識別子は `diagnosis_user_id` のみ、PII 非送付）<br>4. 同期戻りなら結果を `diagnosis_results` に保存、非同期なら job_id を返却し EF-6 で受け取り |
+| 出力 | `{ status: 'completed' \| 'pending', diagnosis_id?, job_id? }` |
+
+### EF-6: `diagnosis-ai-callback`
+
+| 項目 | 内容 |
+|---|---|
+| パス | `POST /functions/v1/diagnosis-ai-callback` |
+| 認証 | Elith AI 側との共有秘密（HMAC 署名）+ IP 制限（クライアント AWS 移植後） |
+| 入力 | `{ diagnosis_user_id, job_id, result: {...} }` |
+| 処理 | 1. 署名検証<br>2. `diagnosis_results` に upsert<br>3. （将来）ユーザー通知をトリガ |
+| 出力 | `204 No Content` |
+
 ---
 
 ## 7. 環境変数（App 側 Edge Function 用）
@@ -274,6 +323,11 @@ ELIGIBLE_PRODUCT_SKUS=
 HP_SIGNUP_URL=
 HP_PRODUCT_PAGE_URL=
 HP_MYPAGE_ORDERS_URL=
+
+# 外部診断 AI (Elith) 連携
+DIAGNOSIS_AI_ENDPOINT=          # 現状: Elith AWS / 移植後: クライアント AWS の URL に切替
+DIAGNOSIS_AI_API_KEY=
+DIAGNOSIS_AI_CALLBACK_HMAC_SECRET=  # EF-6 の署名検証用
 ```
 
 ---
@@ -303,7 +357,71 @@ HP_MYPAGE_ORDERS_URL=
 
 ---
 
-## 10. 未確定事項（TBD）
+## 10. 外部診断 AI 連携（Elith）
+
+### 10.1 概要
+
+| 項目 | 内容 |
+|---|---|
+| 提供元 | 株式会社 Elith（東大松尾研母体ベンチャー） |
+| 稼働環境（現状） | Elith 側 AWS アカウント |
+| 稼働環境（将来） | クライアント側 AWS アカウント（新規開設予定、移植後切替） |
+| 役割 | 計算リソース（解析エンジン）。**結果データの永続ストアではない** |
+| 入力 | App-side `submit-to-diagnosis-ai` (EF-5) からの HTTPS POST。識別子は `diagnosis_user_id` のみ |
+| 出力 | App-side `diagnosis-ai-callback` (EF-6) への結果 POST。同期戻りも将来検討 |
+| 結果の保管場所 | **App-side Supabase `diagnosis_results` が一次ソース** |
+
+### 10.2 ペイロード設計の原則
+
+- **PII 非送付**: 氏名・住所・電話・メール・生年月日（年齢は age 換算で送付可）は含めない
+- **識別子**: `diagnosis_user_id` のみ
+- **再現性**: App 側に `diagnosis_inputs` テーブルを設けて送信時のペイロードスナップショットを保管（監査・再解析用）
+
+### 10.3 AWS 移植時の切替
+
+- エンドポイント変更は環境変数 `DIAGNOSIS_AI_ENDPOINT` の差し替えのみで完結する設計
+- 移植期間中の二重稼働、フェイルオーバー、データ突合の運用ルールは TBD（11 章参照）
+
+---
+
+## 11. 将来の結果閲覧アプリ（HP マイページ拡張）— 制約条件のみ
+
+### 11.1 位置づけ
+
+| 項目 | 内容 |
+|---|---|
+| 名称 | 未定（仮称: Scan-Chat 結果閲覧アプリ） |
+| 開発時期 | **Scan-Chat-AI 本体の要件定義・実装完了後に着手** |
+| 詳細仕様 | **本書のスコープ外**。別途要件定義予定 |
+| 位置づけ | Wellfort HP マイページの拡張機能的位置づけ。Scan-Chat とは別アプリ |
+| 主要機能 | App-side `diagnosis_results` の閲覧（読み取り中心） |
+
+### 11.2 本書（Scan-Chat 要件定義）で守るべき設計制約
+
+将来の閲覧アプリが無理なく接続できるよう、Scan-Chat 側で**今のうちに**確保しておくべき設計事項のみ規定する。
+
+| 制約 | 理由 |
+|---|---|
+| `diagnosis_results` は `diagnosis_user_id` を owner key として持つ | 閲覧アプリが HP `customer_profiles.diagnosis_user_id` 経由で照会可能にするため |
+| `diagnosis_results` は read-only API を将来提供できるスキーマにする | 閲覧アプリは原則 read。書込は Scan-Chat の Edge Function 経由のみ |
+| `diagnosis_results` に **PII を非正規化して埋め込まない** | 閲覧アプリ側で HP `customer_profiles` から都度結合する想定 |
+| 結果データの versioning（schema_version カラム等）を持つ | Elith AI 出力スキーマの変化に閲覧アプリ側も追従できるよう |
+| 結果の表示順制御用に `created_at` / `display_order` を持つ | 時系列表示が確実にできるよう |
+| RLS は閲覧アプリ用の新 role を将来追加できる設計にする | 直接 Supabase 接続 / Edge Function 経由のどちらでも対応可能に |
+
+### 11.3 本書で意図的に未確定とする項目
+
+以下は閲覧アプリの要件定義時に確定するため、現段階では決めない。
+
+- 認証経路（Wellfort マイページのセッション継承 / 別途 Google ログイン / Supabase Auth 共有）
+- データ取得経路（App-side Supabase 直接 read / App-side Edge Function 経由 / GraphQL 等の仲介）
+- 実装基盤（Wellfort 同一リポジトリ拡張 / 別リポジトリ / Astro / Next.js 等）
+- 機能範囲（閲覧のみ / 共有 / PDF 出力 / 削除）
+- 通知（結果到着時の push / email）
+
+---
+
+## 12. 未確定事項（TBD）
 
 - [ ] App 内で表示する顧客情報の範囲（氏名のみ / 生年月日も / 住所も）
 - [ ] HP 側の「対象検査商品」の SKU 一覧（運用ルール）
@@ -315,26 +433,35 @@ HP_MYPAGE_ORDERS_URL=
 - [ ] HP 側 Supabase へのスキーマ追加（`diagnosis_user_id` カラム）は誰がいつ実施するか
 - [ ] `get-customer-profile` のキャッシュ TTL とキャッシュ無効化トリガ
 - [ ] 監査ログの保管期間と形式
+- [ ] Elith AI の API 仕様（同期/非同期、認証方式、レイテンシ、SLA）
+- [ ] Elith AI 出力スキーマ（`diagnosis_results` テーブル設計の前提）
+- [ ] Elith AI が Elith AWS → クライアント AWS へ移植される時期・切替手順
+- [ ] 移植期間中の二重稼働、フェイルオーバー、データ突合の運用ルール
+- [ ] 将来の結果閲覧アプリの認証経路・データ取得経路・実装基盤（→ Scan-Chat 完了後に別途要件定義）
 
 ---
 
-## 11. 関連実装ファイル（予定）
+## 13. 関連実装ファイル（予定）
 
 | ファイル | 役割 |
 |---|---|
 | `supabase/functions/verify-eligibility/index.ts` | 入場ゲート Edge Function |
 | `supabase/functions/get-customer-profile/index.ts` | HP 顧客情報取得 |
 | `supabase/functions/sync-customer-profile/index.ts` | 定期同期（将来） |
+| `supabase/functions/submit-to-diagnosis-ai/index.ts` | Elith AI への送信 (EF-5) |
+| `supabase/functions/diagnosis-ai-callback/index.ts` | Elith AI からの結果受信 (EF-6) |
 | `supabase/migrations/00001_app_users.sql` | App-side `app_users` テーブル定義 |
 | `supabase/migrations/00002_sessions_diagnosis_key.sql` | sessions 等を `diagnosis_user_id` 参照に統一 |
+| `supabase/migrations/00003_diagnosis_inputs_results.sql` | `diagnosis_inputs` / `diagnosis_results` テーブル定義（schema_version 等を含む） |
 | `src/lib/eligibility.ts` | Astro 側のラッパ（ログイン直後に EF-1 を呼ぶ） |
 | `src/pages/welcome.astro` | 不適格時のリダイレクト先解説ページ |
 | HP 側 マイグレーション SQL | `ALTER TABLE customer_profiles ADD diagnosis_user_id ...` |
 
 ---
 
-## 12. 変更履歴
+## 14. 変更履歴
 
 | バージョン | 日付 | 内容 |
 |---|---|---|
 | 0.1 | 2026-05-22 | 初版。App 専用 `diagnosis_user_id` で HP `customer_profiles` とリンクする方針を確定。入場ゲートは Wellfort EC での対象商品購入を必須に。Edge Function は App 側に集約 |
+| 0.2 | 2026-05-22 | 外部診断 AI（株式会社 Elith、東大松尾研母体、Elith AWS → クライアント AWS 移植予定）連携を 10 章として追加。診断結果は App-side Supabase `diagnosis_results` を一次ソースとする方針を明文化。将来の結果閲覧アプリ（HP マイページ拡張、Scan-Chat とは別アプリ、Scan-Chat 完了後に別途要件定義）向けの設計制約のみを 11 章として規定 |
