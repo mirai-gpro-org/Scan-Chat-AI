@@ -31,9 +31,9 @@ const ANALYZE_SYSTEM = `あなたはネイティブマルチモーダル AI と�
   value="8.1", flag="L", unit="g/dl", ref_low="13.7", ref_high="16.8" と分解。
 - 紙面に存在しない値・項目は出力しない（ハルシネーション禁止）。
   読めなければ value="" / confidence="low" でよい。
-- 印字も手書きもすべて漏らさず転記。手書きは kind="handwritten" で個別に格納。
+- 紙面にある全項目を漏らさず転記する（印字も手書きも、行数を恐れず全部）。
+  手書きは kind="handwritten" として個別アイテムに分けて格納。
 - 赤丸・下線・蛍光ペン等の強調は marked: true として示す。
-- 出力は最大 25 項目に抑える（重要・基準値外・手書き・強調を優先）。
 
 【出力 JSON】
 {
@@ -92,7 +92,8 @@ export const POST: APIRoute = async ({ request }) => {
     contents: [{ role: 'user' as const, parts: userParts }],
     generationConfig: {
       temperature: 0.0,
-      maxOutputTokens: 16384,
+      // 健診票は 30+ 項目 + 手書きメモがあると 32k トークン近くまで膨らむ
+      maxOutputTokens: 32768,
       responseMimeType: 'application/json',
       thinkingConfig: { thinkingBudget: 0 },
     },
