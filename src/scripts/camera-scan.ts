@@ -21,27 +21,19 @@
  * 同時にユーザー確認の単位 = 領域になる。
  */
 
-/** 1 領域分のメタ情報 (LLM の出力 JSON 内の各 region) */
-export interface RegionMeta {
+/** 1 領域分のデータ (LLM の出力 JSON 内の各 region) */
+export interface RegionResult {
   id: string;
   label: string;
-  /** 元画像座標系での 0-1000 正規化 bbox [ymin, xmin, ymax, xmax] */
-  bbox: [number, number, number, number];
   /** 表 or 自由テキスト */
   kind?: 'table' | 'notes';
-}
-
-/** 1 領域分の完成データ (メタ + 転記結果) */
-export interface RegionResult extends RegionMeta {
-  /** 切り出した画像 (UI 表示用) */
-  croppedImage?: string;
   /** kind=table のとき */
   cols?: string[];
   rows?: string[][];
   uncertain_rows?: number[];
   /** kind=notes のとき */
   text?: string;
-  /** その領域の生 raw / エラー */
+  /** その領域でエラーが出た時 */
   error?: string;
 }
 
@@ -219,7 +211,6 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
       const incomingRegions: Array<{
         id?: string;
         label?: string;
-        bbox?: [number, number, number, number];
         kind?: 'table' | 'notes';
         cols?: string[];
         rows?: string[][];
@@ -235,34 +226,19 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         return;
       }
 
-      // 各 region の bbox から画像を切り出して、UI 表示用に持たせる
-      // （これはクライアント側のみの処理で API は叩かない）
-      const regionsWithCrops: RegionResult[] = await Promise.all(
-        incomingRegions.map(async (region) => {
-          const bbox = region.bbox ?? [0, 0, 1000, 1000];
-          let croppedImage: string | undefined;
-          try {
-            croppedImage = await cropFromDataUrl(fullImage, bbox);
-          } catch {
-            croppedImage = undefined;
-          }
-          return {
-            id: region.id ?? '',
-            label: region.label ?? '',
-            bbox,
-            kind: region.kind,
-            cols: region.cols,
-            rows: region.rows,
-            uncertain_rows: region.uncertain_rows,
-            text: region.text,
-            croppedImage,
-          };
-        }),
-      );
+      const regions: RegionResult[] = incomingRegions.map((region) => ({
+        id: region.id ?? '',
+        label: region.label ?? '',
+        kind: region.kind,
+        cols: region.cols,
+        rows: region.rows,
+        uncertain_rows: region.uncertain_rows,
+        text: region.text,
+      }));
 
-      const totalItems = regionsWithCrops.reduce((sum, r) => sum + (r.rows?.length ?? 0), 0);
+      const totalItems = regions.reduce((sum, r) => sum + (r.rows?.length ?? 0), 0);
       const result: AnalyzeResult = {
-        regions: regionsWithCrops,
+        regions,
         fullImage,
         raw: typeof data.raw === 'string' ? data.raw : undefined,
         finishReason: typeof data.finishReason === 'string' ? data.finishReason : undefined,
@@ -270,7 +246,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
       setState(stream ? 'running' : 'idle');
       setStatus(
         totalItems
-          ? `${regionsWithCrops.length} 領域 / ${totalItems} 項目を読み取りました`
+          ? `${regions.length} 領域 / ${totalItems} 項目を読み取りました`
           : '解析が完了しました',
       );
       refs.onAnalyze?.(result);
@@ -462,41 +438,6 @@ function summarizeGoogleError(detail: string): string {
   }
 }
 
-/**
- * dataURL の画像を、0-1000 正規化された bbox 領域だけ切り出して
- * 新しい dataURL を返す。並列分割パイプライン Phase 2 で使用。
- */
-async function cropFromDataUrl(
-  dataUrl: string,
-  bbox: [number, number, number, number],
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = (): void => {
-      const [ymin, xmin, ymax, xmax] = bbox;
-      const sx = Math.max(0, (xmin / 1000) * img.naturalWidth);
-      const sy = Math.max(0, (ymin / 1000) * img.naturalHeight);
-      const sw = Math.min(img.naturalWidth - sx, ((xmax - xmin) / 1000) * img.naturalWidth);
-      const sh = Math.min(img.naturalHeight - sy, ((ymax - ymin) / 1000) * img.naturalHeight);
-      if (sw <= 0 || sh <= 0) {
-        reject(new Error('invalid bbox dimensions'));
-        return;
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(sw);
-      canvas.height = Math.round(sh);
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        reject(new Error('canvas context unavailable'));
-        return;
-      }
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-      resolve(canvas.toDataURL('image/jpeg', 0.85));
-    };
-    img.onerror = (): void => reject(new Error('image load failed'));
-    img.src = dataUrl;
-  });
-}
 
 /**
  * fetch のレスポンスを安全に JSON として読む。

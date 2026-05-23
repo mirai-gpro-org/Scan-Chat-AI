@@ -14,12 +14,19 @@ export const MODELS = {
 
 const ENDPOINT_BASE =
   'https://generativelanguage.googleapis.com/v1beta/models';
+const FILES_UPLOAD_ENDPOINT =
+  'https://generativelanguage.googleapis.com/upload/v1beta/files';
 
 export interface GeminiPart {
   text?: string;
   inline_data?: {
     mime_type: string;
     data: string; // base64
+  };
+  /** Files API 経由でアップロード済みファイルへの参照 */
+  file_data?: {
+    mime_type: string;
+    file_uri: string;
   };
 }
 
@@ -167,4 +174,78 @@ export function stripJsonCodeFence(text: string): string {
   const t = text.trim();
   const m = /^```(?:json)?\s*\r?\n?([\s\S]*?)\r?\n?```$/i.exec(t);
   return m ? m[1].trim() : t;
+}
+
+export interface GeminiFileRef {
+  uri: string;
+  mimeType: string;
+  name: string;
+}
+
+/**
+ * 画像バイナリを Gemini Files API にアップロードして file URI を返す。
+ * Base64 inline と比べ:
+ *   - JSON body 経由でない（バイナリ直送）
+ *   - リクエストボディが 1/4 程度（base64 拡張なし）
+ *   - Gemini 側の入力パースが早い（メディア専用パイプライン）
+ * Files は 48h 後に自動失効するので明示削除は不要。
+ */
+export async function uploadGeminiFile(
+  apiKey: string,
+  bytes: Uint8Array,
+  mimeType: string,
+  displayName = 'scan',
+): Promise<GeminiFileRef> {
+  if (!apiKey) {
+    throw new GeminiError('GEMINI_API_KEY is not configured', 500, '');
+  }
+  // resumable upload: start でセッション URL を取得 → finalize でバイナリ送信
+  const startRes = await fetch(
+    `${FILES_UPLOAD_ENDPOINT}?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: 'POST',
+      headers: {
+        'X-Goog-Upload-Protocol': 'resumable',
+        'X-Goog-Upload-Command': 'start',
+        'X-Goog-Upload-Header-Content-Length': String(bytes.byteLength),
+        'X-Goog-Upload-Header-Content-Type': mimeType,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ file: { display_name: displayName } }),
+    },
+  );
+  if (!startRes.ok) {
+    const text = await startRes.text().catch(() => '');
+    throw new GeminiError(`File upload start failed: ${startRes.status}`, startRes.status, text);
+  }
+  const uploadUrl = startRes.headers.get('x-goog-upload-url');
+  if (!uploadUrl) {
+    throw new GeminiError('File upload start: missing X-Goog-Upload-URL', 502, '');
+  }
+
+  const uploadRes = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Length': String(bytes.byteLength),
+      'X-Goog-Upload-Offset': '0',
+      'X-Goog-Upload-Command': 'upload, finalize',
+    },
+    // Uint8Array.buffer は ArrayBuffer なので BodyInit として受理される
+    body: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+  });
+  if (!uploadRes.ok) {
+    const text = await uploadRes.text().catch(() => '');
+    throw new GeminiError(`File upload failed: ${uploadRes.status}`, uploadRes.status, text);
+  }
+  const meta = (await uploadRes.json()) as {
+    file?: { uri?: string; mimeType?: string; name?: string };
+  };
+  if (!meta?.file?.uri) {
+    throw new GeminiError('File upload: no uri in response', 502, JSON.stringify(meta));
+  }
+  return {
+    uri: meta.file.uri,
+    mimeType: meta.file.mimeType ?? mimeType,
+    name: meta.file.name ?? '',
+  };
 }

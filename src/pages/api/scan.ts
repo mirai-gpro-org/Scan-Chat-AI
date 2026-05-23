@@ -4,6 +4,7 @@ import {
   MODELS,
   extractText,
   stripJsonCodeFence,
+  uploadGeminiFile,
   GeminiError,
   type GeminiContent,
 } from '../../lib/gemini';
@@ -48,6 +49,7 @@ const ANALYZE_SYSTEM = `検査表・診断結果報告書の画像を、紙面�
 - 不明な値は推測で埋めない。読めなければ値を "" にし、その行 index を
   uncertain_rows に入れる。行ごと判読不能なら出力しない。
 - 紙面に無い項目・列を作らない（ハルシネーション禁止）。
+- 座標値（bbox）は出力しない。位置情報は不要、内容の転記に集中する。
 
 【領域分け】
 紙面を 2〜4 個の領域に分けて返す。表 1 つ / 手書きメモ等が 1 領域。
@@ -59,7 +61,6 @@ const ANALYZE_SYSTEM = `検査表・診断結果報告書の画像を、紙面�
     {
       "id": "left_table",                          // 英数字 ID
       "label": "左側検査値表",                      // 短い日本語ラベル
-      "bbox": [ymin, xmin, ymax, xmax],            // 領域 bbox 0-1000 正規化
       "kind": "table" | "notes",                   // 表 or 自由テキスト
       "cols": ["列1","列2", ...],                  // table のとき紙面の列見出し
       "rows": [["値","値", ...], ...],             // table のとき各行 cols 順
@@ -90,14 +91,13 @@ const ANALYZE_RESPONSE_SCHEMA: Record<string, unknown> = {
         properties: {
           id: { type: 'string' },
           label: { type: 'string' },
-          bbox: { type: 'array', items: { type: 'number' } },
           kind: { type: 'string', enum: ['table', 'notes'] },
           cols: { type: 'array', items: { type: 'string' } },
           rows: { type: 'array', items: { type: 'array', items: { type: 'string' } } },
           uncertain_rows: { type: 'array', items: { type: 'number' } },
           text: { type: 'string' },
         },
-        required: ['id', 'label', 'bbox', 'kind'],
+        required: ['id', 'label', 'kind'],
       },
     },
   },
@@ -123,43 +123,52 @@ export const POST: APIRoute = async ({ request }) => {
 
   const mode: ScanMode = body.mode === 'detect' ? 'detect' : 'analyze';
   const { mime, data } = parseDataUrl(body.image);
-  const userParts: GeminiContent['parts'] = [
-    { inline_data: { mime_type: mime, data } },
-    {
-      text:
-        mode === 'detect'
-          ? '画像から項目を検知し bbox 配列を返してください。'
-          : body.hint
-            ? `補足: ${body.hint}\nこの紙面を読み取って JSON に転記してください。`
-            : 'この紙面を読み取って JSON に転記してください。',
-    },
-  ];
+  const apiKey = import.meta.env.GEMINI_API_KEY;
 
   try {
-    const res = await callGemini(import.meta.env.GEMINI_API_KEY, {
-      systemInstruction: {
-        parts: [{ text: mode === 'detect' ? DETECT_SYSTEM : ANALYZE_SYSTEM }],
+    // === 画像転送: Files API ===
+    // Base64 inline で送ると JSON body が ~400KB に膨れ、Vercel/Google の
+    // パース層で大幅な遅延を起こす（公式ガイダンスでも非推奨）。
+    // 一度バイナリで Files API にアップロードしてから fileUri 参照する。
+    const bytes = base64ToBytes(data);
+    const file = await uploadGeminiFile(apiKey, bytes, mime, 'scan');
+
+    const userParts: GeminiContent['parts'] = [
+      { file_data: { mime_type: file.mimeType, file_uri: file.uri } },
+      {
+        text:
+          mode === 'detect'
+            ? '画像から項目を検知してください。'
+            : body.hint
+              ? `補足: ${body.hint}\nこの紙面を読み取って JSON に転記してください。`
+              : 'この紙面を読み取って JSON に転記してください。',
       },
-      contents: [{ role: 'user', parts: userParts }],
-      generationConfig: {
-        temperature: mode === 'detect' ? 0.1 : 0.2,
-        maxOutputTokens: mode === 'detect' ? 2048 : 32768,
-        responseMimeType: 'application/json',
-        // 転記タスクに thinking は不要。ON にすると 32k 予算の大半を
-        // 思考過程が食い、出力が早期に MAX_TOKENS で切られる。
-        thinkingConfig: { thinkingBudget: 0 },
-        // responseSchema で出力構造を強制 → モデルが「どう書くか」に
-        // 迷わなくなり、生成が安定 & 高速化する (detect はシンプルなので付けない)。
-        ...(mode === 'detect' ? {} : { responseSchema: ANALYZE_RESPONSE_SCHEMA }),
+    ];
+
+    const res = await callGemini(
+      apiKey,
+      {
+        systemInstruction: {
+          parts: [{ text: mode === 'detect' ? DETECT_SYSTEM : ANALYZE_SYSTEM }],
+        },
+        contents: [{ role: 'user', parts: userParts }],
+        generationConfig: {
+          temperature: mode === 'detect' ? 0.1 : 0.2,
+          maxOutputTokens: mode === 'detect' ? 2048 : 32768,
+          responseMimeType: 'application/json',
+          thinkingConfig: { thinkingBudget: 0 },
+          ...(mode === 'detect' ? {} : { responseSchema: ANALYZE_RESPONSE_SCHEMA }),
+        },
       },
-    }, MODELS.scan);
+      MODELS.scan,
+    );
     const raw = extractText(res);
     const cleaned = stripJsonCodeFence(raw);
     let parsed: unknown = null;
     try {
       parsed = JSON.parse(cleaned);
     } catch {
-      // 構造化失敗時は raw を返してフロントで対応
+      /* 構造化失敗時は raw を返してフロントで対応 */
     }
     const finishReason = res.candidates?.[0]?.finishReason;
     return json({ mode, raw, json: parsed, finishReason });
@@ -167,6 +176,17 @@ export const POST: APIRoute = async ({ request }) => {
     return handleGeminiError(err);
   }
 };
+
+function base64ToBytes(b64: string): Uint8Array {
+  // Node.js (Vercel Serverless) では Buffer が使えるので最速。
+  if (typeof Buffer !== 'undefined') {
+    return new Uint8Array(Buffer.from(b64, 'base64'));
+  }
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {

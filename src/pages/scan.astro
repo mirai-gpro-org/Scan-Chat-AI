@@ -296,10 +296,6 @@ import ScanOverlay from '../components/ScanOverlay.astro';
         <pre class="whitespace-pre-wrap rounded bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-900/30 dark:text-amber-100">${escapeHtml(region.text)}</pre>`
         : '';
 
-    const cropImg = region.croppedImage
-      ? `<img src="${region.croppedImage}" alt="${escapeHtml(region.label)}" class="block w-full rounded border border-slate-200 dark:border-slate-700" />`
-      : '';
-
     const summary =
       region.kind === 'notes'
         ? `自由テキスト ${region.text?.length ?? 0} 字`
@@ -315,12 +311,9 @@ import ScanOverlay from '../components/ScanOverlay.astro';
             ${STATUS_LABEL[status]} · ${summary}
           </span>
         </header>
-        <div class="grid grid-cols-1 gap-3 md:grid-cols-[180px_1fr] md:gap-4">
-          <div>${cropImg}</div>
-          <div class="min-w-0 space-y-2">
-            ${errorBlock}
-            ${tableBlock || notesBlock || (region.error ? '' : '<p class="text-xs text-slate-500">内容なし</p>')}
-          </div>
+        <div class="min-w-0 space-y-2">
+          ${errorBlock}
+          ${tableBlock || notesBlock || (region.error ? '' : '<p class="text-xs text-slate-500">内容なし</p>')}
         </div>
       </article>
     `;
@@ -358,14 +351,7 @@ import ScanOverlay from '../components/ScanOverlay.astro';
     finishEl.classList.toggle('bg-rose-200', hasBadFinish);
     finishEl.classList.toggle('text-rose-900', hasBadFinish);
 
-    // Parsed result: croppedImage を除外して構造を見やすく
-    const stripped = {
-      regions: regions.map((reg) => {
-        const { croppedImage: _ci, ...rest } = reg;
-        return rest;
-      }),
-    };
-    ($('scan-result') as HTMLPreElement).textContent = JSON.stringify(stripped, null, 2);
+    ($('scan-result') as HTMLPreElement).textContent = JSON.stringify({ regions }, null, 2);
   }
 
   document.addEventListener('DOMContentLoaded', () => {
