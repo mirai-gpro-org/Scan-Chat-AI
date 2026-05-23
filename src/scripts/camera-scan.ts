@@ -170,15 +170,29 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
           hint: refs.hint?.value?.trim() || '',
         }),
       });
-      const data = (await res.json()) as {
+      // Vercel タイムアウトやプロキシ層エラーで body が JSON でないことがあるので
+      // text → JSON.parse の順で安全に拾う。
+      const responseText = await res.text();
+      let data: {
         raw?: string;
         json?: AnalyzeResult;
-        error?: string;
+        error?: unknown;
         detail?: string;
         finishReason?: string;
-      };
+      } = {};
+      try {
+        data = JSON.parse(responseText) as typeof data;
+      } catch {
+        data = { error: responseText.slice(0, 500) };
+      }
       if (!res.ok) {
-        const msg = `解析エラー (${res.status}): ${data.error ?? '不明'}${
+        const errorText =
+          typeof data.error === 'string'
+            ? data.error
+            : data.error
+              ? JSON.stringify(data.error)
+              : responseText.slice(0, 200) || '不明';
+        const msg = `解析エラー (${res.status}): ${errorText}${
           data.detail ? `\n${summarizeGoogleError(data.detail)}` : ''
         }`;
         setStatus(msg);
