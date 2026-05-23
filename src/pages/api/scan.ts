@@ -118,6 +118,9 @@ export const POST: APIRoute = async ({ request }) => {
         temperature: mode === 'detect' ? 0.1 : 0.2,
         maxOutputTokens: mode === 'detect' ? 2048 : 32768,
         responseMimeType: 'application/json',
+        // 転記タスクに thinking は不要。ON にすると 32k 予算の大半を
+        // 思考過程が食い、出力が早期に MAX_TOKENS で切られる。
+        thinkingConfig: { thinkingBudget: 0 },
       },
     }, MODELS.scan);
     const raw = extractText(res);
