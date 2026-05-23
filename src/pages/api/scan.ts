@@ -1,9 +1,7 @@
 import type { APIRoute } from 'astro';
 import {
-  callGemini,
   streamGemini,
   MODELS,
-  extractText,
   stripJsonCodeFence,
   GeminiError,
   type GeminiContent,
@@ -11,35 +9,12 @@ import {
 
 export const prerender = false;
 
-type ScanMode = 'detect' | 'analyze';
-
 interface ScanRequestBody {
   /** data: URL もしくは生 base64 */
   image: string;
   /** 補足プロンプト（部位・状況など） */
   hint?: string;
-  /**
-   * detect: AR 用の軽量 bbox 検知（連続呼出）
-   * analyze: 撮影確定時のネイティブマルチモーダル抽出（既定）
-   */
-  mode?: ScanMode;
 }
-
-const DETECT_SYSTEM = `あなたは医療文書スキャン補助 AI です。
-入力画像から検査値・項目ラベル・手書きメモを検知し、各バウンディングボックスを返してください。
-出力は以下の JSON スキーマに厳密に従ってください:
-{
-  "items": [
-    {
-      "label": string,            // 項目名（例: 血圧、Hb、所見）
-      "value": string,            // 認識した値（手書きで判読不能なら空文字）
-      "bbox": [number, number, number, number], // [ymin, xmin, ymax, xmax] 0-1000 で正規化
-      "confidence": "high" | "low", // low は手書き / かすれ等
-      "kind": "printed" | "handwritten"
-    }
-  ]
-}
-JSON 以外の文字（前後のコメントや code fence）は出力しないこと。最大 12 項目まで。`;
 
 const ANALYZE_SYSTEM = `あなたはネイティブマルチモーダル AI として、医療検査結果用紙の画像を
 「視覚」と「言語」を同時に用いて理解し、紙面に存在する値だけを構造化 JSON
@@ -69,6 +44,10 @@ const ANALYZE_SYSTEM = `あなたはネイティブマルチモーダル AI と�
 4. 赤丸・下線・蛍光ペン等で強調されている項目は marked: true としてください。
 5. 解釈や臨床コメントは絶対に出力しない（observations / urgent / priority などは
    このアプリのスキーマには存在しません）。
+6. bbox は **「結果列の値そのもの」を囲む** ように指定してください。
+   行全体や複数列にまたがる広い枠ではなく、value テキストの周辺だけを
+   正規化座標 0-1000 で [ymin, xmin, ymax, xmax] として返します。
+   オーバーレイ表示の精度に直結するので妥協しないこと。
 
 【出力 JSON】
 {
@@ -83,7 +62,7 @@ const ANALYZE_SYSTEM = `あなたはネイティブマルチモーダル AI と�
       "ref_low": string,       // 下限値。無ければ ""
       "ref_high": string,      // 上限値。無ければ ""
       "marked": boolean,       // 赤丸・下線・蛍光等の強調マークの有無
-      "bbox": [number, number, number, number], // [ymin, xmin, ymax, xmax] 0-1000 正規化
+      "bbox": [number, number, number, number], // [ymin, xmin, ymax, xmax] 0-1000 正規化（value 周辺）
       "confidence": "high" | "low",
       "kind": "printed" | "handwritten"
     }
@@ -108,54 +87,32 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ error: 'image is required (data URL or base64)' }, 400);
   }
 
-  const mode: ScanMode = body.mode === 'detect' ? 'detect' : 'analyze';
   const { mime, data } = parseDataUrl(body.image);
   const userParts: GeminiContent['parts'] = [
     { inline_data: { mime_type: mime, data } },
     {
-      text:
-        mode === 'detect'
-          ? '画像から項目を検知し bbox 配列を返してください。'
-          : body.hint
-            ? `補足: ${body.hint}`
-            : '紙面の全項目を、画像理解で「結果列」を正確に弁別したうえで JSON に転記してください。',
+      text: body.hint
+        ? `補足: ${body.hint}`
+        : '紙面の全項目を、画像理解で「結果列」を正確に弁別したうえで JSON に転記してください。',
     },
   ];
 
-  // analyze は表構造の視覚理解精度を優先して gemini-2.5-pro、
-  // detect は連続検知用に軽量 flash を継続使用。
-  // pro の思考予算を絞ることで応答速度を確保（典型 8-15s 想定）。
-  const model = mode === 'detect' ? MODELS.scan : MODELS.scanPrecise;
+  // 表構造の視覚理解精度を優先して gemini-2.5-pro を使用。
+  // 思考予算を絞ることで応答速度を確保（典型 8-15s 想定）。
+  const model = MODELS.scanPrecise;
   const apiKey = import.meta.env.GEMINI_API_KEY;
   const geminiRequest = {
-    systemInstruction: {
-      parts: [{ text: mode === 'detect' ? DETECT_SYSTEM : ANALYZE_SYSTEM }],
-    },
+    systemInstruction: { parts: [{ text: ANALYZE_SYSTEM }] },
     contents: [{ role: 'user' as const, parts: userParts }],
     generationConfig: {
-      temperature: mode === 'detect' ? 0.1 : 0.0,
-      maxOutputTokens: mode === 'detect' ? 2048 : 16384,
+      temperature: 0.0,
+      maxOutputTokens: 16384,
       responseMimeType: 'application/json',
-      thinkingConfig: { thinkingBudget: mode === 'detect' ? 0 : 1024 },
+      thinkingConfig: { thinkingBudget: 1024 },
     },
   };
 
-  // detect は連続呼出なのでストリーミングしない（一括 JSON 応答）。
-  if (mode === 'detect') {
-    try {
-      const res = await callGemini(apiKey, geminiRequest, model);
-      const raw = extractText(res);
-      const cleaned = stripJsonCodeFence(raw);
-      let parsed: unknown = null;
-      try { parsed = JSON.parse(cleaned); } catch { /* noop */ }
-      const finishReason = res.candidates?.[0]?.finishReason;
-      return json({ mode, model, raw, json: parsed, finishReason });
-    } catch (err) {
-      return handleGeminiError(err);
-    }
-  }
-
-  // analyze: NDJSON でストリーミング (chunked)。
+  // NDJSON でストリーミング (chunked)。
   // クライアントは 1 行ずつ JSON.parse して進捗 / 最終結果を扱う。
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -204,11 +161,4 @@ function json(data: unknown, status = 200): Response {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8' },
   });
-}
-
-function handleGeminiError(err: unknown): Response {
-  if (err instanceof GeminiError) {
-    return json({ error: err.message, detail: err.body }, err.status >= 400 ? err.status : 500);
-  }
-  return json({ error: 'Unexpected error', detail: String(err) }, 500);
 }

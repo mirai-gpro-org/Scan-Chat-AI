@@ -1,6 +1,5 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
-import ScanOverlay from '../components/ScanOverlay.astro';
 ---
 
 <BaseLayout title="スキャン | Scan-Chat Medical AI">
@@ -15,7 +14,7 @@ import ScanOverlay from '../components/ScanOverlay.astro';
   <main class="mx-auto flex w-full max-w-3xl flex-1 flex-col px-5 pb-8 md:max-w-6xl">
 
     <!-- ============================================================== -->
-    <!-- パネル: ready（カメラ起動前のオンボーディング）                  -->
+    <!-- パネル: ready                                                   -->
     <!-- ============================================================== -->
     <section id="panel-ready" class="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center gap-6 text-center md:max-w-lg md:gap-8">
       <div class="flex h-24 w-24 items-center justify-center rounded-3xl bg-brand-50 text-5xl dark:bg-brand-600/10 md:h-32 md:w-32 md:text-6xl">
@@ -44,7 +43,7 @@ import ScanOverlay from '../components/ScanOverlay.astro';
     </section>
 
     <!-- ============================================================== -->
-    <!-- パネル: active / busy（カメラ起動中・解析中）                   -->
+    <!-- パネル: active / busy                                           -->
     <!-- ============================================================== -->
     <section id="panel-active" class="mx-auto flex w-full max-w-xl flex-1 flex-col gap-4 md:max-w-3xl" hidden>
       <div class="relative aspect-[3/4] w-full overflow-hidden rounded-2xl bg-black md:aspect-[4/3]">
@@ -54,19 +53,10 @@ import ScanOverlay from '../components/ScanOverlay.astro';
           playsinline
           muted
           autoplay></video>
-        <ScanOverlay id="scan-overlay" />
         <canvas id="scan-canvas" class="hidden"></canvas>
 
         <!-- 撮影ガイド枠 -->
         <div class="pointer-events-none absolute inset-4 rounded-xl border-2 border-white/70 md:inset-6"></div>
-
-        <!-- 信頼度の凡例 -->
-        <div class="pointer-events-none absolute left-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-xs text-white backdrop-blur-sm md:left-4 md:top-4 md:px-3 md:py-1.5 md:text-sm">
-          <span class="mr-1 inline-block h-2 w-2 rounded-full bg-emerald-400 align-middle"></span>
-          高信頼
-          <span class="ml-2 mr-1 inline-block h-2 w-2 rounded-full bg-amber-300 align-middle"></span>
-          要確認
-        </div>
 
         <!-- 解析中オーバーレイ（ストリーミング進捗付き）-->
         <div id="busy-overlay" class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/60 text-white backdrop-blur-sm md:gap-4" hidden>
@@ -77,16 +67,7 @@ import ScanOverlay from '../components/ScanOverlay.astro';
       </div>
 
       <!-- セカンダリ操作行 -->
-      <div class="flex items-center justify-between gap-2 md:gap-3">
-        <label class="inline-flex items-center gap-2 text-sm md:text-base">
-          <input
-            id="scan-detect-toggle"
-            type="checkbox"
-            class="h-4 w-4 rounded border-slate-400 text-brand-600 focus:ring-brand-500 md:h-5 md:w-5"
-            checked
-          />
-          AR 検知
-        </label>
+      <div class="flex items-center justify-end gap-2 md:gap-3">
         <button id="hint-toggle" type="button" class="chip text-xs md:text-sm">
           💡 補足を追加
         </button>
@@ -98,21 +79,20 @@ import ScanOverlay from '../components/ScanOverlay.astro';
           id="scan-hint"
           type="text"
           class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 md:text-base"
-          placeholder="例: 右前腕、3 日前から赤み"
+          placeholder="例: 化学療法前の血液検査結果"
           maxlength="200"
         />
       </div>
 
       <p id="scan-status" class="min-h-5 text-center text-xs text-slate-500 dark:text-slate-400 md:text-sm" aria-live="polite"></p>
 
-      <!-- プライマリ CTA -->
       <button id="scan-shot" class="btn-primary !py-4 text-lg md:!py-5 md:text-xl">
         📷 撮影 & 解析
       </button>
     </section>
 
     <!-- ============================================================== -->
-    <!-- パネル: result（解析結果・タブレットでは 2 カラム）             -->
+    <!-- パネル: result（撮影画像にピンを重ねて、リストと双方向ハイライト）-->
     <!-- ============================================================== -->
     <section id="panel-result" class="flex flex-1 flex-col gap-4 md:gap-6" hidden>
       <div class="flex items-center gap-3 rounded-2xl bg-emerald-50 px-4 py-3 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200 md:px-5 md:py-4">
@@ -120,19 +100,38 @@ import ScanOverlay from '../components/ScanOverlay.astro';
         <p id="result-count" class="text-sm font-semibold md:text-base">解析が完了しました</p>
       </div>
 
+      <!-- フィルタチップ -->
+      <div class="flex flex-wrap items-center gap-1.5 text-xs md:gap-2 md:text-sm">
+        <span class="text-slate-500">表示:</span>
+        <button data-filter="all" class="chip chip-on" type="button">すべて</button>
+        <button data-filter="marked" class="chip" type="button">⬤ 強調</button>
+        <button data-filter="flag" class="chip" type="button">H / L</button>
+        <button data-filter="handwritten" class="chip" type="button">✍ 手書</button>
+        <button data-filter="low" class="chip" type="button">要確認</button>
+      </div>
+
       <!-- 2 カラム: タブレット以上で画像と項目を横並びに -->
-      <div class="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] md:gap-6">
-        <!-- 左: 撮影画像プレビュー（ベリファイ用に紙原本と並べて見られる） -->
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] md:gap-6">
+        <!-- 左: 撮影画像 + ピン/bbox オーバーレイ -->
         <section class="card !p-3 md:sticky md:top-4 md:self-start md:!p-4">
-          <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 md:text-sm">
-            撮影画像（原本との照合用）
+          <h3 class="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500 md:text-sm">
+            <span>撮影画像（原本との照合用）</span>
+            <span class="text-[10px] font-normal normal-case text-slate-400 md:text-xs">タップで詳細</span>
           </h3>
-          <div class="overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-900">
+          <div id="result-image-wrap" class="relative overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-900">
             <img id="result-image" alt="撮影した検査用紙" class="block w-full" />
+            <!-- ピン/bbox の DOM はここに JS で挿入される -->
+            <div id="result-overlay" class="pointer-events-none absolute inset-0"></div>
+          </div>
+          <!-- 凡例 -->
+          <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500 md:mt-3 md:text-xs">
+            <span class="inline-flex items-center gap-1"><span class="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500"></span>印字</span>
+            <span class="inline-flex items-center gap-1"><span class="inline-block h-2.5 w-2.5 rounded-full bg-amber-500"></span>手書</span>
+            <span class="inline-flex items-center gap-1"><span class="inline-block h-2.5 w-2.5 rounded-full bg-rose-500"></span>強調マーク</span>
           </div>
         </section>
 
-        <!-- 右: 認識項目 -->
+        <!-- 右: 認識項目リスト（ピン番号付き） -->
         <section class="card !p-0">
           <h3 class="border-b border-slate-100 px-4 py-3 text-sm font-semibold dark:border-slate-800 md:px-5 md:py-4 md:text-base">
             認識項目
@@ -144,7 +143,7 @@ import ScanOverlay from '../components/ScanOverlay.astro';
       </div>
 
       <!-- Raw JSON（開発用） -->
-      <details open class="rounded-2xl border border-dashed border-slate-300 p-3 dark:border-slate-700 md:p-4">
+      <details class="rounded-2xl border border-dashed border-slate-300 p-3 dark:border-slate-700 md:p-4">
         <summary class="cursor-pointer text-xs font-medium text-slate-500 md:text-sm">詳細データ (JSON)</summary>
         <div class="mt-2 space-y-3 md:mt-3">
           <div>
@@ -190,6 +189,25 @@ import ScanOverlay from '../components/ScanOverlay.astro';
   </main>
 </BaseLayout>
 
+<style>
+  /* ピンと bbox の色分けは Tailwind の通常クラスでまかなえるが、
+     ハイライト時のアニメ等で扱いやすいよう一部だけ宣言 */
+  .pin-highlight {
+    transform: translate(-50%, -50%) scale(1.25);
+    z-index: 30;
+  }
+  .bbox-highlight {
+    outline: 3px solid currentColor;
+    outline-offset: -1px;
+  }
+  .item-highlight {
+    background-color: rgb(254 252 232 / 0.7);
+  }
+  :is(.dark) .item-highlight {
+    background-color: rgb(120 53 15 / 0.35);
+  }
+</style>
+
 <script>
   import { initCameraScan } from '../scripts/camera-scan';
   import type { AnalyzeResult, ScanItem, ScanState } from '../scripts/camera-scan';
@@ -222,7 +240,43 @@ import ScanOverlay from '../components/ScanOverlay.astro';
       .replace(/"/g, '&quot;');
   }
 
-  function renderItem(it: ScanItem): string {
+  // item の "色グループ" を決める（marked > handwritten > printed の優先度）
+  type ColorGroup = 'marked' | 'handwritten' | 'printed';
+  function colorOf(it: ScanItem): ColorGroup {
+    if (it.marked) return 'marked';
+    if (it.kind === 'handwritten') return 'handwritten';
+    return 'printed';
+  }
+
+  // Tailwind の色をグループから取得
+  const COLOR_CLASSES: Record<ColorGroup, {
+    pinBg: string; pinText: string; bboxBorder: string; bboxBg: string; ringText: string;
+  }> = {
+    marked: {
+      pinBg: 'bg-rose-500',
+      pinText: 'text-white',
+      bboxBorder: 'border-rose-500/80',
+      bboxBg: 'bg-rose-500/10',
+      ringText: 'text-rose-500',
+    },
+    handwritten: {
+      pinBg: 'bg-amber-500',
+      pinText: 'text-white',
+      bboxBorder: 'border-amber-500/80',
+      bboxBg: 'bg-amber-500/10',
+      ringText: 'text-amber-500',
+    },
+    printed: {
+      pinBg: 'bg-emerald-600',
+      pinText: 'text-white',
+      bboxBorder: 'border-emerald-500/70',
+      bboxBg: 'bg-emerald-500/10',
+      ringText: 'text-emerald-500',
+    },
+  };
+
+  function renderItem(it: ScanItem, idx: number): string {
+    const c = COLOR_CLASSES[colorOf(it)];
     const handwritten = it.kind === 'handwritten';
     const lowConf = it.confidence === 'low';
     const flagBadge =
@@ -250,28 +304,140 @@ import ScanOverlay from '../components/ScanOverlay.astro';
     const labelDetail = it.label_detail
       ? `<span class="ml-1 text-xs text-slate-500 md:text-sm">${escapeHtml(it.label_detail)}</span>`
       : '';
-    const no = it.no
-      ? `<span class="mr-1 inline-block w-6 text-right text-[10px] text-slate-400 md:w-8 md:text-xs">${escapeHtml(it.no)}</span>`
-      : '';
     const valueDisplay = it.value
       ? `<span class="text-base font-semibold md:text-lg">${escapeHtml(it.value)}</span>${unit}`
       : '<span class="italic text-slate-400">（読み取り不可）</span>';
+    // ピン番号（リスト先頭のチップ）
+    const pin = `<span class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${c.pinBg} text-[10px] font-bold ${c.pinText} md:h-7 md:w-7 md:text-xs">${idx + 1}</span>`;
     return `
-      <li class="px-4 py-3 md:px-5 md:py-4">
+      <li class="cursor-pointer px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 md:px-5 md:py-4" data-item-no="${idx}">
         <div class="flex flex-wrap items-center gap-1.5 md:gap-2">
-          ${no}
+          ${pin}
           <p class="min-w-0 flex-1 truncate text-sm font-medium md:text-base">${escapeHtml(it.label)}${labelDetail}</p>
           ${flagBadge}
           ${kindBadge}
           ${markedBadge}
           ${confBadge}
         </div>
-        <div class="mt-1 flex flex-wrap items-baseline justify-between gap-3 pl-7 md:pl-9">
+        <div class="mt-1 flex flex-wrap items-baseline justify-between gap-3 pl-8 md:pl-9">
           <div>${valueDisplay}</div>
           ${ref}
         </div>
       </li>
     `;
+  }
+
+  function renderOverlay(items: ScanItem[]): void {
+    const overlay = $('result-overlay');
+    overlay.innerHTML = items
+      .map((it, idx) => {
+        const [ymin, xmin, ymax, xmax] = it.bbox;
+        // 0-1000 正規化座標 → % 指定。CSS が画像のアスペクト比に追従する
+        const left = (xmin / 1000) * 100;
+        const top = (ymin / 1000) * 100;
+        const width = ((xmax - xmin) / 1000) * 100;
+        const height = ((ymax - ymin) / 1000) * 100;
+        const cx = ((xmin + xmax) / 2 / 1000) * 100;
+        const cy = ((ymin + ymax) / 2 / 1000) * 100;
+        const c = COLOR_CLASSES[colorOf(it)];
+        return `
+          <div class="bbox pointer-events-none absolute rounded-sm border ${c.bboxBorder} ${c.bboxBg} transition-all"
+               data-item-no="${idx}"
+               style="left:${left}%;top:${top}%;width:${width}%;height:${height}%;"></div>
+          <button type="button"
+                  class="pin pointer-events-auto absolute inline-flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full ${c.pinBg} text-[11px] font-bold ${c.pinText} shadow-md ring-2 ring-white transition-transform hover:scale-110 md:h-8 md:w-8 md:text-xs"
+                  data-item-no="${idx}"
+                  style="left:${cx}%;top:${cy}%;"
+                  aria-label="項目 ${idx + 1}: ${escapeHtml(it.label)}">${idx + 1}</button>
+        `;
+      })
+      .join('');
+  }
+
+  let currentHighlight: number | null = null;
+
+  function setHighlight(no: number | null): void {
+    // 既存ハイライトを解除
+    document
+      .querySelectorAll<HTMLElement>('.pin-highlight, .bbox-highlight, .item-highlight')
+      .forEach((el) => {
+        el.classList.remove('pin-highlight', 'bbox-highlight', 'item-highlight');
+      });
+    currentHighlight = no;
+    if (no === null) return;
+    document
+      .querySelectorAll<HTMLElement>(`[data-item-no="${no}"]`)
+      .forEach((el) => {
+        if (el.classList.contains('pin')) el.classList.add('pin-highlight');
+        else if (el.classList.contains('bbox')) el.classList.add('bbox-highlight');
+        else el.classList.add('item-highlight');
+      });
+  }
+
+  function attachInteractions(items: ScanItem[]): void {
+    // ピン: タップで対応するリスト項目にスクロール
+    document.querySelectorAll<HTMLElement>('.pin').forEach((pin) => {
+      const no = Number(pin.dataset.itemNo);
+      pin.addEventListener('mouseenter', () => setHighlight(no));
+      pin.addEventListener('click', () => {
+        setHighlight(no);
+        const li = document.querySelector<HTMLElement>(`#items-list [data-item-no="${no}"]`);
+        li?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+    });
+    // リスト: タップで対応するピンを点滅
+    document.querySelectorAll<HTMLElement>('#items-list [data-item-no]').forEach((li) => {
+      const no = Number(li.dataset.itemNo);
+      li.addEventListener('mouseenter', () => setHighlight(no));
+      li.addEventListener('click', () => {
+        setHighlight(no);
+        const pin = document.querySelector<HTMLElement>(`.pin[data-item-no="${no}"]`);
+        // 画像が画面外なら見える位置にスクロール
+        const wrap = $('result-image-wrap');
+        const rect = wrap.getBoundingClientRect();
+        if (rect.bottom < 100 || rect.top > window.innerHeight - 100) {
+          wrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        pin?.animate(
+          [{ transform: 'translate(-50%, -50%) scale(1)' }, { transform: 'translate(-50%, -50%) scale(1.5)' }, { transform: 'translate(-50%, -50%) scale(1.25)' }],
+          { duration: 400, fill: 'forwards' },
+        );
+      });
+    });
+    // 画像コンテナ外をタップでハイライト解除
+    document.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.pin, #items-list [data-item-no]')) {
+        setHighlight(null);
+      }
+    });
+  }
+
+  function attachFilters(items: ScanItem[]): void {
+    const buttons = document.querySelectorAll<HTMLButtonElement>('[data-filter]');
+    buttons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const filter = btn.dataset.filter ?? 'all';
+        buttons.forEach((b) => b.classList.toggle('chip-on', b === btn));
+        applyFilter(items, filter);
+      });
+    });
+  }
+
+  function applyFilter(items: ScanItem[], filter: string): void {
+    items.forEach((it, idx) => {
+      const visible =
+        filter === 'all' ||
+        (filter === 'marked' && it.marked) ||
+        (filter === 'flag' && (it.flag === 'H' || it.flag === 'L')) ||
+        (filter === 'handwritten' && it.kind === 'handwritten') ||
+        (filter === 'low' && it.confidence === 'low');
+      document
+        .querySelectorAll<HTMLElement>(`[data-item-no="${idx}"]`)
+        .forEach((el) => {
+          el.style.display = visible ? '' : 'none';
+        });
+    });
   }
 
   function renderResult(r: AnalyzeResult): void {
@@ -280,13 +446,16 @@ import ScanOverlay from '../components/ScanOverlay.astro';
       ? `${items.length} 項目を読み取りました`
       : '解析が完了しました';
 
-    // items（ベリファイ表示: 結果 / 単位 / 基準範囲 / 強調マーク / 信頼度）
     const itemsList = $('items-list') as HTMLUListElement;
     if (items.length) {
       itemsList.innerHTML = items.map(renderItem).join('');
+      renderOverlay(items);
+      attachInteractions(items);
+      attachFilters(items);
     } else {
       itemsList.innerHTML =
         '<li class="px-4 py-6 text-center text-sm text-slate-500 md:text-base">項目は検出されませんでした</li>';
+      $('result-overlay').innerHTML = '';
     }
 
     // debug panes
@@ -304,9 +473,7 @@ import ScanOverlay from '../components/ScanOverlay.astro';
     const controller = initCameraScan({
       video: $<HTMLVideoElement>('scan-video'),
       canvas: $<HTMLCanvasElement>('scan-canvas'),
-      overlay: $<HTMLCanvasElement>('scan-overlay'),
       shotBtn: $<HTMLButtonElement>('scan-shot'),
-      detectToggle: $<HTMLInputElement>('scan-detect-toggle'),
       status: $('scan-status'),
       hint: $<HTMLInputElement>('scan-hint'),
       onStateChange: (state: ScanState) => {
