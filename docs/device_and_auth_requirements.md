@@ -3,10 +3,11 @@
 | 項目 | 内容 |
 |---|---|
 | 文書名 | Scan-Chat Medical AI — デバイス・認証 要件定義書 |
-| バージョン | 0.1 (Draft) |
+| バージョン | 0.2 (Draft) |
 | 作成日 | 2026-05-22 |
 | 対象 | 全機能横断（スキャン / チャット / 診断結果閲覧） |
 | 関連文書 | `docs/scan_chat_medical_ai_proposal.pdf`, `docs/scan_feature_requirements.md` |
+| 参考実装 | `mirai-gpro/wellfort-site`（クライアント企業 EC サイトの Google One Tap 実装パターン） |
 
 ---
 
@@ -14,55 +15,119 @@
 
 ### 1.1 目的
 
-ユーザーが**スマートフォン・タブレット・PC を場面ごとにシームレスに使い分けられる**ようにする。各デバイスは "それぞれが最も得意なこと" を担い、認証とセッションは全デバイスで共通化する。
+**iPhone を最優先**に「iPhone 1 台で全てが完結する」体験を提供しつつ、**より広い画面で見たい場面ではタブレット・PC を使えるクロスデバイス**運用も可能にする。認証とセッションは全デバイスで共通化する。
 
-### 1.2 デバイス想定比率
+### 1.2 基本原則
+
+1. **iPhone-first** — 全主要フロー（スキャン → 問診 → 結果閲覧）が iPhone 1 台のみで完結すること。タブレット / PC は必須ではない**任意の拡張**。
+2. **クロスデバイス・シームレス** — 同一 Google アカウントでログインしている全デバイスは同じ状態を共有し、ユーザーは「いつでも別デバイスに移れる」という安心感を得る。
+3. **シーンに応じたデバイス選択** — スキャンはスマホ / タブレット、問診はどのデバイスでも、診断結果の精読はタブレット / PC が望ましい。**強制はしない**。
+
+### 1.3 デバイス想定比率
 
 | デバイス | 想定比率 | 主用途 |
 |---|---|---|
-| **スマートフォン**（半数以上、うち過半数 iPhone） | **50% 超** | カメラスキャン、移動中のチャット、隙間時間の問診継続 |
-| タブレット | 25–35% | 自宅での音声 Live API 問診、診断結果の中型画面閲覧 |
-| PC | 15–25% | 診断結果・グラフ・PDF 出力の精読、家族や医療者との共有 |
+| **スマートフォン**（半数以上、**うち過半数 iPhone**） | **50% 超** | スキャン、チャット、結果通知の受領 — **これだけで完結可能** |
+| タブレット（iPad 中心） | 25–35% | 自宅での音声 Live 問診、結果閲覧 |
+| PC（Mac / Windows） | 15–25% | 結果・グラフ・PDF の精読、家族や医療者との共有 |
 
-### 1.3 デバイス選択の指針（提案書整合）
+### 1.4 デバイス選択の指針
 
-| シーン | 推奨デバイス | 理由 |
-|---|---|---|
-| 紙の健診結果スキャン | **スマホ** | 背面カメラ + 手持ちが最適 |
-| 自宅でリラックスして音声問診 | **タブレット** or スマホ | 据置で長時間音声 Live が安定 |
-| 移動中のテキスト問診 | **スマホ** | 親指1本でサジェストチップ操作 |
-| **診断結果の閲覧・健康改善アドバイスの精読** | **タブレット or PC** | グラフ・長文・PDF を視認しやすい |
-| 家族との結果共有 | PC | 大画面で並んで閲覧、印刷も可能 |
+| シーン | 推奨デバイス | 強制度 | 理由 |
+|---|---|---|---|
+| 紙の健診結果スキャン | **スマホ / タブレット** | スマホ無しは想定外 | 背面カメラ + 手持ち / 据置スタンドが必須。**PC は対象外**（誰もが少なくとも 1 台スマホを所有している前提） |
+| 自宅でリラックスして音声問診 | タブレット or スマホ | 任意 | 据置で長時間音声 Live が安定 |
+| 移動中のテキスト問診 | スマホ | 任意（推奨） | 親指1本でサジェストチップ操作 |
+| 診断結果の閲覧・健康改善アドバイスの精読 | **どのデバイスでも可**（タブレット / PC が見やすい） | 任意 | iPhone でも閲覧できるが、グラフ・長文は大画面が快適 |
+| 家族との結果共有 | タブレット / PC | 任意 | 大画面で並んで閲覧、印刷も可能 |
 
 ---
 
 ## 2. ユーザーペルソナ
 
-### P-1: 通勤会社員（iPhone メイン）
-- 通勤電車でスマホ問診を進める。AR スキャンは前夜に自宅で済ませている。
-- 帰宅後、タブレットで音声問診の続き、PC で結果 PDF を確認したい。
+### P-1: iPhone だけで完結したい通勤会社員（**最頻ケース**）
+- iPhone 1 台のみ。タブレット・PC は持っているがアプリには使わない。
+- 通勤電車で問診、自宅で紙スキャン、結果も iPhone で確認する。
+- **要件**: 全フローが iPhone Safari で違和感なく動くこと。
 
-### P-2: 在宅シニア（iPad メイン）
-- iPad で音声 Live 問診中心。文字が大きい方が良い。
-- 紙報告書のスキャンだけ iPhone で行い、続きを iPad で行いたい。
+### P-2: 結果は大画面で見たい iPhone ユーザー
+- 入力はすべて iPhone。問診も完了済。
+- 結果の精読だけ、自宅の iPad や PC でログインしてじっくり見たい。
+- **要件**: iPhone で進めたセッションが、別デバイスで同 Google アカウントログイン時に自動同期されること。
 
-### P-3: 家族の健康管理者（PC メイン）
-- 自分の健診結果をスマホでスキャンし、PC で結果を一覧・印刷したい。
+### P-3: 在宅シニア（iPad メイン + 紙スキャン時のみ iPhone）
+- iPad で音声 Live 問診が中心。文字が大きい方が良い。
+- 紙報告書のスキャンだけ iPhone（または iPad の背面カメラ）で行い、続きを iPad で。
+- **要件**: スキャンと問診の間のシームレスなハンドオフ。
+
+### P-4: 家族の健康管理者（PC で結果共有）
+- 自分の健診結果をスマホでスキャン・問診済。
+- 結果ページを PC ブラウザで開き、家族や医師と画面共有・印刷。
+- **要件**: PC 側で安全に結果へアクセス + PDF 出力。
 
 ---
 
 ## 3. 機能要件
 
-### F-A1: Google One Tap 認証
+### F-A1: Google One Tap 認証（Wellfort パターン採用）
+
+クライアント企業の EC サイト（`mirai-gpro/wellfort-site` の `src/pages/products_test/[id].astro`）で実証済の **Google Identity Services (GSI) + Supabase Auth `signInWithIdToken`** パターンを採用する。自前の JWT 検証 API は実装せず、Supabase Auth に委譲する。
 
 | 項目 | 内容 |
 |---|---|
-| 入力 | ページロード時に Google Identity Services (GSI) の One Tap プロンプトを表示 |
-| 処理 | Google が発行する ID Token (JWT) を `/api/auth/google` に POST し、サーバ側で署名検証 |
-| セッション確立 | HttpOnly + Secure + SameSite=Lax な session cookie を発行 |
-| 既存ユーザー | `users.google_sub` で照合し、再ログイン |
-| 新規ユーザー | `users` テーブルに自動レコード作成（メール・氏名・avatar URL） |
-| ボタン併設 | One Tap が ITP 等で表示されない場合のため、明示ログインボタン（`Sign in with Google` ボタン）も常設 |
+| 入力 | ページロード時に GSI の One Tap プロンプトを起動（**FedCM 対応：`use_fedcm_for_prompt: true`**） |
+| ID Token 受領 | `google.accounts.id.initialize` の callback が `response.credential` を受け取る |
+| セッション確立 | `supabase.auth.signInWithIdToken({ provider: 'google', token: response.credential })` を呼び出し、Supabase Auth がユーザーレコード作成・cookie 発行を一括処理 |
+| ユーザー管理 | Supabase Auth の `auth.users` を用いる。**独自の users テーブルは持たず**、必要なプロファイルは別テーブル `user_profiles` に格納（`user_id` で `auth.users.id` を参照） |
+| ボタン併設 | One Tap が表示されない場合に備え、`google.accounts.id.renderButton` で明示「Sign in with Google」ボタンを常設（iOS Safari の ITP 対策） |
+| Astro 連携 | `define:vars={{ SUPABASE_URL, SUPABASE_ANON_KEY, GOOGLE_CLIENT_ID }}` で env を流し込む（Wellfort と同じ） |
+| 自動再ログイン | `auto_select: false` を既定とし、ユーザーの明示的選択を尊重 |
+
+#### F-A1.1 参考実装（Wellfort 抜粋）
+
+GSI の初期化と Supabase 連携は以下の形でそのまま流用可能。
+
+```javascript
+// 1. GSI SDK ロード（CDN）
+// <script is:inline src="https://accounts.google.com/gsi/client" async defer></script>
+
+// 2. One Tap 初期化
+window.google.accounts.id.initialize({
+  client_id: GOOGLE_CLIENT_ID,
+  callback: handleGoogleCredential,
+  auto_select: false,
+  use_fedcm_for_prompt: true,
+});
+
+// 3. 明示ボタン（One Tap 非表示時のフォールバック）
+window.google.accounts.id.renderButton(
+  document.getElementById('google-signin-button'),
+  { theme: 'outline', size: 'large', width: 320, text: 'signin_with' }
+);
+
+// 4. One Tap プロンプト起動
+window.google.accounts.id.prompt();
+
+// 5. credential を Supabase に渡してセッション化
+async function handleGoogleCredential(response) {
+  const { data, error } = await supabaseClient.auth.signInWithIdToken({
+    provider: 'google',
+    token: response.credential,
+  });
+  if (error) return showLoginError(error.message);
+  onAuthenticated(data.session);
+}
+```
+
+#### F-A1.2 Supabase Auth 設定
+
+| 設定箇所 | 値 |
+|---|---|
+| Supabase Dashboard > Authentication > Providers | Google を有効化 |
+| Google Client ID | Google Cloud Console で「ウェブアプリ」として発行（同 client_id を Supabase と GSI 双方に登録） |
+| Authorized JavaScript origins | 本番・プレビュー・`http://localhost:4321` を登録 |
+| Authorized redirect URIs | Supabase の `https://<project>.supabase.co/auth/v1/callback` を登録（OAuth fallback 用） |
+| Supabase JWT | Supabase が発行する access_token / refresh_token を browser SDK が管理（cookie 化はサーバ側で別途実装） |
 
 ### F-A2: クロスデバイス・セッション継続
 
@@ -97,16 +162,22 @@
 
 ### F-A5: デバイス別の機能可否
 
-| 機能 | スマホ | タブレット | PC |
-|---|---|---|---|
-| カメラスキャン (AR) | ◎ | ○ | △（Web カメラ品質次第） |
-| 音声 Live 問診 | ○ | ◎ | ○ |
-| テキスト問診 + サジェストチップ | ◎ | ○ | ○ |
-| 診断結果閲覧（グラフ・長文） | △ | ◎ | ◎ |
-| PDF 出力・印刷 | △ | ○ | ◎ |
-| 家族共有・並列閲覧 | △ | ○ | ◎ |
+| 機能 | iPhone | Android | タブレット | PC |
+|---|---|---|---|---|
+| Google One Tap ログイン | ◎ | ◎ | ◎ | ◎ |
+| **カメラスキャン (AR)** | **◎** | ◎ | ◎ | **— (非対応)** |
+| 音声 Live 問診 | ○ | ○ | ◎ | ○ |
+| テキスト問診 + サジェストチップ | ◎ | ◎ | ○ | ○ |
+| 進捗バー / レジューム | ◎ | ◎ | ◎ | ◎ |
+| 診断結果閲覧（グラフ・長文） | ○ | ○ | ◎ | ◎ |
+| PDF 出力・印刷 | ○ | ○ | ◎ | ◎ |
+| 家族共有・並列閲覧 | △ | △ | ○ | ◎ |
 
-`◎`=最適, `○`=利用可, `△`=制限あり / 推奨しない
+`◎`=最適, `○`=利用可, `△`=制限あり, `—`=非対応
+
+**PC スキャンは要件外**: スマホを所有していないユーザーは想定対象外（PC ユーザーは必ず別途スマホ / タブレットでスキャンする）。PC でスキャンページを開いた場合は「スキャンはスマホまたはタブレットでご利用ください」のメッセージを表示し、ハンドオフ QR を案内する。
+
+**iPhone-first 担保**: 上記表の iPhone 列で `◎` または `○` の機能のみで、提案書の全体フロー（スキャン → 問診 → 結果閲覧）が完結する。
 
 ---
 
@@ -167,87 +238,87 @@
 
 ## 5. API 仕様
 
-### 5.1 `POST /api/auth/google`
+認証は Supabase Auth に委譲するため、独自の `/api/auth/google` は実装しない（Wellfort パターン準拠）。
 
-#### リクエスト
-```json
-{ "credential": "<Google ID Token (JWT)>" }
-```
+### 5.1 Supabase Auth（クライアント直接呼出）
 
-#### レスポンス
-```json
-{ "user": { "id": "uuid", "email": "...", "name": "...", "avatar_url": "..." } }
-```
-- 成功時、HttpOnly cookie `sca_session=<jwt>` を Set-Cookie
+| 操作 | クライアント呼出 | 備考 |
+|---|---|---|
+| ログイン | `supabase.auth.signInWithIdToken({ provider: 'google', token })` | One Tap callback 内で実行 |
+| 現在のセッション | `supabase.auth.getSession()` | ページロード時 |
+| ログアウト | `supabase.auth.signOut()` | 全デバイスではなくローカルセッションのみ |
+| 認証変更検知 | `supabase.auth.onAuthStateChange(callback)` | クロスタブ同期 |
 
-#### エラー
-| HTTP | 内容 |
+### 5.2 サーバ側 cookie ブリッジ（Wellfort 同様）
+
+Astro SSR / API ルートから `auth.uid()` を解決するため、Supabase の access_token を cookie に格納する。`src/lib/supabase.ts` に `createServerClient(cookies)` を用意（参考: Wellfort の `createServerClient`）。
+
+| cookie | 設定 |
 |---|---|
-| 400 | credential 欠落 |
-| 401 | ID Token 検証失敗 / aud 不一致 |
-| 500 | Supabase 書込失敗 |
-
-### 5.2 `POST /api/auth/logout`
-- cookie 削除、Supabase session 行を invalidate
+| `sb-access-token` | HttpOnly + Secure + SameSite=Lax + Path=/ |
+| `sb-refresh-token` | 同上、Max-Age=31536000（1 年） |
+| 本番のみ | `Secure` フラグ ON |
 
 ### 5.3 `POST /api/session/handoff/create`
-- 認証済ユーザーのみ
-- 返却: `{ token, expires_at, qr_data_url }`
+- 認証必須（Supabase JWT cookie）
+- 返却: `{ token, expires_at, qr_data_url, deep_link }`
+- ロジック: `handoff_tokens` テーブルに INSERT（5 分有効、ワンタイム、HMAC 署名）
 
-### 5.4 `POST /api/session/handoff/accept`
-- リクエスト: `{ token }`
-- 認証済ユーザーのみ。`users.id` が一致する場合にのみセッションへ合流許可
-- 成功時、`sessions.active_device_id` を呼出デバイスへ更新
+### 5.4 `GET /api/session/handoff/accept?token=<...>`
+- 受領デバイスでアクセス → ログイン済なら `auth.uid()` と token の owner を照合 → 一致時にセッション URL へリダイレクト
+- 未ログインの場合: One Tap でログインしてから自動的に accept フロー再開
 
 ### 5.5 `GET /api/me`
-- 認証済ユーザー情報 + ログイン中デバイス一覧
+- 認証済ユーザーの基本情報（`auth.users` から email / メタデータ） + `user_profiles` + ログイン中デバイス一覧
 
 ---
 
 ## 6. データモデル（Supabase 想定）
 
-### 6.1 `users`
+### 6.1 `auth.users`（Supabase 標準）
+Supabase Auth が自動管理する標準テーブルをそのまま利用。Google ログイン時に email / `raw_user_meta_data.name` / `raw_user_meta_data.avatar_url` が自動格納される。独自カラムは追加しない。
+
+### 6.2 `user_profiles`（拡張属性のみ）
 | カラム | 型 | 備考 |
 |---|---|---|
-| `id` | uuid (pk) | |
-| `google_sub` | text (unique) | Google の `sub` クレーム |
-| `email` | text | |
-| `name` | text | |
-| `avatar_url` | text | |
-| `created_at` | timestamptz | |
+| `user_id` | uuid (pk, fk → auth.users) | |
+| `display_name` | text | アプリ内表示名（任意の上書き） |
+| `preferred_device` | text | 'phone' / 'tablet' / 'pc' いずれか（UX 最適化のヒント） |
+| `created_at` / `updated_at` | timestamptz | |
 
-### 6.2 `sessions`
+### 6.3 `sessions`
 | カラム | 型 | 備考 |
 |---|---|---|
 | `id` | uuid (pk) | チャット問診セッション |
-| `user_id` | uuid (fk → users) | |
+| `user_id` | uuid (fk → auth.users) | |
 | `active_device_id` | text nullable | 楽観ロック用 |
 | `progress_percent` | int | 0–100 |
 | `current_section_id` | text | |
 | `created_at` / `updated_at` | timestamptz | |
 
-### 6.3 `devices`
+### 6.4 `devices`
 | カラム | 型 | 備考 |
 |---|---|---|
 | `id` | uuid (pk) | |
-| `user_id` | uuid (fk) | |
-| `kind` | enum('phone','tablet','pc') | UA 推定 |
-| `os` | text | |
+| `user_id` | uuid (fk → auth.users) | |
+| `kind` | text | 'phone' / 'tablet' / 'pc'（UA 推定） |
+| `os` | text | iOS / iPadOS / Android / macOS / Windows |
 | `last_seen_at` | timestamptz | |
 
-### 6.4 `handoff_tokens`
+### 6.5 `handoff_tokens`
 | カラム | 型 | 備考 |
 |---|---|---|
 | `token` | text (pk) | HMAC 署名済短期トークン |
-| `user_id` | uuid (fk) | |
+| `user_id` | uuid (fk → auth.users) | |
 | `session_id` | uuid (fk) | |
 | `expires_at` | timestamptz | 発行から 5 分 |
 | `used_at` | timestamptz nullable | ワンタイム |
 
-### 6.5 RLS ポリシー（要点）
-- `users`: 本人レコードのみ select/update 可
+### 6.6 RLS ポリシー（要点）
+- `user_profiles`: `user_id = auth.uid()` の行のみ select / update
 - `sessions` / `messages` / `scan_results`: `user_id = auth.uid()` に限定
-- `handoff_tokens`: 本人 user_id のみ insert/select、`used_at` 設定後は select 不可
+- `handoff_tokens`: 本人 user_id のみ insert / select、`used_at` 設定後は select 不可
+- `devices`: `user_id = auth.uid()` の行のみ select / delete（個別ログアウト用）
 
 ---
 
@@ -359,14 +430,26 @@
 
 | ファイル | 役割 |
 |---|---|
-| `src/pages/api/auth/google.ts` | One Tap ID Token 検証 + cookie 発行 |
-| `src/pages/api/auth/logout.ts` | ログアウト |
-| `src/pages/api/session/handoff/[action].ts` | create / accept |
-| `src/pages/api/me.ts` | 認証済ユーザー情報 |
-| `src/lib/auth.ts` | session cookie 検証ヘルパ |
-| `src/lib/device.ts` | UA → デバイス種別推定 |
-| `src/components/GoogleOneTap.astro` | GSI スクリプト + One Tap 起動 |
+| `src/components/GoogleOneTap.astro` | GSI スクリプト + One Tap 起動 + 明示ボタン（Wellfort `products_test/[id].astro` をテンプレ流用） |
 | `src/components/HandoffModal.astro` | QR + メール送信 UI |
+| `src/lib/supabase.ts` | browser / server クライアント（Wellfort `createServerClient` パターンに揃える） |
+| `src/lib/device.ts` | UA → デバイス種別推定（PC スキャン拒否ガード） |
+| `src/lib/auth.ts` | サーバ側で `sb-access-token` cookie からユーザー解決するヘルパ |
+| `src/pages/api/session/handoff/create.ts` | ハンドオフトークン発行 |
+| `src/pages/api/session/handoff/accept.ts` | トークン消費 + セッション URL リダイレクト |
+| `src/pages/api/me.ts` | 認証済ユーザー情報 + ログイン中デバイス一覧 |
+
+### 11.1 環境変数（`.env.example` 追加）
+
+```
+GOOGLE_CLIENT_ID=               # Google Cloud Console > OAuth 2.0 Client ID（ウェブアプリ）
+PUBLIC_SUPABASE_URL=
+PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+SESSION_HANDOFF_HMAC_KEY=       # /api/session/handoff/* のトークン署名鍵
+```
+
+`GOOGLE_CLIENT_ID` はクライアントへも公開する必要があるため、Astro では `PUBLIC_` プレフィックスでも可。Wellfort の `products_test/[id].astro` は `define:vars` で frontmatter から流し込んでいるので、その方式に合わせる。
 
 ---
 
@@ -375,3 +458,4 @@
 | バージョン | 日付 | 内容 |
 |---|---|---|
 | 0.1 | 2026-05-22 | 初版。iPhone 半数以上を想定したマルチデバイス + Google One Tap 方針 |
+| 0.2 | 2026-05-22 | iPhone-first 原則を明文化（基本 iPhone 1 台で完結）、PC スキャンを要件外に変更、認証実装を `mirai-gpro/wellfort-site` の Supabase Auth + `signInWithIdToken` + FedCM パターンに統一、独自 `/api/auth/google` を撤去、`auth.users` 委譲モデルに変更 |
