@@ -1,0 +1,15 @@
+---
+/**
+ * カメラ映像の上に bbox を描画するためのレイヤー。
+ * video と同じサイズの absolute Canvas を提供するだけのプレゼンテーション要素。
+ */
+interface Props {
+  id?: string;
+}
+const { id = 'scan-overlay' } = Astro.props;
+---
+
+<canvas
+  id={id}
+  class="pointer-events-none absolute inset-0 h-full w-full"
+  aria-hidden="true"></canvas>

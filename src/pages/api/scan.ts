@@ -1,7 +1,8 @@
 import type { APIRoute } from 'astro';
 import {
-  streamGemini,
+  callGemini,
   MODELS,
+  extractText,
   stripJsonCodeFence,
   GeminiError,
   type GeminiContent,
@@ -9,51 +10,65 @@ import {
 
 export const prerender = false;
 
+type ScanMode = 'detect' | 'analyze';
+
 interface ScanRequestBody {
   /** data: URL もしくは生 base64 */
   image: string;
   /** 補足プロンプト（部位・状況など） */
   hint?: string;
+  /**
+   * detect: AR 用の軽量 bbox 検知（連続呼出）
+   * analyze: 撮影確定時のフル解析（既定）
+   */
+  mode?: ScanMode;
 }
 
-const ANALYZE_SYSTEM = `あなたはネイティブマルチモーダル AI として、医療検査結果用紙の画像から
-検査項目を読み取り、構造化 JSON として返してください。
-これは OCR ではなく、表の罫線・列順・赤丸・下線・蛍光ペン・手書き追記を
-視覚的に理解する仕事です。解釈・診断・要約は一切しません
-（下流の別 AI が担当）。
-
-【表の典型レイアウト】
-左から右に: 項目番号 | 検査項目（略称）| 結果 | 検査項目詳細 | 下限値 | 上限値 | 単位
-
-【守ること】
-- value には「結果」列の値のみを入れる。下限値・上限値・単位を value に
-  混入させない。例えば "23 Hgb 8.1 L ヘモグロビン量 13.7 16.8 g/dl" の行は
-  value="8.1", flag="L", unit="g/dl", ref_low="13.7", ref_high="16.8" と分解。
-- 紙面に存在しない値・項目は出力しない（ハルシネーション禁止）。
-  読めなければ value="" / confidence="low" でよい。
-- 紙面にある全項目を漏らさず転記する（印字も手書きも、行数を恐れず全部）。
-  手書きは kind="handwritten" として個別アイテムに分けて格納。
-- 赤丸・下線・蛍光ペン等の強調は marked: true として示す。
-
-【出力 JSON】
+const DETECT_SYSTEM = `あなたは医療文書スキャン補助 AI です。
+入力画像から検査値・項目ラベル・手書きメモを検知し、各バウンディングボックスを返してください。
+出力は以下の JSON スキーマに厳密に従ってください:
 {
   "items": [
     {
-      "label": string,            // 略称 (例: "Hgb")
-      "label_detail": string,     // 詳細名（無ければ ""）
-      "value": string,
-      "unit": string,             // 単位（無ければ ""）
-      "flag": string,             // "H" / "L" / ""
-      "ref_low": string,          // 下限値（無ければ ""）
-      "ref_high": string,         // 上限値（無ければ ""）
-      "marked": boolean,
-      "bbox": [number, number, number, number],  // [ymin, xmin, ymax, xmax] 0-1000 正規化
-      "confidence": "high" | "low",
+      "label": string,            // 項目名（例: 血圧、Hb、所見）
+      "value": string,            // 認識した値（手書きで判読不能なら空文字）
+      "bbox": [number, number, number, number], // [ymin, xmin, ymax, xmax] 0-1000 で正規化
+      "confidence": "high" | "low", // low は手書き / かすれ等
       "kind": "printed" | "handwritten"
     }
   ]
 }
-JSON 以外（コメント・説明・code fence）は出力しないこと。`;
+JSON 以外の文字（前後のコメントや code fence）は出力しないこと。最大 12 項目まで。`;
+
+const ANALYZE_SYSTEM = `あなたは医療画像補助 AI です。
+画像から観察できる所見のみを記述し、診断や処方は行いません。
+
+【出力の長さ厳守（トークン超過防止）】
+- observations: 最大 5 件、各 60 字以内・要点のみ・重複や言い換え禁止
+- regions: 最大 3 件
+- follow_up_questions: 最大 5 件、各 60 字以内
+- items: 最大 20 項目、特に基準値外・赤丸・手書き等の優先項目から選ぶ
+- priority_flags: 最大 3 件
+- urgent は明確な異常値があるときのみ true
+
+出力は以下の JSON スキーマに厳密に従ってください:
+{
+  "observations": string[],
+  "regions": string[],
+  "follow_up_questions": string[],
+  "items": [
+    {
+      "label": string,
+      "value": string,
+      "bbox": [number, number, number, number], // [ymin, xmin, ymax, xmax] 0-1000 で正規化
+      "confidence": "high" | "low",
+      "kind": "printed" | "handwritten"
+    }
+  ],
+  "priority_flags": string[], // 後続チャットで重点的に確認すべき項目（label 名）
+  "urgent": boolean
+}
+JSON 以外の文字（前後のコメントや code fence）は出力しないこと。`;
 
 function parseDataUrl(input: string): { mime: string; data: string } {
   const m = /^data:([^;]+);base64,(.+)$/i.exec(input.trim());
@@ -72,75 +87,45 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ error: 'image is required (data URL or base64)' }, 400);
   }
 
+  const mode: ScanMode = body.mode === 'detect' ? 'detect' : 'analyze';
   const { mime, data } = parseDataUrl(body.image);
   const userParts: GeminiContent['parts'] = [
     { inline_data: { mime_type: mime, data } },
     {
-      text: body.hint
-        ? `補足: ${body.hint}`
-        : '紙面の全項目を、画像理解で「結果列」を正確に弁別したうえで JSON に転記してください。',
+      text:
+        mode === 'detect'
+          ? '画像から項目を検知し bbox 配列を返してください。'
+          : body.hint
+            ? `補足: ${body.hint}`
+            : '画像を解析してください。',
     },
   ];
 
-  // 紙面の転記は perception タスクであって reasoning タスクではない
-  // （診断・要約・優先度判定は下流の AI 診断システムが行う）。
-  // よって flash + thinking 完全停止が最適: 応答速度優先で十分な精度。
-  const model = MODELS.scan;
-  const apiKey = import.meta.env.GEMINI_API_KEY;
-  const geminiRequest = {
-    systemInstruction: { parts: [{ text: ANALYZE_SYSTEM }] },
-    contents: [{ role: 'user' as const, parts: userParts }],
-    generationConfig: {
-      temperature: 0.0,
-      // 健診票は 30+ 項目 + 手書きメモがあると 32k トークン近くまで膨らむ
-      maxOutputTokens: 32768,
-      responseMimeType: 'application/json',
-      thinkingConfig: { thinkingBudget: 0 },
-    },
-  };
-
-  // NDJSON でストリーミング (chunked)。
-  // クライアントは 1 行ずつ JSON.parse して進捗 / 最終結果を扱う。
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const enc = new TextEncoder();
-      const emit = (obj: unknown): void => {
-        controller.enqueue(enc.encode(JSON.stringify(obj) + '\n'));
-      };
-      let acc = '';
-      let lastFinish: string | undefined;
-      try {
-        emit({ type: 'start', model });
-        for await (const ev of streamGemini(apiKey, geminiRequest, model)) {
-          if (ev.text) {
-            acc += ev.text;
-            emit({ type: 'chunk', text: ev.text, totalLen: acc.length });
-          }
-          if (ev.finishReason) lastFinish = ev.finishReason;
-        }
-        const cleaned = stripJsonCodeFence(acc);
-        let parsed: unknown = null;
-        try { parsed = JSON.parse(cleaned); } catch { /* noop */ }
-        emit({ type: 'done', raw: acc, json: parsed, finishReason: lastFinish });
-      } catch (err) {
-        if (err instanceof GeminiError) {
-          emit({ type: 'error', error: err.message, detail: err.body, status: err.status });
-        } else {
-          emit({ type: 'error', error: 'Unexpected error', detail: String(err) });
-        }
-      } finally {
-        controller.close();
-      }
-    },
-  });
-  return new Response(stream, {
-    status: 200,
-    headers: {
-      'content-type': 'application/x-ndjson; charset=utf-8',
-      'cache-control': 'no-store',
-      'x-accel-buffering': 'no', // バッファリング無効化（プロキシ側）
-    },
-  });
+  try {
+    const res = await callGemini(import.meta.env.GEMINI_API_KEY, {
+      systemInstruction: {
+        parts: [{ text: mode === 'detect' ? DETECT_SYSTEM : ANALYZE_SYSTEM }],
+      },
+      contents: [{ role: 'user', parts: userParts }],
+      generationConfig: {
+        temperature: mode === 'detect' ? 0.1 : 0.2,
+        maxOutputTokens: mode === 'detect' ? 2048 : 32768,
+        responseMimeType: 'application/json',
+      },
+    }, MODELS.scan);
+    const raw = extractText(res);
+    const cleaned = stripJsonCodeFence(raw);
+    let parsed: unknown = null;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      // 構造化失敗時は raw を返してフロントで対応
+    }
+    const finishReason = res.candidates?.[0]?.finishReason;
+    return json({ mode, raw, json: parsed, finishReason });
+  } catch (err) {
+    return handleGeminiError(err);
+  }
 };
 
 function json(data: unknown, status = 200): Response {
@@ -148,4 +133,11 @@ function json(data: unknown, status = 200): Response {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8' },
   });
+}
+
+function handleGeminiError(err: unknown): Response {
+  if (err instanceof GeminiError) {
+    return json({ error: err.message, detail: err.body }, err.status >= 400 ? err.status : 500);
+  }
+  return json({ error: 'Unexpected error', detail: String(err) }, 500);
 }
