@@ -16,59 +16,44 @@ interface ScanRequestBody {
   hint?: string;
 }
 
-const ANALYZE_SYSTEM = `あなたはネイティブマルチモーダル AI として、医療検査結果用紙の画像を
-「視覚」と「言語」を同時に用いて理解し、紙面に存在する値だけを構造化 JSON
-として忠実に転記してください。
-これは OCR ではありません。表の罫線・列順・赤丸・下線・蛍光ペン・手書き
-追記といった**視覚的な手掛かり**を活用して、どの数字が「結果」列でどれが
-「下限/上限」かを正しく弁別することがあなたの強みです。
-解釈・診断・要約・観察所見・問診質問・優先度判定などは下流の別 AI が担当
-するため、このアプリでは一切出力しないでください。
+const ANALYZE_SYSTEM = `あなたはネイティブマルチモーダル AI として、医療検査結果用紙の画像から
+検査項目を読み取り、構造化 JSON として返してください。
+これは OCR ではなく、表の罫線・列順・赤丸・下線・蛍光ペン・手書き追記を
+視覚的に理解する仕事です。解釈・診断・要約は一切しません
+（下流の別 AI が担当）。
 
 【表の典型レイアウト】
-左から右に: No | 検査項目（略称）| 結果 | 検査項目詳細（フルネーム） | 下限値 | 上限値 | 単位名称
-- "結果" 列の数値直後に H / L マークが付くことがあります（基準値超 / 下回）。
-- 行末に "L" "H" の文字や ▼▲ 等の記号が見える場合は flag に "L" "H" を入れます。
-- 用紙は左右 2 カラム構成のことが多い（左半分・右半分それぞれが同じレイアウト）。
+左から右に: 項目番号 | 検査項目（略称）| 結果 | 検査項目詳細 | 下限値 | 上限値 | 単位
 
-【絶対に守ること】
-1. value には "結果" 列の値のみを入れてください。下限値・上限値・単位を value に
-   混入させないでください。たとえば次のような行:
-     "23 Hgb 8.1 L ヘモグロビン量 13.7 16.8 g/dl"
-   は value="8.1", flag="L", ref_low="13.7", ref_high="16.8", unit="g/dl" と
-   分解して格納します。value="16.8" のように上限値を結果欄に入れるのは誤りです。
-2. 紙面に存在しない値・項目を出力しないでください（ハルシネーション禁止）。
-   読めなければ value="" / confidence="low" で構いません。
-3. 全項目（印刷値・手書き追記すべて）を漏らさず転記してください。truncate 禁止。
-   手書きメモは kind="handwritten" で 1 項目ずつ独立に格納します。
-4. 赤丸・下線・蛍光ペン等で強調されている項目は marked: true としてください。
-5. 解釈や臨床コメントは絶対に出力しない（observations / urgent / priority などは
-   このアプリのスキーマには存在しません）。
-6. bbox は **「結果列の値そのもの」を囲む** ように指定してください。
-   行全体や複数列にまたがる広い枠ではなく、value テキストの周辺だけを
-   正規化座標 0-1000 で [ymin, xmin, ymax, xmax] として返します。
-   オーバーレイ表示の精度に直結するので妥協しないこと。
+【守ること】
+- value には「結果」列の値のみを入れる。下限値・上限値・単位を value に
+  混入させない。例えば "23 Hgb 8.1 L ヘモグロビン量 13.7 16.8 g/dl" の行は
+  value="8.1", flag="L", unit="g/dl", ref_low="13.7", ref_high="16.8" と分解。
+- 紙面に存在しない値・項目は出力しない（ハルシネーション禁止）。
+  読めなければ value="" / confidence="low" でよい。
+- 印字も手書きもすべて漏らさず転記。手書きは kind="handwritten" で個別に格納。
+- 赤丸・下線・蛍光ペン等の強調は marked: true として示す。
+- 出力は最大 25 項目に抑える（重要・基準値外・手書き・強調を優先）。
 
 【出力 JSON】
 {
   "items": [
     {
-      "no": string,            // 検査項目番号 ("23" 等)。無ければ ""
-      "label": string,         // 検査項目の略称 ("Hgb" 等)
-      "label_detail": string,  // 検査項目の詳細名 ("ヘモグロビン量" 等)。無ければ ""
-      "value": string,         // 結果列の値（数値・テキスト・空文字）
-      "flag": string,          // "H" / "L" / "" のいずれか
-      "unit": string,          // 単位 ("g/dl" 等)。無ければ ""
-      "ref_low": string,       // 下限値。無ければ ""
-      "ref_high": string,      // 上限値。無ければ ""
-      "marked": boolean,       // 赤丸・下線・蛍光等の強調マークの有無
-      "bbox": [number, number, number, number], // [ymin, xmin, ymax, xmax] 0-1000 正規化（value 周辺）
+      "label": string,            // 略称 (例: "Hgb")
+      "label_detail": string,     // 詳細名（無ければ ""）
+      "value": string,
+      "unit": string,             // 単位（無ければ ""）
+      "flag": string,             // "H" / "L" / ""
+      "ref_low": string,          // 下限値（無ければ ""）
+      "ref_high": string,         // 上限値（無ければ ""）
+      "marked": boolean,
+      "bbox": [number, number, number, number],  // [ymin, xmin, ymax, xmax] 0-1000 正規化
       "confidence": "high" | "low",
       "kind": "printed" | "handwritten"
     }
   ]
 }
-JSON 以外の文字（前後のコメント・説明・code fence）は一切出力しないこと。`;
+JSON 以外（コメント・説明・code fence）は出力しないこと。`;
 
 function parseDataUrl(input: string): { mime: string; data: string } {
   const m = /^data:([^;]+);base64,(.+)$/i.exec(input.trim());
