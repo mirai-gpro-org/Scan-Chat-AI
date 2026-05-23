@@ -156,12 +156,12 @@ import ScanOverlay from '../components/ScanOverlay.astro';
         <div class="mt-2 space-y-3">
           <div>
             <p class="mb-1 text-[10px] uppercase tracking-wide text-slate-400">
-              Gemini raw response <span id="scan-finish" class="ml-1 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-normal text-slate-700 dark:bg-slate-700 dark:text-slate-200"></span>
+              Gemini raw markdown <span id="scan-finish" class="ml-1 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-normal text-slate-700 dark:bg-slate-700 dark:text-slate-200"></span>
             </p>
             <pre id="scan-raw" class="max-h-[480px] overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-200"></pre>
           </div>
           <div>
-            <p class="mb-1 text-[10px] uppercase tracking-wide text-slate-400">Parsed result</p>
+            <p class="mb-1 text-[10px] uppercase tracking-wide text-slate-400">下流診断 AI 送信用 Markdown</p>
             <pre id="scan-result" class="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-200"></pre>
           </div>
         </div>
@@ -230,15 +230,9 @@ import ScanOverlay from '../components/ScanOverlay.astro';
   }
 
   function regionStatus(region: AnalyzeResult['regions'][number]): 'green' | 'yellow' | 'red' {
-    if (region.error) return 'red';
-    if (region.kind === 'notes') {
-      return region.text && region.text.trim() ? 'yellow' : 'red';
-    }
-    const rows = region.rows ?? [];
-    if (rows.length === 0) return 'red';
-    const anyEmpty = rows.some((row) => !(row ?? []).some((v) => String(v ?? '').trim() !== ''));
-    if (anyEmpty) return 'red';
-    if ((region.uncertain_rows ?? []).length > 0) return 'yellow';
+    if (!region.body || !region.body.trim()) return 'red';
+    // 「?」「不明」「(?)」が含まれていれば要確認扱い
+    if (/\(\?\)|\?\?|不明/.test(region.body)) return 'yellow';
     return 'green';
   }
 
@@ -250,80 +244,36 @@ import ScanOverlay from '../components/ScanOverlay.astro';
 
   const STATUS_LABEL = { green: '✓ OK', yellow: '⚠ 要確認', red: '✗ 要対応' } as const;
 
-  function renderRegionCard(region: AnalyzeResult['regions'][number], idx: number): string {
+  function renderRegionCard(
+    region: AnalyzeResult['regions'][number],
+    idx: number,
+    renderedBody: string,
+  ): string {
     const status = regionStatus(region);
-    const cols = region.cols ?? [];
-    const rows = region.rows ?? [];
-    const uncertain = new Set(region.uncertain_rows ?? []);
-
-    const errorBlock = region.error
-      ? `<p class="rounded bg-rose-100 px-3 py-2 text-xs text-rose-900 dark:bg-rose-900/40 dark:text-rose-200">${escapeHtml(region.error)}</p>`
+    const bboxNote = region.bbox
+      ? `<span class="text-[10px] text-slate-400">bbox=[${region.bbox.map((n) => n.toFixed(2)).join(',')}]</span>`
       : '';
-
-    const tableBlock =
-      region.kind === 'table' && rows.length > 0
-        ? `
-        <div class="overflow-x-auto">
-          <table class="w-full border-collapse text-xs">
-            <thead>
-              <tr class="bg-slate-100 dark:bg-slate-800">
-                ${cols.map((c) => `<th class="border border-slate-200 px-2 py-1 text-left font-medium dark:border-slate-700">${escapeHtml(c)}</th>`).join('')}
-                <th class="border border-slate-200 px-2 py-1 text-left font-medium dark:border-slate-700">?</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows
-                .map((row, rowIdx) => {
-                  const isUncertain = uncertain.has(rowIdx);
-                  const rowBg = isUncertain ? 'bg-amber-50 dark:bg-amber-900/20' : '';
-                  const cells = (cols.length ? cols.map((_, i) => row[i] ?? '') : row)
-                    .map((v) => `<td class="border border-slate-200 px-2 py-1 dark:border-slate-700">${escapeHtml(v)}</td>`)
-                    .join('');
-                  const flag = isUncertain
-                    ? '<td class="border border-slate-200 px-2 py-1 text-center text-amber-700 dark:border-slate-700">⚠</td>'
-                    : '<td class="border border-slate-200 px-2 py-1 dark:border-slate-700"></td>';
-                  return `<tr class="${rowBg}">${cells}${flag}</tr>`;
-                })
-                .join('')}
-            </tbody>
-          </table>
-        </div>`
-        : '';
-
-    const notesBlock =
-      region.kind === 'notes' && region.text
-        ? `
-        <pre class="whitespace-pre-wrap rounded bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-900/30 dark:text-amber-100">${escapeHtml(region.text)}</pre>`
-        : '';
-
-    const summary =
-      region.kind === 'notes'
-        ? `自由テキスト ${region.text?.length ?? 0} 字`
-        : `${rows.length} 項目${uncertain.size ? ` / ${uncertain.size} 要確認` : ''}`;
-
     return `
       <article class="rounded-2xl border ${STATUS_COLORS[status]} p-3 md:p-4">
         <header class="mb-2 flex items-center justify-between gap-2">
-          <h4 class="text-sm font-semibold md:text-base">
-            <span class="mr-2 text-xs text-slate-500">#${idx + 1}</span>${escapeHtml(region.label)}
+          <h4 class="flex items-center gap-2 text-sm font-semibold md:text-base">
+            <span class="text-xs text-slate-500">#${idx + 1}</span>${escapeHtml(region.label)}${bboxNote}
           </h4>
           <span class="rounded-full bg-white/70 px-2 py-0.5 text-xs font-medium dark:bg-slate-900/60">
-            ${STATUS_LABEL[status]} · ${summary}
+            ${STATUS_LABEL[status]}
           </span>
         </header>
-        <div class="min-w-0 space-y-2">
-          ${errorBlock}
-          ${tableBlock || notesBlock || (region.error ? '' : '<p class="text-xs text-slate-500">内容なし</p>')}
+        <div class="md-region">
+          ${renderedBody || '<p class="text-xs text-slate-500">内容なし</p>'}
         </div>
       </article>
     `;
   }
 
-  function renderResult(r: AnalyzeResult): void {
+  async function renderResult(r: AnalyzeResult): Promise<void> {
     const regions = r.regions ?? [];
-    const totalItems = regions.reduce((s, region) => s + (region.rows?.length ?? 0), 0);
     $('result-count').textContent = regions.length
-      ? `${regions.length} 領域 / ${totalItems} 項目を読み取りました`
+      ? `${regions.length} 領域を読み取りました`
       : '解析が完了しました';
 
     // 旧 UI 要素は非表示
@@ -331,19 +281,26 @@ import ScanOverlay from '../components/ScanOverlay.astro';
     $('priority-section').hidden = true;
     $('obs-section').innerHTML = '';
 
-    // 領域カード一覧
+    // marked で各領域の Markdown 本文を HTML 化
+    const { marked } = await import('marked');
+    marked.setOptions({ gfm: true, breaks: false });
+
     const itemsList = $('items-list') as HTMLUListElement;
     if (regions.length === 0) {
       itemsList.innerHTML =
         '<li class="px-4 py-6 text-center text-sm text-slate-500">領域は検出されませんでした</li>';
     } else {
-      itemsList.innerHTML = regions
-        .map((region, idx) => `<li class="px-3 py-3 md:px-4">${renderRegionCard(region, idx)}</li>`)
-        .join('');
+      const renderedRegions = await Promise.all(
+        regions.map(async (region, idx) => {
+          const html = await marked.parse(region.body || '');
+          return `<li class="px-3 py-3 md:px-4">${renderRegionCard(region, idx, html)}</li>`;
+        }),
+      );
+      itemsList.innerHTML = renderedRegions.join('');
     }
 
-    // debug panes: 1 リクエスト 1 raw
-    ($('scan-raw') as HTMLPreElement).textContent = r.raw ?? '(empty)';
+    // debug panes
+    ($('scan-raw') as HTMLPreElement).textContent = r.markdown || '(empty)';
     const finish = r.finishReason ?? '';
     const finishEl = $('scan-finish');
     finishEl.textContent = finish ? `finish: ${finish}` : '';
@@ -351,7 +308,8 @@ import ScanOverlay from '../components/ScanOverlay.astro';
     finishEl.classList.toggle('bg-rose-200', hasBadFinish);
     finishEl.classList.toggle('text-rose-900', hasBadFinish);
 
-    ($('scan-result') as HTMLPreElement).textContent = JSON.stringify({ regions }, null, 2);
+    // 下流診断 AI へ渡すのは Markdown のまま。Parsed 領域メタは UI 補助のみ。
+    ($('scan-result') as HTMLPreElement).textContent = r.markdown || '(empty)';
   }
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -367,7 +325,7 @@ import ScanOverlay from '../components/ScanOverlay.astro';
         shot.textContent = state === 'busy' ? '解析中…' : '📷 撮影 & 解析';
       },
       onAnalyze: (result) => {
-        renderResult(result);
+        void renderResult(result);
         controller.stop();
         show('result');
       },

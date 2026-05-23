@@ -51,3 +51,35 @@
     @apply border-brand-500 bg-brand-50 text-brand-700 hover:bg-brand-100 dark:border-brand-500 dark:bg-brand-500/15 dark:text-brand-100;
   }
 }
+
+/* Gemini が返す Markdown を marked で HTML 化した部分のスタイル */
+.md-region table {
+  @apply w-full border-collapse text-xs md:text-sm;
+}
+.md-region thead {
+  @apply bg-slate-100 dark:bg-slate-800;
+}
+.md-region th,
+.md-region td {
+  @apply border border-slate-200 px-2 py-1 text-left align-top dark:border-slate-700;
+}
+.md-region th {
+  @apply font-medium;
+}
+.md-region h1,
+.md-region h2,
+.md-region h3 {
+  @apply mt-2 mb-1 text-sm font-semibold md:text-base;
+}
+.md-region p {
+  @apply my-1 text-sm md:text-base;
+}
+.md-region ul {
+  @apply my-1 ml-4 list-disc text-sm md:text-base;
+}
+.md-region ol {
+  @apply my-1 ml-4 list-decimal text-sm md:text-base;
+}
+.md-region code {
+  @apply rounded bg-slate-100 px-1 text-[0.85em] dark:bg-slate-800;
+}

@@ -1,32 +1,32 @@
 /**
- * カメラ起動 → 撮影 → サーバ送信（バイナリ Blob）→ NDJSON ストリーム受信。
+ * カメラ起動 → 撮影 → サーバ送信（バイナリ Blob）→ Markdown ストリーム受信。
  *
  * - base64 は一切使わない。撮影画像は canvas.toBlob() で Blob として保持し、
  *   multipart/form-data でサーバへバイナリ直送する。
- * - サーバは Files API 経由で Gemini に画像を渡し、応答は NDJSON で
- *   1 chunk ずつ流す（Vercel のレスポンスバッファ詰まりを回避）。
- * - AR 連続検知は撤廃済み。capture() 1 発のみ。
+ * - サーバは Files API 経由で Gemini に画像を渡し、応答は **Markdown** で
+ *   1 chunk ずつ NDJSON で流す（Vercel のレスポンスバッファ詰まりを回避）。
+ * - 下流の診断 AI も Markdown のまま消費する設計のため、JSON 強制を完全撤廃。
+ *   AR 風オーバーレイ用の bbox は Markdown 内に HTML コメントで埋め込む。
  */
 
-/** 1 領域分のデータ (LLM の出力 JSON 内の各 region) */
+/** 1 領域分のデータ (Markdown を parse した結果) */
 export interface RegionResult {
-  id: string;
+  /** 領域ラベル (H2 見出し) */
   label: string;
-  kind?: 'table' | 'notes';
-  /** kind=table のとき */
-  cols?: string[];
-  rows?: string[][];
-  uncertain_rows?: number[];
-  /** kind=notes のとき */
-  text?: string;
-  error?: string;
+  /** 正規化 bbox [ymin, xmin, ymax, xmax] (0.0-1.0)。HTML コメントから抽出。 */
+  bbox?: [number, number, number, number];
+  /** 領域内の Markdown 本文 (見出し直下〜次の H2 までのテキスト) */
+  body: string;
 }
 
 export interface AnalyzeResult {
+  /** 全体の生 Markdown (下流診断 AI へ渡す形) */
+  markdown: string;
+  /** 領域ごとに切り分けたメタデータ + 本文 (UI 表示用) */
   regions: RegionResult[];
-  /** 表示用フル画像 URL (objectURL, dataURL ではない) */
+  /** 表示用フル画像 URL (objectURL) */
   fullImage?: string;
-  raw?: string;
+  /** Gemini finishReason */
   finishReason?: string;
 }
 
@@ -96,7 +96,6 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
       setStatus('まだ映像が取得できていません');
       return;
     }
-    // 表示用 URL は objectURL（base64 ではない）
     const previewUrl = URL.createObjectURL(blob);
     refs.onCapture?.(previewUrl);
 
@@ -106,11 +105,9 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     const userHint = refs.hint?.value?.trim() || '';
     const formData = new FormData();
     formData.append('image', blob, 'scan.jpg');
-    formData.append('mode', 'analyze');
     if (userHint) formData.append('hint', userHint);
 
     try {
-      // multipart/form-data として送信（Content-Type はブラウザが boundary 付きで自動設定）
       const res = await fetch('/api/scan', {
         method: 'POST',
         body: formData,
@@ -123,13 +120,11 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         return;
       }
 
-      // NDJSON ストリーム受信
       const holder: {
-        regions: RegionResult[];
-        raw?: string;
+        markdown: string;
         finishReason?: string;
         err?: string;
-      } = { regions: [] };
+      } = { markdown: '' };
 
       await readNdjsonStream(res, (ev) => {
         if (ev.type === 'start') {
@@ -139,9 +134,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
           setStatus(`📝 読み取り中… ${len.toLocaleString()} 文字`);
           refs.onStreamProgress?.(len);
         } else if (ev.type === 'done') {
-          const json = ev.json as { regions?: RegionResult[] } | null;
-          holder.regions = Array.isArray(json?.regions) ? json.regions : [];
-          holder.raw = ev.raw;
+          holder.markdown = String(ev.markdown ?? '');
           holder.finishReason = ev.finishReason;
         } else if (ev.type === 'error') {
           holder.err = `${ev.error ?? '不明'}\n${
@@ -156,26 +149,31 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         setState(stream ? 'running' : 'idle');
         return;
       }
-      if (holder.regions.length === 0) {
-        const msg = '領域が検出されませんでした。撮影し直してください。';
+      const markdown = stripMarkdownCodeFence(holder.markdown);
+      if (!markdown.trim()) {
+        const msg = '内容が検出されませんでした。撮影し直してください。';
         setStatus(msg);
         refs.onError?.(msg);
         setState(stream ? 'running' : 'idle');
         return;
       }
 
-      const totalItems = holder.regions.reduce((sum, r) => sum + (r.rows?.length ?? 0), 0);
+      const regions = parseMarkdownRegions(markdown);
+      const totalRows = regions.reduce(
+        (sum, r) => sum + countTableRows(r.body),
+        0,
+      );
       const result: AnalyzeResult = {
-        regions: holder.regions,
+        markdown,
+        regions,
         fullImage: previewUrl,
-        raw: holder.raw,
         finishReason: holder.finishReason,
       };
       setState(stream ? 'running' : 'idle');
       setStatus(
-        totalItems
-          ? `${holder.regions.length} 領域 / ${totalItems} 項目を読み取りました`
-          : '解析が完了しました',
+        totalRows
+          ? `${regions.length} 領域 / ${totalRows} 行を読み取りました`
+          : `${regions.length} 領域を読み取りました`,
       );
       refs.onAnalyze?.(result);
     } catch (err) {
@@ -186,10 +184,6 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     }
   }
 
-  /**
-   * video から canvas にコピーして JPEG Blob として返す。
-   * dataURL 経由しないので base64 化が一切発生しない。
-   */
   async function grabFrameBlob(opts: { maxEdge: number; quality: number }): Promise<Blob | null> {
     const vw = refs.video.videoWidth;
     const vh = refs.video.videoHeight;
@@ -225,6 +219,82 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
 }
 
 // ============================================================
+// Markdown パース: H2 (## ラベル) で領域に切り分け、HTML コメント
+// から bbox を抽出する。
+// ============================================================
+
+const HEADING_REGEX = /^##\s+(.+?)\s*$/;
+const BBOX_COMMENT_REGEX = /<!--\s*bbox\s*:\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*-->/i;
+
+export function parseMarkdownRegions(md: string): RegionResult[] {
+  const lines = md.split('\n');
+  const regions: RegionResult[] = [];
+  let current: { label: string; bodyLines: string[]; bbox?: [number, number, number, number] } | null = null;
+  for (const line of lines) {
+    const h = HEADING_REGEX.exec(line);
+    if (h) {
+      if (current) regions.push(finalize(current));
+      current = { label: h[1].trim(), bodyLines: [] };
+      continue;
+    }
+    if (current) {
+      const b = BBOX_COMMENT_REGEX.exec(line);
+      if (b && !current.bbox) {
+        current.bbox = [
+          clamp01(parseFloat(b[1])),
+          clamp01(parseFloat(b[2])),
+          clamp01(parseFloat(b[3])),
+          clamp01(parseFloat(b[4])),
+        ];
+        // bbox コメント行は body には含めない
+        continue;
+      }
+      current.bodyLines.push(line);
+    }
+  }
+  if (current) regions.push(finalize(current));
+  return regions;
+}
+
+function finalize(c: {
+  label: string;
+  bodyLines: string[];
+  bbox?: [number, number, number, number];
+}): RegionResult {
+  return {
+    label: c.label,
+    bbox: c.bbox,
+    body: c.bodyLines.join('\n').trim(),
+  };
+}
+
+function clamp01(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(1, v));
+}
+
+/** GFM テーブル本文の行数を雑にカウント (区切り行 `|---|` を除く) */
+function countTableRows(body: string): number {
+  let count = 0;
+  for (const line of body.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('|')) continue;
+    // ヘッダ/区切り行を除外
+    if (/^\|\s*-+/.test(trimmed) || /^\|\s*:?-+/.test(trimmed)) continue;
+    count++;
+  }
+  // 最初の 1 行は表ヘッダなので 1 引く
+  return Math.max(0, count - 1);
+}
+
+/** モデルが \`\`\`markdown ... \`\`\` で全体を包んできた場合に剥がす */
+function stripMarkdownCodeFence(text: string): string {
+  const t = text.trim();
+  const m = /^```(?:markdown|md)?\s*\r?\n?([\s\S]*?)\r?\n?```$/i.exec(t);
+  return m ? m[1].trim() : t;
+}
+
+// ============================================================
 // ストリーム受信 (NDJSON)
 // ============================================================
 
@@ -232,8 +302,7 @@ interface StreamEvent {
   type: 'start' | 'chunk' | 'done' | 'error';
   text?: string;
   totalLen?: number;
-  raw?: string;
-  json?: unknown;
+  markdown?: string;
   finishReason?: string;
   error?: string;
   detail?: string;
@@ -260,11 +329,10 @@ async function readNdjsonStream(
       try {
         onEvent(JSON.parse(line) as StreamEvent);
       } catch {
-        // 部分行や JSON でない行は無視（次の chunk で揃う想定）
+        /* ignore partial / non-JSON lines */
       }
     }
   }
-  // 残った buf の処理
   if (buf.trim()) {
     try {
       onEvent(JSON.parse(buf.trim()) as StreamEvent);
@@ -274,10 +342,6 @@ async function readNdjsonStream(
   }
 }
 
-/**
- * non-stream エラーレスポンスからメッセージを抽出。
- * Vercel のタイムアウト等で JSON でない場合は raw テキスト先頭を使う。
- */
 async function readErrorMessage(res: Response): Promise<string> {
   try {
     const text = await res.text();
@@ -315,10 +379,6 @@ function describeMediaError(err: unknown): string {
   }
 }
 
-/**
- * Google Generative Language API のエラーレスポンス本文から
- * 人間が読みやすい 1 行サマリを作る。
- */
 function summarizeGoogleError(detail: string): string {
   try {
     const obj = JSON.parse(detail) as {

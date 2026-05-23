@@ -1,10 +1,7 @@
 import type { APIRoute } from 'astro';
 import {
-  callGemini,
   streamGemini,
   MODELS,
-  extractText,
-  stripJsonCodeFence,
   uploadGeminiFile,
   GeminiError,
   type GeminiContent,
@@ -12,93 +9,68 @@ import {
 
 export const prerender = false;
 
-type ScanMode = 'detect' | 'analyze';
-
-const DETECT_SYSTEM = `あなたは医療文書スキャン補助 AI です。
-入力画像から検査値・項目ラベル・手書きメモを検知し、各バウンディングボックスを返してください。
-出力は以下の JSON スキーマに厳密に従ってください:
-{
-  "items": [
-    {
-      "label": string,            // 項目名（例: 血圧、Hb、所見）
-      "value": string,            // 認識した値（手書きで判読不能なら空文字）
-      "bbox": [number, number, number, number], // [ymin, xmin, ymax, xmax] 0-1000 で正規化
-      "confidence": "high" | "low", // low は手書き / かすれ等
-      "kind": "printed" | "handwritten"
-    }
-  ]
-}
-JSON 以外の文字（前後のコメントや code fence）は出力しないこと。最大 12 項目まで。`;
-
-const ANALYZE_SYSTEM = `検査表・診断結果報告書の画像を、紙面の内容そのまま JSON にしてください。
+/**
+ * 検査表画像 → 構造化 Markdown (見出し + GFM テーブル + bbox HTML コメント)。
+ * 下流の診断 AI も Markdown のまま消費する設計のため、JSON 強制を完全撤廃。
+ * LLM のネイティブ生成形式に寄せたことで、JSON 構文オーバーヘッド分の
+ * 生成時間・トークンが削減される。
+ */
+const ANALYZE_SYSTEM = `検査表・診断結果報告書の画像を、紙面の内容そのまま **構造化 Markdown** に
+書き起こしてください。
 診断・解釈・要約はしません（下流の別 AI が行います）。
+
+【出力フォーマット (厳守)】
+紙面を意味のある領域 (regions) に分け、各領域を H2 見出しで始めます。
+見出しの直後の行に、領域の正規化された bounding box を HTML コメントで埋めます。
+表は GFM テーブル形式、自由テキストは段落 / 箇条書きとして書きます。
+
+【座標系】
+bbox は **0.0〜1.0 の小数** で **[ymin, xmin, ymax, xmax]** の順。
+ピクセル単位は使わない（端末非依存にするため）。
 
 【守ること】
 - 紙面にあるものだけを、書かれている形で転記する。
-- 不明な値は推測で埋めない。読めなければ値を "" にし、その行 index を
-  uncertain_rows に入れる。行ごと判読不能なら出力しない。
+- 不明な値は推測で埋めない。読めない値は \`(?)\` と書く。
 - 紙面に無い項目・列を作らない（ハルシネーション禁止）。
-- 座標値（bbox）は出力しない。位置情報は不要、内容の転記に集中する。
+- 領域は最大 4 つまで。極端に細かく分けない。
+- 表の列見出しは紙面で使われている見出し語をそのまま使う。
 
-【領域分け】
-紙面を 2〜4 個の領域に分けて返す。表 1 つ / 手書きメモ等が 1 領域。
-領域内の表構造（列の意味、項目並び）はあなたが画像を見て判断する。
+【出力例】
 
-【出力 JSON】
-{
-  "regions": [
-    {
-      "id": "left_table",                          // 英数字 ID
-      "label": "左側検査値表",                      // 短い日本語ラベル
-      "kind": "table" | "notes",                   // 表 or 自由テキスト
-      "cols": ["列1","列2", ...],                  // table のとき紙面の列見出し
-      "rows": [["値","値", ...], ...],             // table のとき各行 cols 順
-      "uncertain_rows": [3, 7],                    // table のとき自信なし行 index
-      "text": "..."                                // notes のとき自由テキスト（改行 \\n）
-    }
-  ]
-}
+## 左側検査値表
+<!-- bbox: 0.05,0.05,0.95,0.50 -->
 
-【注意】
-- 各行は cols と同じ要素数の文字列配列。
-- table 領域は cols / rows / uncertain_rows のみ（text なし）。
-- notes 領域は text のみ（cols / rows / uncertain_rows なし）。
+| No | 検査項目 | 結果 | 単位 | 基準値 |
+|----|----------|------|------|--------|
+| 1  | AST(GOT) | 18   | U/L  | 10-35  |
+| 2  | ALT(GPT) | 12   | U/L  | 5-40   |
 
-JSON 以外（前置き、code fence、後置きの説明）は出力しないこと。`;
+## 右側検査値表
+<!-- bbox: 0.05,0.50,0.95,0.85 -->
 
-/**
- * Gemini に出力構造を強制する responseSchema (OpenAPI 風サブセット)。
- * シンプルに保つ: per-row metadata を削ったので空間推論コストも消える。
- */
-const ANALYZE_RESPONSE_SCHEMA: Record<string, unknown> = {
-  type: 'object',
-  properties: {
-    regions: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          label: { type: 'string' },
-          kind: { type: 'string', enum: ['table', 'notes'] },
-          cols: { type: 'array', items: { type: 'string' } },
-          rows: { type: 'array', items: { type: 'array', items: { type: 'string' } } },
-          uncertain_rows: { type: 'array', items: { type: 'number' } },
-          text: { type: 'string' },
-        },
-        required: ['id', 'label', 'kind'],
-      },
-    },
-  },
-  required: ['regions'],
-};
+| No | 検査項目 | 結果 | 単位 | 基準値 |
+|----|----------|------|------|--------|
+| 35 | CEA      | 7.1H | ng/ml| 0-5.0  |
+| 36 | CA19-9   | 4048.7H | U/ml | 0-37 |
+
+## 手書きメモ
+<!-- bbox: 0.05,0.85,0.95,0.98 -->
+
+- 古富先生
+- CA19-9 (腫瘍マーカー)
+- 前回 4981 / 今回 4048 / -933 改善
+
+【出力する際の注意】
+- 出力は **純粋な Markdown だけ**。前置きの説明文や code fence (\`\`\`) で
+  全体を囲む等は絶対にしない（GFM テーブル内の \`code\` は OK）。
+- 領域見出しの bbox HTML コメントは省略しないこと。
+- 表が無い領域は notes として段落/箇条書きで書く。`;
 
 export const POST: APIRoute = async ({ request }) => {
-  // クライアントは multipart/form-data でバイナリ直送。base64 inline は廃止。
+  // multipart/form-data でバイナリ直送 (base64 は一切経由しない)
   let bytes: Uint8Array;
   let mime: string;
   let hint = '';
-  let mode: ScanMode = 'analyze';
   try {
     const ct = request.headers.get('content-type') ?? '';
     if (!ct.startsWith('multipart/form-data')) {
@@ -111,8 +83,6 @@ export const POST: APIRoute = async ({ request }) => {
     }
     bytes = new Uint8Array(await file.arrayBuffer());
     mime = file.type || 'image/jpeg';
-    const rawMode = String(fd.get('mode') ?? 'analyze');
-    mode = rawMode === 'detect' ? 'detect' : 'analyze';
     hint = String(fd.get('hint') ?? '').trim();
   } catch (err) {
     return json({ error: 'Invalid form data', detail: String(err) }, 400);
@@ -121,53 +91,36 @@ export const POST: APIRoute = async ({ request }) => {
   const apiKey = import.meta.env.GEMINI_API_KEY;
 
   try {
-    // === 画像転送: Files API ===
-    // バイナリ直送（base64 一切不使用）→ Files API resumable upload → fileUri 参照
+    // Files API バイナリアップロード → fileUri 参照（base64 inline 不使用）
     const file = await uploadGeminiFile(apiKey, bytes, mime, 'scan');
 
     const userParts: GeminiContent['parts'] = [
       { file_data: { mime_type: file.mimeType, file_uri: file.uri } },
       {
-        text:
-          mode === 'detect'
-            ? '画像から項目を検知してください。'
-            : hint
-              ? `補足: ${hint}\nこの紙面を読み取って JSON に転記してください。`
-              : 'この紙面を読み取って JSON に転記してください。',
+        text: hint
+          ? `補足: ${hint}\nこの紙面を Markdown に書き起こしてください。`
+          : 'この紙面を Markdown に書き起こしてください。',
       },
     ];
 
     const geminiRequest = {
-      systemInstruction: {
-        parts: [{ text: mode === 'detect' ? DETECT_SYSTEM : ANALYZE_SYSTEM }],
-      },
+      systemInstruction: { parts: [{ text: ANALYZE_SYSTEM }] },
       contents: [{ role: 'user' as const, parts: userParts }],
       generationConfig: {
-        temperature: mode === 'detect' ? 0.1 : 0.2,
-        maxOutputTokens: mode === 'detect' ? 2048 : 32768,
-        responseMimeType: 'application/json',
+        temperature: 0.0,
+        maxOutputTokens: 32768,
+        // responseMimeType / responseSchema は意図的に外す:
+        //   - LLM のネイティブ形式 (Markdown) で生成させて構文負担を最小化
+        //   - 厳密 JSON が必要なら下流のバッチ変換で対応
         thinkingConfig: { thinkingBudget: 0 },
-        ...(mode === 'detect' ? {} : { responseSchema: ANALYZE_RESPONSE_SCHEMA }),
       },
     };
 
-    // detect は一発返し
-    if (mode === 'detect') {
-      const res = await callGemini(apiKey, geminiRequest, MODELS.scan);
-      const raw = extractText(res);
-      const cleaned = stripJsonCodeFence(raw);
-      let parsed: unknown = null;
-      try { parsed = JSON.parse(cleaned); } catch { /* noop */ }
-      const finishReason = res.candidates?.[0]?.finishReason;
-      return json({ mode, raw, json: parsed, finishReason });
-    }
-
-    // analyze は NDJSON でストリーミング:
+    // NDJSON でストリーミング: MD テキストを chunk ごとに client に流す
     //   {"type":"start"}
     //   {"type":"chunk","text":"...","totalLen":N}
-    //   {"type":"done","raw":"...","json":{...},"finishReason":"STOP"}
-    // → クライアントは進捗 UI で「何文字目」を表示できる。
-    //   Vercel の単一レスポンスバッファリング詰まり (Gemini 推奨書の主因) も回避。
+    //   {"type":"done","markdown":"完成 MD","finishReason":"STOP"}
+    //   {"type":"error", ...}
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         const enc = new TextEncoder();
@@ -185,10 +138,7 @@ export const POST: APIRoute = async ({ request }) => {
             }
             if (ev.finishReason) lastFinish = ev.finishReason;
           }
-          const cleaned = stripJsonCodeFence(acc);
-          let parsed: unknown = null;
-          try { parsed = JSON.parse(cleaned); } catch { /* noop */ }
-          emit({ type: 'done', raw: acc, json: parsed, finishReason: lastFinish });
+          emit({ type: 'done', markdown: acc, finishReason: lastFinish });
         } catch (err) {
           if (err instanceof GeminiError) {
             emit({ type: 'error', error: err.message, detail: err.body, status: err.status });
