@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import {
   callGemini,
+  MODELS,
   extractText,
   GeminiError,
   type GeminiContent,
@@ -101,7 +102,7 @@ export const POST: APIRoute = async ({ request }) => {
         maxOutputTokens: mode === 'detect' ? 512 : 1024,
         responseMimeType: 'application/json',
       },
-    });
+    }, MODELS.scan);
     const raw = extractText(res);
     let parsed: unknown = null;
     try {

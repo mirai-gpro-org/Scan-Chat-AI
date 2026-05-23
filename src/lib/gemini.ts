@@ -3,7 +3,13 @@
  * クライアントには公開しない（API キーが必要なため必ずサーバから呼ぶ）。
  */
 
-const DEFAULT_MODEL = 'gemini-2.5-flash';
+export const MODELS = {
+  // REST generateContent (画像解析・テキスト応答)
+  scan: 'gemini-2.5-flash',
+  // Live API 専用 (WebSocket / audio-to-audio)。REST には渡さないこと
+  liveChat: 'gemini-3.1-flash-live-preview',
+} as const;
+
 const ENDPOINT_BASE =
   'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -58,7 +64,7 @@ export class GeminiError extends Error {
 export async function callGemini(
   apiKey: string,
   request: GeminiRequest,
-  model: string = DEFAULT_MODEL,
+  model: string = MODELS.scan,
 ): Promise<GeminiResponse> {
   if (!apiKey) {
     throw new GeminiError('GEMINI_API_KEY is not configured', 500, '');

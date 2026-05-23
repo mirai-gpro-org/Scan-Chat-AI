@@ -3,6 +3,7 @@ import {
   callGemini,
   extractText,
   GeminiError,
+  MODELS,
   type GeminiContent,
 } from '../../lib/gemini';
 
@@ -82,6 +83,9 @@ export const POST: APIRoute = async ({ request }) => {
       : []),
   ];
 
+  // 設計上は MODELS.liveChat (gemini-3.1-flash-live-preview) を使うが、
+  // それは WebSocket 専用なので Live API エンドポイント実装までは REST 用の
+  // MODELS.scan を流用する。
   try {
     const res = await callGemini(import.meta.env.GEMINI_API_KEY, {
       systemInstruction: { parts: hintParts },
@@ -91,7 +95,7 @@ export const POST: APIRoute = async ({ request }) => {
         maxOutputTokens: 512,
         responseMimeType: 'application/json',
       },
-    });
+    }, MODELS.scan);
 
     const raw = extractText(res);
     const parsed = safeParse(raw);
