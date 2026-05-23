@@ -152,9 +152,18 @@ import ScanOverlay from '../components/ScanOverlay.astro';
       </details>
 
       <!-- Raw JSON（開発用） -->
-      <details class="rounded-2xl border border-dashed border-slate-300 p-3 dark:border-slate-700">
+      <details open class="rounded-2xl border border-dashed border-slate-300 p-3 dark:border-slate-700">
         <summary class="cursor-pointer text-xs font-medium text-slate-500">詳細データ (JSON)</summary>
-        <pre id="scan-result" class="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs text-slate-600 dark:text-slate-300"></pre>
+        <div class="mt-2 space-y-3">
+          <div>
+            <p class="mb-1 text-[10px] uppercase tracking-wide text-slate-400">Gemini raw response</p>
+            <pre id="scan-raw" class="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-200"></pre>
+          </div>
+          <div>
+            <p class="mb-1 text-[10px] uppercase tracking-wide text-slate-400">Parsed result</p>
+            <pre id="scan-result" class="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-200"></pre>
+          </div>
+        </div>
       </details>
 
       <!-- CTA -->
@@ -292,8 +301,10 @@ import ScanOverlay from '../components/ScanOverlay.astro';
       parts.join('') ||
       '<p class="text-sm text-slate-500">追加の所見はありません</p>';
 
-    // raw JSON
-    ($('scan-result') as HTMLPreElement).textContent = JSON.stringify(r, null, 2);
+    // debug panes
+    ($('scan-raw') as HTMLPreElement).textContent = r.raw ?? '(empty)';
+    const { raw: _omit, ...withoutRaw } = r;
+    ($('scan-result') as HTMLPreElement).textContent = JSON.stringify(withoutRaw, null, 2);
   }
 
   document.addEventListener('DOMContentLoaded', () => {
