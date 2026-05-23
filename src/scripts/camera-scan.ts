@@ -25,6 +25,7 @@ export interface AnalyzeResult {
   priority_flags?: string[];
   urgent?: boolean;
   raw?: string;
+  finishReason?: string;
 }
 
 export type ScanState = 'idle' | 'running' | 'busy';
@@ -174,6 +175,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         json?: AnalyzeResult;
         error?: string;
         detail?: string;
+        finishReason?: string;
       };
       if (!res.ok) {
         const msg = `解析エラー (${res.status}): ${data.error ?? '不明'}${
@@ -184,7 +186,11 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         setState(stream ? 'running' : 'idle');
         return;
       }
-      const result: AnalyzeResult = { ...(data.json ?? {}), raw: data.raw };
+      const result: AnalyzeResult = {
+        ...(data.json ?? {}),
+        raw: data.raw,
+        finishReason: data.finishReason,
+      };
       if (result.items?.length) {
         lastItems = result.items;
         drawDigitalOverlay(result.items);

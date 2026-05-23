@@ -156,8 +156,10 @@ import ScanOverlay from '../components/ScanOverlay.astro';
         <summary class="cursor-pointer text-xs font-medium text-slate-500">詳細データ (JSON)</summary>
         <div class="mt-2 space-y-3">
           <div>
-            <p class="mb-1 text-[10px] uppercase tracking-wide text-slate-400">Gemini raw response</p>
-            <pre id="scan-raw" class="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-200"></pre>
+            <p class="mb-1 text-[10px] uppercase tracking-wide text-slate-400">
+              Gemini raw response <span id="scan-finish" class="ml-1 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-normal text-slate-700 dark:bg-slate-700 dark:text-slate-200"></span>
+            </p>
+            <pre id="scan-raw" class="max-h-[480px] overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-200"></pre>
           </div>
           <div>
             <p class="mb-1 text-[10px] uppercase tracking-wide text-slate-400">Parsed result</p>
@@ -303,7 +305,12 @@ import ScanOverlay from '../components/ScanOverlay.astro';
 
     // debug panes
     ($('scan-raw') as HTMLPreElement).textContent = r.raw ?? '(empty)';
-    const { raw: _omit, ...withoutRaw } = r;
+    const finish = r.finishReason ?? '';
+    const finishEl = $('scan-finish');
+    finishEl.textContent = finish ? `finish: ${finish}` : '';
+    finishEl.classList.toggle('bg-rose-200', finish === 'MAX_TOKENS' || finish === 'SAFETY');
+    finishEl.classList.toggle('text-rose-900', finish === 'MAX_TOKENS' || finish === 'SAFETY');
+    const { raw: _omit, finishReason: _omit2, ...withoutRaw } = r;
     ($('scan-result') as HTMLPreElement).textContent = JSON.stringify(withoutRaw, null, 2);
   }
 

@@ -100,7 +100,7 @@ export const POST: APIRoute = async ({ request }) => {
       contents: [{ role: 'user', parts: userParts }],
       generationConfig: {
         temperature: mode === 'detect' ? 0.1 : 0.2,
-        maxOutputTokens: mode === 'detect' ? 1024 : 4096,
+        maxOutputTokens: mode === 'detect' ? 2048 : 16384,
         responseMimeType: 'application/json',
       },
     }, MODELS.scan);
@@ -112,7 +112,8 @@ export const POST: APIRoute = async ({ request }) => {
     } catch {
       // 構造化失敗時は raw を返してフロントで対応
     }
-    return json({ mode, raw, json: parsed });
+    const finishReason = res.candidates?.[0]?.finishReason;
+    return json({ mode, raw, json: parsed, finishReason });
   } catch (err) {
     return handleGeminiError(err);
   }
