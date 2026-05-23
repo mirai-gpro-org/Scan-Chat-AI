@@ -3,10 +3,10 @@
 | 項目 | 内容 |
 |---|---|
 | 文書名 | Scan-Chat Medical AI — デバイス・認証 要件定義書 |
-| バージョン | 0.2 (Draft) |
+| バージョン | 0.3 (Draft) |
 | 作成日 | 2026-05-22 |
 | 対象 | 全機能横断（スキャン / チャット / 診断結果閲覧） |
-| 関連文書 | `docs/scan_chat_medical_ai_proposal.pdf`, `docs/scan_feature_requirements.md` |
+| 関連文書 | `docs/scan_chat_medical_ai_proposal.pdf`, `docs/scan_feature_requirements.md`, `docs/data_integration_requirements.md` |
 | 参考実装 | `mirai-gpro/wellfort-site`（クライアント企業 EC サイトの Google One Tap 実装パターン） |
 
 ---
@@ -128,6 +128,39 @@ async function handleGoogleCredential(response) {
 | Authorized JavaScript origins | 本番・プレビュー・`http://localhost:4321` を登録 |
 | Authorized redirect URIs | Supabase の `https://<project>.supabase.co/auth/v1/callback` を登録（OAuth fallback 用） |
 | Supabase JWT | Supabase が発行する access_token / refresh_token を browser SDK が管理（cookie 化はサーバ側で別途実装） |
+
+#### F-A1.3 入場資格チェック（必須）
+
+ログイン直後、必ず Edge Function `verify-eligibility` を呼び、HP 側 Wellfort EC での対象検査商品購入を確認する。不適格時は HP/EC の登録・購入ページへリダイレクトする。詳細は `docs/data_integration_requirements.md` の 4 章を参照。
+
+```javascript
+// One Tap ログイン成功後
+async function handleGoogleCredential(response) {
+  const { data, error } = await supabaseClient.auth.signInWithIdToken({
+    provider: 'google',
+    token: response.credential,
+  });
+  if (error) return showLoginError(error.message);
+
+  // 入場資格チェック
+  const googleSub = parseJwtSub(response.credential);
+  const elig = await fetch('/functions/v1/verify-eligibility', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${data.session.access_token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ google_sub: googleSub }),
+  }).then((r) => r.json());
+
+  if (!elig.eligible) {
+    window.location.href = elig.redirect_url; // HP の登録・購入ページ
+    return;
+  }
+  // elig.diagnosis_user_id を session に保持し、以降のリクエストで使用
+  onAuthenticated(data.session, elig.diagnosis_user_id);
+}
+```
 
 ### F-A2: クロスデバイス・セッション継続
 
@@ -275,22 +308,30 @@ Astro SSR / API ルートから `auth.uid()` を解決するため、Supabase �
 
 ## 6. データモデル（Supabase 想定）
 
-### 6.1 `auth.users`（Supabase 標準）
-Supabase Auth が自動管理する標準テーブルをそのまま利用。Google ログイン時に email / `raw_user_meta_data.name` / `raw_user_meta_data.avatar_url` が自動格納される。独自カラムは追加しない。
+### 6.1 `auth.users`（App-side Supabase Auth 標準）
+Supabase Auth が自動管理する標準テーブルをそのまま利用。Google ログイン時に email / `raw_user_meta_data.name` / `raw_user_meta_data.avatar_url` が自動格納される。**HP 側 `auth.users`（wellfort-site）とは別インスタンス**であることに留意。
 
-### 6.2 `user_profiles`（拡張属性のみ）
+### 6.2 `app_users`（このアプリの診断アカウント実体）
+
+顧客マスタ（氏名・住所・連絡先）は HP 側 `customer_profiles` が一次ソースのため、App 側では**最小限のリンク用フィールド**のみを持つ。詳細は `docs/data_integration_requirements.md` を参照。
+
 | カラム | 型 | 備考 |
 |---|---|---|
-| `user_id` | uuid (pk, fk → auth.users) | |
-| `display_name` | text | アプリ内表示名（任意の上書き） |
-| `preferred_device` | text | 'phone' / 'tablet' / 'pc' いずれか（UX 最適化のヒント） |
+| `diagnosis_user_id` | uuid (pk) | **アプリ全体の owner key**（外部 AI 診断 API 連携キーでもある） |
+| `auth_user_id` | uuid (fk → auth.users) unique | App-side Supabase Auth の user_id |
+| `google_sub` | text unique | Google ID Token の `sub`（HP との初回紐付け用） |
+| `hp_customer_user_id` | uuid nullable | HP 側 `customer_profiles.user_id` のミラー |
+| `display_name_cache` | text nullable | HP から取得した表示名のキャッシュ |
+| `eligibility_checked_at` | timestamptz | 入場資格の最終確認時刻 |
 | `created_at` / `updated_at` | timestamptz | |
+
+**ポイント:** ユーザーの氏名・住所等の PII は App 側に**永続化しない**。表示が必要な場合は Edge Function 経由で HP 側からオンデマンド取得し、`display_name_cache` 程度のみ保持する。
 
 ### 6.3 `sessions`
 | カラム | 型 | 備考 |
 |---|---|---|
 | `id` | uuid (pk) | チャット問診セッション |
-| `user_id` | uuid (fk → auth.users) | |
+| `diagnosis_user_id` | uuid (fk → app_users) | **app_users 経由で参照**（auth.users.id ではない） |
 | `active_device_id` | text nullable | 楽観ロック用 |
 | `progress_percent` | int | 0–100 |
 | `current_section_id` | text | |
@@ -300,7 +341,7 @@ Supabase Auth が自動管理する標準テーブルをそのまま利用。Goo
 | カラム | 型 | 備考 |
 |---|---|---|
 | `id` | uuid (pk) | |
-| `user_id` | uuid (fk → auth.users) | |
+| `diagnosis_user_id` | uuid (fk → app_users) | |
 | `kind` | text | 'phone' / 'tablet' / 'pc'（UA 推定） |
 | `os` | text | iOS / iPadOS / Android / macOS / Windows |
 | `last_seen_at` | timestamptz | |
@@ -309,16 +350,16 @@ Supabase Auth が自動管理する標準テーブルをそのまま利用。Goo
 | カラム | 型 | 備考 |
 |---|---|---|
 | `token` | text (pk) | HMAC 署名済短期トークン |
-| `user_id` | uuid (fk → auth.users) | |
+| `diagnosis_user_id` | uuid (fk → app_users) | |
 | `session_id` | uuid (fk) | |
 | `expires_at` | timestamptz | 発行から 5 分 |
 | `used_at` | timestamptz nullable | ワンタイム |
 
 ### 6.6 RLS ポリシー（要点）
-- `user_profiles`: `user_id = auth.uid()` の行のみ select / update
-- `sessions` / `messages` / `scan_results`: `user_id = auth.uid()` に限定
-- `handoff_tokens`: 本人 user_id のみ insert / select、`used_at` 設定後は select 不可
-- `devices`: `user_id = auth.uid()` の行のみ select / delete（個別ログアウト用）
+- `app_users`: `auth.uid() = auth_user_id` の行のみ select / update（insert は Edge Function のみ）
+- `sessions` / `messages` / `scan_results` / `diagnosis_results`:<br>`diagnosis_user_id IN (SELECT diagnosis_user_id FROM app_users WHERE auth_user_id = auth.uid())` に限定
+- `handoff_tokens`: 本人の diagnosis_user_id のみ insert / select、`used_at` 設定後は select 不可
+- `devices`: 本人の diagnosis_user_id のみ select / delete
 
 ---
 
@@ -459,3 +500,4 @@ SESSION_HANDOFF_HMAC_KEY=       # /api/session/handoff/* のトークン署名�
 |---|---|---|
 | 0.1 | 2026-05-22 | 初版。iPhone 半数以上を想定したマルチデバイス + Google One Tap 方針 |
 | 0.2 | 2026-05-22 | iPhone-first 原則を明文化（基本 iPhone 1 台で完結）、PC スキャンを要件外に変更、認証実装を `mirai-gpro/wellfort-site` の Supabase Auth + `signInWithIdToken` + FedCM パターンに統一、独自 `/api/auth/google` を撤去、`auth.users` 委譲モデルに変更 |
+| 0.3 | 2026-05-22 | HP / App の 2 Supabase 分離方針を反映。App 側は専用の `app_users` テーブルで `diagnosis_user_id`（uuid）を発行・管理。顧客マスタは HP の `customer_profiles` が一次ソース。入場資格は Edge Function `verify-eligibility` で確認（Wellfort EC の対象検査商品購入が前提）。詳細は `docs/data_integration_requirements.md` 参照 |
