@@ -218,14 +218,14 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     setState('busy');
 
     try {
-      // ===== Phase 1: レイアウト検出 =====
+      // ===== Phase 1: レイアウト検出 (429 retry 込み) =====
       setStatus('🗺️ レイアウト検出中…');
-      const layoutFetch = await fetch('/api/scan-layout', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ image: layoutImage ?? fullImage }),
-      });
-      const layoutData = await readJsonResponse(layoutFetch);
+      const layoutBody = JSON.stringify({ image: layoutImage ?? fullImage });
+      const { res: layoutFetch, data: layoutData } = await fetchWithRetry(
+        '/api/scan-layout',
+        layoutBody,
+        'layout',
+      );
       if (!layoutFetch.ok || !layoutData) {
         const msg = formatError('レイアウト検出エラー', layoutFetch.status, layoutData);
         setStatus(msg);
