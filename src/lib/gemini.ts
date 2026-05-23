@@ -96,3 +96,14 @@ export function extractText(res: GeminiResponse): string {
     .join('\n')
     .trim();
 }
+
+/**
+ * Gemini が responseMimeType:'application/json' を無視して
+ * ```json … ``` で包んでくることがあるので剥がす。
+ * 何も包まれていなければそのまま返す。
+ */
+export function stripJsonCodeFence(text: string): string {
+  const t = text.trim();
+  const m = /^```(?:json)?\s*\r?\n?([\s\S]*?)\r?\n?```$/i.exec(t);
+  return m ? m[1].trim() : t;
+}

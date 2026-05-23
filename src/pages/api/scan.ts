@@ -3,6 +3,7 @@ import {
   callGemini,
   MODELS,
   extractText,
+  stripJsonCodeFence,
   GeminiError,
   type GeminiContent,
 } from '../../lib/gemini';
@@ -99,14 +100,15 @@ export const POST: APIRoute = async ({ request }) => {
       contents: [{ role: 'user', parts: userParts }],
       generationConfig: {
         temperature: mode === 'detect' ? 0.1 : 0.2,
-        maxOutputTokens: mode === 'detect' ? 512 : 1024,
+        maxOutputTokens: mode === 'detect' ? 1024 : 4096,
         responseMimeType: 'application/json',
       },
     }, MODELS.scan);
     const raw = extractText(res);
+    const cleaned = stripJsonCodeFence(raw);
     let parsed: unknown = null;
     try {
-      parsed = JSON.parse(raw);
+      parsed = JSON.parse(cleaned);
     } catch {
       // 構造化失敗時は raw を返してフロントで対応
     }
