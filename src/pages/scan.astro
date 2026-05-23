@@ -231,12 +231,14 @@ import ScanOverlay from '../components/ScanOverlay.astro';
 
   function regionStatus(region: AnalyzeResult['regions'][number]): 'green' | 'yellow' | 'red' {
     if (region.error) return 'red';
-    const items = region.items ?? [];
-    if (items.length === 0 && !(region.notes && region.notes.length > 0)) return 'red';
-    const anyMissing = items.some((it) => !(it.r ?? []).some((v) => String(v ?? '').trim() !== ''));
-    if (anyMissing) return 'red';
-    const anyUncertain = items.some((it) => it.c === 'l' || it.k === 'w' || it.x === true);
-    if (anyUncertain) return 'yellow';
+    if (region.kind === 'notes') {
+      return region.text && region.text.trim() ? 'yellow' : 'red';
+    }
+    const rows = region.rows ?? [];
+    if (rows.length === 0) return 'red';
+    const anyEmpty = rows.some((row) => !(row ?? []).some((v) => String(v ?? '').trim() !== ''));
+    if (anyEmpty) return 'red';
+    if ((region.uncertain_rows ?? []).length > 0) return 'yellow';
     return 'green';
   }
 
@@ -250,40 +252,37 @@ import ScanOverlay from '../components/ScanOverlay.astro';
 
   function renderRegionCard(region: AnalyzeResult['regions'][number], idx: number): string {
     const status = regionStatus(region);
-    const items = region.items ?? [];
-    const notes = region.notes ?? [];
     const cols = region.cols ?? [];
+    const rows = region.rows ?? [];
+    const uncertain = new Set(region.uncertain_rows ?? []);
 
     const errorBlock = region.error
       ? `<p class="rounded bg-rose-100 px-3 py-2 text-xs text-rose-900 dark:bg-rose-900/40 dark:text-rose-200">${escapeHtml(region.error)}</p>`
       : '';
 
     const tableBlock =
-      items.length > 0 && cols.length > 0
+      region.kind === 'table' && rows.length > 0
         ? `
         <div class="overflow-x-auto">
           <table class="w-full border-collapse text-xs">
             <thead>
               <tr class="bg-slate-100 dark:bg-slate-800">
                 ${cols.map((c) => `<th class="border border-slate-200 px-2 py-1 text-left font-medium dark:border-slate-700">${escapeHtml(c)}</th>`).join('')}
-                <th class="border border-slate-200 px-2 py-1 text-left font-medium dark:border-slate-700">badges</th>
+                <th class="border border-slate-200 px-2 py-1 text-left font-medium dark:border-slate-700">?</th>
               </tr>
             </thead>
             <tbody>
-              ${items
-                .map((it) => {
-                  const row = it.r ?? [];
-                  const cells = cols
-                    .map((_, i) => `<td class="border border-slate-200 px-2 py-1 dark:border-slate-700">${escapeHtml(row[i] ?? '')}</td>`)
+              ${rows
+                .map((row, rowIdx) => {
+                  const isUncertain = uncertain.has(rowIdx);
+                  const rowBg = isUncertain ? 'bg-amber-50 dark:bg-amber-900/20' : '';
+                  const cells = (cols.length ? cols.map((_, i) => row[i] ?? '') : row)
+                    .map((v) => `<td class="border border-slate-200 px-2 py-1 dark:border-slate-700">${escapeHtml(v)}</td>`)
                     .join('');
-                  const tags = [
-                    it.c === 'l' ? '<span class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">low</span>' : '',
-                    it.k === 'w' ? '<span class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">✍</span>' : '',
-                    it.x ? '<span class="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] text-rose-800 dark:bg-rose-900/40 dark:text-rose-200">⬤</span>' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ');
-                  return `<tr>${cells}<td class="border border-slate-200 px-2 py-1 dark:border-slate-700">${tags}</td></tr>`;
+                  const flag = isUncertain
+                    ? '<td class="border border-slate-200 px-2 py-1 text-center text-amber-700 dark:border-slate-700">⚠</td>'
+                    : '<td class="border border-slate-200 px-2 py-1 dark:border-slate-700"></td>';
+                  return `<tr class="${rowBg}">${cells}${flag}</tr>`;
                 })
                 .join('')}
             </tbody>
@@ -292,17 +291,9 @@ import ScanOverlay from '../components/ScanOverlay.astro';
         : '';
 
     const notesBlock =
-      notes.length > 0
+      region.kind === 'notes' && region.text
         ? `
-        <div class="mt-2 space-y-1 text-xs">
-          <p class="font-semibold text-slate-500">手書き / 表外メモ</p>
-          ${notes
-            .map(
-              (n) =>
-                `<p class="rounded bg-amber-50 px-2 py-1 text-amber-900 dark:bg-amber-900/30 dark:text-amber-100">✍ ${escapeHtml(n.t)}${n.c === 'l' ? ' <span class="text-[10px] text-amber-700">(low)</span>' : ''}</p>`,
-            )
-            .join('')}
-        </div>`
+        <pre class="whitespace-pre-wrap rounded bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-900/30 dark:text-amber-100">${escapeHtml(region.text)}</pre>`
         : '';
 
     const cropImg = region.croppedImage
@@ -310,9 +301,9 @@ import ScanOverlay from '../components/ScanOverlay.astro';
       : '';
 
     const summary =
-      items.length || notes.length
-        ? `${items.length} 項目 / ${notes.length} メモ`
-        : '内容なし';
+      region.kind === 'notes'
+        ? `自由テキスト ${region.text?.length ?? 0} 字`
+        : `${rows.length} 項目${uncertain.size ? ` / ${uncertain.size} 要確認` : ''}`;
 
     return `
       <article class="rounded-2xl border ${STATUS_COLORS[status]} p-3 md:p-4">
@@ -328,8 +319,7 @@ import ScanOverlay from '../components/ScanOverlay.astro';
           <div>${cropImg}</div>
           <div class="min-w-0 space-y-2">
             ${errorBlock}
-            ${tableBlock || (region.error ? '' : '<p class="text-xs text-slate-500">表項目はありません</p>')}
-            ${notesBlock}
+            ${tableBlock || notesBlock || (region.error ? '' : '<p class="text-xs text-slate-500">内容なし</p>')}
           </div>
         </div>
       </article>
@@ -338,7 +328,7 @@ import ScanOverlay from '../components/ScanOverlay.astro';
 
   function renderResult(r: AnalyzeResult): void {
     const regions = r.regions ?? [];
-    const totalItems = regions.reduce((s, region) => s + (region.items?.length ?? 0), 0);
+    const totalItems = regions.reduce((s, region) => s + (region.rows?.length ?? 0), 0);
     $('result-count').textContent = regions.length
       ? `${regions.length} 領域 / ${totalItems} 項目を読み取りました`
       : '解析が完了しました';
@@ -359,22 +349,19 @@ import ScanOverlay from '../components/ScanOverlay.astro';
         .join('');
     }
 
-    // debug panes: 領域ごとの raw を結合表示
-    const rawCombined = regions
-      .map((reg, i) => `=== Region #${i + 1}: ${reg.label} ===\n${reg.raw ?? '(empty)'}\n`)
-      .join('\n');
-    ($('scan-raw') as HTMLPreElement).textContent = rawCombined || '(empty)';
-    const finishReasons = regions.map((reg) => reg.finishReason).filter(Boolean);
+    // debug panes: 1 リクエスト 1 raw
+    ($('scan-raw') as HTMLPreElement).textContent = r.raw ?? '(empty)';
+    const finish = r.finishReason ?? '';
     const finishEl = $('scan-finish');
-    finishEl.textContent = finishReasons.length ? `finish: ${finishReasons.join(', ')}` : '';
-    const hasBadFinish = finishReasons.some((f) => f === 'MAX_TOKENS' || f === 'SAFETY');
+    finishEl.textContent = finish ? `finish: ${finish}` : '';
+    const hasBadFinish = finish === 'MAX_TOKENS' || finish === 'SAFETY';
     finishEl.classList.toggle('bg-rose-200', hasBadFinish);
     finishEl.classList.toggle('text-rose-900', hasBadFinish);
 
-    // Parsed result: croppedImage / raw を除外して構造を見やすく
+    // Parsed result: croppedImage を除外して構造を見やすく
     const stripped = {
       regions: regions.map((reg) => {
-        const { croppedImage: _ci, raw: _r, ...rest } = reg;
+        const { croppedImage: _ci, ...rest } = reg;
         return rest;
       }),
     };

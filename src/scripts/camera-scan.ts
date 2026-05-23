@@ -21,47 +21,27 @@
  * 同時にユーザー確認の単位 = 領域になる。
  */
 
-/** /api/scan-layout が返す領域メタ */
+/** 1 領域分のメタ情報 (LLM の出力 JSON 内の各 region) */
 export interface RegionMeta {
   id: string;
   label: string;
-  /** 後続転記 AI 向けのタスクヒント（layout LLM が生成） */
-  task?: string;
   /** 元画像座標系での 0-1000 正規化 bbox [ymin, xmin, ymax, xmax] */
   bbox: [number, number, number, number];
-}
-
-/** /api/scan が領域ごとに返す圧縮スキーマの items[] */
-export interface RegionItem {
-  /** cols と同順の値配列 */
-  r: string[];
-  /** クロップ後画像内での bbox (0-1000) */
-  b: [number, number, number, number];
-  /** 信頼度: high / low */
-  c: 'h' | 'l';
-  /** 種別: printed / handwritten */
-  k: 'p' | 'w';
-  /** 赤丸・下線等の強調 (true 時のみ) */
-  x?: boolean;
-}
-
-/** /api/scan が領域ごとに返す表外メモ */
-export interface RegionNote {
-  t: string;
-  b?: [number, number, number, number];
-  c?: 'h' | 'l';
+  /** 表 or 自由テキスト */
+  kind?: 'table' | 'notes';
 }
 
 /** 1 領域分の完成データ (メタ + 転記結果) */
 export interface RegionResult extends RegionMeta {
-  /** 切り出した画像 (UI 表示・再撮影用) */
+  /** 切り出した画像 (UI 表示用) */
   croppedImage?: string;
+  /** kind=table のとき */
   cols?: string[];
-  items?: RegionItem[];
-  notes?: RegionNote[];
-  /** その領域の生 raw / finishReason / エラー */
-  raw?: string;
-  finishReason?: string;
+  rows?: string[][];
+  uncertain_rows?: number[];
+  /** kind=notes のとき */
+  text?: string;
+  /** その領域の生 raw / エラー */
   error?: string;
 }
 
@@ -69,8 +49,10 @@ export interface AnalyzeResult {
   regions: RegionResult[];
   /** フル画像 (UI 表示用) */
   fullImage?: string;
-  /** レイアウト検出フェーズの raw (デバッグ用) */
-  layoutRaw?: string;
+  /** Gemini 生レスポンス (デバッグ用) */
+  raw?: string;
+  /** Gemini finishReason */
+  finishReason?: string;
 }
 
 // 旧 ScanItem は AR detect モードでまだ使われるので残す
@@ -205,38 +187,47 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
 
   async function capture(): Promise<void> {
     if (!stream) return;
-    // 転記用の高解像度版（クロップ後にこれをサーバへ送る）
     const fullImage = grabFrame({ maxEdge: 1500, quality: 0.78 });
     if (!fullImage) {
       setStatus('まだ映像が取得できていません');
       return;
     }
-    // レイアウト検出用の軽量版（領域の位置検出だけなので低解像度で十分）
-    // → 司令塔 LLM への送信が軽くなり Phase 1 が高速化する
-    const layoutImage = grabFrame({ maxEdge: 1000, quality: 0.7 });
 
     setState('busy');
+    setStatus('🤖 解析中…');
+
+    const userHint = refs.hint?.value?.trim() || '';
+    const body = JSON.stringify({
+      image: fullImage,
+      mode: 'analyze',
+      hint: userHint || undefined,
+    });
 
     try {
-      // ===== Phase 1: レイアウト検出 (429 retry 込み) =====
-      setStatus('🗺️ レイアウト検出中…');
-      const layoutBody = JSON.stringify({ image: layoutImage ?? fullImage });
-      const { res: layoutFetch, data: layoutData } = await fetchWithRetry(
-        '/api/scan-layout',
-        layoutBody,
-        'layout',
-      );
-      if (!layoutFetch.ok || !layoutData) {
-        const msg = formatError('レイアウト検出エラー', layoutFetch.status, layoutData);
+      // ★ 1 リクエストで領域分割 + 各領域の転記を全部やらせる。
+      //   公式: 1 generateContent = 1 RPM/RPD なので並列分割は quota の無駄。
+      //   LLM が画像全体を見て regions[] にグルーピングして返す。
+      const { res, data } = await fetchWithRetry('/api/scan', body, 'scan');
+      if (!res.ok || !data) {
+        const msg = formatError('解析エラー', res.status, data);
         setStatus(msg);
         refs.onError?.(msg);
         setState(stream ? 'running' : 'idle');
         return;
       }
-      const regions: RegionMeta[] = Array.isArray(layoutData.json?.regions)
-        ? layoutData.json.regions
-        : [];
-      if (regions.length === 0) {
+
+      const incomingRegions: Array<{
+        id?: string;
+        label?: string;
+        bbox?: [number, number, number, number];
+        kind?: 'table' | 'notes';
+        cols?: string[];
+        rows?: string[][];
+        uncertain_rows?: number[];
+        text?: string;
+      }> = Array.isArray(data.json?.regions) ? data.json.regions : [];
+
+      if (incomingRegions.length === 0) {
         const msg = '領域が検出されませんでした。撮影し直してください。';
         setStatus(msg);
         refs.onError?.(msg);
@@ -244,67 +235,42 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         return;
       }
 
-      // ===== Phase 2: 各領域をクライアントでクロップ =====
-      setStatus(`✂️ ${regions.length} 領域に分割中…`);
-      const cropped = await Promise.all(
-        regions.map((region) => cropFromDataUrl(fullImage, region.bbox)),
-      );
-
-      // ===== Phase 3: 並列で /api/scan に投げる =====
-      setStatus(`⚡ ${regions.length} 領域を並列解析中…`);
-      const userHint = refs.hint?.value?.trim() || '';
-      const transcriptions = await Promise.all(
-        regions.map(async (region, i): Promise<RegionResult> => {
-          // 司令塔 LLM が生成した task ヒントを per-region prompt に組み込む。
-          // task が無ければ label を fallback として使う。
-          const taskHint = region.task?.trim() || region.label;
-          const hintParts = [`領域「${region.label}」の転記: ${taskHint}`];
-          if (userHint) hintParts.push(userHint);
-          const body = JSON.stringify({
-            image: cropped[i],
-            mode: 'analyze',
-            hint: hintParts.join('\n'),
-          });
+      // 各 region の bbox から画像を切り出して、UI 表示用に持たせる
+      // （これはクライアント側のみの処理で API は叩かない）
+      const regionsWithCrops: RegionResult[] = await Promise.all(
+        incomingRegions.map(async (region) => {
+          const bbox = region.bbox ?? [0, 0, 1000, 1000];
+          let croppedImage: string | undefined;
           try {
-            const { res, data } = await fetchWithRetry('/api/scan', body, region.label);
-            if (!res.ok || !data) {
-              return {
-                ...region,
-                croppedImage: cropped[i],
-                error: formatError('転記エラー', res.status, data),
-              };
-            }
-            return {
-              ...region,
-              croppedImage: cropped[i],
-              cols: data.json?.cols,
-              items: data.json?.items,
-              notes: data.json?.notes,
-              raw: typeof data.raw === 'string' ? data.raw : undefined,
-              finishReason:
-                typeof data.finishReason === 'string' ? data.finishReason : undefined,
-            };
-          } catch (err) {
-            return {
-              ...region,
-              croppedImage: cropped[i],
-              error: `通信エラー: ${String(err)}`,
-            };
+            croppedImage = await cropFromDataUrl(fullImage, bbox);
+          } catch {
+            croppedImage = undefined;
           }
+          return {
+            id: region.id ?? '',
+            label: region.label ?? '',
+            bbox,
+            kind: region.kind,
+            cols: region.cols,
+            rows: region.rows,
+            uncertain_rows: region.uncertain_rows,
+            text: region.text,
+            croppedImage,
+          };
         }),
       );
 
-      // ===== Phase 4: マージして UI へ =====
-      const totalItems = transcriptions.reduce((sum, r) => sum + (r.items?.length ?? 0), 0);
+      const totalItems = regionsWithCrops.reduce((sum, r) => sum + (r.rows?.length ?? 0), 0);
       const result: AnalyzeResult = {
-        regions: transcriptions,
+        regions: regionsWithCrops,
         fullImage,
-        layoutRaw: typeof layoutData.raw === 'string' ? layoutData.raw : undefined,
+        raw: typeof data.raw === 'string' ? data.raw : undefined,
+        finishReason: typeof data.finishReason === 'string' ? data.finishReason : undefined,
       };
       setState(stream ? 'running' : 'idle');
       setStatus(
         totalItems
-          ? `${transcriptions.length} 領域 / ${totalItems} 項目を読み取りました`
+          ? `${regionsWithCrops.length} 領域 / ${totalItems} 項目を読み取りました`
           : '解析が完了しました',
       );
       refs.onAnalyze?.(result);
@@ -539,10 +505,16 @@ async function cropFromDataUrl(
 interface ScanResponseBody {
   raw?: unknown;
   json?: {
-    cols?: string[];
-    items?: RegionItem[];
-    notes?: RegionNote[];
-    regions?: RegionMeta[];
+    regions?: Array<{
+      id?: string;
+      label?: string;
+      bbox?: [number, number, number, number];
+      kind?: 'table' | 'notes';
+      cols?: string[];
+      rows?: string[][];
+      uncertain_rows?: number[];
+      text?: string;
+    }>;
   };
   error?: unknown;
   detail?: string;

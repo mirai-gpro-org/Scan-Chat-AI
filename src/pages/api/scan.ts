@@ -40,88 +40,68 @@ const DETECT_SYSTEM = `あなたは医療文書スキャン補助 AI です。
 }
 JSON 以外の文字（前後のコメントや code fence）は出力しないこと。最大 12 項目まで。`;
 
-const ANALYZE_SYSTEM = `あなたは検査表・診断結果報告書の画像を読み取り、紙面に書かれて
-いる内容を圧縮された構造化 JSON として返します。出力速度を優先するため
-短いキー名・配列形式を使います。
+const ANALYZE_SYSTEM = `検査表・診断結果報告書の画像を、紙面の内容そのまま JSON にしてください。
+診断・解釈・要約はしません（下流の別 AI が行います）。
 
-【ミッション（最重要）】
-診断・解釈・要約はこの JSON を受け取る別の AI が行います。あなたの仕事は
-「紙面を正しく読み取ること」だけ。人命に関わるため次の原則を守ってください:
+【守ること】
+- 紙面にあるものだけを、書かれている形で転記する。
+- 不明な値は推測で埋めない。読めなければ値を "" にし、その行 index を
+  uncertain_rows に入れる。行ごと判読不能なら出力しない。
+- 紙面に無い項目・列を作らない（ハルシネーション禁止）。
 
-- 紙面に書かれていることだけを、書かれている形で転記する。
-- 不明・確信が持てない値は絶対に推測で埋めない。
-  読めなければ値を空文字 "" / c を "l" にする。
-  行ごと判読不能ならその行を出力しない。
-- 紙面に存在しない項目・列・値を作り出さない（ハルシネーション禁止）。
+【領域分け】
+紙面を 2〜4 個の領域に分けて返す。表 1 つ / 手書きメモ等が 1 領域。
+領域内の表構造（列の意味、項目並び）はあなたが画像を見て判断する。
 
-【判断はあなたに任せる】
-- 紙面のレイアウト（表構造・列の意味・項目の並び）はあなたが画像を見て判断。
-- cols 配列の列名は紙面で使われている見出し語をそのまま使う（日本語可）。
-- 検査種別（血液 / 尿 / 画像 / 心電図 等）や医療機関による違いは自身で吸収。
-
-【出力 JSON（圧縮形式）】
+【出力 JSON】
 {
-  "cols": [...],          // 紙面で検出した表の列見出し配列（日本語そのまま）
-  "items": [              // 表の各行
+  "regions": [
     {
-      "r": [...],         // cols と同順の値配列
-      "b": [y1,x1,y2,x2], // bbox 0-1000 正規化
-      "c": "h" | "l",     // 信頼度 high/low
-      "k": "p" | "w",     // 種別 printed/handwritten
-      "x": true           // 赤丸・下線等の強調がある時のみ（無い時は省略）
-    }
-  ],
-  "notes": [              // 表に属さない手書きメモ・所見・補足
-    {
-      "t": "...",         // メモの生テキスト
-      "b": [y1,x1,y2,x2],
-      "c": "h" | "l"
+      "id": "left_table",                          // 英数字 ID
+      "label": "左側検査値表",                      // 短い日本語ラベル
+      "bbox": [ymin, xmin, ymax, xmax],            // 領域 bbox 0-1000 正規化
+      "kind": "table" | "notes",                   // 表 or 自由テキスト
+      "cols": ["列1","列2", ...],                  // table のとき紙面の列見出し
+      "rows": [["値","値", ...], ...],             // table のとき各行 cols 順
+      "uncertain_rows": [3, 7],                    // table のとき自信なし行 index
+      "text": "..."                                // notes のとき自由テキスト（改行 \\n）
     }
   ]
 }
 
-JSON 以外（前置きの説明、code fence、後置きの注釈）は出力しない。
-表に該当しない手書きメモは items ではなく notes に入れること。`;
+【注意】
+- 各行は cols と同じ要素数の文字列配列。
+- table 領域は cols / rows / uncertain_rows のみ（text なし）。
+- notes 領域は text のみ（cols / rows / uncertain_rows なし）。
+
+JSON 以外（前置き、code fence、後置きの説明）は出力しないこと。`;
 
 /**
  * Gemini に出力構造を強制する responseSchema (OpenAPI 風サブセット)。
- * これによりモデルが「どう構造を組むか」に迷う時間が削減され、生成が安定&高速化。
+ * シンプルに保つ: per-row metadata を削ったので空間推論コストも消える。
  */
 const ANALYZE_RESPONSE_SCHEMA: Record<string, unknown> = {
   type: 'object',
   properties: {
-    cols: {
-      type: 'array',
-      items: { type: 'string' },
-    },
-    items: {
+    regions: {
       type: 'array',
       items: {
         type: 'object',
         properties: {
-          r: { type: 'array', items: { type: 'string' } },
-          b: { type: 'array', items: { type: 'number' } },
-          c: { type: 'string', enum: ['h', 'l'] },
-          k: { type: 'string', enum: ['p', 'w'] },
-          x: { type: 'boolean' },
+          id: { type: 'string' },
+          label: { type: 'string' },
+          bbox: { type: 'array', items: { type: 'number' } },
+          kind: { type: 'string', enum: ['table', 'notes'] },
+          cols: { type: 'array', items: { type: 'string' } },
+          rows: { type: 'array', items: { type: 'array', items: { type: 'string' } } },
+          uncertain_rows: { type: 'array', items: { type: 'number' } },
+          text: { type: 'string' },
         },
-        required: ['r', 'b', 'c', 'k'],
-      },
-    },
-    notes: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          t: { type: 'string' },
-          b: { type: 'array', items: { type: 'number' } },
-          c: { type: 'string', enum: ['h', 'l'] },
-        },
-        required: ['t'],
+        required: ['id', 'label', 'bbox', 'kind'],
       },
     },
   },
-  required: ['cols', 'items'],
+  required: ['regions'],
 };
 
 function parseDataUrl(input: string): { mime: string; data: string } {
