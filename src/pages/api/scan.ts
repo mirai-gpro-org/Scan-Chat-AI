@@ -97,9 +97,11 @@ export const POST: APIRoute = async ({ request }) => {
     },
   ];
 
-  // 表構造の視覚理解精度を優先して gemini-2.5-pro を使用。
-  // 思考予算を絞ることで応答速度を確保（典型 8-15s 想定）。
-  const model = MODELS.scanPrecise;
+  // === 暫定: gemini-2.5-flash に戻す（billing/Tier 1 反映が未完のため） ===
+  // 本来は MODELS.scanPrecise (gemini-2.5-pro) を使いたい。表構造の視覚理解
+  // 精度が大きく違うので、Google 側で paid tier 1+ が反映され次第戻すこと。
+  // flash の FreeTier 上限: 5 RPM / 20 RPD なので連打注意。
+  const model = MODELS.scan;
   const apiKey = import.meta.env.GEMINI_API_KEY;
   const geminiRequest = {
     systemInstruction: { parts: [{ text: ANALYZE_SYSTEM }] },
@@ -108,7 +110,8 @@ export const POST: APIRoute = async ({ request }) => {
       temperature: 0.0,
       maxOutputTokens: 16384,
       responseMimeType: 'application/json',
-      thinkingConfig: { thinkingBudget: 1024 },
+      // flash は thinking を完全停止できる (pro と違って) 。OCR 用途では充分。
+      thinkingConfig: { thinkingBudget: 0 },
     },
   };
 
