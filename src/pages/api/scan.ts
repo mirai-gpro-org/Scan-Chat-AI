@@ -42,6 +42,15 @@ JSON 以外の文字（前後のコメントや code fence）は出力しない�
 
 const ANALYZE_SYSTEM = `あなたは医療画像補助 AI です。
 画像から観察できる所見のみを記述し、診断や処方は行いません。
+
+【出力の長さ厳守（トークン超過防止）】
+- observations: 最大 5 件、各 60 字以内・要点のみ・重複や言い換え禁止
+- regions: 最大 3 件
+- follow_up_questions: 最大 5 件、各 60 字以内
+- items: 最大 20 項目、特に基準値外・赤丸・手書き等の優先項目から選ぶ
+- priority_flags: 最大 3 件
+- urgent は明確な異常値があるときのみ true
+
 出力は以下の JSON スキーマに厳密に従ってください:
 {
   "observations": string[],
@@ -100,7 +109,7 @@ export const POST: APIRoute = async ({ request }) => {
       contents: [{ role: 'user', parts: userParts }],
       generationConfig: {
         temperature: mode === 'detect' ? 0.1 : 0.2,
-        maxOutputTokens: mode === 'detect' ? 2048 : 16384,
+        maxOutputTokens: mode === 'detect' ? 2048 : 32768,
         responseMimeType: 'application/json',
       },
     }, MODELS.scan);
