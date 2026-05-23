@@ -358,9 +358,7 @@ import ScanOverlay from '../components/ScanOverlay.astro';
     const controller = initCameraScan({
       video: $<HTMLVideoElement>('scan-video'),
       canvas: $<HTMLCanvasElement>('scan-canvas'),
-      overlay: $<HTMLCanvasElement>('scan-overlay'),
       shotBtn: $<HTMLButtonElement>('scan-shot'),
-      detectToggle: $<HTMLInputElement>('scan-detect-toggle'),
       status: $('scan-status'),
       hint: $<HTMLInputElement>('scan-hint'),
       onStateChange: (state: ScanState) => {

@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import {
   callGemini,
+  streamGemini,
   MODELS,
   extractText,
   stripJsonCodeFence,
@@ -12,18 +13,6 @@ import {
 export const prerender = false;
 
 type ScanMode = 'detect' | 'analyze';
-
-interface ScanRequestBody {
-  /** data: URL もしくは生 base64 */
-  image: string;
-  /** 補足プロンプト（部位・状況など） */
-  hint?: string;
-  /**
-   * detect: AR 用の軽量 bbox 検知（連続呼出）
-   * analyze: 撮影確定時のフル解析（既定）
-   */
-  mode?: ScanMode;
-}
 
 const DETECT_SYSTEM = `あなたは医療文書スキャン補助 AI です。
 入力画像から検査値・項目ラベル・手書きメモを検知し、各バウンディングボックスを返してください。
@@ -104,33 +93,36 @@ const ANALYZE_RESPONSE_SCHEMA: Record<string, unknown> = {
   required: ['regions'],
 };
 
-function parseDataUrl(input: string): { mime: string; data: string } {
-  const m = /^data:([^;]+);base64,(.+)$/i.exec(input.trim());
-  if (m) return { mime: m[1], data: m[2] };
-  return { mime: 'image/jpeg', data: input.trim() };
-}
-
 export const POST: APIRoute = async ({ request }) => {
-  let body: ScanRequestBody;
+  // クライアントは multipart/form-data でバイナリ直送。base64 inline は廃止。
+  let bytes: Uint8Array;
+  let mime: string;
+  let hint = '';
+  let mode: ScanMode = 'analyze';
   try {
-    body = (await request.json()) as ScanRequestBody;
-  } catch {
-    return json({ error: 'Invalid JSON body' }, 400);
-  }
-  if (!body?.image) {
-    return json({ error: 'image is required (data URL or base64)' }, 400);
+    const ct = request.headers.get('content-type') ?? '';
+    if (!ct.startsWith('multipart/form-data')) {
+      return json({ error: 'expected multipart/form-data with binary image' }, 415);
+    }
+    const fd = await request.formData();
+    const file = fd.get('image');
+    if (!(file instanceof Blob)) {
+      return json({ error: 'image field missing or not binary' }, 400);
+    }
+    bytes = new Uint8Array(await file.arrayBuffer());
+    mime = file.type || 'image/jpeg';
+    const rawMode = String(fd.get('mode') ?? 'analyze');
+    mode = rawMode === 'detect' ? 'detect' : 'analyze';
+    hint = String(fd.get('hint') ?? '').trim();
+  } catch (err) {
+    return json({ error: 'Invalid form data', detail: String(err) }, 400);
   }
 
-  const mode: ScanMode = body.mode === 'detect' ? 'detect' : 'analyze';
-  const { mime, data } = parseDataUrl(body.image);
   const apiKey = import.meta.env.GEMINI_API_KEY;
 
   try {
     // === 画像転送: Files API ===
-    // Base64 inline で送ると JSON body が ~400KB に膨れ、Vercel/Google の
-    // パース層で大幅な遅延を起こす（公式ガイダンスでも非推奨）。
-    // 一度バイナリで Files API にアップロードしてから fileUri 参照する。
-    const bytes = base64ToBytes(data);
+    // バイナリ直送（base64 一切不使用）→ Files API resumable upload → fileUri 参照
     const file = await uploadGeminiFile(apiKey, bytes, mime, 'scan');
 
     const userParts: GeminiContent['parts'] = [
@@ -139,54 +131,87 @@ export const POST: APIRoute = async ({ request }) => {
         text:
           mode === 'detect'
             ? '画像から項目を検知してください。'
-            : body.hint
-              ? `補足: ${body.hint}\nこの紙面を読み取って JSON に転記してください。`
+            : hint
+              ? `補足: ${hint}\nこの紙面を読み取って JSON に転記してください。`
               : 'この紙面を読み取って JSON に転記してください。',
       },
     ];
 
-    const res = await callGemini(
-      apiKey,
-      {
-        systemInstruction: {
-          parts: [{ text: mode === 'detect' ? DETECT_SYSTEM : ANALYZE_SYSTEM }],
-        },
-        contents: [{ role: 'user', parts: userParts }],
-        generationConfig: {
-          temperature: mode === 'detect' ? 0.1 : 0.2,
-          maxOutputTokens: mode === 'detect' ? 2048 : 32768,
-          responseMimeType: 'application/json',
-          thinkingConfig: { thinkingBudget: 0 },
-          ...(mode === 'detect' ? {} : { responseSchema: ANALYZE_RESPONSE_SCHEMA }),
-        },
+    const geminiRequest = {
+      systemInstruction: {
+        parts: [{ text: mode === 'detect' ? DETECT_SYSTEM : ANALYZE_SYSTEM }],
       },
-      MODELS.scan,
-    );
-    const raw = extractText(res);
-    const cleaned = stripJsonCodeFence(raw);
-    let parsed: unknown = null;
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch {
-      /* 構造化失敗時は raw を返してフロントで対応 */
+      contents: [{ role: 'user' as const, parts: userParts }],
+      generationConfig: {
+        temperature: mode === 'detect' ? 0.1 : 0.2,
+        maxOutputTokens: mode === 'detect' ? 2048 : 32768,
+        responseMimeType: 'application/json',
+        thinkingConfig: { thinkingBudget: 0 },
+        ...(mode === 'detect' ? {} : { responseSchema: ANALYZE_RESPONSE_SCHEMA }),
+      },
+    };
+
+    // detect は一発返し
+    if (mode === 'detect') {
+      const res = await callGemini(apiKey, geminiRequest, MODELS.scan);
+      const raw = extractText(res);
+      const cleaned = stripJsonCodeFence(raw);
+      let parsed: unknown = null;
+      try { parsed = JSON.parse(cleaned); } catch { /* noop */ }
+      const finishReason = res.candidates?.[0]?.finishReason;
+      return json({ mode, raw, json: parsed, finishReason });
     }
-    const finishReason = res.candidates?.[0]?.finishReason;
-    return json({ mode, raw, json: parsed, finishReason });
+
+    // analyze は NDJSON でストリーミング:
+    //   {"type":"start"}
+    //   {"type":"chunk","text":"...","totalLen":N}
+    //   {"type":"done","raw":"...","json":{...},"finishReason":"STOP"}
+    // → クライアントは進捗 UI で「何文字目」を表示できる。
+    //   Vercel の単一レスポンスバッファリング詰まり (Gemini 推奨書の主因) も回避。
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const enc = new TextEncoder();
+        const emit = (obj: unknown): void => {
+          controller.enqueue(enc.encode(JSON.stringify(obj) + '\n'));
+        };
+        let acc = '';
+        let lastFinish: string | undefined;
+        try {
+          emit({ type: 'start', model: MODELS.scan });
+          for await (const ev of streamGemini(apiKey, geminiRequest, MODELS.scan)) {
+            if (ev.text) {
+              acc += ev.text;
+              emit({ type: 'chunk', text: ev.text, totalLen: acc.length });
+            }
+            if (ev.finishReason) lastFinish = ev.finishReason;
+          }
+          const cleaned = stripJsonCodeFence(acc);
+          let parsed: unknown = null;
+          try { parsed = JSON.parse(cleaned); } catch { /* noop */ }
+          emit({ type: 'done', raw: acc, json: parsed, finishReason: lastFinish });
+        } catch (err) {
+          if (err instanceof GeminiError) {
+            emit({ type: 'error', error: err.message, detail: err.body, status: err.status });
+          } else {
+            emit({ type: 'error', error: 'Unexpected error', detail: String(err) });
+          }
+        } finally {
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, {
+      status: 200,
+      headers: {
+        'content-type': 'application/x-ndjson; charset=utf-8',
+        'cache-control': 'no-store',
+        'x-accel-buffering': 'no',
+      },
+    });
   } catch (err) {
     return handleGeminiError(err);
   }
 };
-
-function base64ToBytes(b64: string): Uint8Array {
-  // Node.js (Vercel Serverless) では Buffer が使えるので最速。
-  if (typeof Buffer !== 'undefined') {
-    return new Uint8Array(Buffer.from(b64, 'base64'));
-  }
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {

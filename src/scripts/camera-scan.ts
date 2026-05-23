@@ -1,31 +1,17 @@
 /**
- * getUserMedia でカメラを起動し、AR ハイライト（連続検知）と
- * 撮影確定時のフル解析の 2 つを担う。
+ * カメラ起動 → 撮影 → サーバ送信（バイナリ Blob）→ NDJSON ストリーム受信。
  *
- * 提案書 機能1:
- *  - AR リアルタイム・ハイライト: 確信度が高い項目は緑、手書きや低信頼は黄。
- *  - デジタル・オーバーレイ: 撮影確定後、画像の真上に構造化値を半透明で重ねる。
- *
- * UI 統合は呼び出し側に委ねるため、状態変化と解析結果はコールバックで通知する。
- */
-
-/**
- * 並列分割パイプライン:
- *   1. 撮影 → フル画像 dataURL
- *   2. POST /api/scan-layout で領域 (regions) を検出
- *   3. クライアントで各領域を canvas で切り出し
- *   4. POST /api/scan を全領域分 並列に投げる
- *   5. 結果をマージ
- *
- * これで 1 撮影あたりの体感時間が 1/N (N = 領域数) に縮み、
- * 同時にユーザー確認の単位 = 領域になる。
+ * - base64 は一切使わない。撮影画像は canvas.toBlob() で Blob として保持し、
+ *   multipart/form-data でサーバへバイナリ直送する。
+ * - サーバは Files API 経由で Gemini に画像を渡し、応答は NDJSON で
+ *   1 chunk ずつ流す（Vercel のレスポンスバッファ詰まりを回避）。
+ * - AR 連続検知は撤廃済み。capture() 1 発のみ。
  */
 
 /** 1 領域分のデータ (LLM の出力 JSON 内の各 region) */
 export interface RegionResult {
   id: string;
   label: string;
-  /** 表 or 自由テキスト */
   kind?: 'table' | 'notes';
   /** kind=table のとき */
   cols?: string[];
@@ -33,40 +19,30 @@ export interface RegionResult {
   uncertain_rows?: number[];
   /** kind=notes のとき */
   text?: string;
-  /** その領域でエラーが出た時 */
   error?: string;
 }
 
 export interface AnalyzeResult {
   regions: RegionResult[];
-  /** フル画像 (UI 表示用) */
+  /** 表示用フル画像 URL (objectURL, dataURL ではない) */
   fullImage?: string;
-  /** Gemini 生レスポンス (デバッグ用) */
   raw?: string;
-  /** Gemini finishReason */
   finishReason?: string;
-}
-
-// 旧 ScanItem は AR detect モードでまだ使われるので残す
-export interface ScanItem {
-  label: string;
-  value: string;
-  bbox: [number, number, number, number];
-  confidence: 'high' | 'low';
-  kind: 'printed' | 'handwritten';
 }
 
 export type ScanState = 'idle' | 'running' | 'busy';
 
 export interface CameraRefs {
   video: HTMLVideoElement;
-  canvas: HTMLCanvasElement; // 撮影用（非表示）
-  overlay: HTMLCanvasElement; // ライブ video の上に重ねる検知枠用
-  detectToggle: HTMLInputElement;
+  canvas: HTMLCanvasElement;
   status: HTMLElement;
   hint?: HTMLInputElement | null;
   shotBtn?: HTMLButtonElement;
   onStateChange?: (state: ScanState) => void;
+  /** 撮影直後の画像 URL（objectURL）を結果ページに渡す用 */
+  onCapture?: (objectUrl: string) => void;
+  /** NDJSON ストリームの進捗 (文字数) */
+  onStreamProgress?: (totalLen: number) => void;
   onAnalyze?: (result: AnalyzeResult) => void;
   onError?: (message: string) => void;
 }
@@ -75,27 +51,13 @@ export interface CameraScanController {
   start: () => Promise<void>;
   stop: () => void;
   capture: () => Promise<void>;
-  clearOverlay: () => void;
   isRunning: () => boolean;
 }
 
-const DETECT_INTERVAL_MS = 1800; // AR 連続検知の間隔（APIコスト抑制）
-const DETECT_JPEG_QUALITY = 0.6;
-const DETECT_MAX_EDGE = 720; // 検知用は縮小して送る
-
 export function initCameraScan(refs: CameraRefs): CameraScanController {
   let stream: MediaStream | null = null;
-  let detectTimer: number | null = null;
-  let detectBusy = false;
-  let lastItems: ScanItem[] = [];
 
   refs.shotBtn?.addEventListener('click', capture);
-  refs.detectToggle.addEventListener('change', () => {
-    if (refs.detectToggle.checked && stream) startDetectLoop();
-    else stopDetectLoop();
-  });
-  refs.video.addEventListener('loadedmetadata', syncOverlaySize);
-  window.addEventListener('resize', syncOverlaySize);
 
   setState('idle');
 
@@ -104,15 +66,13 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     setStatus('カメラを起動中…');
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1500 } },
         audio: false,
       });
       refs.video.srcObject = stream;
       await refs.video.play();
-      syncOverlaySize();
       setState('running');
       setStatus('用紙が枠に収まるようにかざしてください');
-      if (refs.detectToggle.checked) startDetectLoop();
     } catch (err) {
       setState('idle');
       const msg = describeMediaError(err);
@@ -122,103 +82,81 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
   }
 
   function stop(): void {
-    stopDetectLoop();
     stream?.getTracks().forEach((t) => t.stop());
     stream = null;
     refs.video.srcObject = null;
-    clearOverlay();
-    lastItems = [];
     setState('idle');
     setStatus('停止中');
   }
 
-  function startDetectLoop(): void {
-    if (detectTimer !== null) return;
-    detectTimer = window.setTimeout(tick, 100);
-  }
-
-  async function tick(): Promise<void> {
-    if (!stream || detectBusy) {
-      scheduleNext();
-      return;
-    }
-    detectBusy = true;
-    try {
-      const dataUrl = grabFrame({ maxEdge: DETECT_MAX_EDGE, quality: DETECT_JPEG_QUALITY });
-      if (!dataUrl) return;
-      const res = await fetch('/api/scan', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ image: dataUrl, mode: 'detect' }),
-      });
-      const data = (await res.json()) as { json?: { items?: ScanItem[] }; error?: string };
-      if (res.ok && data.json?.items) {
-        lastItems = data.json.items;
-        drawLiveOverlay(lastItems);
-      }
-    } catch {
-      // 一過性の失敗は次フレームで取り戻す
-    } finally {
-      detectBusy = false;
-      scheduleNext();
-    }
-  }
-
-  function scheduleNext(): void {
-    if (detectTimer === null) return;
-    detectTimer = window.setTimeout(tick, DETECT_INTERVAL_MS);
-  }
-
-  function stopDetectLoop(): void {
-    if (detectTimer !== null) {
-      window.clearTimeout(detectTimer);
-      detectTimer = null;
-    }
-    clearOverlay();
-  }
-
   async function capture(): Promise<void> {
     if (!stream) return;
-    const fullImage = grabFrame({ maxEdge: 1500, quality: 0.78 });
-    if (!fullImage) {
+    const blob = await grabFrameBlob({ maxEdge: 1500, quality: 0.78 });
+    if (!blob) {
       setStatus('まだ映像が取得できていません');
       return;
     }
+    // 表示用 URL は objectURL（base64 ではない）
+    const previewUrl = URL.createObjectURL(blob);
+    refs.onCapture?.(previewUrl);
 
     setState('busy');
-    setStatus('🤖 解析中…');
+    setStatus('📤 アップロード中…');
 
     const userHint = refs.hint?.value?.trim() || '';
-    const body = JSON.stringify({
-      image: fullImage,
-      mode: 'analyze',
-      hint: userHint || undefined,
-    });
+    const formData = new FormData();
+    formData.append('image', blob, 'scan.jpg');
+    formData.append('mode', 'analyze');
+    if (userHint) formData.append('hint', userHint);
 
     try {
-      // ★ 1 リクエストで領域分割 + 各領域の転記を全部やらせる。
-      //   公式: 1 generateContent = 1 RPM/RPD なので並列分割は quota の無駄。
-      //   LLM が画像全体を見て regions[] にグルーピングして返す。
-      const { res, data } = await fetchWithRetry('/api/scan', body, 'scan');
-      if (!res.ok || !data) {
-        const msg = formatError('解析エラー', res.status, data);
+      // multipart/form-data として送信（Content-Type はブラウザが boundary 付きで自動設定）
+      const res = await fetch('/api/scan', {
+        method: 'POST',
+        body: formData,
+      });
+      if (!res.ok || !res.body) {
+        const msg = await readErrorMessage(res);
         setStatus(msg);
         refs.onError?.(msg);
         setState(stream ? 'running' : 'idle');
         return;
       }
 
-      const incomingRegions: Array<{
-        id?: string;
-        label?: string;
-        kind?: 'table' | 'notes';
-        cols?: string[];
-        rows?: string[][];
-        uncertain_rows?: number[];
-        text?: string;
-      }> = Array.isArray(data.json?.regions) ? data.json.regions : [];
+      // NDJSON ストリーム受信
+      const holder: {
+        regions: RegionResult[];
+        raw?: string;
+        finishReason?: string;
+        err?: string;
+      } = { regions: [] };
 
-      if (incomingRegions.length === 0) {
+      await readNdjsonStream(res, (ev) => {
+        if (ev.type === 'start') {
+          setStatus('🤖 解析中…');
+        } else if (ev.type === 'chunk') {
+          const len = ev.totalLen ?? 0;
+          setStatus(`📝 読み取り中… ${len.toLocaleString()} 文字`);
+          refs.onStreamProgress?.(len);
+        } else if (ev.type === 'done') {
+          const json = ev.json as { regions?: RegionResult[] } | null;
+          holder.regions = Array.isArray(json?.regions) ? json.regions : [];
+          holder.raw = ev.raw;
+          holder.finishReason = ev.finishReason;
+        } else if (ev.type === 'error') {
+          holder.err = `${ev.error ?? '不明'}\n${
+            ev.detail ? summarizeGoogleError(ev.detail) : ''
+          }`.trim();
+        }
+      });
+
+      if (holder.err) {
+        setStatus(`解析エラー: ${holder.err}`);
+        refs.onError?.(`解析エラー: ${holder.err}`);
+        setState(stream ? 'running' : 'idle');
+        return;
+      }
+      if (holder.regions.length === 0) {
         const msg = '領域が検出されませんでした。撮影し直してください。';
         setStatus(msg);
         refs.onError?.(msg);
@@ -226,27 +164,17 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         return;
       }
 
-      const regions: RegionResult[] = incomingRegions.map((region) => ({
-        id: region.id ?? '',
-        label: region.label ?? '',
-        kind: region.kind,
-        cols: region.cols,
-        rows: region.rows,
-        uncertain_rows: region.uncertain_rows,
-        text: region.text,
-      }));
-
-      const totalItems = regions.reduce((sum, r) => sum + (r.rows?.length ?? 0), 0);
+      const totalItems = holder.regions.reduce((sum, r) => sum + (r.rows?.length ?? 0), 0);
       const result: AnalyzeResult = {
-        regions,
-        fullImage,
-        raw: typeof data.raw === 'string' ? data.raw : undefined,
-        finishReason: typeof data.finishReason === 'string' ? data.finishReason : undefined,
+        regions: holder.regions,
+        fullImage: previewUrl,
+        raw: holder.raw,
+        finishReason: holder.finishReason,
       };
       setState(stream ? 'running' : 'idle');
       setStatus(
         totalItems
-          ? `${regions.length} 領域 / ${totalItems} 項目を読み取りました`
+          ? `${holder.regions.length} 領域 / ${totalItems} 項目を読み取りました`
           : '解析が完了しました',
       );
       refs.onAnalyze?.(result);
@@ -258,7 +186,11 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     }
   }
 
-  function grabFrame(opts: { maxEdge: number; quality: number }): string | null {
+  /**
+   * video から canvas にコピーして JPEG Blob として返す。
+   * dataURL 経由しないので base64 化が一切発生しない。
+   */
+  async function grabFrameBlob(opts: { maxEdge: number; quality: number }): Promise<Blob | null> {
     const vw = refs.video.videoWidth;
     const vh = refs.video.videoHeight;
     if (!vw || !vh) return null;
@@ -270,144 +202,122 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     const ctx = refs.canvas.getContext('2d');
     if (!ctx) return null;
     ctx.drawImage(refs.video, 0, 0, w, h);
-    return refs.canvas.toDataURL('image/jpeg', opts.quality);
-  }
-
-  function syncOverlaySize(): void {
-    const rect = refs.video.getBoundingClientRect();
-    refs.overlay.width = Math.max(1, Math.round(rect.width * window.devicePixelRatio));
-    refs.overlay.height = Math.max(1, Math.round(rect.height * window.devicePixelRatio));
-    drawLiveOverlay(lastItems);
-  }
-
-  function clearOverlay(): void {
-    const ctx = refs.overlay.getContext('2d');
-    ctx?.clearRect(0, 0, refs.overlay.width, refs.overlay.height);
-  }
-
-  /** 連続検知用：bbox 枠のみ薄く描画（緑=高信頼, 黄=低信頼/手書き） */
-  function drawLiveOverlay(items: ScanItem[]): void {
-    const ctx = refs.overlay.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, refs.overlay.width, refs.overlay.height);
-    items.forEach((it) => {
-      const { x, y, w, h } = bboxToCanvas(it.bbox);
-      const low = it.confidence === 'low' || it.kind === 'handwritten';
-      ctx.lineWidth = 3 * window.devicePixelRatio;
-      ctx.strokeStyle = low ? 'rgba(245, 200, 50, 0.95)' : 'rgba(34, 197, 94, 0.95)';
-      ctx.fillStyle = low ? 'rgba(245, 200, 50, 0.18)' : 'rgba(34, 197, 94, 0.18)';
-      roundRect(ctx, x, y, w, h, 8 * window.devicePixelRatio);
-      ctx.fill();
-      ctx.stroke();
+    return new Promise<Blob | null>((resolve) => {
+      refs.canvas.toBlob((b) => resolve(b), 'image/jpeg', opts.quality);
     });
-  }
-
-  /** 撮影確定後：bbox 枠 + 半透明テキストオーバーレイで結果を可視化 */
-  function drawDigitalOverlay(items: ScanItem[]): void {
-    const ctx = refs.overlay.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, refs.overlay.width, refs.overlay.height);
-    items.forEach((it) => {
-      const { x, y, w, h } = bboxToCanvas(it.bbox);
-      const low = it.confidence === 'low' || it.kind === 'handwritten';
-      ctx.lineWidth = 3 * window.devicePixelRatio;
-      ctx.strokeStyle = low ? 'rgba(245, 200, 50, 0.95)' : 'rgba(34, 197, 94, 0.95)';
-      ctx.fillStyle = low ? 'rgba(245, 200, 50, 0.20)' : 'rgba(34, 197, 94, 0.20)';
-      roundRect(ctx, x, y, w, h, 8 * window.devicePixelRatio);
-      ctx.fill();
-      ctx.stroke();
-
-      const text = it.value ? `${it.label}: ${it.value}` : `${it.label} (要確認)`;
-      const fontSize =
-        Math.max(12, Math.min(20, w / Math.max(8, text.length)) * 1.2) * window.devicePixelRatio;
-      ctx.font = `${fontSize}px system-ui, -apple-system, sans-serif`;
-      const padding = 6 * window.devicePixelRatio;
-      const metrics = ctx.measureText(text);
-      const tw = metrics.width + padding * 2;
-      const th = fontSize + padding * 1.4;
-      const tx = x;
-      const ty = Math.max(0, y - th - 4 * window.devicePixelRatio);
-      ctx.fillStyle = low ? 'rgba(180, 130, 0, 0.92)' : 'rgba(20, 120, 60, 0.92)';
-      roundRect(ctx, tx, ty, tw, th, 6 * window.devicePixelRatio);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.98)';
-      ctx.fillText(text, tx + padding, ty + fontSize + padding * 0.2);
-    });
-  }
-
-  function bboxToCanvas(bbox: [number, number, number, number]): {
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-  } {
-    const [ymin, xmin, ymax, xmax] = bbox;
-    const W = refs.overlay.width;
-    const H = refs.overlay.height;
-    const x = (xmin / 1000) * W;
-    const y = (ymin / 1000) * H;
-    const w = ((xmax - xmin) / 1000) * W;
-    const h = ((ymax - ymin) / 1000) * H;
-    return { x, y, w, h };
-  }
-
-  function roundRect(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    r: number,
-  ): void {
-    const rr = Math.min(r, w / 2, h / 2);
-    ctx.beginPath();
-    ctx.moveTo(x + rr, y);
-    ctx.arcTo(x + w, y, x + w, y + h, rr);
-    ctx.arcTo(x + w, y + h, x, y + h, rr);
-    ctx.arcTo(x, y + h, x, y, rr);
-    ctx.arcTo(x, y, x + w, y, rr);
-    ctx.closePath();
-  }
-
-  function setState(state: ScanState): void {
-    if (refs.shotBtn) refs.shotBtn.disabled = state !== 'running';
-    refs.detectToggle.disabled = state === 'idle' || state === 'busy';
-    refs.onStateChange?.(state);
   }
 
   function setStatus(text: string): void {
     refs.status.textContent = text;
   }
 
-  function describeMediaError(err: unknown): string {
-    const name = (err as { name?: string })?.name ?? '';
-    if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-      return 'カメラへのアクセスが許可されていません。ブラウザの設定から許可してください。';
-    }
-    if (name === 'NotFoundError' || name === 'OverconstrainedError') {
-      return 'カメラが見つかりませんでした。';
-    }
-    if (name === 'NotReadableError') {
-      return 'カメラを他のアプリが使用中です。';
-    }
-    return `カメラを起動できませんでした: ${String(err)}`;
+  function setState(state: ScanState): void {
+    if (refs.shotBtn) refs.shotBtn.disabled = state !== 'running';
+    refs.onStateChange?.(state);
   }
 
   return {
     start,
     stop,
     capture,
-    clearOverlay,
     isRunning: () => stream !== null,
   };
+}
+
+// ============================================================
+// ストリーム受信 (NDJSON)
+// ============================================================
+
+interface StreamEvent {
+  type: 'start' | 'chunk' | 'done' | 'error';
+  text?: string;
+  totalLen?: number;
+  raw?: string;
+  json?: unknown;
+  finishReason?: string;
+  error?: string;
+  detail?: string;
+  status?: number;
+  model?: string;
+}
+
+async function readNdjsonStream(
+  res: Response,
+  onEvent: (ev: StreamEvent) => void,
+): Promise<void> {
+  const reader = res.body!.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buf.indexOf('\n')) !== -1) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      try {
+        onEvent(JSON.parse(line) as StreamEvent);
+      } catch {
+        // 部分行や JSON でない行は無視（次の chunk で揃う想定）
+      }
+    }
+  }
+  // 残った buf の処理
+  if (buf.trim()) {
+    try {
+      onEvent(JSON.parse(buf.trim()) as StreamEvent);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * non-stream エラーレスポンスからメッセージを抽出。
+ * Vercel のタイムアウト等で JSON でない場合は raw テキスト先頭を使う。
+ */
+async function readErrorMessage(res: Response): Promise<string> {
+  try {
+    const text = await res.text();
+    try {
+      const data = JSON.parse(text) as { error?: unknown; detail?: string };
+      const err =
+        typeof data.error === 'string'
+          ? data.error
+          : data.error
+            ? JSON.stringify(data.error)
+            : text.slice(0, 200);
+      const detail = data.detail ? `\n${summarizeGoogleError(data.detail)}` : '';
+      return `解析エラー (${res.status}): ${err}${detail}`;
+    } catch {
+      return `解析エラー (${res.status}): ${text.slice(0, 200) || '不明'}`;
+    }
+  } catch {
+    return `解析エラー (${res.status})`;
+  }
+}
+
+function describeMediaError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  switch (err.name) {
+    case 'NotAllowedError':
+    case 'SecurityError':
+      return 'カメラへのアクセスが拒否されました。設定からカメラ許可をご確認ください。';
+    case 'NotFoundError':
+    case 'OverconstrainedError':
+      return 'カメラが見つかりません。デバイスの設定をご確認ください。';
+    case 'NotReadableError':
+      return 'カメラが他のアプリで使用中の可能性があります。';
+    default:
+      return `カメラの起動に失敗しました: ${err.message || err.name}`;
+  }
 }
 
 /**
  * Google Generative Language API のエラーレスポンス本文から
  * 人間が読みやすい 1 行サマリを作る。
- * 期待される形:
- *   {"error":{"code":429,"message":"...","status":"RESOURCE_EXHAUSTED",
- *             "details":[{"@type":".../QuotaFailure","violations":[{"quotaMetric":"...","quotaId":"..."}]}]}}
  */
 function summarizeGoogleError(detail: string): string {
   try {
@@ -416,7 +326,6 @@ function summarizeGoogleError(detail: string): string {
         status?: string;
         message?: string;
         details?: Array<{
-          '@type'?: string;
           violations?: Array<{ quotaMetric?: string; quotaId?: string }>;
           retryDelay?: string;
         }>;
@@ -436,104 +345,4 @@ function summarizeGoogleError(detail: string): string {
   } catch {
     return detail.slice(0, 300);
   }
-}
-
-
-/**
- * fetch のレスポンスを安全に JSON として読む。
- * Vercel タイムアウト等で body が JSON でない場合は { error: <truncated text> } を返す。
- */
-interface ScanResponseBody {
-  raw?: unknown;
-  json?: {
-    regions?: Array<{
-      id?: string;
-      label?: string;
-      bbox?: [number, number, number, number];
-      kind?: 'table' | 'notes';
-      cols?: string[];
-      rows?: string[][];
-      uncertain_rows?: number[];
-      text?: string;
-    }>;
-  };
-  error?: unknown;
-  detail?: string;
-  finishReason?: unknown;
-}
-
-async function readJsonResponse(res: Response): Promise<ScanResponseBody | null> {
-  try {
-    const text = await res.text();
-    try {
-      return JSON.parse(text) as ScanResponseBody;
-    } catch {
-      return { error: text.slice(0, 500) };
-    }
-  } catch {
-    return null;
-  }
-}
-
-function formatError(prefix: string, status: number, data: ScanResponseBody | null): string {
-  const errorText =
-    typeof data?.error === 'string'
-      ? data.error
-      : data?.error
-        ? JSON.stringify(data.error).slice(0, 300)
-        : '不明';
-  const detail = data?.detail ? `\n${summarizeGoogleError(data.detail)}` : '';
-  return `${prefix} (${status}): ${errorText}${detail}`;
-}
-
-/**
- * 429 RESOURCE_EXHAUSTED を Google が返してきた場合に、レスポンスから
- * retryDelay を抽出して待ち時間を返す。無ければ既定のフォールバック値。
- */
-function extractRetryDelayMs(data: ScanResponseBody | null, fallbackMs: number): number {
-  try {
-    const detailStr = typeof data?.detail === 'string' ? data.detail : '';
-    if (!detailStr) return fallbackMs;
-    const obj = JSON.parse(detailStr) as {
-      error?: { details?: Array<{ retryDelay?: string }> };
-    };
-    const retry = obj.error?.details?.find((d) => d.retryDelay)?.retryDelay;
-    if (!retry) return fallbackMs;
-    // "32.5s" や "6s" 形式 → ms
-    const m = /^(\d+(?:\.\d+)?)s$/.exec(retry);
-    if (!m) return fallbackMs;
-    return Math.ceil(parseFloat(m[1]) * 1000);
-  } catch {
-    return fallbackMs;
-  }
-}
-
-/**
- * 429 (RESOURCE_EXHAUSTED) を Google の retryDelay に従って自動再試行する。
- * これにより FreeTier の 5 RPM 制限で並列リクエストが瞬間的に弾かれる
- * ケースを救済できる（quota 自体が枯渇しているなら何度やっても失敗するが、
- * その時はエラーをそのまま返す）。
- */
-async function fetchWithRetry(
-  url: string,
-  body: string,
-  label: string,
-): Promise<{ res: Response; data: ScanResponseBody | null }> {
-  const maxAttempts = 3;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body,
-    });
-    const data = await readJsonResponse(res);
-    if (res.status !== 429 || attempt === maxAttempts) {
-      return { res, data };
-    }
-    const waitMs = Math.min(extractRetryDelayMs(data, 5000) + 500, 30000);
-    console.warn(`[scan] 429 on "${label}" (attempt ${attempt}/${maxAttempts}). retry in ${waitMs}ms`);
-    await new Promise((resolve) => setTimeout(resolve, waitMs));
-  }
-  // 到達不可（ループ内で必ず return する）が、TS の型のため
-  throw new Error('fetchWithRetry: unreachable');
 }
