@@ -173,13 +173,3 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function handleGeminiError(err: unknown): Response {
-  if (err instanceof GeminiError) {
-    return json({ error: err.message, detail: err.body }, err.status >= 400 ? err.status : 500);
-  }
-  return json({ error: 'Unexpected error', detail: String(err) }, 500);
-}
-// eslint: handleGeminiError is unused after the streaming refactor but kept
-// for future non-streaming paths (diag-style endpoints, etc.). Re-export
-// to silence "noUnusedLocals" if it bites.
-export { handleGeminiError as _handleGeminiError };
