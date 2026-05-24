@@ -18,13 +18,13 @@ export interface RegionResult {
 
 export interface AnalyzeResult {
   /**
-   * Gemini が出した生 Markdown (Audit/修正案 列を含む)。
-   * Gemini の監査自己チェック専用カラムが残っているため**デバッグ用途のみ**。
+   * Gemini が出した生 Markdown (推論値列を含む)。
+   * Gemini の自己チェック用カラムが残っているため**デバッグ用途のみ**。
    * UI 表示にも下流診断 AI への送信にも使わない。
    */
   markdown: string;
   /**
-   * Audit/修正案 列を削除した「確定 scan_md」候補。
+   * 推論値列を削除した「確定 scan_md」候補。
    * UI 表示用カード本文 + Supabase #2 / Elith への送信に使う。
    * (docs/diagnostic_session_data_spec.md §3.2 の scan_md フォーマット)
    */
@@ -135,15 +135,10 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         return;
       }
 
-      // 「Audit/修正案」は Gemini の監査自己チェック専用列。
-      // ユーザー検証 UI と下流診断 AI には漏らさず、ここで除去する。
-      // 旧プロンプトの「推論値/推定値」も後方互換で同時に拾う。
-      const markdownClean = stripColumnFromTables(markdown, [
-        'Audit',
-        '修正案',
-        '推論値',
-        '推定値',
-      ]);
+      // 「推論値」は Gemini の自己チェック用 (備考列に【要確認】を立てるための内部材料)。
+      // ユーザー表示にも下流診断 AI 送信にも漏らさず、ここで除去する。
+      // 列名のブレ (推定値) も同時に拾う。
+      const markdownClean = stripColumnFromTables(markdown, ['推論値', '推定値']);
       const regions = parseMarkdownRegions(markdownClean);
       const totalRows = regions.reduce(
         (sum, r) => sum + countTableRows(r.body),
