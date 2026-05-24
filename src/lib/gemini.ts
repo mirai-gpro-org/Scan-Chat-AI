@@ -32,6 +32,8 @@ export interface GeminiGenerationConfig {
   topK?: number;
   maxOutputTokens?: number;
   responseMimeType?: string;
+  /** Thinking 予算 (token)。0 で thinking 完全停止 (flash/lite のみ)。 */
+  thinkingConfig?: { thinkingBudget?: number };
 }
 
 export interface GeminiRequest {
