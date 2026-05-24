@@ -5,7 +5,7 @@
 ## 機能（雛形レベル）
 
 - **トップ** (`/`)：モード選択（スキャン / チャット）
-- **スキャン** (`/scan`)：`getUserMedia` でカメラ起動 → 静止フレームを Gemini Vision に送信 → 構造化 JSON で応答取得
+- **スキャン** (`/scan`)：`getUserMedia` でカメラ起動 → 静止フレームを Gemini 2.5 Flash (監査官モード) に送信 → 9 列 Markdown 表を受信 → **ユーザー検証フェーズ** (トリミング画像 + bbox オーバーレイ + セル単位の疑念解消モーダル) → `/chat` へ遷移。詳細は `docs/scan_feature_requirements.md` §5 / `docs/diagnostic_session_data_spec.md` §3.2
 - **チャット** (`/chat`)：Gemini REST API ベースのテキスト対話。音声/テキスト トグル、サジェストチップ、進捗バー、`localStorage` レジューム
 
 ## セットアップ

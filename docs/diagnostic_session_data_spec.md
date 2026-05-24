@@ -95,7 +95,15 @@ customer_id (1) ─── (n) diagnosis_user_id [このユーザーの認証実�
 
 ### 3.2 `scan_md` のフォーマット
 
-`scan_md` は **ユーザー検証フェーズを通過した「確定 Markdown」** を指す。Gemini が生成した raw 出力は Scan-Chat-AI の `/api/scan` レスポンスに含まれるが、これは**そのまま永続化されない**。ユーザーが緑/黄ブロック単位で確認・編集した後の Markdown のみが Supabase #2 / S3 に書き込まれ、Elith 診断 AI に渡される。
+`scan_md` は **ユーザー検証フェーズを通過した「確定 Markdown」** を指す。Gemini が生成した raw 出力は Scan-Chat-AI の `/api/scan` レスポンスに含まれるが、これは**そのまま永続化されない**。ユーザーが **セル単位で確認・編集** した後の Markdown のみが Supabase #2 / S3 に書き込まれ、Elith 診断 AI に渡される。
+
+ユーザー検証フェーズの UX 仕様は `docs/scan_feature_requirements.md` §5 を参照。要点:
+
+- 表全体のトリミング画像 + 領域 bbox オーバーレイをハブ画面とする
+- ブロックをタップすると 9 列テーブルを展開、**セル単位**で着色 (黄=要確認 / 緑=確認済 or 元から OK)
+- 疑念セルをタップするとモーダルで該当行の全セルを入力フィールドとして表示
+- 各疑念セルは「直接修正」または「このまま OK」で個別に解消できる
+- 行内の疑念セル**全て**が解消されたら行が緑になり、全行緑で「✓ 確認して送信」が活性化
 
 #### Gemini 生出力 (中間データ、永続化されない)
 
@@ -540,7 +548,8 @@ GCS 側は Coldline で保管、30 日以降は Archive クラスへライフサ
 |---|---|
 | `src/pages/api/scan.ts` | スキャン → Markdown 生成 |
 | `src/pages/api/live-token.ts` | Live API 問診の ephemeral token 発行 |
-| `src/scripts/camera-scan.ts` | 撮影 + Markdown ストリーム受信 |
+| `src/scripts/camera-scan.ts` | 撮影 + Markdown 受信 + `parseMarkdownRegions` |
+| `src/scripts/scan-verification.ts` | 検証 UX (トリミング画像 + bbox オーバーレイ + セル単位モーダル + `assembleMarkdownClean`) |
 | `src/scripts/chat/live-controller.ts` | 問診 (Live API) UI 連携 |
 | `src/pages/scan.astro` | スキャン UI |
 | `src/pages/chat.astro` | 問診 UI |

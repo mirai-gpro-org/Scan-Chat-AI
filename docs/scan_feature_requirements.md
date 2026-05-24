@@ -3,11 +3,14 @@
 | 項目 | 内容 |
 |---|---|
 | 文書名 | Scan-Chat Medical AI — スキャン機能 要件定義書 |
-| バージョン | 0.1 (Draft) |
+| バージョン | 0.3 (Draft) |
 | 作成日 | 2026-05-22 |
+| 最終更新 | 2026-05-24 |
 | 作成者 | UNFIX Entertainment |
-| 対象機能 | カメラスキャン（提案書「機能1」相当） |
-| 関連文書 | `docs/scan_chat_medical_ai_proposal.pdf`（UI/UX 総合仕様提案書） |
+| 対象機能 | カメラスキャン + ユーザー検証 UX（提案書「機能1」相当） |
+| 関連文書 | `docs/scan_chat_medical_ai_proposal.pdf`（UI/UX 総合仕様提案書）/ `docs/diagnostic_session_data_spec.md` §3.2 |
+
+> **v0.3 の重要変更 (2026-05-24)**: 旧 JSON `ScanItem` ベースの設計は廃止。現在は Gemini 監査官モードによる **9 列 Markdown 表** を生成し、その後 **「ユーザー検証フェーズ」** (§5) で **セル単位** に疑念を解消してから下流診断 AI へ渡す。本書では旧仕様の節 (§4 F-3 / F-5 / F-6、§7 旧 API、§8.1 旧 ScanItem) に Deprecated タグを付け、新フローを §5 と §4 F-11〜F-15 に追加した。
 
 ---
 
@@ -29,12 +32,15 @@
 
 | 用語 | 定義 |
 |---|---|
-| **AR ハイライト** | カメラプレビュー映像の上に、検知された項目の bbox を半透明枠で重畳描画する機能 |
-| **デジタル・オーバーレイ** | 撮影確定後、画像の項目位置の真上に構造化された認識結果（例：「血圧: 138/88」）を半透明テキストで重畳する機能 |
-| **bbox** | bounding box。検知された項目の矩形領域。`[ymin, xmin, ymax, xmax]` を 0–1000 で正規化した配列で表現する |
-| **項目（ScanItem）** | 1 つの検知結果単位。`label`（項目名）、`value`（値）、`bbox`、`confidence`、`kind` から構成 |
-| **priority_flags** | 後続チャット問診で重点的に確認すべき項目名の配列。確信度が低い箇所などをフラグ付け |
+| **領域 (region / RegionResult)** | 検査表の論理ブロック (左側検査表、右側手書きメモ等)。Markdown 上は H2 (`## ラベル`) + 直後の HTML コメント `<!-- bbox: ymin,xmin,ymax,xmax -->` で表現。最大 4 領域 |
+| **bbox** | bounding box。`[ymin, xmin, ymax, xmax]` を **0.0–1.0** で正規化した配列で表現する (Gemini 慣例の 0–1000 ピクセル正規化ではない点に注意) |
+| **scan_md (確定 Markdown)** | ユーザー検証フェーズを通過した、推論値列を除去した 9 列 Markdown。Supabase #2 と下流診断 AI への送信フォーマット。詳細は `diagnostic_session_data_spec.md` §3.2 |
+| **疑念セル (suspicious cell)** | Gemini 出力のうち、§5.3 の 5 つのヒューリスティック (`(?)/??` / 備考タグ / [強調]/H/L マーカ / 判定列 H/L / 桁数異常) のいずれかに該当する個別セル |
+| **解消 (resolved)** | 疑念セルがユーザーの「直接修正」または「このまま OK」アクションでマークされた状態。表示は緑 |
+| **トリミング画像** | 検証画面上部に表示される、撮影画像のうち全領域 bbox の union (+2% padding) だけを切り出した画像。各領域 bbox は再正規化して上に重畳描画する |
 | **PHI** | Protected Health Information。個人を特定可能な医療情報 |
+| ~~AR ハイライト~~ (Deprecated) | 旧仕様。F-3 参照 |
+| ~~ScanItem / priority_flags / observations~~ (Deprecated) | 旧 JSON モデル。v0.3 で全廃。互換性も保たない |
 
 ---
 
@@ -100,43 +106,35 @@
 | 出力 | プレビュー停止、検知結果クリア |
 | 後処理 | 起動ボタンを enabled に戻す |
 
-### F-3: AR 連続検知ハイライト
+### ~~F-3: AR 連続検知ハイライト~~ (Deprecated, v0.3)
+
+UI 上のトグル (`#scan-detect-toggle`) は残置されているが、現在の実装ではハンドラを持たない。
+旧仕様: `mode: 'detect'` で 1.8s 間隔のフレーム送信 → bbox オーバーレイ。
+廃止理由: Gemini 監査官モードに統一し、検証フェーズ (§5) でユーザーが値を吟味するフローに置換。
+復活する場合は新フローと両立する設計を別途検討すること。
+
+### F-4: 撮影 & フル解析 (v0.3 改定)
 
 | 項目 | 内容 |
 |---|---|
-| 入力 | 「AR 検知」トグル ON、かつカメラ起動済 |
-| 処理 | `DETECT_INTERVAL_MS`（既定 1800ms）ごとに最新フレームを `DETECT_MAX_EDGE`（既定 720px）に縮小・JPEG 圧縮（品質 0.6）して `/api/scan` に `mode: 'detect'` で送信 |
-| 出力 | 返却された `items[]` を `<canvas>` オーバーレイに重畳描画。高信頼=緑、低信頼/手書き=黄 |
-| 並行制御 | 1リクエスト完了まで次は発火しない（`detectBusy` ガード）。timer は単一のみ |
-| トグル OFF | timer を clear し、オーバーレイを clear |
-| API コスト抑制 | 既定値で 約 0.5 req/sec 程度。ユーザーがトグルで明示的に ON にしない限り発火しない |
+| 入力 | 「📷 撮影 & 解析」ボタン押下 |
+| 処理 | フルサイズ JPEG (品質 0.85) フレームを取得 → `/api/scan` に `{ image, hint? }` で POST |
+| サーバ処理 | `gemini-2.5-flash` を監査官モード system prompt + 9 列 + 推論値列の 10 列フォーマットで呼び出し |
+| 出力 | `{ markdown, finishReason }` の JSON。Markdown には H2 領域 + bbox HTML コメント + GFM テーブル |
+| クライアント後処理 | `stripColumnFromTables` で「推論値/推定値」列を除去 → `markdownClean` を生成 → `parseMarkdownRegions` で `RegionResult[]` に分解 |
+| 画面遷移 | 解析完了で `panel-result` を表示 (§5) |
+| ステータス | 「Gemini Vision に送信中…」→「解析完了。」/ 失敗時はエラー文 |
+| 排他制御 | 解析中は撮影ボタン disabled |
 
-### F-4: 撮影 & フル解析
+### ~~F-5: デジタル・オーバーレイ (旧仕様)~~ (Deprecated, v0.3)
 
-| 項目 | 内容 |
-|---|---|
-| 入力 | 「撮影 & 解析」ボタン押下 |
-| 処理 | 1280px・JPEG 品質 0.85 でフレームを取得 → `/api/scan` に `mode: 'analyze'` + `hint` を送信 |
-| 出力 | 構造化 JSON（observations / regions / follow_up_questions / items / priority_flags / urgent）を取得し、`<pre>` に表示 |
-| UI 副作用 | `items[]` が含まれていればデジタル・オーバーレイで重畳描画 |
-| ステータス | 「Gemini Vision に送信中…」→「解析完了：N 項目」 |
-| 排他制御 | 解析中は撮影ボタン disabled、AR 検知トグル一時 disabled |
+旧仕様の「画像上に label: value をテキスト重畳」描画は廃止。
+現在は §5.2 の **トリミング画像 + 領域 bbox オーバーレイ** に置き換わっている。テキスト重畳ではなくブロックタップで詳細パネルに展開する方式。
 
-### F-5: デジタル・オーバーレイ
+### ~~F-6: 確信度別の色分け (旧仕様)~~ (Deprecated, v0.3)
 
-| 項目 | 内容 |
-|---|---|
-| 入力 | F-4 の `items[]` |
-| 処理 | 各項目について以下を描画:<br>1. 半透明の塗りつぶし矩形（緑 or 黄）<br>2. 矩形の上辺直上に "label: value" のラベル（背景塗り + 白文字） |
-| 動的サイズ | bbox の幅と文字長から自動でフォントサイズを計算（12–20px 相当 × devicePixelRatio） |
-| 値が空の場合 | ラベルを "label (要確認)" 表記とし、確信度を低として扱う |
-
-### F-6: 確信度別の色分け
-
-| 確信度 | 色 | 用途 |
-|---|---|---|
-| `confidence: 'high'` かつ `kind: 'printed'` | 緑 `rgba(34,197,94,*)` | 印刷文字で読み取り確実 |
-| `confidence: 'low'` または `kind: 'handwritten'` | 黄 `rgba(245,200,50,*)` | 手書き、かすれ、不鮮明 |
+旧仕様の `confidence: high/low` ベース色分けは廃止 (Gemini 監査官モードは confidence を返さない)。
+現在は §5.4 の **検証ステータス** ベース色分け (黄=未解消疑念セル / 緑=解消済セル or 元から OK)。
 
 ### F-7: 補足プロンプト
 
@@ -168,11 +166,194 @@
 | 内容 | プレビュー左上に「●高信頼 / ●要確認」の凡例を常時表示 |
 | 目的 | 黄色ハイライトの意味をユーザーが直感的に理解できるよう補助 |
 
+### F-11: 表全体のトリミング画像 + bbox オーバーレイ (v0.3 追加)
+
+| 項目 | 内容 |
+|---|---|
+| 入力 | F-4 完了後の `AnalyzeResult` (特に `fullImage` + `regions[].bbox`) |
+| 処理 | 1. 全領域 bbox の union を算出 (各方向に 0.02 パディング)<br>2. `<canvas>` で当該範囲を切り出して JPEG dataURL 化 (`trimImage`)<br>3. 各領域 bbox を union 内座標に再正規化<br>4. トリミング画像の上に半透明ボタン (`<button>`) を絶対配置 |
+| 色 | 緑 = 領域内全行 OK / 黄 = 1 件以上未解消 / 赤 = 表が無い領域 (現状未到達) |
+| インタラクション | ボタンタップで詳細パネル (F-12) を展開し、`scrollIntoView({behavior:'smooth'})` |
+
+### F-12: ブロック詳細パネル + セル単位着色 (v0.3 追加)
+
+| 項目 | 内容 |
+|---|---|
+| 入力 | 選択された `RegionResult` |
+| 処理 | `parseTable` で GFM テーブルを headers + rows に分解 → HTML `<table>` として描画 |
+| セル着色 | セル単位:<br>- 元から疑念なし: 通常表示<br>- 疑念セル 未解消: 黄背景 + bold<br>- 疑念セル 解消済 (編集 or OK): 緑背景 + `✎` プレフィクス (編集済の場合) |
+| 行クリック | 元から疑念ありの行はクリック可 (解消済でも再修正用に維持)。元から OK の行はクリック不可 |
+| クリック動作 | F-13 の行修正モーダルを開く |
+
+### F-13: 行修正モーダル (セル単位、v0.3 追加)
+
+| 項目 | 内容 |
+|---|---|
+| 入力 | クリックされた行の `RegionResult` + rowIdx |
+| レイアウト | フルスクリーンオーバーレイ (`fixed inset-0`)、下部 sheet (md: center) |
+| 表示単位 | 行内の **全セル** を 1 セル = 1 カードとして縦に列挙 (ヘッダラベル + input + ステータス) |
+| カード色 | 元から疑念なし = 灰枠 / 疑念あり未解消 = 黄枠 / 疑念あり解消済 = 緑枠 |
+| 入力 | 1 行 input。元から疑念ありのセルには「✓ このまま OK」ボタンを併設 |
+| 解消条件 | (a) input 値が元と異なる (= 編集) / (b)「このまま OK」押下 のいずれか |
+| 自動色変化 | 入力 or OK 押下で即時に該当カードが緑へ遷移 |
+| ローカル状態 | モーダル内のドラフトは「保存」押下まで永続化されない (キャンセル可能) |
+| 保存ボタン | ラベルに残未解消数を表示 (`💾 保存して閉じる (残 N 件)`)。残 0 のとき青、残ありで黄 |
+| 永続化 | 「保存」で `state.rows[${regionIdx}:${rowIdx}].cells[${cellIdx}] = { edited?, userConfirmed: true }` を localStorage に書込 |
+
+### F-14: 検証ゲート + 確定送信 (v0.3 追加)
+
+| 項目 | 内容 |
+|---|---|
+| 入力 | 検証 state |
+| 行 OK 判定 | 行内の **元から疑念ありセル全て** が「編集 (値が元と異なる)」または「userConfirmed=true」のとき OK |
+| 領域ステータス | 領域内に未 OK 行があれば黄、全行 OK なら緑 |
+| サマリ表示 | `N 領域 / M 行 / K 件 要確認` を panel-result 先頭に表示 |
+| 送信ボタン | 全領域緑になるまで disabled。ラベルに残数 (`✓ 確認して送信 (残 K 件)`) |
+| 確定動作 | `window.confirm` 経由で同意取得 → `/chat` へ遷移 |
+| 永続化 (Phase 0) | 現状はメモリ保持のみ。`/chat` 側は別途 sessionStorage 連携を Phase 1 で追加予定 |
+| 永続化 (Phase 1) | `assembleMarkdownClean(regions, cellOverrides)` で確定 `scan_md` を再構築し、`scan_artifacts.content` に書込 (`diagnostic_session_data_spec.md` §3.2) |
+
+### F-15: 検証状態の localStorage 永続化 (v0.3 追加)
+
+| 項目 | 内容 |
+|---|---|
+| キー | `scan-chat-ai.verification.${diagnostic_id}` |
+| 値スキーマ | `{ rows: Record<"${regionIdx}:${rowIdx}", { cells: Record<cellIdx, { edited?: string; userConfirmed: boolean }> }> }` |
+| 復元 | ページ再ロード時に同一 `diagnostic_id` であれば検証進捗が復元される |
+| 旧形式互換 | v0.2 までの `{ edited?, userConfirmed }` (行単位) は読込時に破棄 (互換性なし、dev データのみのため許容) |
+
 ---
 
-## 5. 非機能要件
+## 5. ユーザー検証フェーズ (Verification UX) — v0.3 新設
 
-### 5.1 パフォーマンス
+撮影 + Gemini 監査官モードでの転記が完了した後、**確定 `scan_md` として下流診断 AI に渡される前に**、ユーザーが Gemini の認識結果を吟味するフェーズ。本機能の臨床的信頼性の中核を担う。
+
+### 5.1 設計原則
+
+| 原則 | 内容 |
+|---|---|
+| **モデル非依存** | UI は Gemini が markdown 上に出した「タグ」(`【要確認】`, `(?)`, `[強調]`, H/L) のみに依存。後段で Gemma / Qwen / Med-PaLM 等に差し替えても同じプロンプト規約を満たせば動く |
+| **セル単位の解消** | 「行」ではなく「セル」を最小解消単位とする。9 列のうち 1 列だけ怪しい場合に、関係ないセルを毎回触らずに済む |
+| **元紙との並列比較を前提** | 紙の検査表を手元に置いた状態で「画面の値が紙と同じか」を 1 セルずつ確認する想定。OCR の不確実性を人間が補完する |
+| **修正と承認の対称性** | 「直接修正」も「このまま OK」も同等に「ユーザーが見た」シグナル。両者を区別せず行 OK 判定に使う |
+| **キャンセル可能な編集** | モーダル内のセル編集は保存ボタンまで永続化されない。誤操作で状態が壊れない |
+
+### 5.2 画面構成
+
+```
+┌─────────────────────────────────────┐
+│ 📋 解析結果                          │
+│ 2 領域 / 32 行 / 8 件 要確認         │  ← サマリ (F-14)
+│                                       │
+│ ┌─ 表全体 (タップでブロックを確認) ┐│
+│ │ ┌─[#1 左側検査表]─┐              ││
+│ │ │  ......          │ ← 緑 (全行OK) ││ ← トリミング画像 (F-11)
+│ │ └──────────────────┘              ││
+│ │ ┌─[#2 右側手書き]─┐               ││
+│ │ │  ......          │ ← 黄 (5件)   ││
+│ │ └──────────────────┘              ││
+│ └────────────────────────────────────┘│
+│                                       │
+│ ┌─ #2 右側手書き ────────────── ✕ ┐│
+│ │ No │ 検査項目 │ 読み取った値 │... ││ ← 詳細パネル (F-12)
+│ │ 1  │ AST     │ 18           │... ││ ← 全セル緑/通常
+│ │ 8  │ D-Bil   │[0.06 L]      │[L] ││ ← 値・判定セル黄
+│ │ ...                                ││
+│ └────────────────────────────────────┘│
+│                                       │
+│ [⏬ 詳細データ (開発用)]               │
+│                                       │
+│ [✓ 確認して送信 (残 8 件)] ← disabled│ ← 送信ゲート (F-14)
+│ [もう一度撮影する]                     │
+└─────────────────────────────────────┘
+
+[モーダル: 行 D-Bil の修正]            ← F-13
+┌────────────────────────────────────┐
+│ ┌─ No ───────────────────────┐    │ ← 灰枠 (元から OK)
+│ │ [ 8                    ]   │    │
+│ └────────────────────────────┘    │
+│ ┌─ 検査項目 ────────────────┐    │ ← 灰枠
+│ │ [ D-Bil                ]   │    │
+│ └────────────────────────────┘    │
+│ ┌─ 読み取った値 ──── ⚠要確認 ┐   │ ← 黄枠 (疑念)
+│ │ [ 0.06 L               ]   │    │
+│ │ [✓ このまま OK]            │   │
+│ └────────────────────────────┘    │
+│ ┌─ 判定 ──────────── ⚠要確認 ┐   │ ← 黄枠 (H/L マーカ)
+│ │ [ L                    ]   │    │
+│ │ [✓ このまま OK]            │   │
+│ └────────────────────────────┘    │
+│ ...                                │
+├────────────────────────────────────┤
+│ [💾 保存して閉じる (残 2 件)]       │
+└────────────────────────────────────┘
+```
+
+### 5.3 疑念セル判定ルール (5 件の OR)
+
+| # | 条件 | 該当セル | 実装 |
+|---|---|---|---|
+| (a) | セル内に `(?)` または `??` を含む | そのセル | `/\(\?\)\|\?\?/.test(cell)` |
+| (b) | 「備考」列に `【要確認】`/`【不整合】`/`【欠落】`/`【混線】`/`【捏造】` のいずれか | 備考セル | 列名で `findColumnIndex('備考')` |
+| (c) | 「読み取った値」列に `[強調]` 注記、または ` H ` / ` L ` 等のマーカ共起 | 値セル | `/\[強調\]/`, `/[\s][HL][\s\[]\|[\s][HL]$/` |
+| (d) | 「判定」列が `H` / `L` / `HH` / `LL` のいずれか | 判定セル | `cell.trim() === 'H'\|'L'\|...` |
+| (e) | 「読み取った値」整数部桁数が同一表の中央値から ±2 以上乖離 | 値セル | `detectDigitAnomalies` |
+
+(e) は周辺行に対する outlier 検出。例: ほとんどが 2-3 桁の中で `CA19-9 = 4048` のような 4 桁を flag できる。
+
+### 5.4 検証ステータスの色対応
+
+| ステータス | bbox オーバーレイ | テーブルセル | モーダルカード |
+|---|---|---|---|
+| 元から OK (疑念フラグなし) | 緑 (領域内全行 OK の場合) | 通常 (薄い緑系) | 灰枠 |
+| 疑念あり 未解消 | 黄 (領域内に 1 件以上ある場合) | 黄背景 + bold | 黄枠 + 「このまま OK」ボタン表示 |
+| 疑念あり 解消済 (編集 or OK 押下) | 緑 (全件解消なら) | 緑背景 + `✎` (編集済の場合) | 緑枠 |
+| ユーザーが触った非疑念セル | (影響なし) | `✎` プレフィクス | 灰枠 + 「✎ 修正済」ステータス |
+
+### 5.5 確定 `scan_md` の再構築
+
+`assembleMarkdownClean(regions, cellOverrides)`:
+
+```
+入力: regions: RegionResult[],
+      cellOverrides: Map<"${regionIdx}:${rowIdx}", Map<cellIdx, editedValue>>
+
+処理: 各 region について
+  - H2 `## ラベル` + bbox HTML コメント を出力
+  - 表があれば preamble (header 行 + separator) を出力
+  - 各行について:
+    - その行の cellOverrides が無ければ rawLine をそのまま出力
+    - あれば、各セルを `cellOverrides.get(cellIdx) ?? originalCell` で置換し
+      `| ${cells.join(' | ')} |` 形式で再構築
+  - 表が無ければ region.body をそのまま出力
+
+出力: 確定 scan_md (9 列、推論値列なし)
+```
+
+これが `diagnostic_session_data_spec.md` §3.2 の `scan_md` フォーマットに準拠する。
+
+### 5.6 送信ゲート
+
+- 全領域の **全疑念セル** が解消されるまで「✓ 確認して送信」は disabled
+- 解消済の数に応じてボタンラベルが `(残 K 件)` を表示
+- ヒント文も同期 (黄: `⚠ K 件の疑念がまだ未解消です` / 緑: `✓ 全行を確認しました。問診へ進めます。`)
+- クリックで `window.confirm` → 同意で `/chat` へ遷移
+- Phase 0 はメモリ保持のみ。Phase 1 で `assembleMarkdownClean` の結果を Supabase #2 に書込予定
+
+### 5.7 スコープ外 (今後検討)
+
+| 項目 | 状況 |
+|---|---|
+| ブロック単位の再撮影 | 暫定仕様外。現状は「もう一度撮影する」(全画像ベース再撮影) のみ提供 |
+| 行追加 / 行削除 | 暫定仕様外。Gemini の出した行構造を変更する操作は提供しない |
+| 単位 / 上下限値の修正 UI | 全セル編集可能なので技術的には可能。優先度は低い |
+| (e) 桁数異常の閾値チューニング | 現状 ±2 固定。誤検出が問題になれば調整 |
+
+---
+
+## 6. 非機能要件
+
+### 6.1 パフォーマンス
 
 | 指標 | 目標値 | 備考 |
 |---|---|---|
@@ -183,7 +364,7 @@
 | 撮影解析応答時間（p50） | 5 秒以下 | フル解析 |
 | 初回 LCP | 2.5 秒以下 | モバイル 4G 想定 |
 
-### 5.2 セキュリティ・プライバシー
+### 6.2 セキュリティ・プライバシー
 
 | 項目 | 要件 |
 |---|---|
@@ -194,7 +375,7 @@
 | PHI | 個人特定情報を含む可能性があるため、ブラウザコンソール / 解析結果 `<pre>` の DOM 経路以外への漏出を禁止 |
 | CORS | `/api/scan` は same-origin のみ受付（既定の Astro 設定） |
 
-### 5.3 可用性・障害時挙動
+### 6.3 可用性・障害時挙動
 
 | 障害 | 挙動 |
 |---|---|
@@ -203,7 +384,7 @@
 | Gemini JSON パース失敗 | `json: null` を返却し、`raw` を保持。フロントは「項目数 0」として継続 |
 | ネットワーク断 | 検知ループは一過性失敗として握りつぶし、次フレームでリトライ。撮影解析は status にエラー表示 |
 
-### 5.4 対応ブラウザ / デバイス
+### 6.4 対応ブラウザ / デバイス
 
 | カテゴリ | 対応 |
 |---|---|
@@ -214,7 +395,7 @@
 | カメラ | 背面カメラ優先（無ければ前面でフォールバック許容） |
 | 画面 | 縦長モバイル前提（提案書ワイヤーフレーム準拠） |
 
-#### 5.4.1 デバイス別の利用方針
+#### 6.4.1 デバイス別の利用方針
 
 スキャン機能は **スマートフォン（特に iPhone）またはタブレット**でのみ提供する。スマホを所有していないユーザーは対象外（誰もが少なくとも 1 台はスマホを所有している前提）。**PC は要件外**。
 
@@ -225,11 +406,11 @@
 | タブレット (iPad 等) | ○ | 据置スタンドでの利用シーン。AR 検知間隔は同条件 |
 | **PC** | **— 非対応** | スキャンページを開いた場合は「スキャンはスマホまたはタブレットでご利用ください」を表示し、ハンドオフ QR で別デバイスへ誘導 |
 
-#### 5.4.2 iPhone-first 原則
+#### 6.4.2 iPhone-first 原則
 
 スキャン → 問診 → 結果閲覧の全主要フローは **iPhone 1 台のみで完結可能**であること。タブレット / PC は任意の拡張であり、強制しない。クロスデバイス連携の全体方針（Google One Tap、セッション継続、デバイス引継ぎ）は `docs/device_and_auth_requirements.md` を参照。診断結果の精読のみ、ユーザー任意でタブレット / PC で行える設計とする。
 
-### 5.5 アクセシビリティ
+### 6.5 アクセシビリティ
 
 | 要件 | 実装 |
 |---|---|
@@ -239,68 +420,51 @@
 | 配色コントラスト | 緑・黄ともに WCAG AA 相当の前景コントラストを背景塗りで担保 |
 | 色のみに依存しない表現 | 低信頼項目は「(要確認)」テキストも併記 |
 
-### 5.6 国際化
+### 6.6 国際化
 
 - 当面は日本語のみ。AI 出力も日本語固定（system prompt で指定）。
 
 ---
 
-## 6. API 仕様
+## 7. API 仕様
 
-### 6.1 `POST /api/scan`
+### 7.1 `POST /api/scan` (v0.3 改定)
 
 #### リクエスト
 
 | フィールド | 型 | 必須 | 説明 |
 |---|---|---|---|
-| `image` | string | yes | data URL もしくは生 base64（JPEG/PNG） |
-| `mode` | `'detect' \| 'analyze'` | no | 既定 `'analyze'` |
-| `hint` | string | no | 補足プロンプト（analyze 時のみ使用） |
+| `image` | string | yes | data URL もしくは生 base64 (JPEG/PNG)。フルサイズで送信、サーバで Files API に upload |
+| `hint` | string | no | 補足プロンプト (例:「黄ばんだ古い検査表」「裏面に注記あり」)。system prompt に注入 |
 
-#### レスポンス（共通）
+> 旧 `mode: 'detect' | 'analyze'` フィールドは廃止。`POST /api/scan` は常に監査官モードの **9 列 + 推論値列 = 10 列 Markdown** を生成する。
 
-```json
-{
-  "mode": "detect" | "analyze",
-  "raw": "...",           // Gemini が返した生テキスト（デバッグ用）
-  "json": { ... } | null  // パース成功時の構造化結果
-}
-```
-
-#### レスポンス `json` スキーマ（mode=detect）
+#### レスポンス
 
 ```json
 {
-  "items": [
-    {
-      "label": "血圧",
-      "value": "138/88",
-      "bbox": [120, 80, 180, 420],
-      "confidence": "high",
-      "kind": "printed"
-    }
-  ]
+  "markdown": "## 左側検査表\n<!-- bbox: 0.05,0.05,0.95,0.65 -->\n\n| No | 検査項目 | ... | 推論値 | ... | 備考 |\n|----|---------|-----|--------|-----|------|\n| 1  | AST     | ... | -      | ... | -    |\n...",
+  "finishReason": "STOP"
 }
 ```
 
-#### レスポンス `json` スキーマ（mode=analyze）
+`markdown` は **生出力 (10 列)**。クライアント側で `stripColumnFromTables(['推論値','推定値'])` を適用して 9 列の `markdownClean` (= 確定 `scan_md` 候補) を作り、それを `parseMarkdownRegions` で `RegionResult[]` に分解する。
 
-```json
-{
-  "observations": ["..."],
-  "regions": ["..."],
-  "follow_up_questions": ["..."],
-  "items": [ /* ScanItem 配列 */ ],
-  "priority_flags": ["要再検", "手書き所見"],
-  "urgent": false
-}
-```
+`finishReason` (Gemini 由来): `STOP` (正常) / `MAX_TOKENS` (応答打ち切り) / `SAFETY` (安全フィルタ作動)。UI は `MAX_TOKENS`/`SAFETY` の場合に警告バッジを表示。
 
-#### bbox 座標系
+#### Markdown フォーマット (詳細は `diagnostic_session_data_spec.md` §3.2)
 
-- 配列順: `[ymin, xmin, ymax, xmax]`（Gemini の慣例に準拠）
-- 値域: 0–1000 で正規化（画像の幅・高さに対して）
-- フロントは canvas サイズに合わせてスケール変換する（`bboxToCanvas`）
+- 領域は H2 (`## ラベル`) で開始、最大 4 領域
+- 各領域 H2 の直後に bbox HTML コメント `<!-- bbox: ymin,xmin,ymax,xmax -->` (0.0〜1.0)
+- 表は GFM テーブル、固定列。`読み取った値` 列は紙面文字通り (H/L マーカ・[強調] を保持)
+- 不明値は `(?)`、推測補完禁止
+- `備考` 列は不整合検出時のみ `【要確認】理由` を出力
+
+#### bbox 座標系 (v0.3 改定)
+
+- 配列順: `[ymin, xmin, ymax, xmax]`
+- 値域: **0.0–1.0 で正規化** (旧 0–1000 から変更)
+- フロントは画像の表示サイズに合わせて `top/left/width/height` を `%` で適用
 
 #### エラーレスポンス
 
@@ -311,52 +475,87 @@
 | 500 | `{ error: 'GEMINI_API_KEY is not configured' }` | サーバ側設定不備 |
 | 4xx/5xx | `{ error, detail }` | Gemini API からの転送エラー |
 
-### 6.2 内部ライブラリ
+### 7.2 内部ライブラリ
 
 `src/lib/gemini.ts`:
-- `callGemini(apiKey, request, model?)` — POST + JSON パース + `GeminiError` ハンドリング
+- `callGemini(apiKey, request, model?)` — Files API upload + `generateContent` + `GeminiError` ハンドリング
 - `extractText(res)` — `candidates[0].content.parts[].text` を結合
-- 既定モデル: `gemini-1.5-flash`
+- `MODELS` — 既定モデル ID 定義 (`gemini-2.5-flash`)
 
 ---
 
-## 7. データモデル
+## 8. データモデル
 
-### 7.1 ScanItem
+### 8.1 ScanItem (Deprecated, v0.3 で削除済)
+
+旧 JSON フローの最小単位だった `ScanItem` (label + value + bbox + confidence + kind) は v0.3 で完全に廃止。
+現在のコードベース (`src/scripts/camera-scan.ts`) には存在しない。
+互換性は保たない (パイロット段階のため)。
+
+### 8.2 RegionResult (現行)
 
 ```ts
-export interface ScanItem {
-  label: string;       // 項目名（例: "血圧", "Hb", "所見"）
-  value: string;       // 認識値（判読不能時は空文字）
-  bbox: [number, number, number, number]; // [ymin, xmin, ymax, xmax] 0-1000
-  confidence: 'high' | 'low';
-  kind: 'printed' | 'handwritten';
+// src/scripts/camera-scan.ts
+export interface RegionResult {
+  /** 領域ラベル (H2 見出し) */
+  label: string;
+  /** 正規化 bbox [ymin, xmin, ymax, xmax] (0.0-1.0)。HTML コメントから抽出。 */
+  bbox?: [number, number, number, number];
+  /** 領域内の Markdown 本文 (見出し直下〜次の H2 までのテキスト) */
+  body: string;
 }
 ```
 
-### 7.2 AnalyzeResult
+### 8.3 AnalyzeResult (現行)
 
 ```ts
+// src/scripts/camera-scan.ts
 export interface AnalyzeResult {
-  observations: string[];
-  regions: string[];
-  follow_up_questions: string[];
-  items: ScanItem[];
-  priority_flags: string[]; // label 名の配列
-  urgent: boolean;
+  /** Gemini が出した生 Markdown (推論値列を含む)。デバッグ用途のみ */
+  markdown: string;
+  /** 推論値列を除去した「確定 scan_md 候補」。UI / Supabase / Elith 入力 */
+  markdownClean: string;
+  /** 領域ごとに切り分けたメタデータ + 本文 (markdownClean ベース) */
+  regions: RegionResult[];
+  /** 表示用フル画像 URL (objectURL) */
+  fullImage?: string;
+  /** Gemini finishReason (STOP / MAX_TOKENS / SAFETY) */
+  finishReason?: string;
 }
 ```
 
-### 7.3 検知最大件数
+### 8.4 VerificationState (現行、検証フェーズ用、v0.3 追加)
 
-- `mode=detect`: 最大 12 項目（プロンプトで上限指定）
-- `mode=analyze`: 上限なし（Gemini の応答長制限 1024 tokens 内で自然に決まる）
+```ts
+// src/scripts/scan-verification.ts (internal)
+interface CellState {
+  /** ユーザーが編集したセル値。未編集なら未設定 */
+  edited?: string;
+  /** ユーザーが「このまま OK」と確認した */
+  userConfirmed: boolean;
+}
+interface RowState {
+  /** cellIdx → CellState。記録のあるセルだけ含む */
+  cells: Record<number, CellState>;
+}
+interface VerificationState {
+  /** key = `${regionIdx}:${rowIdx}` */
+  rows: Record<string, RowState>;
+}
+```
+
+localStorage キー: `scan-chat-ai.verification.${diagnostic_id}`
+
+### 8.5 検知最大件数
+
+- 現行: 最大 4 領域 (system prompt で指定)
+- 表 1 つあたりの行数: 上限なし (Gemini の応答長制限内で自然に決まる)
 
 ---
 
-## 8. UI 仕様
+## 9. UI 仕様
 
-### 8.1 画面構成（提案書ワイヤーフレーム[1]に準拠）
+### 9.1 画面構成（提案書ワイヤーフレーム[1]に準拠）
 
 ```
 ┌───────────────────────────────┐
@@ -385,27 +584,34 @@ export interface AnalyzeResult {
 └───────────────────────────────┘
 ```
 
-### 8.2 操作フロー
+### 9.2 操作フロー
 
 ```
 [初期] → カメラ起動押下
        ↓
-[起動中] → (任意) AR 検知トグル ON
-       ↓                ↓
-       │           [連続検知ループ] ← 1.8s
-       │                ↓
-       │           bbox オーバーレイ更新
+[起動中] → 撮影 & 解析押下
+       ↓
+[解析中] → POST /api/scan (image + hint)
+       ↓
+[Gemini 監査官モード]
+       ↓
+[結果受信] → Markdown 10列 → クライアントで推論値列除去 → 9列 markdownClean
+       ↓
+[検証フェーズ (§5)] → トリミング画像 + bbox オーバーレイ
+       ↓
+       ├─ ブロックタップ → 詳細パネル (セル単位着色)
+       │  └─ 疑念セルクリック → モーダル (セル単位編集 or 「このまま OK」)
        │
-       → 撮影&解析押下
+       ↓ 全疑念解消
+[送信ゲート活性化]
        ↓
-[解析中] → /api/scan (analyze)
+[✓ 確認して送信] → confirm → /chat へ遷移
        ↓
-[解析完了] → デジタル・オーバーレイ + JSON 表示
-       ↓
-[停止] or [再撮影]
+       ─ Phase 0: メモリ保持 (再ロードで失う)
+       ─ Phase 1: assembleMarkdownClean → Supabase #2 scan_artifacts INSERT
 ```
 
-### 8.3 ステータス文言
+### 9.3 ステータス文言
 
 | 状況 | 表示 |
 |---|---|
@@ -418,7 +624,7 @@ export interface AnalyzeResult {
 | 停止 | 「停止中。」 |
 | 起動エラー | 「カメラを起動できませんでした: <理由>」 |
 
-### 8.4 ボタン状態マトリクス
+### 9.4 ボタン状態マトリクス
 
 | 状態 | カメラ起動 | 撮影&解析 | 停止 | AR 検知 |
 |---|---|---|---|---|
@@ -428,7 +634,7 @@ export interface AnalyzeResult {
 
 ---
 
-## 9. エラー・例外ケース
+## 10. エラー・例外ケース
 
 | ID | 状況 | 期待挙動 |
 |---|---|---|
@@ -444,9 +650,9 @@ export interface AnalyzeResult {
 
 ---
 
-## 10. テスト要件 / 受入基準
+## 11. テスト要件 / 受入基準
 
-### 10.1 機能テスト
+### 11.1 機能テスト
 
 - [ ] 「カメラ起動」で背面カメラのプレビューが表示される
 - [ ] 「AR 検知」ON で 1.8 秒間隔の bbox 描画が始まる
@@ -457,7 +663,7 @@ export interface AnalyzeResult {
 - [ ] 権限拒否時にエラーメッセージが表示される
 - [ ] 補足プロンプトを入力すると analyze 結果に反映される（observations の文言に影響）
 
-### 10.2 非機能テスト
+### 11.2 非機能テスト
 
 - [ ] iPhone Safari (iOS 16+) で動作確認
 - [ ] Pixel Chrome で動作確認
@@ -465,7 +671,7 @@ export interface AnalyzeResult {
 - [ ] AR 検知中のメモリリークなし（10 分連続で安定）
 - [ ] Gemini レート制限到達時に UI がフリーズしない
 
-### 10.3 セキュリティテスト
+### 11.3 セキュリティテスト
 
 - [ ] DevTools の Network タブで `GEMINI_API_KEY` が一切露出しない
 - [ ] `/api/scan` への cross-origin リクエストが拒否される
@@ -473,7 +679,7 @@ export interface AnalyzeResult {
 
 ---
 
-## 11. 既知の制約・将来課題
+## 12. 既知の制約・将来課題
 
 | 区分 | 内容 |
 |---|---|
@@ -488,7 +694,7 @@ export interface AnalyzeResult {
 
 ---
 
-## 12. 関連実装ファイル
+## 13. 関連実装ファイル
 
 | ファイル | 役割 |
 |---|---|
@@ -500,9 +706,10 @@ export interface AnalyzeResult {
 
 ---
 
-## 13. 変更履歴
+## 14. 変更履歴
 
 | バージョン | 日付 | 内容 |
 |---|---|---|
 | 0.1 | 2026-05-22 | 初版（提案書 PDF + スケルトン実装 v0.1.0 を踏まえて作成） |
 | 0.2 | 2026-05-22 | iPhone-first 原則を明文化、スキャン対応デバイスから PC を除外（誘導 UI のみ）、タブレットを明示的に対応に追加 |
+| 0.3 | 2026-05-24 | 旧 JSON `ScanItem` フローを廃止、Gemini 監査官モードによる **9 列 Markdown** + **ユーザー検証フェーズ (セル単位)** を採用。§5 新設、§4 F-11〜F-15 追加、§7 API spec を `markdown` レスポンスに改定、§8 データモデルを `RegionResult`/`AnalyzeResult`/`VerificationState` に更新、§9.2 操作フローに検証ステップを反映、bbox 座標系を 0–1000 → 0.0–1.0 に変更 |
