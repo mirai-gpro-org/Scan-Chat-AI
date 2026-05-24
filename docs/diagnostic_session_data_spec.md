@@ -510,7 +510,6 @@ GCS 側は Coldline で保管、30 日以降は Archive クラスへライフサ
 |---|---|
 | `src/pages/api/scan.ts` | スキャン → Markdown 生成 |
 | `src/pages/api/live-token.ts` | Live API 問診の ephemeral token 発行 |
-| `src/pages/api/diag.ts` | Gemini Tier 状態の診断ツール |
 | `src/scripts/camera-scan.ts` | 撮影 + Markdown ストリーム受信 |
 | `src/scripts/chat/live-controller.ts` | 問診 (Live API) UI 連携 |
 | `src/pages/scan.astro` | スキャン UI |
