@@ -84,12 +84,68 @@ export function findColumnIndex(headers: string[], keyword: string): number {
 }
 
 /**
- * 行の「疑念」判定。以下の OR で 1 つでも該当すれば疑念あり:
- *   (a) いずれかのセルに `(?)` または `??` を含む
- *   (b) 備考列に【要確認/不整合/欠落/混線/捏造】タグ
- *   (c) 読み取った値/結果列に [強調] 注記、または H/L マーカが値の隣にある
- *   (d) 判定列が H or L
- *   (e) 桁数異常 (周辺行と整数部桁数が 2 以上乖離)
+ * セル単位の疑念判定。返り値はその行で疑念がある「セルのインデックス集合」。
+ * 行が空集合を返したらその行は「確度高」とみなす。
+ *
+ * 判定ロジック (5/24 仕様確認の OR):
+ *   (a) いずれかのセルに `(?)` または `??` を含む       → そのセル
+ *   (b) 備考列に【要確認/不整合/欠落/混線/捏造】タグ    → 備考セル
+ *   (c) 読み取った値列に [強調] 注記                    → 値セル
+ *   (c) 読み取った値列に H/L マーカ (値の隣)            → 値セル
+ *   (d) 判定列が H/L/HH/LL                              → 判定セル
+ *   (e) 桁数異常 (周辺行と整数部桁数が 2 以上乖離)      → 値セル
+ */
+export function detectSuspiciousCells(
+  row: TableRow,
+  headers: string[],
+  digitAnomalyRowIdx?: Set<number>,
+  rowIdx?: number,
+): Set<number> {
+  const suspicious = new Set<number>();
+  const remarksIdx = findColumnIndex(headers, '備考');
+  const valueIdx = findValueColumn(headers);
+  const judgeIdx = findColumnIndex(headers, '判定');
+
+  row.cells.forEach((cell, i) => {
+    // (a) (?) or ?? — どのセルでも
+    if (/\(\?\)|\?\?/.test(cell)) {
+      suspicious.add(i);
+    }
+    // (b) 備考タグ
+    if (
+      i === remarksIdx &&
+      /【要確認|【不整合|【欠落|【混線|【捏造/.test(cell)
+    ) {
+      suspicious.add(i);
+    }
+    // (c) [強調] / H・L 共起
+    if (i === valueIdx) {
+      if (/\[強調\]/.test(cell)) suspicious.add(i);
+      if (/[\s][HL][\s\[]|[\s][HL]$/.test(cell)) suspicious.add(i);
+    }
+    // (d) 判定列
+    if (i === judgeIdx) {
+      const j = cell.trim();
+      if (j === 'H' || j === 'L' || j === 'HH' || j === 'LL') {
+        suspicious.add(i);
+      }
+    }
+  });
+  // (e) 桁数異常は値セルに付与
+  if (
+    digitAnomalyRowIdx &&
+    rowIdx !== undefined &&
+    digitAnomalyRowIdx.has(rowIdx) &&
+    valueIdx >= 0
+  ) {
+    suspicious.add(valueIdx);
+  }
+  return suspicious;
+}
+
+/**
+ * 行の「疑念」判定 (= 疑念セルが 1 つ以上ある)。
+ * 互換用に残しているが、内部は detectSuspiciousCells.
  */
 export function isRowSuspicious(
   row: TableRow,
@@ -97,39 +153,9 @@ export function isRowSuspicious(
   digitAnomalyRowIdx?: Set<number>,
   rowIdx?: number,
 ): boolean {
-  const allText = row.cells.join(' ');
-  // (a)
-  if (/\(\?\)|\?\?/.test(allText)) return true;
-  // (b)
-  const remarksIdx = findColumnIndex(headers, '備考');
-  if (
-    remarksIdx >= 0 &&
-    /【要確認|【不整合|【欠落|【混線|【捏造/.test(row.cells[remarksIdx] ?? '')
-  ) {
-    return true;
-  }
-  // (c) 値列の [強調] or H/L 共起
-  const valueIdx = findValueColumn(headers);
-  if (valueIdx >= 0) {
-    const v = row.cells[valueIdx] ?? '';
-    if (/\[強調\]/.test(v)) return true;
-    if (/[\s][HL][\s\[]|[\s][HL]$/.test(v)) return true;
-  }
-  // (d) 判定列が H/L
-  const judgeIdx = findColumnIndex(headers, '判定');
-  if (judgeIdx >= 0) {
-    const j = (row.cells[judgeIdx] ?? '').trim();
-    if (j === 'H' || j === 'L' || j === 'HH' || j === 'LL') return true;
-  }
-  // (e) 桁数異常
-  if (
-    digitAnomalyRowIdx &&
-    rowIdx !== undefined &&
-    digitAnomalyRowIdx.has(rowIdx)
-  ) {
-    return true;
-  }
-  return false;
+  return (
+    detectSuspiciousCells(row, headers, digitAnomalyRowIdx, rowIdx).size > 0
+  );
 }
 
 function findValueColumn(headers: string[]): number {
@@ -165,12 +191,12 @@ export function detectDigitAnomalies(model: TableModel): Set<number> {
 }
 
 /**
- * 領域配列 + 行単位の編集後行 → 確定 scan_md を再構築。
- * 編集後行は parseTable の rows と同じ位置で上書きされる。
+ * 領域配列 + セル単位の編集 → 確定 scan_md を再構築。
+ * overrides の構造: `${regionIdx}:${rowIdx}` → cellIdx → 編集後セル文字列。
  */
 export function assembleMarkdownClean(
   regions: RegionResult[],
-  rowOverrides: Map<string, string>, // key = `${regionIdx}:${rowIdx}` → 編集後 rawLine
+  rowOverrides: Map<string, Map<number, string>>,
 ): string {
   const out: string[] = [];
   regions.forEach((region, regionIdx) => {
@@ -187,8 +213,15 @@ export function assembleMarkdownClean(
     }
     out.push(...table.preamble);
     table.rows.forEach((row, rowIdx) => {
-      const overrideKey = `${regionIdx}:${rowIdx}`;
-      out.push(rowOverrides.get(overrideKey) ?? row.rawLine);
+      const cellOverrides = rowOverrides.get(`${regionIdx}:${rowIdx}`);
+      if (!cellOverrides || cellOverrides.size === 0) {
+        out.push(row.rawLine);
+        return;
+      }
+      const cells = row.cells.map(
+        (cell, cellIdx) => cellOverrides.get(cellIdx) ?? cell,
+      );
+      out.push(`| ${cells.join(' | ')} |`);
     });
     out.push('');
   });
@@ -199,11 +232,16 @@ export function assembleMarkdownClean(
 // 行状態管理 (localStorage)
 // ============================================================
 
-interface RowState {
-  /** ユーザーが編集した rawLine (markdown 1 行)。未編集なら未設定 */
+interface CellState {
+  /** ユーザーが編集したセル値。未編集なら未設定 */
   edited?: string;
-  /** ユーザーが「OK」と確認した (= 疑念解消) */
+  /** ユーザーが「このまま OK」と確認した (= このセルの疑念解消) */
   userConfirmed: boolean;
+}
+
+interface RowState {
+  /** key = cellIdx → CellState。記録のあるセルだけ含む */
+  cells: Record<number, CellState>;
 }
 
 interface VerificationState {
@@ -220,8 +258,21 @@ function loadState(diagnosticId: string): VerificationState {
   const raw = window.localStorage.getItem(storageKey(diagnosticId));
   if (!raw) return { rows: {} };
   try {
-    const parsed = JSON.parse(raw) as Partial<VerificationState>;
-    return { rows: parsed.rows ?? {} };
+    const parsed = JSON.parse(raw) as { rows?: Record<string, unknown> };
+    const rows: Record<string, RowState> = {};
+    // 旧形式 ({ edited?, userConfirmed }) は破棄。新形式 ({ cells: {...} }) だけ受理。
+    Object.entries(parsed.rows ?? {}).forEach(([key, value]) => {
+      if (
+        value &&
+        typeof value === 'object' &&
+        'cells' in value &&
+        value.cells &&
+        typeof value.cells === 'object'
+      ) {
+        rows[key] = { cells: value.cells as Record<number, CellState> };
+      }
+    });
+    return { rows };
   } catch {
     return { rows: {} };
   }
@@ -246,12 +297,11 @@ export interface VerificationRefs {
   submitBtn: HTMLButtonElement;  // 「✓ 確認して送信」
   submitHint: HTMLElement;       // 送信ボタン下のヒント
 
-  // 行修正モーダル
+  // 行修正モーダル (セル単位編集)
   rowEditModal: HTMLElement;
-  rowEditTextarea: HTMLTextAreaElement;
-  rowEditOriginal: HTMLElement;   // 元行の表示先 <pre>
+  rowEditTitle: HTMLElement;
+  rowEditCellsContainer: HTMLElement;
   rowEditSaveBtn: HTMLButtonElement;
-  rowEditOkBtn: HTMLButtonElement;
   rowEditCancelBtn: HTMLButtonElement;
 }
 
@@ -259,8 +309,27 @@ interface RegionView {
   region: RegionResult;
   table: TableModel | null;
   digitAnomalies: Set<number>;
-  /** 各データ行の元の疑念フラグ (state を考慮しない) */
-  originalSuspicious: boolean[];
+  /** 各データ行の元の疑念セル集合 (state を考慮しない) */
+  suspiciousCellsByRow: Array<Set<number>>;
+}
+
+/**
+ * 行修正モーダル内で持つ「保存前」のセル状態。
+ * 「保存」ボタンを押すまで永続化されない。
+ */
+interface ModalCellDraft {
+  cellIdx: number;
+  header: string;
+  /** Gemini が出力した元のセル値 */
+  original: string;
+  /** 現在 input に表示されている値 */
+  value: string;
+  /** 元から疑念ありフラグ (= 黄色表示の対象) */
+  originalSuspicious: boolean;
+  /** ユーザーが値を書き換えた (= 元と異なる) */
+  isEdited: boolean;
+  /** ユーザーが「このまま OK」を押した */
+  userConfirmed: boolean;
 }
 
 const STATUS_RING: Record<'green' | 'yellow' | 'red', string> = {
@@ -277,6 +346,8 @@ export class ScanVerificationController {
     [];
   /** 編集モーダルの編集対象 */
   private editing: { regionIdx: number; rowIdx: number } | null = null;
+  /** モーダル内の保存前セル状態 */
+  private modalDrafts: ModalCellDraft[] = [];
   private selectedRegionIdx: number | null = null;
   /** 画像が onload で読み終わってトリミングが完了したかフラグ */
   private trimmedImageReady = false;
@@ -309,13 +380,15 @@ export class ScanVerificationController {
     const regions = this.result.regions ?? [];
     this.regions = regions.map((region) => {
       const table = parseTable(region.body);
-      const digitAnomalies = table ? detectDigitAnomalies(table) : new Set<number>();
-      const originalSuspicious = table
+      const digitAnomalies = table
+        ? detectDigitAnomalies(table)
+        : new Set<number>();
+      const suspiciousCellsByRow = table
         ? table.rows.map((row, i) =>
-            isRowSuspicious(row, table.headers, digitAnomalies, i),
+            detectSuspiciousCells(row, table.headers, digitAnomalies, i),
           )
         : [];
-      return { region, table, digitAnomalies, originalSuspicious };
+      return { region, table, digitAnomalies, suspiciousCellsByRow };
     });
   }
 
@@ -468,35 +541,50 @@ export class ScanVerificationController {
     // 本文
     const tbody = document.createElement('tbody');
     view.table.rows.forEach((row, rowIdx) => {
-      const ok = this.isRowOk(idx, rowIdx);
-      const suspicious = !ok;
+      const rowOk = this.isRowOk(idx, rowIdx);
+      const originallySuspicious =
+        (view.suspiciousCellsByRow[rowIdx]?.size ?? 0) > 0;
       const tr = document.createElement('tr');
       tr.dataset.rowIdx = String(rowIdx);
-      tr.className = suspicious
-        ? 'cursor-pointer bg-amber-50 transition-colors hover:bg-amber-100 dark:bg-amber-900/30 dark:hover:bg-amber-900/50'
-        : 'bg-emerald-50/40 dark:bg-emerald-900/15';
-      if (suspicious) {
-        tr.addEventListener('click', () =>
-          this.openRowEdit(idx, rowIdx),
-        );
+      // 元から疑念ありなら、解消済みでもクリック可 (再修正)。元から OK の行はクリック不可。
+      if (originallySuspicious) {
+        tr.className = rowOk
+          ? 'cursor-pointer bg-emerald-50/60 transition-colors hover:bg-emerald-100/80 dark:bg-emerald-900/20 dark:hover:bg-emerald-900/40'
+          : 'cursor-pointer bg-amber-50 transition-colors hover:bg-amber-100 dark:bg-amber-900/30 dark:hover:bg-amber-900/50';
+        tr.addEventListener('click', () => this.openRowEdit(idx, rowIdx));
+      } else {
+        tr.className =
+          'bg-emerald-50/40 dark:bg-emerald-900/15';
       }
-      // 編集済み行は太字 + マーク
-      const rowState = this.state.rows[`${idx}:${rowIdx}`];
-      const isEdited = !!rowState?.edited;
-      const cells =
-        rowState?.edited != null
-          ? splitRow(rowState.edited)
-          : row.cells;
-      cells.forEach((cellText, cellIdx) => {
+      const persistedCells = this.state.rows[`${idx}:${rowIdx}`]?.cells ?? {};
+      const suspiciousCells =
+        view.suspiciousCellsByRow[rowIdx] ?? new Set<number>();
+      row.cells.forEach((origCell, cellIdx) => {
+        const cs = persistedCells[cellIdx];
+        const displayText = cs?.edited ?? origCell;
+        const isCellEdited = cs?.edited != null && cs.edited !== origCell;
+        const isCellConfirmed = cs?.userConfirmed === true;
+        const cellOriginallySuspicious = suspiciousCells.has(cellIdx);
         const td = document.createElement('td');
-        td.className =
+        // セルごとに状態色を反映
+        let cellClasses =
           'border border-slate-200 px-2 py-1 align-top dark:border-slate-700';
-        if (cellIdx === 0 && isEdited) {
+        if (cellOriginallySuspicious) {
+          if (isCellEdited || isCellConfirmed) {
+            cellClasses +=
+              ' bg-emerald-100/80 dark:bg-emerald-900/40';
+          } else {
+            cellClasses +=
+              ' bg-amber-100/80 font-semibold dark:bg-amber-900/40';
+          }
+        }
+        td.className = cellClasses;
+        if (isCellEdited) {
           td.innerHTML =
-            '<span class="mr-1 inline-block rounded bg-emerald-500 px-1 text-[10px] font-medium text-white">編集</span>' +
-            escapeHtml(cellText);
+            '<span class="mr-1 text-emerald-600 dark:text-emerald-400" title="修正済">✎</span>' +
+            escapeHtml(displayText);
         } else {
-          td.textContent = cellText;
+          td.textContent = displayText;
         }
         tr.appendChild(td);
       });
@@ -508,7 +596,8 @@ export class ScanVerificationController {
     const legend = document.createElement('p');
     legend.className = 'mt-3 text-[11px] text-slate-500';
     legend.innerHTML =
-      '黄色の行 = 疑念あり (タップで修正可能)。緑色の行 = 確度高。';
+      '<span class="inline-block h-2 w-2 rounded bg-amber-300"></span> 要確認セル / ' +
+      '<span class="inline-block h-2 w-2 rounded bg-emerald-300"></span> 確認済 (タップで修正できます)';
     body.appendChild(legend);
   }
 
@@ -522,31 +611,164 @@ export class ScanVerificationController {
     const row = view.table.rows[rowIdx];
     if (!row) return;
     this.editing = { regionIdx, rowIdx };
-    const currentLine =
-      this.state.rows[`${regionIdx}:${rowIdx}`]?.edited ?? row.rawLine;
-    this.refs.rowEditOriginal.textContent = row.rawLine;
-    this.refs.rowEditTextarea.value = currentLine;
+    const persisted = this.state.rows[`${regionIdx}:${rowIdx}`]?.cells ?? {};
+    const suspiciousCells =
+      view.suspiciousCellsByRow[rowIdx] ?? new Set<number>();
+    // 各セルのドラフトを構築
+    this.modalDrafts = view.table.headers.map((header, cellIdx) => {
+      const original = row.cells[cellIdx] ?? '';
+      const cs = persisted[cellIdx];
+      const editedFromState = cs?.edited != null && cs.edited !== original;
+      return {
+        cellIdx,
+        header,
+        original,
+        value: cs?.edited ?? original,
+        originalSuspicious: suspiciousCells.has(cellIdx),
+        isEdited: editedFromState,
+        userConfirmed: cs?.userConfirmed === true,
+      };
+    });
+    // 行ラベル: 検査項目列があればそれをタイトルに使う
+    const nameIdx = findColumnIndex(view.table.headers, '検査項目');
+    const rowLabel =
+      nameIdx >= 0 ? row.cells[nameIdx] : `行 ${rowIdx + 1}`;
+    this.refs.rowEditTitle.textContent = `行の修正: ${rowLabel}`;
+    this.renderModalCells();
     this.refs.rowEditModal.hidden = false;
-    setTimeout(() => this.refs.rowEditTextarea.focus(), 50);
   }
 
   private closeRowEdit(): void {
     this.editing = null;
+    this.modalDrafts = [];
     this.refs.rowEditModal.hidden = true;
+  }
+
+  /**
+   * モーダル内のセル入力フォームを描画。
+   * 各セルは 1 つの「行カード」として表示:
+   *   - 元から OK のセル: 緑枠、ラベル + input のみ
+   *   - 元から疑念ありで未解消: 黄枠 + 「このまま OK」ボタン
+   *   - 元から疑念ありで解消済 (編集 or OK 押下): 緑枠、ステータス表示
+   */
+  private renderModalCells(): void {
+    const container = this.refs.rowEditCellsContainer;
+    container.innerHTML = '';
+    this.modalDrafts.forEach((draft) => {
+      const card = document.createElement('div');
+      card.className =
+        'rounded-lg border-2 p-2 transition-colors';
+      const headerRow = document.createElement('div');
+      headerRow.className = 'mb-1 flex items-center justify-between gap-2';
+      const label = document.createElement('label');
+      label.className = 'text-xs font-medium text-slate-700 dark:text-slate-200';
+      label.textContent = draft.header;
+      const status = document.createElement('span');
+      status.className = 'text-[10px] font-medium';
+      headerRow.append(label, status);
+      card.appendChild(headerRow);
+
+      // 入力フィールド
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = draft.value;
+      input.spellcheck = false;
+      input.className =
+        'w-full rounded border bg-white px-2 py-1 font-mono text-sm text-slate-900 focus:outline-none focus:ring-1 dark:bg-slate-800 dark:text-slate-100';
+      card.appendChild(input);
+
+      // 「このまま OK」ボタン (元から疑念ありのセルのみ)
+      let okBtn: HTMLButtonElement | null = null;
+      if (draft.originalSuspicious) {
+        okBtn = document.createElement('button');
+        okBtn.type = 'button';
+        okBtn.textContent = '✓ このまま OK';
+        okBtn.className =
+          'mt-1.5 rounded border border-amber-500 px-2 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100 dark:border-amber-600 dark:text-amber-300 dark:hover:bg-amber-900/30';
+        card.appendChild(okBtn);
+      }
+
+      const refresh = () => {
+        const resolved =
+          !draft.originalSuspicious || draft.isEdited || draft.userConfirmed;
+        if (!draft.originalSuspicious) {
+          // 元から OK: 中立色
+          card.className =
+            'rounded-lg border-2 border-slate-200 bg-slate-50 p-2 transition-colors dark:border-slate-700 dark:bg-slate-800/40';
+          input.className =
+            'w-full rounded border border-slate-300 bg-white px-2 py-1 font-mono text-sm text-slate-900 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100';
+          status.textContent = draft.isEdited ? '✎ 修正済' : '';
+          status.className =
+            'text-[10px] font-medium text-emerald-700 dark:text-emerald-400';
+        } else if (resolved) {
+          card.className =
+            'rounded-lg border-2 border-emerald-400 bg-emerald-50 p-2 transition-colors dark:border-emerald-700 dark:bg-emerald-900/30';
+          input.className =
+            'w-full rounded border border-emerald-400 bg-white px-2 py-1 font-mono text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-emerald-600 dark:bg-slate-800 dark:text-slate-100';
+          status.textContent = draft.isEdited
+            ? '✎ 修正済'
+            : '✓ 確認済';
+          status.className =
+            'text-[10px] font-medium text-emerald-700 dark:text-emerald-400';
+        } else {
+          card.className =
+            'rounded-lg border-2 border-amber-400 bg-amber-50 p-2 transition-colors dark:border-amber-600 dark:bg-amber-900/30';
+          input.className =
+            'w-full rounded border border-amber-400 bg-white px-2 py-1 font-mono text-sm text-slate-900 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 dark:border-amber-600 dark:bg-slate-800 dark:text-slate-100';
+          status.textContent = '⚠ 要確認';
+          status.className =
+            'text-[10px] font-medium text-amber-700 dark:text-amber-400';
+        }
+        if (okBtn) okBtn.hidden = resolved;
+      };
+      refresh();
+
+      input.addEventListener('input', () => {
+        draft.value = input.value;
+        draft.isEdited = input.value !== draft.original;
+        refresh();
+        this.updateModalSummary();
+      });
+      if (okBtn) {
+        okBtn.addEventListener('click', () => {
+          draft.userConfirmed = true;
+          refresh();
+          this.updateModalSummary();
+        });
+      }
+      container.appendChild(card);
+    });
+    this.updateModalSummary();
+  }
+
+  /** モーダル下部の「残 N 件」表示を更新 */
+  private updateModalSummary(): void {
+    const unresolved = this.modalDrafts.filter(
+      (d) => d.originalSuspicious && !d.isEdited && !d.userConfirmed,
+    ).length;
+    if (unresolved === 0) {
+      this.refs.rowEditSaveBtn.textContent = '💾 保存して閉じる (全セル OK)';
+      this.refs.rowEditSaveBtn.classList.remove(
+        '!bg-amber-500',
+        'hover:!bg-amber-600',
+      );
+    } else {
+      this.refs.rowEditSaveBtn.textContent = `💾 保存して閉じる (残 ${unresolved} 件)`;
+      this.refs.rowEditSaveBtn.classList.add(
+        '!bg-amber-500',
+        'hover:!bg-amber-600',
+      );
+    }
   }
 
   private bindModal(): void {
     this.refs.rowEditSaveBtn.addEventListener('click', () =>
       this.handleRowSave(),
     );
-    this.refs.rowEditOkBtn.addEventListener('click', () =>
-      this.handleRowOk(),
-    );
     this.refs.rowEditCancelBtn.addEventListener('click', () =>
       this.closeRowEdit(),
     );
     this.refs.rowEditModal.addEventListener('click', (ev) => {
-      // 背景タップで閉じる
       if (ev.target === this.refs.rowEditModal) this.closeRowEdit();
     });
   }
@@ -555,26 +777,26 @@ export class ScanVerificationController {
     if (!this.editing) return;
     const { regionIdx, rowIdx } = this.editing;
     const key = `${regionIdx}:${rowIdx}`;
-    const edited = this.refs.rowEditTextarea.value.trim();
-    const view = this.regions[regionIdx];
-    const original = view?.table?.rows[rowIdx]?.rawLine ?? '';
-    if (edited === '' || edited === original) {
-      // 元と同じ or 空 → userConfirmed のみ
-      this.state.rows[key] = { userConfirmed: true };
+    const cells: Record<number, CellState> = {};
+    this.modalDrafts.forEach((draft) => {
+      // 永続化対象: ユーザーが触ったセルのみ (編集 or OK 押下)
+      const editedAndDifferent =
+        draft.isEdited && draft.value !== draft.original;
+      if (editedAndDifferent) {
+        cells[draft.cellIdx] = {
+          edited: draft.value,
+          userConfirmed: true,
+        };
+      } else if (draft.userConfirmed) {
+        cells[draft.cellIdx] = { userConfirmed: true };
+      }
+    });
+    if (Object.keys(cells).length === 0) {
+      // 何も変更がなければ既存状態を保持
+      delete this.state.rows[key];
     } else {
-      this.state.rows[key] = { edited, userConfirmed: true };
+      this.state.rows[key] = { cells };
     }
-    saveState(this.diagnosticId, this.state);
-    this.closeRowEdit();
-    this.afterRowChange(regionIdx);
-  }
-
-  private handleRowOk(): void {
-    if (!this.editing) return;
-    const { regionIdx, rowIdx } = this.editing;
-    const key = `${regionIdx}:${rowIdx}`;
-    const prev = this.state.rows[key];
-    this.state.rows[key] = { ...prev, userConfirmed: true };
     saveState(this.diagnosticId, this.state);
     this.closeRowEdit();
     this.afterRowChange(regionIdx);
@@ -592,16 +814,24 @@ export class ScanVerificationController {
   // 状態判定
   // ----------------------------------------------------------
 
-  /** その行が「ユーザー視点で OK 扱い」か */
+  /**
+   * その行が「ユーザー視点で OK 扱い」か。
+   * 元から疑念があったセル**全て**が、編集 or「このまま OK」のいずれかで
+   * 解消されていれば OK。
+   */
   private isRowOk(regionIdx: number, rowIdx: number): boolean {
     const view = this.regions[regionIdx];
-    if (!view) return true;
-    const rowState = this.state.rows[`${regionIdx}:${rowIdx}`];
-    if (rowState?.userConfirmed) return true;
-    if (view.table) {
-      // 編集後の行は疑念再評価。ただし userConfirmed 既に true なら↑で抜けている
-      const rawSuspicious = view.originalSuspicious[rowIdx] ?? false;
-      return !rawSuspicious;
+    if (!view?.table) return true;
+    const suspiciousCells =
+      view.suspiciousCellsByRow[rowIdx] ?? new Set<number>();
+    if (suspiciousCells.size === 0) return true;
+    const cells = this.state.rows[`${regionIdx}:${rowIdx}`]?.cells ?? {};
+    for (const cellIdx of suspiciousCells) {
+      const cs = cells[cellIdx];
+      if (!cs) return false;
+      const original = view.table.rows[rowIdx]?.cells[cellIdx] ?? '';
+      const isEdited = cs.edited != null && cs.edited !== original;
+      if (!isEdited && !cs.userConfirmed) return false;
     }
     return true;
   }
@@ -646,14 +876,15 @@ export class ScanVerificationController {
   }
 
   private updateDownstreamPreview(): void {
-    const overrides = new Map<string, string>();
+    const overrides = new Map<string, Map<number, string>>();
     Object.entries(this.state.rows).forEach(([key, rowState]) => {
-      if (rowState.edited != null) overrides.set(key, rowState.edited);
+      const cellMap = new Map<number, string>();
+      Object.entries(rowState.cells).forEach(([cellIdx, cs]) => {
+        if (cs.edited != null) cellMap.set(Number(cellIdx), cs.edited);
+      });
+      if (cellMap.size > 0) overrides.set(key, cellMap);
     });
-    const md = assembleMarkdownClean(
-      this.result.regions ?? [],
-      overrides,
-    );
+    const md = assembleMarkdownClean(this.result.regions ?? [], overrides);
     this.refs.downstreamPreview.textContent = md || '(empty)';
   }
 
