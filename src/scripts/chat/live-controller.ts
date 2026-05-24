@@ -40,7 +40,11 @@ export interface LiveRefs {
 
   modeToggle: HTMLElement;
   micBtn: HTMLButtonElement;
+  startBtn: HTMLButtonElement;
 
+  startHero: HTMLElement;
+  qaArea: HTMLElement;
+  dualHint: HTMLElement;
   answerPanel: HTMLElement;
   questionText: HTMLElement;
 
@@ -133,9 +137,17 @@ const SYSTEM_INSTRUCTION = `あなたは健康アドバイス用の問診を行�
 すべての present_question で:
   section_id, section_title, percent (5セクション均等で 0/20/40/60/80/100), question (発話内容と同じ短い質問文), allow_skip
 
+【選択肢タップ時の応答】
+ユーザーが選択肢ボタンをタップで回答した場合（テキストで届く）も、必ず音声で短く復唱してから次の質問へ進んでください:
+- 単一選択: 「『○○』ですね。」
+- 複数選択: 「『○○』と『××』ですね。」
+- 数値 (本/杯/分/時間): 「○○本ですね。」
+- スライダー (1-10): 「○○点ですね。」
+復唱は 1 文だけ、明るく短く。続けて次の present_question を呼んで次の質問を発話する。
+
 【セッション開始時の挨拶】
 セッション開始直後に必ず以下のように発話し、第1問へ:
-「こんにちは、Scan-Chat の AI 問診です。約5分でいくつか生活習慣についてお聞きします。気軽にお答えください。まず喫煙について — 普段たばこを吸われますか？」
+「こんにちは、Scan-Chat の AI 問診です。約5分でいくつか生活習慣についてお聞きします。お話しいただくか、画面の選択肢をタップ、どちらでも構いません。まず喫煙について — 普段たばこを吸われますか？」
 そして同時に present_question(section_id:"lifestyle", section_title:"嗜好品", percent:0, question:"普段たばこを吸われますか？", answer_kind:"chip", chips:[{label:"吸わない", emoji:"🚭"},{label:"以前吸っていた", emoji:"🍃"},{label:"吸っている", emoji:"🚬"}], allow_skip:true) を呼ぶ。
 
 【完了時】
@@ -259,6 +271,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     refs.resumeBanner.hidden = false;
   }
   renderHistory();
+  setConnected(false);
   applyModeUI();
   refs.fallbackZone.hidden = false; // 補助テキスト入力は常時表示
 
@@ -274,11 +287,17 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     renderHistory();
     renderProgress(0, '準備中…');
     renderSectionDots(-1);
-    refs.questionText.textContent = '🎙 マイクを押して問診を開始します';
+    refs.questionText.textContent = '…';
     showWidget('voice');
+    setConnected(false);
   });
 
-  refs.micBtn.addEventListener('click', async () => {
+  // 開始: 大型 hero ボタン
+  refs.startBtn.addEventListener('click', () => toggleSession());
+  // 中断: コンパクト top-right ボタン
+  refs.micBtn.addEventListener('click', () => toggleSession());
+
+  async function toggleSession(): Promise<void> {
     if (liveSession) {
       stopLive();
       return;
@@ -286,6 +305,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     if (connecting) return;
     connecting = true;
     setStatus('接続中…');
+    refs.startBtn.disabled = true;
     refs.micBtn.disabled = true;
     try {
       await startLive();
@@ -295,9 +315,10 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       stopLive();
     } finally {
       connecting = false;
+      refs.startBtn.disabled = false;
       refs.micBtn.disabled = false;
     }
-  });
+  }
 
   refs.modeToggle.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
@@ -314,6 +335,8 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-chip]');
     if (!btn) return;
     const label = btn.dataset.chip ?? '';
+    // フラッシュ視覚フィードバック
+    btn.classList.add('flash', 'selected');
     submitAnswer(label);
   });
 
@@ -383,6 +406,25 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     refs.status.textContent = text;
   }
 
+  function setConnected(state: boolean): void {
+    refs.startHero.hidden = state;
+    refs.qaArea.hidden = !state;
+    if (state) {
+      refs.micBtn.classList.add('active');
+      const lbl = refs.micBtn.querySelector('.mic-label') as HTMLElement | null;
+      const icn = refs.micBtn.querySelector('.mic-icon') as HTMLElement | null;
+      if (lbl) lbl.textContent = '中断';
+      if (icn) icn.textContent = '⏸';
+      refs.micBtn.setAttribute('aria-label', '問診を中断');
+    } else {
+      refs.micBtn.classList.remove('active');
+      const lbl = refs.micBtn.querySelector('.mic-label') as HTMLElement | null;
+      const icn = refs.micBtn.querySelector('.mic-icon') as HTMLElement | null;
+      if (lbl) lbl.textContent = '中断';
+      if (icn) icn.textContent = '⏸';
+    }
+  }
+
   function applyModeUI(): void {
     refs.modeToggle.querySelectorAll<HTMLElement>('[data-mode]').forEach((p) => {
       p.classList.toggle('on', p.dataset.mode === mode);
@@ -428,6 +470,8 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     }
     // 自由記述 widget が出ているときは補助テキスト入力を非表示（重複防止）
     refs.fallbackZone.hidden = key === 'text';
+    // 「音声でも・タップでも」ヒント: chip/multi/slider/stepper の時に表示
+    refs.dualHint.hidden = !(key === 'chip' || key === 'multi' || key === 'slider' || key === 'stepper');
   }
 
   function stepStep(delta: number): void {
@@ -501,11 +545,8 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       },
       callbacks: {
         onopen: () => {
-          setStatus('🎙 接続済 — 話せます');
-          refs.micBtn.classList.add('active');
-          refs.micBtn.setAttribute('aria-label', 'マイク停止');
-          (refs.micBtn.querySelector('.mic-label') as HTMLElement | null) &&
-            ((refs.micBtn.querySelector('.mic-label') as HTMLElement).textContent = '停止');
+          setStatus('🎙 接続済 — 話せます / タップ可');
+          setConnected(true);
           // セッション開始直後に AI を kickoff（ユーザーには見せない）
           setTimeout(() => {
             try {
@@ -523,9 +564,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
           const reason = (e as { reason?: string })?.reason;
           setStatus(reason ? `切断: ${reason}` : '切断');
           liveSession = null;
-          refs.micBtn.classList.remove('active');
-          (refs.micBtn.querySelector('.mic-label') as HTMLElement | null) &&
-            ((refs.micBtn.querySelector('.mic-label') as HTMLElement).textContent = '開始する');
+          setConnected(false);
         },
       },
     });
@@ -542,9 +581,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     audio.stop();
     try { liveSession?.close(); } catch {}
     liveSession = null;
-    refs.micBtn.classList.remove('active');
-    (refs.micBtn.querySelector('.mic-label') as HTMLElement | null) &&
-      ((refs.micBtn.querySelector('.mic-label') as HTMLElement).textContent = '開始する');
+    setConnected(false);
     setStatus('停止');
   }
 
@@ -725,7 +762,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       // 空状態のプレースホルダ
       const empty = document.createElement('div');
       empty.className = 'flex h-full flex-col items-center justify-center gap-2 py-6 text-center text-slate-400';
-      empty.innerHTML = '<span class="text-4xl">💬</span><p class="text-xs">右上の🎙開始ボタンから問診をスタート</p>';
+      empty.innerHTML = '<span class="text-4xl">💬</span><p class="text-xs">下の <span class="font-medium text-brand-600">🎙 問診を開始</span> ボタンから始めてください</p>';
       refs.log.appendChild(empty);
     } else {
       session.messages.forEach(renderMessage);

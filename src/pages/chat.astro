@@ -68,7 +68,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     >
       <div id="chat-empty" class="flex h-full flex-col items-center justify-center gap-2 py-6 text-center text-slate-400">
         <span class="text-4xl">💬</span>
-        <p class="text-xs">右下の🎙開始ボタンから問診をスタート</p>
+        <p class="text-xs">下の <span class="font-medium text-brand-600">🎙 問診を開始</span> から始めてください</p>
       </div>
     </div>
 
@@ -77,89 +77,125 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       class="card border-brand-200 dark:border-brand-500/30"
       style="background: linear-gradient(180deg, rgba(99,102,241,0.04) 0%, rgba(255,255,255,0) 60%);"
     >
-      <div class="mb-3 flex items-start gap-3">
-        <div id="question-text" class="flex-1 text-sm font-medium text-slate-800 dark:text-slate-100">
-          🎙 マイクを押して問診を開始します
-        </div>
-        <button
-          id="mic-btn"
-          type="button"
-          class="mic-fab compact shrink-0"
-          aria-label="マイク開始"
-        >
-          <span class="mic-icon text-xl">🎙</span>
-          <span class="mic-label text-[10px]">開始</span>
-        </button>
-      </div>
-
-      <!-- 音声モード（接続前の大型 CTA / 接続中の指示） -->
-      <div id="ui-voice" class="flex flex-col items-center gap-2 py-3">
-        <div id="voice-indicator" class="grid place-items-center">
-          <span class="text-5xl">🎙</span>
-        </div>
+      <!-- ━━━ START HERO（未接続時のみ表示） ━━━ -->
+      <div id="start-hero" class="flex flex-col items-center gap-3 py-2">
         <p class="text-center text-xs text-slate-500">
-          右上の <span class="font-medium text-brand-600">🎙開始</span> をタップして話しかけてください<br/>
-          <span class="text-[11px]">テキストでも回答できます</span>
+          下のボタンで問診を開始します
         </p>
-      </div>
-
-      <!-- chip 単一選択 -->
-      <div id="ui-chip" class="stagger flex flex-wrap gap-2" hidden></div>
-
-      <!-- multi 複数選択（モーダル起動ボタン） -->
-      <div id="ui-multi" class="flex flex-col gap-2" hidden>
-        <button id="multi-open" type="button" class="btn-primary w-full">
-          ＋ 選択肢から選ぶ
-        </button>
-        <p id="multi-summary" class="text-center text-xs text-slate-500"></p>
-      </div>
-
-      <!-- slider 1-10 -->
-      <div id="ui-slider" class="flex flex-col gap-3" hidden>
-        <div class="flex items-center justify-center gap-3">
-          <span id="slider-low" class="text-xs text-slate-500">低</span>
-          <div
-            id="slider-value"
-            class="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-cyan-500 text-2xl font-bold text-white shadow-md"
-          >5</div>
-          <span id="slider-high" class="text-xs text-slate-500">高</span>
-        </div>
-        <input id="slider-input" type="range" min="1" max="10" value="5" class="range-slider" />
-        <button id="slider-submit" type="button" class="btn-primary">この値で回答</button>
-      </div>
-
-      <!-- stepper 数値（本/杯/時間） -->
-      <div id="ui-stepper" class="flex flex-col gap-3" hidden>
-        <div class="flex items-center justify-center gap-4">
-          <button id="stepper-minus" type="button" class="stepper-btn" aria-label="減らす">−</button>
-          <div class="flex items-baseline gap-1">
-            <span id="stepper-value" class="text-3xl font-bold tabular-nums">0</span>
-            <span id="stepper-unit" class="text-sm text-slate-500">本</span>
-          </div>
-          <button id="stepper-plus" type="button" class="stepper-btn" aria-label="増やす">＋</button>
-        </div>
-        <button id="stepper-submit" type="button" class="btn-primary">この量で回答</button>
-      </div>
-
-      <!-- free text -->
-      <div id="ui-text" class="flex flex-col gap-2" hidden>
-        <textarea
-          id="text-input"
-          rows="2"
-          class="resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900"
-          placeholder="自由にお答えください"
-        ></textarea>
-        <button id="text-submit" type="button" class="btn-primary">送信</button>
-      </div>
-
-      <!-- 共通: スキップ / 補助 -->
-      <div class="mt-3 flex items-center justify-center gap-2">
         <button
-          id="skip-btn"
+          id="start-btn"
           type="button"
-          class="text-xs text-slate-500 hover:text-slate-700 hover:underline dark:hover:text-slate-200"
+          class="mic-fab mic-fab-hero"
+          aria-label="問診を開始する"
+        >
+          <span class="mic-icon text-3xl">🎙</span>
+          <span class="mic-label text-xs font-semibold">問診を開始</span>
+        </button>
+        <div class="mt-1 flex items-center gap-2 rounded-full bg-slate-50 px-3 py-1.5 text-[11px] text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
+          <span>🎙 話す</span>
+          <span class="text-slate-400">/</span>
+          <span>👆 選んでタップ</span>
+          <span class="text-slate-400">—</span>
+          <span class="font-medium text-brand-700 dark:text-brand-300">どちらでも OK</span>
+        </div>
+      </div>
+
+      <!-- ━━━ QA AREA（接続時のみ表示） ━━━ -->
+      <div id="qa-area" hidden>
+        <div class="mb-3 flex items-start gap-3">
+          <div id="question-text" class="flex-1 text-sm font-medium leading-relaxed text-slate-800 dark:text-slate-100">
+            …
+          </div>
+          <button
+            id="mic-btn"
+            type="button"
+            class="mic-fab compact shrink-0"
+            aria-label="問診を中断"
+          >
+            <span class="mic-icon text-lg">⏸</span>
+            <span class="mic-label text-[10px]">中断</span>
+          </button>
+        </div>
+
+        <!-- 二刀流ヒント（widget 表示時のみ） -->
+        <div
+          id="dual-hint"
+          class="mb-2 flex items-center justify-center gap-2 rounded-full bg-brand-50 px-3 py-1 text-[11px] text-brand-700 dark:bg-brand-500/10 dark:text-brand-300"
           hidden
-        >答えたくない</button>
+        >
+          <span>🎙 話してもOK</span>
+          <span class="text-brand-400">・</span>
+          <span>👇 タップでもOK</span>
+        </div>
+
+        <!-- 音声モード（質問なし時のループ待機） -->
+        <div id="ui-voice" class="flex flex-col items-center gap-2 py-3">
+          <div id="voice-indicator" class="grid place-items-center">
+            <span class="text-4xl animate-pulse">🎙</span>
+          </div>
+          <p class="text-center text-xs text-slate-500">
+            話しかけてください
+          </p>
+        </div>
+
+        <!-- chip 単一選択 -->
+        <div id="ui-chip" class="stagger flex flex-col gap-2" hidden></div>
+
+        <!-- multi 複数選択 -->
+        <div id="ui-multi" class="flex flex-col gap-2" hidden>
+          <button id="multi-open" type="button" class="btn-primary w-full">
+            ＋ 選択肢から選ぶ
+          </button>
+          <p id="multi-summary" class="text-center text-xs text-slate-500"></p>
+        </div>
+
+        <!-- slider 1-10 -->
+        <div id="ui-slider" class="flex flex-col gap-3" hidden>
+          <div class="flex items-center justify-center gap-3">
+            <span id="slider-low" class="text-xs text-slate-500">低</span>
+            <div
+              id="slider-value"
+              class="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-cyan-500 text-2xl font-bold text-white shadow-md"
+            >5</div>
+            <span id="slider-high" class="text-xs text-slate-500">高</span>
+          </div>
+          <input id="slider-input" type="range" min="1" max="10" value="5" class="range-slider" />
+          <button id="slider-submit" type="button" class="btn-primary">この値で回答</button>
+        </div>
+
+        <!-- stepper -->
+        <div id="ui-stepper" class="flex flex-col gap-3" hidden>
+          <div class="flex items-center justify-center gap-4">
+            <button id="stepper-minus" type="button" class="stepper-btn" aria-label="減らす">−</button>
+            <div class="flex items-baseline gap-1">
+              <span id="stepper-value" class="text-3xl font-bold tabular-nums">0</span>
+              <span id="stepper-unit" class="text-sm text-slate-500">本</span>
+            </div>
+            <button id="stepper-plus" type="button" class="stepper-btn" aria-label="増やす">＋</button>
+          </div>
+          <button id="stepper-submit" type="button" class="btn-primary">この量で回答</button>
+        </div>
+
+        <!-- free text -->
+        <div id="ui-text" class="flex flex-col gap-2" hidden>
+          <textarea
+            id="text-input"
+            rows="2"
+            class="resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900"
+            placeholder="自由にお答えください"
+          ></textarea>
+          <button id="text-submit" type="button" class="btn-primary">送信</button>
+        </div>
+
+        <!-- 共通: スキップ -->
+        <div class="mt-3 flex items-center justify-center gap-2">
+          <button
+            id="skip-btn"
+            type="button"
+            class="text-xs text-slate-500 hover:text-slate-700 hover:underline dark:hover:text-slate-200"
+            hidden
+          >答えたくない</button>
+        </div>
       </div>
     </section>
 
@@ -215,7 +251,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
       modeToggle: $('mode-toggle'),
       micBtn: $<HTMLButtonElement>('mic-btn'),
+      startBtn: $<HTMLButtonElement>('start-btn'),
 
+      startHero: $('start-hero'),
+      qaArea: $('qa-area'),
+      dualHint: $('dual-hint'),
       answerPanel: $('answer-panel'),
       questionText: $('question-text'),
 
