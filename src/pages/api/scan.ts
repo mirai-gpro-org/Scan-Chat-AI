@@ -146,6 +146,7 @@ export const POST: APIRoute = async ({ request }) => {
         generationConfig: {
           temperature: 0.0,
           maxOutputTokens: 32768,
+          thinkingConfig: { thinkingBudget: 2048 },
         },
       },
       MODELS.scan,
