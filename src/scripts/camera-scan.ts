@@ -86,7 +86,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
 
   async function capture(): Promise<void> {
     if (!stream) return;
-    const frame = await grabFrameDataUrl({ maxEdge: 1500, quality: 0.78 });
+    const frame = await grabFrameDataUrl({ maxEdge: 2400, quality: 0.92 });
     if (!frame) {
       setStatus('まだ映像が取得できていません');
       return;
@@ -94,7 +94,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     refs.onCapture?.(frame.dataUrl);
 
     setState('busy');
-    setStatus('🤖 AI 解析中…');
+    setStatus('🔬 AI が紙面を精密読解中… (精度優先モード)');
 
     const userHint = refs.hint?.value?.trim() || '';
 
