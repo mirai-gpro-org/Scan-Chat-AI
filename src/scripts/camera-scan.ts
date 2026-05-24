@@ -153,7 +153,8 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
       }
       const markdown = stripMarkdownCodeFence(holder.markdown);
       if (!markdown.trim()) {
-        const msg = '内容が検出されませんでした。撮影し直してください。';
+        const reason = holder.finishReason ?? 'UNKNOWN';
+        const msg = `内容が検出されませんでした (finishReason: ${reason})`;
         setStatus(msg);
         refs.onError?.(msg);
         setState(stream ? 'running' : 'idle');
