@@ -1,12 +1,9 @@
 /**
- * カメラ起動 → 撮影 → サーバ送信（バイナリ Blob）→ Markdown ストリーム受信。
+ * カメラ起動 → 撮影 → /api/scan に画像を 1 枚まるごと POST → Markdown 受信。
  *
- * - base64 は一切使わない。撮影画像は canvas.toBlob() で Blob として保持し、
- *   multipart/form-data でサーバへバイナリ直送する。
- * - サーバは Files API 経由で Gemini に画像を渡し、応答は **Markdown** で
- *   1 chunk ずつ NDJSON で流す（Vercel のレスポンスバッファ詰まりを回避）。
- * - 下流の診断 AI も Markdown のまま消費する設計のため、JSON 強制を完全撤廃。
- *   AR 風オーバーレイ用の bbox は Markdown 内に HTML コメントで埋め込む。
+ * - 画像は分割しない。canvas からそのまま 1 枚を JPEG dataURL 化して送る。
+ * - サーバ応答は { markdown, finishReason } の JSON。下流診断 AI も Markdown
+ *   をそのまま消費するため、H2 + bbox HTML コメントで領域メタを埋め込む。
  */
 
 /** 1 領域分のデータ (Markdown を parse した結果) */
@@ -41,8 +38,6 @@ export interface CameraRefs {
   onStateChange?: (state: ScanState) => void;
   /** 撮影直後の画像 URL（objectURL）を結果ページに渡す用 */
   onCapture?: (objectUrl: string) => void;
-  /** NDJSON ストリームの進捗 (文字数) */
-  onStreamProgress?: (totalLen: number) => void;
   onAnalyze?: (result: AnalyzeResult) => void;
   onError?: (message: string) => void;
 }
@@ -91,69 +86,38 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
 
   async function capture(): Promise<void> {
     if (!stream) return;
-    const blob = await grabFrameBlob({ maxEdge: 1500, quality: 0.78 });
-    if (!blob) {
+    const frame = await grabFrameDataUrl({ maxEdge: 1500, quality: 0.78 });
+    if (!frame) {
       setStatus('まだ映像が取得できていません');
       return;
     }
-    const previewUrl = URL.createObjectURL(blob);
-    refs.onCapture?.(previewUrl);
+    refs.onCapture?.(frame.dataUrl);
 
     setState('busy');
-    setStatus('📤 アップロード中…');
+    setStatus('🤖 AI 解析中…');
 
     const userHint = refs.hint?.value?.trim() || '';
-    const formData = new FormData();
-    formData.append('image', blob, 'scan.jpg');
-    if (userHint) formData.append('hint', userHint);
 
     try {
       const res = await fetch('/api/scan', {
         method: 'POST',
-        body: formData,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ image: frame.dataUrl, hint: userHint || undefined }),
       });
-      if (!res.ok || !res.body) {
+      if (!res.ok) {
         const msg = await readErrorMessage(res);
         setStatus(msg);
         refs.onError?.(msg);
         setState(stream ? 'running' : 'idle');
         return;
       }
-
-      const holder: {
-        markdown: string;
+      const data = (await res.json()) as {
+        markdown?: string;
         finishReason?: string;
-        err?: string;
-      } = { markdown: '' };
-
-      await readNdjsonStream(res, (ev) => {
-        if (ev.type === 'start') {
-          setStatus('📤 サーバ受信 → アップロード中…');
-        } else if (ev.type === 'uploaded') {
-          setStatus('🤖 AI 解析中…');
-        } else if (ev.type === 'chunk') {
-          const len = ev.totalLen ?? 0;
-          setStatus(`📝 読み取り中… ${len.toLocaleString()} 文字`);
-          refs.onStreamProgress?.(len);
-        } else if (ev.type === 'done') {
-          holder.markdown = String(ev.markdown ?? '');
-          holder.finishReason = ev.finishReason;
-        } else if (ev.type === 'error') {
-          holder.err = `${ev.error ?? '不明'}\n${
-            ev.detail ? summarizeGoogleError(ev.detail) : ''
-          }`.trim();
-        }
-      });
-
-      if (holder.err) {
-        setStatus(`解析エラー: ${holder.err}`);
-        refs.onError?.(`解析エラー: ${holder.err}`);
-        setState(stream ? 'running' : 'idle');
-        return;
-      }
-      const markdown = stripMarkdownCodeFence(holder.markdown);
+      };
+      const markdown = stripMarkdownCodeFence(String(data.markdown ?? ''));
       if (!markdown.trim()) {
-        const reason = holder.finishReason ?? 'UNKNOWN';
+        const reason = data.finishReason ?? 'UNKNOWN';
         const msg = `内容が検出されませんでした (finishReason: ${reason})`;
         setStatus(msg);
         refs.onError?.(msg);
@@ -169,8 +133,8 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
       const result: AnalyzeResult = {
         markdown,
         regions,
-        fullImage: previewUrl,
-        finishReason: holder.finishReason,
+        fullImage: frame.dataUrl,
+        finishReason: data.finishReason,
       };
       setState(stream ? 'running' : 'idle');
       setStatus(
@@ -187,7 +151,10 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     }
   }
 
-  async function grabFrameBlob(opts: { maxEdge: number; quality: number }): Promise<Blob | null> {
+  async function grabFrameDataUrl(opts: {
+    maxEdge: number;
+    quality: number;
+  }): Promise<{ dataUrl: string } | null> {
     const vw = refs.video.videoWidth;
     const vh = refs.video.videoHeight;
     if (!vw || !vh) return null;
@@ -199,9 +166,8 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     const ctx = refs.canvas.getContext('2d');
     if (!ctx) return null;
     ctx.drawImage(refs.video, 0, 0, w, h);
-    return new Promise<Blob | null>((resolve) => {
-      refs.canvas.toBlob((b) => resolve(b), 'image/jpeg', opts.quality);
-    });
+    const dataUrl = refs.canvas.toDataURL('image/jpeg', opts.quality);
+    return { dataUrl };
   }
 
   function setStatus(text: string): void {
@@ -295,54 +261,6 @@ function stripMarkdownCodeFence(text: string): string {
   const t = text.trim();
   const m = /^```(?:markdown|md)?\s*\r?\n?([\s\S]*?)\r?\n?```$/i.exec(t);
   return m ? m[1].trim() : t;
-}
-
-// ============================================================
-// ストリーム受信 (NDJSON)
-// ============================================================
-
-interface StreamEvent {
-  type: 'start' | 'uploaded' | 'chunk' | 'done' | 'error';
-  text?: string;
-  totalLen?: number;
-  markdown?: string;
-  finishReason?: string;
-  error?: string;
-  detail?: string;
-  status?: number;
-  model?: string;
-}
-
-async function readNdjsonStream(
-  res: Response,
-  onEvent: (ev: StreamEvent) => void,
-): Promise<void> {
-  const reader = res.body!.getReader();
-  const dec = new TextDecoder();
-  let buf = '';
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let nl: number;
-    while ((nl = buf.indexOf('\n')) !== -1) {
-      const line = buf.slice(0, nl).trim();
-      buf = buf.slice(nl + 1);
-      if (!line) continue;
-      try {
-        onEvent(JSON.parse(line) as StreamEvent);
-      } catch {
-        /* ignore partial / non-JSON lines */
-      }
-    }
-  }
-  if (buf.trim()) {
-    try {
-      onEvent(JSON.parse(buf.trim()) as StreamEvent);
-    } catch {
-      /* ignore */
-    }
-  }
 }
 
 async function readErrorMessage(res: Response): Promise<string> {

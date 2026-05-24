@@ -1,20 +1,21 @@
 import type { APIRoute } from 'astro';
 import {
-  streamGemini,
+  callGemini,
   MODELS,
-  uploadGeminiFile,
+  extractText,
   GeminiError,
   type GeminiContent,
 } from '../../lib/gemini';
 
 export const prerender = false;
 
-/**
- * 検査表画像 → 構造化 Markdown (見出し + GFM テーブル + bbox HTML コメント)。
- * 下流の診断 AI も Markdown のまま消費する設計のため、JSON 強制を完全撤廃。
- * LLM のネイティブ生成形式に寄せたことで、JSON 構文オーバーヘッド分の
- * 生成時間・トークンが削減される。
- */
+interface ScanRequestBody {
+  /** data: URL もしくは生 base64 */
+  image: string;
+  /** 補足プロンプト（部位・状況など） */
+  hint?: string;
+}
+
 const ANALYZE_SYSTEM = `検査表・診断結果報告書の画像を、紙面の内容そのまま **構造化 Markdown** に
 書き起こしてください。
 診断・解釈・要約はしません（下流の別 AI が行います）。
@@ -66,104 +67,58 @@ bbox は **0.0〜1.0 の小数** で **[ymin, xmin, ymax, xmax]** の順。
 - 領域見出しの bbox HTML コメントは省略しないこと。
 - 表が無い領域は notes として段落/箇条書きで書く。`;
 
+function parseDataUrl(input: string): { mime: string; data: string } {
+  const m = /^data:([^;]+);base64,(.+)$/i.exec(input.trim());
+  if (m) return { mime: m[1], data: m[2] };
+  return { mime: 'image/jpeg', data: input.trim() };
+}
+
 export const POST: APIRoute = async ({ request }) => {
-  // multipart/form-data でバイナリ直送 (base64 は一切経由しない)
-  let bytes: Uint8Array;
-  let mime: string;
-  let hint = '';
+  let body: ScanRequestBody;
   try {
-    const ct = request.headers.get('content-type') ?? '';
-    if (!ct.startsWith('multipart/form-data')) {
-      return json({ error: 'expected multipart/form-data with binary image' }, 415);
-    }
-    const fd = await request.formData();
-    const file = fd.get('image');
-    if (!(file instanceof Blob)) {
-      return json({ error: 'image field missing or not binary' }, 400);
-    }
-    bytes = new Uint8Array(await file.arrayBuffer());
-    mime = file.type || 'image/jpeg';
-    hint = String(fd.get('hint') ?? '').trim();
-  } catch (err) {
-    return json({ error: 'Invalid form data', detail: String(err) }, 400);
+    body = (await request.json()) as ScanRequestBody;
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+  if (!body?.image) {
+    return json({ error: 'image is required (data URL or base64)' }, 400);
   }
 
-  const apiKey = import.meta.env.GEMINI_API_KEY;
-
-  // ★ Response を**即座**に開いて Safari の "Load failed" を回避する。
-  //   Files API upload や Gemini への接続は ReadableStream.start() の
-  //   中に押し込み、ストリーム開始直後の {type:'start'} で Safari に
-  //   「コネクションは生きてる」と早期に伝える。
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const enc = new TextEncoder();
-      const emit = (obj: unknown): void => {
-        controller.enqueue(enc.encode(JSON.stringify(obj) + '\n'));
-      };
-      let acc = '';
-      let lastFinish: string | undefined;
-      try {
-        // 1. まず "start" を即送 (これで Safari の Load failed 回避)
-        emit({ type: 'start', model: MODELS.scan });
-
-        // 2. Files API アップロード (この間 1〜3 秒。Safari はストリーム開いて待つ)
-        const file = await uploadGeminiFile(apiKey, bytes, mime, 'scan');
-        emit({ type: 'uploaded' });
-
-        // 3. Gemini に渡す request を組む
-        const userParts: GeminiContent['parts'] = [
-          { file_data: { mime_type: file.mimeType, file_uri: file.uri } },
-          {
-            text: hint
-              ? `補足: ${hint}\nこの紙面を Markdown に書き起こしてください。`
-              : 'この紙面を Markdown に書き起こしてください。',
-          },
-        ];
-        const geminiRequest = {
-          systemInstruction: { parts: [{ text: ANALYZE_SYSTEM }] },
-          contents: [{ role: 'user' as const, parts: userParts }],
-          generationConfig: {
-            temperature: 0.0,
-            maxOutputTokens: 32768,
-            thinkingConfig: { thinkingBudget: 0 },
-          },
-        };
-
-        // 4. Gemini ストリーミング: chunk を NDJSON で client に流す
-        for await (const ev of streamGemini(apiKey, geminiRequest, MODELS.scan)) {
-          if (ev.text) {
-            acc += ev.text;
-            emit({ type: 'chunk', text: ev.text, totalLen: acc.length });
-          }
-          if (ev.finishReason) lastFinish = ev.finishReason;
-        }
-
-        // 5. 完了
-        emit({ type: 'done', markdown: acc, finishReason: lastFinish });
-      } catch (err) {
-        if (err instanceof GeminiError) {
-          emit({
-            type: 'error',
-            error: err.message,
-            detail: err.body,
-            status: err.status,
-          });
-        } else {
-          emit({ type: 'error', error: 'Unexpected error', detail: String(err) });
-        }
-      } finally {
-        controller.close();
-      }
+  const { mime, data } = parseDataUrl(body.image);
+  const userParts: GeminiContent['parts'] = [
+    { inline_data: { mime_type: mime, data } },
+    {
+      text: body.hint
+        ? `補足: ${body.hint}\nこの紙面を Markdown に書き起こしてください。`
+        : 'この紙面を Markdown に書き起こしてください。',
     },
-  });
-  return new Response(stream, {
-    status: 200,
-    headers: {
-      'content-type': 'application/x-ndjson; charset=utf-8',
-      'cache-control': 'no-store',
-      'x-accel-buffering': 'no',
-    },
-  });
+  ];
+
+  try {
+    const res = await callGemini(
+      import.meta.env.GEMINI_API_KEY,
+      {
+        systemInstruction: { parts: [{ text: ANALYZE_SYSTEM }] },
+        contents: [{ role: 'user', parts: userParts }],
+        generationConfig: {
+          temperature: 0.0,
+          maxOutputTokens: 32768,
+        },
+      },
+      MODELS.scan,
+    );
+    const markdown = extractText(res);
+    const finishReason = res.candidates?.[0]?.finishReason;
+    return json({ markdown, finishReason });
+  } catch (err) {
+    if (err instanceof GeminiError) {
+      return json(
+        { error: err.message, detail: err.body },
+        err.status >= 400 ? err.status : 500,
+      );
+    }
+    return json({ error: 'Unexpected error', detail: String(err) }, 500);
+  }
 };
 
 function json(data: unknown, status = 200): Response {
@@ -172,4 +127,3 @@ function json(data: unknown, status = 200): Response {
     headers: { 'content-type': 'application/json; charset=utf-8' },
   });
 }
-
