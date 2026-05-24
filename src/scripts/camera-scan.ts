@@ -153,13 +153,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
       }
       const markdown = stripMarkdownCodeFence(holder.markdown);
       if (!markdown.trim()) {
-        const finishHint = holder.finishReason
-          ? ` (finishReason: ${holder.finishReason})`
-          : '';
-        const rawTail = holder.markdown
-          ? ` raw 先頭: "${holder.markdown.slice(0, 120)}"`
-          : '';
-        const msg = `内容が検出されませんでした。撮影し直してください。${finishHint}${rawTail}`;
+        const msg = '内容が検出されませんでした。撮影し直してください。';
         setStatus(msg);
         refs.onError?.(msg);
         setState(stream ? 'running' : 'idle');

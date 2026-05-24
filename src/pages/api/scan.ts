@@ -125,20 +125,8 @@ export const POST: APIRoute = async ({ request }) => {
           generationConfig: {
             temperature: 0.0,
             maxOutputTokens: 32768,
-            // Markdown を直生成させる用途。text/plain を明示することで
-            // モデルが「フォーマット推測」で迷う時間を消す。
-            responseMimeType: 'text/plain',
             thinkingConfig: { thinkingBudget: 0 },
           },
-          // 医療検査表は DANGEROUS_CONTENT などに引っかかって SAFETY で
-          // 空応答になることがある。本アプリは医療従事者向けの転記用途
-          // (診断・処方は下流) なので最緩設定にする。
-          safetySettings: [
-            { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_HATE_SPEECH',       threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-          ] as const,
         };
 
         // 4. Gemini ストリーミング: chunk を NDJSON で client に流す
