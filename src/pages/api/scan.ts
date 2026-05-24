@@ -90,77 +90,80 @@ export const POST: APIRoute = async ({ request }) => {
 
   const apiKey = import.meta.env.GEMINI_API_KEY;
 
-  try {
-    // Files API バイナリアップロード → fileUri 参照（base64 inline 不使用）
-    const file = await uploadGeminiFile(apiKey, bytes, mime, 'scan');
+  // ★ Response を**即座**に開いて Safari の "Load failed" を回避する。
+  //   Files API upload や Gemini への接続は ReadableStream.start() の
+  //   中に押し込み、ストリーム開始直後の {type:'start'} で Safari に
+  //   「コネクションは生きてる」と早期に伝える。
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const enc = new TextEncoder();
+      const emit = (obj: unknown): void => {
+        controller.enqueue(enc.encode(JSON.stringify(obj) + '\n'));
+      };
+      let acc = '';
+      let lastFinish: string | undefined;
+      try {
+        // 1. まず "start" を即送 (これで Safari の Load failed 回避)
+        emit({ type: 'start', model: MODELS.scan });
 
-    const userParts: GeminiContent['parts'] = [
-      { file_data: { mime_type: file.mimeType, file_uri: file.uri } },
-      {
-        text: hint
-          ? `補足: ${hint}\nこの紙面を Markdown に書き起こしてください。`
-          : 'この紙面を Markdown に書き起こしてください。',
-      },
-    ];
+        // 2. Files API アップロード (この間 1〜3 秒。Safari はストリーム開いて待つ)
+        const file = await uploadGeminiFile(apiKey, bytes, mime, 'scan');
+        emit({ type: 'uploaded' });
 
-    const geminiRequest = {
-      systemInstruction: { parts: [{ text: ANALYZE_SYSTEM }] },
-      contents: [{ role: 'user' as const, parts: userParts }],
-      generationConfig: {
-        temperature: 0.0,
-        maxOutputTokens: 32768,
-        // responseMimeType / responseSchema は意図的に外す:
-        //   - LLM のネイティブ形式 (Markdown) で生成させて構文負担を最小化
-        //   - 厳密 JSON が必要なら下流のバッチ変換で対応
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-    };
-
-    // NDJSON でストリーミング: MD テキストを chunk ごとに client に流す
-    //   {"type":"start"}
-    //   {"type":"chunk","text":"...","totalLen":N}
-    //   {"type":"done","markdown":"完成 MD","finishReason":"STOP"}
-    //   {"type":"error", ...}
-    const stream = new ReadableStream<Uint8Array>({
-      async start(controller) {
-        const enc = new TextEncoder();
-        const emit = (obj: unknown): void => {
-          controller.enqueue(enc.encode(JSON.stringify(obj) + '\n'));
+        // 3. Gemini に渡す request を組む
+        const userParts: GeminiContent['parts'] = [
+          { file_data: { mime_type: file.mimeType, file_uri: file.uri } },
+          {
+            text: hint
+              ? `補足: ${hint}\nこの紙面を Markdown に書き起こしてください。`
+              : 'この紙面を Markdown に書き起こしてください。',
+          },
+        ];
+        const geminiRequest = {
+          systemInstruction: { parts: [{ text: ANALYZE_SYSTEM }] },
+          contents: [{ role: 'user' as const, parts: userParts }],
+          generationConfig: {
+            temperature: 0.0,
+            maxOutputTokens: 32768,
+            thinkingConfig: { thinkingBudget: 0 },
+          },
         };
-        let acc = '';
-        let lastFinish: string | undefined;
-        try {
-          emit({ type: 'start', model: MODELS.scan });
-          for await (const ev of streamGemini(apiKey, geminiRequest, MODELS.scan)) {
-            if (ev.text) {
-              acc += ev.text;
-              emit({ type: 'chunk', text: ev.text, totalLen: acc.length });
-            }
-            if (ev.finishReason) lastFinish = ev.finishReason;
+
+        // 4. Gemini ストリーミング: chunk を NDJSON で client に流す
+        for await (const ev of streamGemini(apiKey, geminiRequest, MODELS.scan)) {
+          if (ev.text) {
+            acc += ev.text;
+            emit({ type: 'chunk', text: ev.text, totalLen: acc.length });
           }
-          emit({ type: 'done', markdown: acc, finishReason: lastFinish });
-        } catch (err) {
-          if (err instanceof GeminiError) {
-            emit({ type: 'error', error: err.message, detail: err.body, status: err.status });
-          } else {
-            emit({ type: 'error', error: 'Unexpected error', detail: String(err) });
-          }
-        } finally {
-          controller.close();
+          if (ev.finishReason) lastFinish = ev.finishReason;
         }
-      },
-    });
-    return new Response(stream, {
-      status: 200,
-      headers: {
-        'content-type': 'application/x-ndjson; charset=utf-8',
-        'cache-control': 'no-store',
-        'x-accel-buffering': 'no',
-      },
-    });
-  } catch (err) {
-    return handleGeminiError(err);
-  }
+
+        // 5. 完了
+        emit({ type: 'done', markdown: acc, finishReason: lastFinish });
+      } catch (err) {
+        if (err instanceof GeminiError) {
+          emit({
+            type: 'error',
+            error: err.message,
+            detail: err.body,
+            status: err.status,
+          });
+        } else {
+          emit({ type: 'error', error: 'Unexpected error', detail: String(err) });
+        }
+      } finally {
+        controller.close();
+      }
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      'content-type': 'application/x-ndjson; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-accel-buffering': 'no',
+    },
+  });
 };
 
 function json(data: unknown, status = 200): Response {
@@ -176,3 +179,7 @@ function handleGeminiError(err: unknown): Response {
   }
   return json({ error: 'Unexpected error', detail: String(err) }, 500);
 }
+// eslint: handleGeminiError is unused after the streaming refactor but kept
+// for future non-streaming paths (diag-style endpoints, etc.). Re-export
+// to silence "noUnusedLocals" if it bites.
+export { handleGeminiError as _handleGeminiError };

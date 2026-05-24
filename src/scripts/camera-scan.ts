@@ -128,7 +128,9 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
 
       await readNdjsonStream(res, (ev) => {
         if (ev.type === 'start') {
-          setStatus('🤖 解析中…');
+          setStatus('📤 サーバ受信 → アップロード中…');
+        } else if (ev.type === 'uploaded') {
+          setStatus('🤖 AI 解析中…');
         } else if (ev.type === 'chunk') {
           const len = ev.totalLen ?? 0;
           setStatus(`📝 読み取り中… ${len.toLocaleString()} 文字`);
@@ -299,7 +301,7 @@ function stripMarkdownCodeFence(text: string): string {
 // ============================================================
 
 interface StreamEvent {
-  type: 'start' | 'chunk' | 'done' | 'error';
+  type: 'start' | 'uploaded' | 'chunk' | 'done' | 'error';
   text?: string;
   totalLen?: number;
   markdown?: string;
