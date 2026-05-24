@@ -17,9 +17,19 @@ export interface RegionResult {
 }
 
 export interface AnalyzeResult {
-  /** 全体の生 Markdown (下流診断 AI へ渡す形) */
+  /**
+   * Gemini が出した生 Markdown (推論値列を含む)。
+   * Gemini の自己チェック用カラムが残っているため**デバッグ用途のみ**。
+   * UI 表示にも下流診断 AI への送信にも使わない。
+   */
   markdown: string;
-  /** 領域ごとに切り分けたメタデータ + 本文 (UI 表示用) */
+  /**
+   * 推論値列を削除した「確定 scan_md」候補。
+   * UI 表示用カード本文 + Supabase #2 / Elith への送信に使う。
+   * (docs/diagnostic_session_data_spec.md §3.2 の scan_md フォーマット)
+   */
+  markdownClean: string;
+  /** 領域ごとに切り分けたメタデータ + 本文 (UI 表示用、markdownClean ベース) */
   regions: RegionResult[];
   /** 表示用フル画像 URL (objectURL) */
   fullImage?: string;
@@ -125,13 +135,18 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         return;
       }
 
-      const regions = parseMarkdownRegions(markdown);
+      // 「推論値」は Gemini の自己チェック用 (備考列に【要確認】を立てるための内部材料)。
+      // ユーザー表示にも下流診断 AI 送信にも漏らさず、ここで除去する。
+      // 列名のブレ (推定値) も同時に拾う。
+      const markdownClean = stripColumnFromTables(markdown, ['推論値', '推定値']);
+      const regions = parseMarkdownRegions(markdownClean);
       const totalRows = regions.reduce(
         (sum, r) => sum + countTableRows(r.body),
         0,
       );
       const result: AnalyzeResult = {
         markdown,
+        markdownClean,
         regions,
         fullImage: frame.dataUrl,
         finishReason: data.finishReason,
@@ -261,6 +276,45 @@ function stripMarkdownCodeFence(text: string): string {
   const t = text.trim();
   const m = /^```(?:markdown|md)?\s*\r?\n?([\s\S]*?)\r?\n?```$/i.exec(t);
   return m ? m[1].trim() : t;
+}
+
+/**
+ * Markdown 内の GFM テーブルから指定列名の列を削除する。
+ * - 表は連続するパイプ行 (\`^\\s*\\|\`) で検出。途切れたら次の表とみなす。
+ * - 列名マッチはヘッダ行で空白除去して部分一致 (Gemini の微妙な表記揺れ吸収)。
+ * - 区切り行 (\`|---|---|\`) のセルも同じインデックスで削除。
+ * - 該当列が無い表は無加工で通す。
+ * - パイプ行以外の本文 (H2 / bbox コメント / 箇条書き / 段落) は変更しない。
+ */
+function stripColumnFromTables(md: string, columnNames: string[]): string {
+  const targets = columnNames.map((n) => n.replace(/\s+/g, ''));
+  const lines = md.split('\n');
+  const out: string[] = [];
+  let colIndex = -1; // -1 = 表の外
+  for (const line of lines) {
+    if (!/^\s*\|/.test(line)) {
+      colIndex = -1;
+      out.push(line);
+      continue;
+    }
+    // 両端の境界パイプを落としてからセル分解
+    const inner = line.replace(/^\s*\|/, '').replace(/\|\s*$/, '');
+    const cells = inner.split('|');
+    if (colIndex === -1) {
+      // 各表の最初のパイプ行 = ヘッダとみなして対象列を確定
+      colIndex = cells.findIndex((c) =>
+        targets.some((t) => c.trim().replace(/\s+/g, '').includes(t)),
+      );
+      if (colIndex === -1) {
+        // 対象列が無い表は無加工
+        out.push(line);
+        continue;
+      }
+    }
+    if (colIndex < cells.length) cells.splice(colIndex, 1);
+    out.push('| ' + cells.map((c) => c.trim()).join(' | ') + ' |');
+  }
+  return out.join('\n');
 }
 
 async function readErrorMessage(res: Response): Promise<string> {

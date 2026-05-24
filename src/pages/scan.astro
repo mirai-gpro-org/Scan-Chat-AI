@@ -231,8 +231,9 @@ import ScanOverlay from '../components/ScanOverlay.astro';
 
   function regionStatus(region: AnalyzeResult['regions'][number]): 'green' | 'yellow' | 'red' {
     if (!region.body || !region.body.trim()) return 'red';
-    // 「?」「不明」「(?)」が含まれていれば要確認扱い
-    if (/\(\?\)|\?\?|不明/.test(region.body)) return 'yellow';
+    // 「(?)」「不明」「??」が含まれていれば読取困難として要確認
+    // 「【要確認】」が含まれていれば Gemini 監査官が不整合を検出
+    if (/\(\?\)|\?\?|不明|【要確認】/.test(region.body)) return 'yellow';
     return 'green';
   }
 
@@ -299,7 +300,7 @@ import ScanOverlay from '../components/ScanOverlay.astro';
       itemsList.innerHTML = renderedRegions.join('');
     }
 
-    // debug panes
+    // デバッグペイン: Gemini 生出力 (推論値列含む。監査の透明性のため残す)
     ($('scan-raw') as HTMLPreElement).textContent = r.markdown || '(empty)';
     const finish = r.finishReason ?? '';
     const finishEl = $('scan-finish');
@@ -308,8 +309,10 @@ import ScanOverlay from '../components/ScanOverlay.astro';
     finishEl.classList.toggle('bg-rose-200', hasBadFinish);
     finishEl.classList.toggle('text-rose-900', hasBadFinish);
 
-    // 下流診断 AI へ渡すのは Markdown のまま。Parsed 領域メタは UI 補助のみ。
-    ($('scan-result') as HTMLPreElement).textContent = r.markdown || '(empty)';
+    // 下流診断 AI 送信用: 推論値列を除去した「確定 scan_md」候補。
+    // Supabase #2 の scan_artifacts.content に入る形と一致。
+    ($('scan-result') as HTMLPreElement).textContent =
+      r.markdownClean || '(empty)';
   }
 
   document.addEventListener('DOMContentLoaded', () => {
