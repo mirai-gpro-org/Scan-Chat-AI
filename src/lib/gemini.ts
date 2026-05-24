@@ -5,7 +5,9 @@
 
 export const MODELS = {
   // REST generateContent (画像解析・テキスト応答)
-  scan: 'gemini-2.5-flash',
+  // Free Tier の RPD は (プロジェクト × モデル) ごとに別カウンタ。
+  // 2.5-flash は Free Tier 20 RPD / 日と狭いので、より枠の大きい lite を採用。
+  scan: 'gemini-2.5-flash-lite',
   // Live API 専用 (WebSocket / audio-to-audio)。REST には渡さないこと
   liveChat: 'gemini-3.1-flash-live-preview',
 } as const;
