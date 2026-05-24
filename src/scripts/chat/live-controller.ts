@@ -762,7 +762,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       // 空状態のプレースホルダ
       const empty = document.createElement('div');
       empty.className = 'flex h-full flex-col items-center justify-center gap-2 py-6 text-center text-slate-400';
-      empty.innerHTML = '<span class="text-4xl">💬</span><p class="text-xs">下の <span class="font-medium text-brand-600">🎙 問診を開始</span> ボタンから始めてください</p>';
+      empty.innerHTML = '<span class="text-4xl">💬</span><p class="text-xs">下の <span class="font-medium text-brand-600">🩺 問診を開始</span> ボタンから始めてください</p>';
       refs.log.appendChild(empty);
     } else {
       session.messages.forEach(renderMessage);

@@ -68,7 +68,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     >
       <div id="chat-empty" class="flex h-full flex-col items-center justify-center gap-2 py-6 text-center text-slate-400">
         <span class="text-4xl">💬</span>
-        <p class="text-xs">下の <span class="font-medium text-brand-600">🎙 問診を開始</span> から始めてください</p>
+        <p class="text-xs">下の <span class="font-medium text-brand-600">🩺 問診を開始</span> から始めてください</p>
       </div>
     </div>
 
@@ -88,8 +88,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           class="mic-fab mic-fab-hero"
           aria-label="問診を開始する"
         >
-          <span class="mic-icon text-3xl">🎙</span>
-          <span class="mic-label text-xs font-semibold">問診を開始</span>
+          <svg
+            class="mic-icon"
+            width="44" height="44" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M11 2v2"/>
+            <path d="M5 2v2"/>
+            <path d="M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1"/>
+            <path d="M8 15a6 6 0 0 0 12 0v-3"/>
+            <circle cx="20" cy="10" r="2"/>
+          </svg>
+          <span class="mic-label mt-1 text-xs font-semibold">問診を開始</span>
         </button>
         <div class="mt-1 flex items-center gap-2 rounded-full bg-slate-50 px-3 py-1.5 text-[11px] text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
           <span>🎙 話す</span>
