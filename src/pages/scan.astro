@@ -169,9 +169,10 @@ import ScanOverlay from '../components/ScanOverlay.astro';
 
       <!-- CTA -->
       <div class="mt-auto flex flex-col gap-2 pt-2">
-        <a href="/chat" class="btn-primary !py-4 text-lg">
+        <a id="scan-start-chat" href="/chat" class="btn-primary !py-4 text-lg">
           問診を開始する →
         </a>
+        <p id="scan-start-hint" class="text-center text-xs text-slate-500" aria-live="polite"></p>
         <button id="scan-retake" type="button" class="btn-secondary">
           もう一度撮影する
         </button>
@@ -200,6 +201,8 @@ import ScanOverlay from '../components/ScanOverlay.astro';
 <script>
   import { initCameraScan } from '../scripts/camera-scan';
   import type { AnalyzeResult, ScanState } from '../scripts/camera-scan';
+  import { ScanVerificationController } from '../scripts/scan-verification';
+  import { getOrCreateDiagnosticId } from '../lib/diagnostic-id';
 
   function $<T extends HTMLElement = HTMLElement>(id: string): T {
     const el = document.getElementById(id);
@@ -221,86 +224,13 @@ import ScanOverlay from '../components/ScanOverlay.astro';
     });
   }
 
-  function escapeHtml(s: unknown): string {
-    return String(s ?? '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
-  }
-
-  function regionStatus(region: AnalyzeResult['regions'][number]): 'green' | 'yellow' | 'red' {
-    if (!region.body || !region.body.trim()) return 'red';
-    // 「(?)」「不明」「??」が含まれていれば読取困難として要確認
-    // 「【要確認】」が含まれていれば Gemini 監査官が不整合を検出
-    if (/\(\?\)|\?\?|不明|【要確認】/.test(region.body)) return 'yellow';
-    return 'green';
-  }
-
-  const STATUS_COLORS = {
-    green: 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200',
-    yellow: 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-200',
-    red: 'border-rose-300 bg-rose-50 text-rose-800 dark:border-rose-700 dark:bg-rose-900/30 dark:text-rose-200',
-  } as const;
-
-  const STATUS_LABEL = { green: '✓ OK', yellow: '⚠ 要確認', red: '✗ 要対応' } as const;
-
-  function renderRegionCard(
-    region: AnalyzeResult['regions'][number],
-    idx: number,
-    renderedBody: string,
-  ): string {
-    const status = regionStatus(region);
-    const bboxNote = region.bbox
-      ? `<span class="text-[10px] text-slate-400">bbox=[${region.bbox.map((n) => n.toFixed(2)).join(',')}]</span>`
-      : '';
-    return `
-      <article class="rounded-2xl border ${STATUS_COLORS[status]} p-3 md:p-4">
-        <header class="mb-2 flex items-center justify-between gap-2">
-          <h4 class="flex items-center gap-2 text-sm font-semibold md:text-base">
-            <span class="text-xs text-slate-500">#${idx + 1}</span>${escapeHtml(region.label)}${bboxNote}
-          </h4>
-          <span class="rounded-full bg-white/70 px-2 py-0.5 text-xs font-medium dark:bg-slate-900/60">
-            ${STATUS_LABEL[status]}
-          </span>
-        </header>
-        <div class="md-region">
-          ${renderedBody || '<p class="text-xs text-slate-500">内容なし</p>'}
-        </div>
-      </article>
-    `;
-  }
-
   async function renderResult(r: AnalyzeResult): Promise<void> {
-    const regions = r.regions ?? [];
-    $('result-count').textContent = regions.length
-      ? `${regions.length} 領域を読み取りました`
-      : '解析が完了しました';
-
     // 旧 UI 要素は非表示
     $('urgent-banner').hidden = true;
     $('priority-section').hidden = true;
     $('obs-section').innerHTML = '';
 
-    // marked で各領域の Markdown 本文を HTML 化
-    const { marked } = await import('marked');
-    marked.setOptions({ gfm: true, breaks: false });
-
-    const itemsList = $('items-list') as HTMLUListElement;
-    if (regions.length === 0) {
-      itemsList.innerHTML =
-        '<li class="px-4 py-6 text-center text-sm text-slate-500">領域は検出されませんでした</li>';
-    } else {
-      const renderedRegions = await Promise.all(
-        regions.map(async (region, idx) => {
-          const html = await marked.parse(region.body || '');
-          return `<li class="px-3 py-3 md:px-4">${renderRegionCard(region, idx, html)}</li>`;
-        }),
-      );
-      itemsList.innerHTML = renderedRegions.join('');
-    }
-
-    // デバッグペイン: Gemini 生出力 (推論値列含む。監査の透明性のため残す)
+    // Gemini 生 markdown (推論値列含む) — 監査の透明性のため raw のまま表示
     ($('scan-raw') as HTMLPreElement).textContent = r.markdown || '(empty)';
     const finish = r.finishReason ?? '';
     const finishEl = $('scan-finish');
@@ -309,10 +239,20 @@ import ScanOverlay from '../components/ScanOverlay.astro';
     finishEl.classList.toggle('bg-rose-200', hasBadFinish);
     finishEl.classList.toggle('text-rose-900', hasBadFinish);
 
-    // 下流診断 AI 送信用: 推論値列を除去した「確定 scan_md」候補。
-    // Supabase #2 の scan_artifacts.content に入る形と一致。
-    ($('scan-result') as HTMLPreElement).textContent =
-      r.markdownClean || '(empty)';
+    // 検証 UI: 領域カード + メトリクス + 画像参照 + 確認/編集
+    const diagnosticId = getOrCreateDiagnosticId();
+    const controller = new ScanVerificationController(
+      {
+        itemsList: $('items-list'),
+        downstreamPreview: $('scan-result'),
+        resultCount: $('result-count'),
+        startChatBtn: $<HTMLAnchorElement>('scan-start-chat'),
+        startChatHint: $('scan-start-hint'),
+      },
+      r,
+      diagnosticId,
+    );
+    await controller.render();
   }
 
   document.addEventListener('DOMContentLoaded', () => {
