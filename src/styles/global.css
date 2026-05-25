@@ -117,6 +117,36 @@
     100% { box-shadow: 0 14px 36px -10px rgba(239, 68, 68, 0.55), 0 0 0 16px rgba(239, 68, 68, 0); }
   }
 
+  /* スピーカー ON/OFF ボタン (中断ボタンの隣) */
+  .speaker-fab {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    width: 3.5rem;
+    height: 3.5rem;
+    border-radius: 9999px;
+    background: linear-gradient(135deg, #475569 0%, #334155 100%);
+    color: white;
+    box-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.25);
+    transition: transform 0.18s ease, opacity 0.18s ease, filter 0.18s ease, background 0.18s ease;
+  }
+  .speaker-fab:hover { transform: translateY(-1px) scale(1.04); }
+  .speaker-fab:active { transform: scale(0.96); }
+  .speaker-fab .speaker-label { font-size: 0.625rem; line-height: 1; margin-top: 1px; }
+  .speaker-fab .speaker-ico-off { display: none; }
+  .speaker-fab.muted {
+    background: linear-gradient(135deg, #cbd5e1 0%, #94a3b8 100%);
+    color: #475569;
+    opacity: 0.7;
+    filter: grayscale(0.5);
+    box-shadow: none;
+  }
+  .speaker-fab.muted .speaker-ico-on { display: none; }
+  .speaker-fab.muted .speaker-ico-off { display: block; color: #ef4444; }
+  .speaker-fab.muted .speaker-label { color: #64748b; }
+
   /* 選択タップ時のフラッシュ */
   .choice-card.flash {
     animation: card-flash 0.5s ease-out;

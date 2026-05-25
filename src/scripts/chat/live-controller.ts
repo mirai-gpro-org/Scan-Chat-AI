@@ -41,6 +41,7 @@ export interface LiveRefs {
   modeToggle: HTMLElement;
   micBtn: HTMLButtonElement;
   startBtn: HTMLButtonElement;
+  speakerBtn: HTMLButtonElement;
 
   startHero: HTMLElement;
   qaArea: HTMLElement;
@@ -339,6 +340,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
   let mode: 'voice' | 'text' = 'voice';
   let currentPresent: PresentArgs | null = null;
+  let muted = false;
 
   if (session.messages.length > 0 && refs.resumeBanner) {
     refs.resumeBanner.hidden = false;
@@ -369,6 +371,17 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   refs.startBtn.addEventListener('click', () => toggleSession());
   // 中断: コンパクト top-right ボタン
   refs.micBtn.addEventListener('click', () => toggleSession());
+
+  // スピーカー ON/OFF（AI の音声出力のみ。テキスト/UI は影響なし）
+  refs.speakerBtn.addEventListener('click', () => {
+    muted = !muted;
+    refs.speakerBtn.classList.toggle('muted', muted);
+    refs.speakerBtn.setAttribute('aria-label', muted ? '音声 OFF（クリックでON）' : '音声 ON（クリックでOFF）');
+    if (muted) {
+      // 再生途中の音声を即座に止める
+      audio.flushPlayback();
+    }
+  });
 
   async function toggleSession(): Promise<void> {
     if (liveSession) {
@@ -661,12 +674,12 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   // ── サーバメッセージ ────────────────────────────
 
   function handleServerMessage(msg: LiveServerMessage): void {
-    // 1) PCM 音声 chunk → 再生
+    // 1) PCM 音声 chunk → 再生（muted 中はスキップ）
     const parts = msg.serverContent?.modelTurn?.parts ?? [];
     for (const p of parts) {
       const mime = p.inlineData?.mimeType ?? '';
       const data = p.inlineData?.data;
-      if (data && mime.startsWith('audio/pcm')) audio.playPcm(data);
+      if (data && mime.startsWith('audio/pcm') && !muted) audio.playPcm(data);
     }
 
     // 2) ストリーミング transcript (入力 = ユーザー)
