@@ -405,6 +405,16 @@ export class ScanVerificationController {
         '<p class="px-4 py-6 text-center text-sm text-slate-500">画像がありません</p>';
       return;
     }
+    // PDF アップロードの場合、img タグでは表示できないのでプレースホルダ
+    if (full.startsWith('data:application/pdf')) {
+      container.innerHTML = `
+        <div class="flex flex-col items-center justify-center gap-2 px-4 py-8 text-center">
+          <span class="text-5xl">📄</span>
+          <p class="text-sm font-medium text-slate-700 dark:text-slate-200">PDF を解析しました</p>
+          <p class="text-xs text-slate-500">表領域のプレビュー画像はありません。下のブロックから内容を確認してください。</p>
+        </div>`;
+      return;
+    }
     // 領域 bbox の union を計算 (表全体のおおまかな範囲)
     const bboxes = this.regions
       .map((r) => r.region.bbox)

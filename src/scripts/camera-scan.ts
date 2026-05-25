@@ -56,6 +56,8 @@ export interface CameraScanController {
   start: () => Promise<void>;
   stop: () => void;
   capture: () => Promise<void>;
+  /** カメラ起動なしで dataURL (PDF / 画像) を /api/scan に投げて解析する */
+  analyzeDataUrl: (dataUrl: string, opts?: { sourceLabel?: string }) => Promise<void>;
   isRunning: () => boolean;
 }
 
@@ -101,10 +103,25 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
       setStatus('まだ映像が取得できていません');
       return;
     }
-    refs.onCapture?.(frame.dataUrl);
+    await analyzeDataUrl(frame.dataUrl);
+  }
+
+  /**
+   * カメラ起動なしで dataURL を /api/scan に POST して解析する。
+   * PDF / JPEG / PNG / WebP / HEIC など、Gemini が受け取れる形式ならそのまま渡せる。
+   */
+  async function analyzeDataUrl(
+    dataUrl: string,
+    opts?: { sourceLabel?: string },
+  ): Promise<void> {
+    refs.onCapture?.(dataUrl);
 
     setState('busy');
-    setStatus('🔬 AI が紙面を精密読解中… (精度優先モード)');
+    setStatus(
+      opts?.sourceLabel
+        ? `🔬 ${opts.sourceLabel} を解析中…`
+        : '🔬 AI が紙面を精密読解中… (精度優先モード)',
+    );
 
     const userHint = refs.hint?.value?.trim() || '';
 
@@ -112,7 +129,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ image: frame.dataUrl, hint: userHint || undefined }),
+        body: JSON.stringify({ image: dataUrl, hint: userHint || undefined }),
       });
       if (!res.ok) {
         const msg = await readErrorMessage(res);
@@ -148,7 +165,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         markdown,
         markdownClean,
         regions,
-        fullImage: frame.dataUrl,
+        fullImage: dataUrl,
         finishReason: data.finishReason,
       };
       setState(stream ? 'running' : 'idle');
@@ -198,6 +215,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     start,
     stop,
     capture,
+    analyzeDataUrl,
     isRunning: () => stream !== null,
   };
 }

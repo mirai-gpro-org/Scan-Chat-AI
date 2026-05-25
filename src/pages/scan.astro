@@ -34,10 +34,26 @@ import ScanOverlay from '../components/ScanOverlay.astro';
       </ul>
       <div class="mt-auto flex w-full flex-col gap-2">
         <button id="scan-start" class="btn-primary w-full !py-4 text-lg">
-          📷 スキャンを開始
+          📷 カメラで撮影
         </button>
+
+        <div class="my-1 flex items-center gap-3">
+          <span class="h-px flex-1 bg-slate-200 dark:bg-slate-700"></span>
+          <span class="text-xs text-slate-500">または</span>
+          <span class="h-px flex-1 bg-slate-200 dark:bg-slate-700"></span>
+        </div>
+
+        <label for="scan-file" class="btn-secondary w-full cursor-pointer !py-4 text-center text-lg">
+          📎 ファイルを選択
+        </label>
+        <input
+          id="scan-file"
+          type="file"
+          class="hidden"
+          accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"
+        />
         <p class="text-center text-xs text-slate-500">
-          タップするとカメラへのアクセス許可を求めます
+          PDF / JPEG / PNG / WebP / HEIC <span class="text-slate-400">(最大 4 MB)</span>
         </p>
       </div>
     </section>
@@ -293,8 +309,46 @@ import ScanOverlay from '../components/ScanOverlay.astro';
       await controller.start();
     });
 
+    // ファイルアップロード経路 (PDF / 画像)
+    $<HTMLInputElement>('scan-file').addEventListener('change', async (e) => {
+      const target = e.target as HTMLInputElement;
+      const file = target.files?.[0];
+      if (!file) return;
+      target.value = ''; // 同じファイルの再選択を許可
+
+      const MAX_BYTES = 4 * 1024 * 1024;
+      if (file.size > MAX_BYTES) {
+        $('error-message').textContent =
+          `ファイルサイズが大きすぎます (${(file.size / 1024 / 1024).toFixed(1)} MB)。4 MB 以下にしてください。`;
+        show('error');
+        return;
+      }
+
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        // ファイル経由はカメラ起動なしで panel-active を表示し、video エリアは非表示にする
+        show('active');
+        $('scan-video').hidden = true;
+        const label = file.type === 'application/pdf' ? `PDF (${file.name})` : `画像 (${file.name})`;
+        await controller.analyzeDataUrl(dataUrl, { sourceLabel: label });
+      } catch (err) {
+        $('error-message').textContent = String(err);
+        show('error');
+      }
+    });
+
+    function readFileAsDataUrl(file: File): Promise<string> {
+      return new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result));
+        fr.onerror = () => reject(new Error('ファイルの読み込みに失敗しました'));
+        fr.readAsDataURL(file);
+      });
+    }
+
     $('scan-retake').addEventListener('click', async () => {
       show('active');
+      $('scan-video').hidden = false; // ファイル経由で隠していた場合の復旧
       await controller.start();
     });
 
