@@ -574,10 +574,16 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
         onopen: () => {
           setStatus('🎙 接続済 — 話せます / タップ可');
           setConnected(true);
-          // セッション開始直後に AI を kickoff（ユーザーには見せない）
+          // セッション開始直後に AI を kickoff（ユーザーには見せない）。
+          // 公式ガイドに従い "discrete な初回入力" は sendClientContent({turnComplete:true})
+          // で投げる。sendRealtimeInput はストリーミング向けで turn 完結が曖昧になり、
+          // モデルが挨拶を繰り返す原因になり得る。
           setTimeout(() => {
             try {
-              liveSession?.sendRealtimeInput({ text: '（セッション開始。挨拶と第1問をお願いします）' });
+              liveSession?.sendClientContent({
+                turns: [{ role: 'user', parts: [{ text: 'よろしくお願いします。' }] }],
+                turnComplete: true,
+              });
             } catch {}
           }, 250);
         },
@@ -615,20 +621,15 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   // ── サーバメッセージ ────────────────────────────
 
   function handleServerMessage(msg: LiveServerMessage): void {
-    // 1) PCM 音声 chunk → 再生（muted 中はスキップ）
-    //    AI が話している間は mic を遮断（半二重）。muted の場合も、サーバが認識する
-    //    "AI 発話中" は同じなので setAiSpeaking(true) を呼ぶ（echo 無くても誤転写防止）。
+    // 1) PCM 音声 chunk → 再生（muted 中はスキップ）。
+    //    VAD / echo / barge-in は Live API サーバ側が処理するため、ここで mic を
+    //    gating しない（barge-in が壊れる）。
     const parts = msg.serverContent?.modelTurn?.parts ?? [];
-    let hasAudioInThisMsg = false;
     for (const p of parts) {
       const mime = p.inlineData?.mimeType ?? '';
       const data = p.inlineData?.data;
-      if (data && mime.startsWith('audio/pcm')) {
-        hasAudioInThisMsg = true;
-        if (!muted) audio.playPcm(data);
-      }
+      if (data && mime.startsWith('audio/pcm') && !muted) audio.playPcm(data);
     }
-    if (hasAudioInThisMsg) audio.setAiSpeaking(true);
 
     // 2) ストリーミング transcript (入力 = ユーザー)
     const inText = msg.serverContent?.inputTranscription?.text;
@@ -652,9 +653,6 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       finalizeStream('assistant', assistantBuf);
       userBuf = '';
       assistantBuf = '';
-
-      // turn が完了したら mic 入力を再開（cooldown 後）
-      audio.setAiSpeaking(false);
 
       // セーフネット: AI が「?」で終わる質問をしたのに present_question を呼ばなかった
       //   → 補助テキスト入力にフォーカスして、ユーザーが回答できる状態を担保
