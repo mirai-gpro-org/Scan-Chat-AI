@@ -4,12 +4,15 @@
  * - Output: server 24kHz PCM mono → AudioBuffer 連結再生
  *
  * iPhone Safari 互換のため ScriptProcessorNode を使用（AudioWorklet は別ファイル必要で煩雑）。
- * half-duplex: AI 発話中は送信停止（バックチャンネル防止）。
+ * half-duplex: AI 発話中は送信停止（バックチャンネル / 音響エコー防止）。
  */
 
 const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 24000;
 const PROCESS_BUFFER_SIZE = 4096;
+// AI 発話終了後、mic 送信を再開するまでの cooldown
+// (speaker の余韻と echo 経路の遅延を吸収する)
+const AI_SPEAKING_COOLDOWN_MS = 900;
 
 export type AudioChunkHandler = (base64Pcm16: string) => void;
 
@@ -22,6 +25,7 @@ export class LiveAudioManager {
   private nextPlaybackTime = 0;
   private playingSources = new Set<AudioBufferSourceNode>();
   private isAiSpeaking = false;
+  private cooldownTimer: ReturnType<typeof setTimeout> | null = null;
   private onChunk: AudioChunkHandler = () => {};
 
   /** ユーザー操作（クリック等）の同期文脈で呼ぶこと（iOS の autoplay 制限対策） */
@@ -65,6 +69,10 @@ export class LiveAudioManager {
     try {
       this.outputCtx?.close();
     } catch {}
+    if (this.cooldownTimer !== null) {
+      clearTimeout(this.cooldownTimer);
+      this.cooldownTimer = null;
+    }
     this.processor = null;
     this.source = null;
     this.stream = null;
@@ -92,11 +100,17 @@ export class LiveAudioManager {
     src.start(start);
     this.nextPlaybackTime = start + buf.duration;
     this.isAiSpeaking = true;
+    // 新しい音声 chunk が来たら cooldown timer をキャンセル（後で再スケジュール）
+    if (this.cooldownTimer !== null) {
+      clearTimeout(this.cooldownTimer);
+      this.cooldownTimer = null;
+    }
     this.playingSources.add(src);
     src.onended = () => {
       this.playingSources.delete(src);
-      if (this.outputCtx && this.nextPlaybackTime <= this.outputCtx.currentTime + 0.05) {
-        this.isAiSpeaking = false;
+      // 全 chunk が再生終了した場合 → cooldown 後に isAiSpeaking を解除
+      if (this.playingSources.size === 0) {
+        this.scheduleCooldown();
       }
     };
   }
@@ -112,7 +126,41 @@ export class LiveAudioManager {
     });
     this.playingSources.clear();
     this.nextPlaybackTime = this.outputCtx.currentTime;
+    if (this.cooldownTimer !== null) {
+      clearTimeout(this.cooldownTimer);
+      this.cooldownTimer = null;
+    }
     this.isAiSpeaking = false;
+  }
+
+  /**
+   * 外部 (controller) から turn 単位で AI 発話状態を上書きする。
+   * - true: 直ちに mic 入力を遮断
+   * - false: cooldown 後に mic 入力を再開
+   */
+  setAiSpeaking(state: boolean): void {
+    if (state) {
+      this.isAiSpeaking = true;
+      if (this.cooldownTimer !== null) {
+        clearTimeout(this.cooldownTimer);
+        this.cooldownTimer = null;
+      }
+    } else {
+      this.scheduleCooldown();
+    }
+  }
+
+  private scheduleCooldown(): void {
+    if (this.cooldownTimer !== null) {
+      clearTimeout(this.cooldownTimer);
+    }
+    this.cooldownTimer = setTimeout(() => {
+      this.cooldownTimer = null;
+      // 再生キューが空のままなら本当に解除
+      if (this.playingSources.size === 0) {
+        this.isAiSpeaking = false;
+      }
+    }, AI_SPEAKING_COOLDOWN_MS);
   }
 
   private handleAudioProcess(ev: AudioProcessingEvent): void {

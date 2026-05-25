@@ -616,12 +616,19 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
   function handleServerMessage(msg: LiveServerMessage): void {
     // 1) PCM 音声 chunk → 再生（muted 中はスキップ）
+    //    AI が話している間は mic を遮断（半二重）。muted の場合も、サーバが認識する
+    //    "AI 発話中" は同じなので setAiSpeaking(true) を呼ぶ（echo 無くても誤転写防止）。
     const parts = msg.serverContent?.modelTurn?.parts ?? [];
+    let hasAudioInThisMsg = false;
     for (const p of parts) {
       const mime = p.inlineData?.mimeType ?? '';
       const data = p.inlineData?.data;
-      if (data && mime.startsWith('audio/pcm') && !muted) audio.playPcm(data);
+      if (data && mime.startsWith('audio/pcm')) {
+        hasAudioInThisMsg = true;
+        if (!muted) audio.playPcm(data);
+      }
     }
+    if (hasAudioInThisMsg) audio.setAiSpeaking(true);
 
     // 2) ストリーミング transcript (入力 = ユーザー)
     const inText = msg.serverContent?.inputTranscription?.text;
@@ -645,6 +652,9 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       finalizeStream('assistant', assistantBuf);
       userBuf = '';
       assistantBuf = '';
+
+      // turn が完了したら mic 入力を再開（cooldown 後）
+      audio.setAiSpeaking(false);
 
       // セーフネット: AI が「?」で終わる質問をしたのに present_question を呼ばなかった
       //   → 補助テキスト入力にフォーカスして、ユーザーが回答できる状態を担保
@@ -851,12 +861,18 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     const bubble = role === 'assistant' ? assistantStreamBubble : userStreamBubble;
     // AI 側は最終 transcript も cleanTranscript で関数呼び出し漏れを除去
     const cleaned = role === 'assistant' ? cleanTranscript(buf) : buf.trim();
+
+    // 重複抑止: 直前メッセージと同 role + 同テキスト ならスキップ
+    //   (echo loop で AI が同じ挨拶を繰り返した場合の保険)
+    const lastMsg = session.messages[session.messages.length - 1];
+    const isDup = cleaned && lastMsg && lastMsg.role === role && lastMsg.text === cleaned;
+
     if (!bubble) {
-      if (cleaned) appendMessage({ role, text: cleaned, ts: Date.now() });
+      if (cleaned && !isDup) appendMessage({ role, text: cleaned, ts: Date.now() });
       return;
     }
     bubble.classList.remove('typing-caret');
-    if (!cleaned) {
+    if (!cleaned || isDup) {
       bubble.parentElement?.remove();
     } else {
       session.messages.push({ role, text: cleaned, ts: Date.now() });
