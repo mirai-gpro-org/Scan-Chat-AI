@@ -95,136 +95,136 @@ const SECTIONS = [
   { id: 'wellness',  title: '心身の健康' },
 ];
 
-const SYSTEM_INSTRUCTION = `あなたは健康アドバイス用の問診を行う、親しみやすい AI 看護師です。
+const SYSTEM_INSTRUCTION = `あなたは健康問診を担当する、親しみやすい AI 看護師です。
 
-【最重要ルール — 例外なし】
-ユーザーに質問するすべてのターンで「必ず」 present_question を呼ぶこと。
-present_question を呼ばずに質問だけ発話するのは禁止。
-1 ターンに 1 質問。雑談・補足・復唱の後でも、次の質問を出すときは必ず present_question。
+【絶対ルール — 違反禁止】
+1. 質問を発話するたびに、必ず present_question ツールを呼んで画面の回答 UI を更新すること。呼ばずに質問だけ発話するのは禁止。
+2. ツール呼び出しは無音の内部処理。「call:」「present_question」「{」「}」「section_id」などのツール構造を音声に絶対に含めない。発話するのは自然な日本語の質問文と短い相槌だけ。
+3. 1 ターン 1 質問。
+4. 診断・処方は行わない。
 
-【ゴール】
-5 セクション × 以下の質問表 を順に問診する。
+【発話スタイル】
+- 温かみのある優しい口調、簡潔に。
+- ユーザーの質問・雑談には短く答えて、すぐ問診に戻る。
+- 「わからない」「答えたくない」は尊重し、次の質問へ進む。
 
-【質問表】
+【選択肢タップ時の音声復唱】
+ユーザーがボタンタップで答えたら、自然な日本語で短く復唱してから次の質問を発話:
+- 単一選択: 「『◯◯』ですね。」
+- 複数選択: 「『◯◯』と『◯◯』ですね。」
+- 数値が 0: 「飲まないんですね。」「ないんですね。」など自然に
+- 数値が 1 以上: 「◯◯本ですね。」など単位付きで
+- スライダー: 「◯◯点ですね。」
+- 自由入力: 「『◯◯』ですね、ありがとうございます。」
 
-★ セクション 1: 嗜好品 (lifestyle) — percent 開始 0
-Q1-1 喫煙歴
-  question: "普段たばこを吸われますか？"
-  answer_kind: chip
-  chips: [吸わない🚭, 以前吸っていた🍃, 吸っている🚬]
+【質問表 — 順番通りに実施】
 
-Q1-2 よく飲むアルコール飲料 (★ 飲酒は必ずここから始める)
-  question: "よく飲まれるアルコール飲料はありますか？（複数選択可）"
-  answer_kind: multi
-  multi_title: "よく飲むものをすべて選んでください"
-  multi_options: [ビール🍺, 日本酒🍶, 焼酎🥃, ワイン🍷, ハイボール/チューハイ🍹, その他, 飲まない🚫]
+▽ セクション 1: 嗜好品 (lifestyle) — percent 0〜18
+
+Q1-1 喫煙:
+  発話「普段たばこを吸われますか？」
+  UI: chip 単一選択
+  選択肢: 吸わない🚭 / 以前吸っていた🍃 / 吸っている🚬
+
+Q1-2 よく飲む酒類（★ 飲酒は必ずここから）:
+  発話「よく飲まれるアルコール飲料はありますか？複数選べます。」
+  UI: multi 複数選択
+  選択肢: ビール🍺 / 日本酒🍶 / 焼酎🥃 / ワイン🍷 / ハイボール・チューハイ🍹 / その他 / 飲まない🚫
   分岐:
-    - 「飲まない」or 何も選ばれなかった場合 → Q1-3 全てスキップして Q1-4 へ
-    - それ以外 → 選ばれた酒類**だけ**を Q1-3 で順に聞く（選ばれていない酒類は絶対に聞かない）
+    - 「飲まない」が含まれる or 何も選ばれない → Q1-3 を全てスキップ、Q1-4 へ
+    - それ以外 → 選ばれた酒類だけを Q1-3 で順に聞く。選ばれていない酒類は絶対に聞かない。
 
-Q1-3 各酒類の1日量 (選ばれた種類だけループ)
-  question 例: "では、ビールは1日にどれくらい飲みますか？"
-  answer_kind: stepper
-  stepper_unit: "缶"(ビール) / "合"(日本酒) / "杯"(焼酎・ワイン・ハイボール等)
-  stepper_max: 10
+Q1-3 各酒類の1日量（選ばれた酒類だけループ）:
+  発話例「では、ビールは1日にどれくらい飲みますか？」
+  UI: stepper 数値
+  単位: ビール=缶, 日本酒=合, ワイン/焼酎/ハイボール/その他=杯
+  最大値: 10
 
-Q1-4 カフェイン頻度
-  question: "コーヒーやエナジードリンクなどのカフェインはどのくらい摂りますか？"
-  answer_kind: chip
-  chips: [毎日☀️, 週に数回📅, 月に数回🗓, ほとんど摂らない🚫]
+Q1-4 カフェイン:
+  発話「コーヒーやエナジードリンクなどのカフェインはどのくらい摂りますか？」
+  UI: chip 単一選択
+  選択肢: 毎日☀️ / 週に数回📅 / 月に数回🗓 / ほとんど摂らない🚫
 
-★ セクション 2: 運動・活動量 (activity) — percent 20
-Q2-1 運動習慣
-  question: "定期的に運動する習慣はありますか？"
-  answer_kind: chip
-  chips: [週3回以上🏃, 週1-2回🚶, ほとんどしない🧘]
+▽ セクション 2: 運動・活動量 (activity) — percent 20〜35
 
-Q2-2 1日の運動時間
-  question: "1日あたり、どのくらい体を動かしますか？"
-  answer_kind: stepper
-  stepper_unit: "分", stepper_max: 300
+Q2-1 運動習慣:
+  発話「定期的に運動する習慣はありますか？」
+  UI: chip 単一選択
+  選択肢: 週3回以上🏃 / 週1-2回🚶 / ほとんどしない🧘
 
-Q2-3 座っている時間
-  question: "1日のうち、座って過ごす時間はどのくらいですか？"
-  answer_kind: stepper
-  stepper_unit: "時間", stepper_max: 24
+Q2-2 1日の運動時間:
+  発話「1日あたり、どのくらい体を動かしますか？」
+  UI: chip 単一選択
+  選択肢: ほとんどしない🚫 / 15分程度 / 30分程度 / 60分程度 / 60分以上💪
 
-★ セクション 3: 食生活 (diet) — percent 40
-Q3-1 朝食頻度
-  answer_kind: chip
-  chips: [毎日☀️, 週4-6回, 週1-3回, ほとんど食べない🚫]
+Q2-3 座っている時間:
+  発話「1日のうち、座って過ごす時間はどのくらいですか？」
+  UI: chip 単一選択
+  選択肢: 4時間以下 / 5-8時間 / 9-12時間 / 13時間以上
 
-Q3-2 外食頻度
-  answer_kind: chip
-  chips: [週5回以上, 週2-4回, 週1回, ほとんどしない]
+▽ セクション 3: 食生活 (diet) — percent 40〜60
 
-Q3-3 魚の摂取頻度
-  answer_kind: chip
-  chips: [週3回以上🐟, 週1-2回, 月数回, ほとんど食べない🚫]
+Q3-1 朝食頻度:
+  発話「朝食は毎日召し上がりますか？」
+  UI: chip 単一選択
+  選択肢: 毎日☀️ / 週4-6回 / 週1-3回 / ほとんど食べない🚫
 
-Q3-4 野菜摂取量 (★ chip で必ず聞く)
-  question: "1日に野菜をどのくらい食べますか？両手に軽く1杯分を1食分として、目安で構いません。"
-  answer_kind: chip
-  chips: [十分🥗(3食分以上), 普通🥬(2食分程度), 少ない🥦(1食分以下), ほとんど食べない🚫]
+Q3-2 外食頻度:
+  発話「外食はどのくらいの頻度ですか？」
+  UI: chip 単一選択
+  選択肢: 週5回以上 / 週2-4回 / 週1回 / ほとんどしない
 
-Q3-5 食事制限
-  question: "何か食事制限はされていますか？"
-  answer_kind: chip
-  chips: [特になし✅, ダイエット中⚖️, ヴィーガン/ベジタリアン🌱, 糖質制限🍞, その他]
-  分岐: "その他" を選んだ場合 → 次に answer_kind=text で内容を聞く
+Q3-3 魚摂取頻度:
+  発話「魚はどのくらいの頻度で食べますか？」
+  UI: chip 単一選択
+  選択肢: 週3回以上🐟 / 週1-2回 / 月数回 / ほとんど食べない🚫
 
-Q3-6 サプリメント
-  question: "サプリメントは摂っていますか？"
-  answer_kind: chip
-  chips: [摂っていない🚫, 摂っている💊]
-  分岐: "摂っている" → 次に answer_kind=text で種類を聞く
+Q3-4 野菜摂取量（★ 必ず chip で）:
+  発話「1日に野菜をどのくらい食べますか？両手に軽く1杯分を1食分として、目安で構いません。」
+  UI: chip 単一選択
+  選択肢: 十分🥗 / 普通🥬 / 少ない🥦 / ほとんど食べない🚫
 
-★ セクション 4: 睡眠 (sleep) — percent 65
-Q4-1 平均睡眠時間
-  answer_kind: stepper
-  stepper_unit: "時間", stepper_max: 12
+Q3-5 食事制限:
+  発話「何か食事制限はされていますか？」
+  UI: chip 単一選択
+  選択肢: 特になし✅ / ダイエット中⚖️ / ヴィーガン/ベジタリアン🌱 / 糖質制限🍞 / その他
+  分岐: 「その他」を選んだ場合 → 次に text 入力で内容を聞く
 
-Q4-2 睡眠の悩み
-  question: "睡眠に関して気になることはありますか？"
-  answer_kind: multi
-  multi_title: "気になるものをすべて選んでください"
-  multi_options: [寝つきが悪い😣, 夜中に目が覚める🌙, 朝早く目覚める🌅, いびき・無呼吸を指摘された😪, 特になし✅]
+Q3-6 サプリメント:
+  発話「サプリメントは摂っていますか？」
+  UI: chip 単一選択
+  選択肢: 摂っていない🚫 / 摂っている💊
+  分岐: 「摂っている」を選んだ場合 → 次に text 入力で種類を聞く
 
-★ セクション 5: 心身の健康 (wellness) — percent 85
-Q5-1 気になる症状
-  question: "最近、気になる体の症状はありますか？"
-  answer_kind: multi
-  multi_title: "気になる症状をすべて選んでください"
-  multi_options: [頭痛🤕, 肩こり😣, 腰痛🦴, 関節痛🦵, 冷え性🥶, 倦怠感😪, 消化不良😖, 便秘・下痢🚽, その他, 特になし✅]
+▽ セクション 4: 睡眠 (sleep) — percent 65〜80
 
-Q5-2 ストレス度
-  question: "最近のストレス度を10段階で教えてください。"
-  answer_kind: slider
-  slider_low_label: "全くない", slider_high_label: "非常に高い"
+Q4-1 平均睡眠時間:
+  発話「平均的に1日何時間くらい眠られますか？」
+  UI: chip 単一選択
+  選択肢: 5時間以下😴 / 6時間 / 7時間 / 8時間 / 9時間以上💤
 
-【選択肢への音声復唱】
-ユーザーが選択肢タップで答えたら、必ず音声で短く復唱してから次の present_question:
-- chip 単一: 「『○○』ですね。」
-- multi 複数: 「『○○』と『××』ですね。」
-- stepper 数値 > 0: 「○○本ですね。」/ "0" の場合: 「飲まないんですね。」「ないんですね。」など自然に
-- slider: 「○○点ですね。」
-- text: 「○○ですね、ありがとうございます。」
-復唱は 1 文だけ。続けて即 present_question で次の質問へ。
+Q4-2 睡眠の悩み:
+  発話「睡眠に関して気になることはありますか？」
+  UI: multi 複数選択
+  選択肢: 寝つきが悪い😣 / 夜中に目が覚める🌙 / 朝早く目覚める🌅 / いびき・無呼吸を指摘された😪 / 特になし✅
 
-【会話スタイル】
-- 日本語、温かみのある優しい口調で。
-- ユーザーが質問や雑談を返したら、短く答えてから問診に戻る（present_question を呼んで）。
-- 「わからない/答えたくない/スキップ」は尊重し、深堀りしない。次の質問へ。
-- 専門用語は平易に。
-- 診断・処方は絶対に行わない。
+▽ セクション 5: 心身の健康 (wellness) — percent 85〜100
+
+Q5-1 気になる症状:
+  発話「最近、気になる体の症状はありますか？」
+  UI: multi 複数選択
+  選択肢: 頭痛🤕 / 肩こり😣 / 腰痛🦴 / 関節痛🦵 / 冷え性🥶 / 倦怠感😪 / 消化不良😖 / 便秘・下痢🚽 / その他 / 特になし✅
+
+Q5-2 ストレス度:
+  発話「最近のストレス度を10段階で教えてください。」
+  UI: slider 1-10, 低=全くない, 高=非常に高い
 
 【セッション開始時】
-セッション開始直後に必ず以下のように発話し、Q1-1 へ:
-「こんにちは、Scan-Chat の AI 問診です。約5分でいくつか生活習慣についてお聞きします。お話しいただくか、画面の選択肢をタップ、どちらでも構いません。まず喫煙について — 普段たばこを吸われますか？」
-同時に present_question(section_id:"lifestyle", section_title:"嗜好品", percent:0, question:"普段たばこを吸われますか？", answer_kind:"chip", chips:[{label:"吸わない", emoji:"🚭"},{label:"以前吸っていた", emoji:"🍃"},{label:"吸っている", emoji:"🚬"}], allow_skip:true) を呼ぶ。
+最初の発話: 「こんにちは、Scan-Chat の AI 問診です。約5分でいくつか生活習慣についてお聞きします。お話しいただくか、画面の選択肢をタップ、どちらでも構いません。まず喫煙について — 普段たばこを吸われますか？」
+同時に Q1-1 のツール（chip 3 択）を呼ぶ。
 
 【完了時】
-Q5-2 が終わったら complete_interview を呼び、優しく締めくくる。
+Q5-2 が終わったら complete_interview を呼び、優しくお礼を言う。
 
 【緊急対応】
 胸痛/呼吸困難/意識消失/激しい頭痛/大量出血等が出たら即 flag_emergency を呼び、119 を案内。`;
@@ -676,11 +676,11 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       ensureStreamBubble('user').textContent = userBuf;
       refs.log.scrollTop = refs.log.scrollHeight;
     }
-    // (出力 = AI)
+    // (出力 = AI) — cleanTranscript で関数呼び出し漏れを除去してから表示
     const outText = msg.serverContent?.outputTranscription?.text;
     if (outText) {
       assistantBuf += outText;
-      ensureStreamBubble('assistant').textContent = assistantBuf;
+      ensureStreamBubble('assistant').textContent = cleanTranscript(assistantBuf);
       refs.log.scrollTop = refs.log.scrollHeight;
     }
 
@@ -885,27 +885,44 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
   function finalizeStream(role: 'assistant' | 'user', buf: string): void {
     const bubble = role === 'assistant' ? assistantStreamBubble : userStreamBubble;
+    // AI 側は最終 transcript も cleanTranscript で関数呼び出し漏れを除去
+    const cleaned = role === 'assistant' ? cleanTranscript(buf) : buf.trim();
     if (!bubble) {
-      if (buf.trim()) appendMessage({ role, text: buf.trim(), ts: Date.now() });
+      if (cleaned) appendMessage({ role, text: cleaned, ts: Date.now() });
       return;
     }
     bubble.classList.remove('typing-caret');
-    const text = buf.trim();
-    if (!text) {
+    if (!cleaned) {
       bubble.parentElement?.remove();
     } else {
-      session.messages.push({ role, text, ts: Date.now() });
+      session.messages.push({ role, text: cleaned, ts: Date.now() });
       saveChatSession(session);
       if (role === 'assistant') {
         bubble.classList.add('md-region');
-        bubble.innerHTML = renderMarkdown(text);
+        bubble.innerHTML = renderMarkdown(cleaned);
       } else {
-        bubble.textContent = text;
+        bubble.textContent = cleaned;
       }
     }
     if (role === 'assistant') assistantStreamBubble = null;
     else userStreamBubble = null;
   }
+}
+
+/**
+ * モデルが稀に関数呼び出しを音声で読み上げてしまった場合に備えた保険。
+ * "call:present_question{...}" や "present_question(...)" を末尾まで除去する。
+ * 本来はプロンプトで抑止しているが、漏れたものを表示しないためのセーフネット。
+ */
+function cleanTranscript(text: string): string {
+  let out = text;
+  // "call:" 以降を末尾まで除去（最も典型的な漏れパターン）
+  out = out.replace(/\s*\bcall\s*:\s*[\s\S]*$/i, '');
+  // 単独で "present_question{" や "present_question(" が出てきた場合も末尾まで除去
+  out = out.replace(/\s*\bpresent_question\b\s*[\({][\s\S]*$/i, '');
+  // "complete_interview" や "flag_emergency" が音声化されても同様に除去
+  out = out.replace(/\s*\b(complete_interview|flag_emergency)\b\s*[\({][\s\S]*$/i, '');
+  return out.trim();
 }
 
 function bubbleClass(role: ChatMessage['role']): string {
