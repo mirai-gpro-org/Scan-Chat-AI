@@ -465,6 +465,9 @@ create index on kit_shipments(customer_id);
 create index on kit_shipments(order_id);
 ```
 
+> **進捗管理 (検査キット内容・配送予定日・受取/返送自己申告・検査会社受領・通知) のために、本テーブルには追加カラム + 関連テーブル (`subscription_plans` / `subscriptions` / `notifications`) が必要**。
+> 詳細は `kit_progress_management.md §8` を参照 (本書では関心の分離のため進捗管理仕様は分離)。
+
 #### `lab_tests` — 検査 ID ↔ 顧客 ID の紐付け (要のテーブル)
 
 ```sql
