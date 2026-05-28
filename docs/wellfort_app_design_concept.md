@@ -3,7 +3,7 @@
 | 項目 | 内容 |
 |---|---|
 | 文書名 | Wellfort Web アプリ 設計コンセプト |
-| バージョン | 0.3 (Draft) |
+| バージョン | 0.4 (Draft) |
 | 作成日 | 2026-05-28 |
 | 位置づけ | プロダクトのミッション・ビジョン・戦略の**最上位**文書。技術詳細は本書から参照する各仕様書に委ねる |
 | 想定読者 | 経営層・プロジェクト関係者・新規参画メンバ・パートナー (Elith 等) |
@@ -311,6 +311,7 @@ Wellfort 側で受領した PDF をどの `diagnostic_user_id` に紐付ける�
 | `data_integration_requirements.md` | データ連携・Elith 接続・diagnostic_user_id 設計 |
 | `diagnostic_session_data_spec.md` | 検査セッションのデータ仕様 (scan_md 統一フォーマット、検査種別スキーマ、interrogation_md) |
 | `lab_integration_workflow.md` | **検査機関連携・ユーザー割当ワークフロー** (Workflow 1/2/3) |
+| `test_data_storage_and_db_design.md` | **検査データファイル・DB 基本設計** (ストレージ階層、検査会社マスタ、検査 ID 紐付けテーブル等) |
 | `scan_feature_requirements.md` | スキャン機能の詳細要件 |
 | `scan_chat_medical_ai_proposal.pdf` | スキャン・問診の UI/UX 提案書 (機能 1〜4 のワイヤーフレーム) |
 | `ai_app_ui_ux_proposal.pdf` | **ダッシュボード UI/UX 提案書** (4 アプローチのモック + AI 時代の設計手法 + UI 破綻サンプル) |
@@ -325,3 +326,4 @@ Wellfort 側で受領した PDF をどの `diagnostic_user_id` に紐付ける�
 | 0.1 | 2026-05-28 | パイロット版完了時点のコンセプトを最上位文書として整理。Mission / Vision、5 つの戦略目標、入力データ 3 ソース (a/b/c)、認証ロードマップ (Google One Tap → マイナ+JPKI)、「読ませるレポート」→「行動を促すダッシュボード」を明文化 |
 | 0.2 | 2026-05-28 | §2 プロダクト哲学を **4 つの UI アプローチ** (プログレッシブ・ディスクロージャー / アクション・タスク化 / 対話型ヘルスコーチ / シチュエーション別カード) で具体化。AI 時代の UI 設計手法 (静的ワイヤーフレームの限界、コードベース・プロトタイピング推奨) を追加。アンチパターン「スクロール地獄」を明示。`ai_app_ui_ux_proposal.pdf` (ダッシュボードモック + 設計手法) を関連ドキュメントに追加 |
 | 0.3 | 2026-05-28 | §5 (b) Wellfort 経由データの**形式**と**ユーザー割当**を明確化。a/b 共通の統一 `scan_md` フォーマット (YAML front-matter + 検査種別スキーマ) を採用方針として明文化。3 つの割当 Workflow (ID 同伴 / 検査ID 逆引き / AI 抽出+人間承認) を Phase 別に併用。新規 `lab_integration_workflow.md` を関連ドキュメントに追加 |
+| 0.4 | 2026-05-28 | 新規 `test_data_storage_and_db_design.md` (検査データファイル・DB 基本設計) を関連ドキュメントに追加。サンプル PDF 4 種 (`docs/kensa_sample/`) を取り込み済 |
