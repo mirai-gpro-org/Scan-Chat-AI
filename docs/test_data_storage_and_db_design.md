@@ -3,7 +3,7 @@
 | 項目 | 内容 |
 |---|---|
 | 文書名 | 検査データファイル・DB 基本設計 |
-| バージョン | 0.1 (Draft) |
+| バージョン | 0.2 (Draft) |
 | 作成日 | 2026-05-28 |
 | 対象範囲 | 検査結果 PDF/CSV の取込・保管・正規化、ユーザー紐付け、DB スキーマ、ファイルストレージ階層 |
 | 関連文書 | `wellfort_app_design_concept.md` §5 / `lab_integration_workflow.md` / `diagnostic_session_data_spec.md` §3 / `data_integration_requirements.md` |
@@ -121,10 +121,32 @@
 
 | 項目 | 値 |
 |---|---|
-| ファイル形式 | **208 ページ PDF** (8.7 MB) |
-| 想定 | 表 + 解説の混在、グラフ多数 |
-| 取込方針 | 「**PDF 表示だけで OK**」(機能要件 v1.0 内、表 2 で明示) — LLM 変換せず原本 PDF をそのまま表示 |
-| Elith 提供 | PDF を base64 or URL で渡す |
+| 検査会社 | **ジェノプランジャパン株式会社** (福岡市西区九大新町4-1) |
+| 検査名 | Genoplan My Book |
+| 検体 | 唾液 / 分析方法: SNP Genotyping |
+| ファイル形式 | **207 ページ PDF** (8.7 MB) |
+| PII | 顧客名 (p.2 アウトライン + 各ページ下部に印字) |
+| 検査 ID | **認証キー / 固有検体番号** (例: `CBAD-DMID-BOAQ` — 英字 4 文字 × 3 ブロックをハイフン区切り、計 14 文字)。 p.2 アウトラインと p.207 保証書の**両方に印字** |
+| 検査日 | 発行日 (p.2) |
+| 検査回数 | **生涯 1 回のみ** (遺伝情報は不変) |
+| 経年比較 | **不要** (1 回限り) |
+
+#### PDF の実構造 (207 ページの内訳)
+
+| ページ | セクション | 構造 | 抽出価値 |
+|---|---|---|---|
+| 1-2 | カバー + アウトライン (認証キー、顧客名、発行日) | フォーム | **メタ抽出必須** |
+| 3-8 | サービス案内 / My Book の見方 | 説明文 | 不要 |
+| **9-24** | **全体項目** (**472 項目** の分析結果サマリー表) | **構造化テーブル** | **機械抽出可能** |
+| **25-33** | **主要項目** (**100 項目** = がん 25 + 一般疾患 40 + 体質 35) のサマリー表 | **構造化テーブル** | **機械抽出可能** |
+| 34-199 | **各疾患の詳細ページ** (1 疾患 = 2 pg × 100 ≈ 166 pg) — テンプレ固定: 総合発症リスク (倍数)、80 歳までの%、年齢別予測グラフ、影響 SNP 数、危険要因、管理方法 | **構造化テンプレート** | 構造化抽出可能 |
+| 200-204 | 用語辞典 (染色体・DNA・SNP 等) | 説明 | 不要 |
+| 205-206 | FAQ | Q&A | 不要 |
+| 207 | **分析結果保証書** (固有検体番号、検体種別、分析方法、QC 結果、検査責任者 3 名) | **フォーム** | **メタ抽出必須** |
+
+#### 取込方針 (改訂)
+
+要件定義書 v1.0 の「PDF 表示だけで OK」記述は、**サマリー機能を実装しない場合のフォールバック**として解釈。実態は構造化されており抽出可能なため、**§6.2 / §6.4 の 3 段階抽出 + 3 モード表示**を採用する。
 
 ### 4.4 AI 疾病予測 (Wellfort 経由 / Elith 以外)
 
@@ -139,12 +161,12 @@
 
 ### 4.5 まとめ表
 
-| 検査種別 | 検査会社 | 配信形式 | 検査 ID 名 | LLM 変換 | 原本保管 |
-|---|---|---|---|---|---|
-| 血液検査 | リージャーラボラトリー | **CSV** + PDF | (CSV キーで紐付け) | あり (md 化) | 必須 |
-| がんリスク | PREVENT メディカル | PDF | 検査 ID / バーコード No | あり (md 化) | 必須 |
-| 遺伝子検査 | (TBD) | PDF | (TBD) | **なし** (PDF そのまま) | 必須 |
-| AI 疾病予測 | LAiF | PDF | (TBD) | あり (md 化) | 必須 |
+| 検査種別 | 検査会社 | ページ数 | 配信形式 | 検査 ID 名 | LLM 変換 | 表示モード | 原本保管 |
+|---|---|---|---|---|---|---|---|
+| 血液検査 | リージャーラボラトリー | 1 | **CSV** + PDF | (CSV キーで紐付け) | あり (CSV→md) | 単一 | 必須 |
+| がんリスク | PREVENT メディカル | 3 | PDF | 検査 ID / バーコード No | あり (Gemini) | 単一 | 必須 |
+| **遺伝子検査** | **ジェノプランジャパン** | **207** | PDF | **認証キー / 固有検体番号** | **あり (3 段階抽出)** | **3 モード** (a/b/c) | 必須 |
+| AI 疾病予測 | LAiF | 9 | PDF | (TBD) | あり (Gemini) | **3 モード** (a/b/c) | 必須 |
 
 ---
 
@@ -221,9 +243,21 @@
 | 血液検査 (CSV 配信) | 不要 | CSV → md 直接変換 (Python script で OK) | CSV が既に構造化 |
 | 血液検査 (PDF 経路) | **必要** | Gemini 2.5 Flash でテーブル抽出 | 検査会社が CSV 対応してない場合 |
 | がんリスク検査 | **必要** | Gemini で値抽出 | 3 値のみだが PDF |
-| 遺伝子検査 (208pg) | **不要** | scan_md は生成せず、原本 PDF URL のみ参照 | 量が膨大、UI は PDF 直表示 |
-| AI 疾病予測 | **必要** | Gemini でテーブル抽出 (18 疾患 × 4 列) | 構造的だが PDF |
-| (a) ユーザー UP 全て | **必要** | 既存パイプライン (Gemini 2.5 Flash) | フォーマット可変 |
+| 遺伝子検査 (207pg) | **必要** | **3 段階抽出** (§6.2.1 参照)。生成した a) サマリー / b) ハイライト は §6.4 の 3 モード表示で利用、c) 全編 PDF も保管 | 構造化されているが膨大。サマリー優先で UX を救う |
+| AI 疾病予測 (9pg) | **必要** | Gemini でテーブル抽出 (18 疾患 × 4 列) + サマリー生成 | 構造的だが PDF。9pg は閾値ぎりぎりで 3 モード適用 |
+| (a) ユーザー UP 全て | **必要** | 既存パイプライン (Gemini 2.5 Flash)。**5pg 以上**は 3 モード自動適用 | フォーマット可変 |
+
+#### 6.2.1 遺伝子検査 — 3 段階抽出
+
+ジェノプラン社の 207 pg PDF は構造が整理されているため、抽出を 3 段階に分けて Phase 別に深化:
+
+| 抽出レベル | 対象ページ | 取得データ | 推定コスト/件 | 採用 Phase |
+|---|---|---|---|---|
+| **Lv1: メタのみ** | p.2 + p.207 | 認証キー、顧客名、発行日、検体、分析方法、QC、検査責任者 | ~$0.001 | Phase 1 から |
+| **Lv2: サマリー抽出** (推奨) | + p.9-33 | 全体 472 項目 + 主要 100 項目のテーブル (項目名 / カテゴリ / リスク倍数 / 状態色 / 該当 PDF ページ番号) | ~$0.01 | **Phase 1 主軸** |
+| Lv3: 完全抽出 | + p.34-199 | 各疾患詳細 (総合発症リスク、80歳までの%、年齢別予測、影響 SNP 数) | ~$0.05 | Phase 2 |
+
+すべてのレベルで **PDF 原本 (c 全編) は別途必ず保管**。Lv2 取得時に各項目の PDF ページ番号を `test_artifact_items.pdf_page` に保存することで、§6.4 の deep-link が成立する。
 
 ### 6.3 ストレージ階層
 
@@ -262,6 +296,84 @@ s3://wellfort-diagnosis/
 - 顧客系ストレージは PII を含む生 PDF を保持 (Wellfort 担当者のみアクセス)
 - 診断系ストレージへ移送時に**必ず PII redaction** + `diagnostic_user_id` 命名に切替
 - 顧客系 → 診断系の橋渡し時点で `lab_integration_workflow.md` の Workflow 1/2/3 が走る
+
+### 6.4 結果表示モード設計 (3 モード: サマリー / 要注意抜粋 / 全編)
+
+#### 背景
+
+207 ページの遺伝子検査 PDF を生のまま表示すると、`ai_app_ui_ux_proposal.pdf` 末尾の「スクロール地獄」アンチパターンに直撃する。一方、ユーザーは「LLM サマリーだけ」では信頼しきれない。**両者を両立**するため、長尺レポート用の **3 モード表示**を採用。
+
+#### 3 モードの定義
+
+| モード | 用途 | 生成方法 | デフォルト |
+|---|---|---|---|
+| **a) サマリー版** | LLM が総括して 1 画面で読める形に圧縮 | 取込時に **1 回 LLM 生成 + キャッシュ** | **◯ デフォルト + 「おすすめ」バッジ** |
+| **b) 要注意事項抜粋版** | 高リスク + 行動可能な項目だけ抽出 | 取込時に LLM がフラグ付け | 切替可 |
+| **c) 全編** | 原本 PDF をそのまま | 配信された原本 PDF | 詳細確認時 |
+
+#### a/b/c の連動 (deep-link + back navigation)
+
+```
+[a) サマリー版]                    [c) 全編 PDF]
+┌──────────────────────┐          ┌──────────────────┐
+│ 大腸がん 4.47倍 高い  │  tap     │ p.38             │
+│ → 詳細を見る (p.38) ─┼─────────▶│  大腸がん       │
+│                      │          │  発症リスク...   │
+│ 前立腺がん 4.53倍 高い│          │  [← 要約に戻る] │
+│                      │ ◀────────┼──────────────────┘
+└──────────────────────┘   back
+```
+
+- a) / b) の各項目に `pdf_page` (PDF 内のページ番号) を保持
+- タップで c) を該当ページにスクロール (PDF embed の `#page=N` 機構を利用)
+- c) 内の固定「← 要約に戻る」ボタンで a/b の元位置に復帰 (アプリ内 history stack + ブラウザ history.back() 併用)
+
+#### b) 「要注意」の定義 (推奨案)
+
+LLM が以下の **2 軸**で各項目を判定し、両方を満たすものを b) に抽出:
+
+| 軸 | 判定 |
+|---|---|
+| **リスク軸** | 平均比リスク ≥ 1.5 倍 (or 4 色判定で赤・オレンジ) |
+| **行動軸** | 生活習慣の改善で軽減できる項目 (`is_actionable: true`) |
+
+→ 例:
+- 大腸がん リスク 4.47 倍 + 食事改善で軽減可能 → **b に表示**
+- アルツハイマー リスク 5 倍 + 行動で変えにくい → b には表示せず a) には "Watch" タグで掲載
+
+(注: 「行動可能性」は LLM 判定。Phase 1 は固定リスト+ Phase 2 で運用ログから調整)
+
+#### 適用範囲 (ページ数による自動判定)
+
+| 検査 | ページ数 | 3 モード適用 |
+|---|---|---|
+| 血液 | 1 | ✕ (単一表示) |
+| がんリスク | 3 | ✕ (単一表示) |
+| AI 疾病予測 | 9 | **◯ 自動** |
+| 遺伝子 | 207 | **◯ 自動** |
+| 人間ドック (a 経由) | 可変 | **5pg 以上で自動 ON** |
+
+→ ルール: **PDF/コンテンツが 5pg 以上で 3 モード自動適用**。閾値以下は単一表示。
+
+#### LLM サマリー生成のハルシネーション抑止
+
+医療コンテンツのため以下を必須:
+
+1. **出典ページ番号を必ず併記** (a/b の各項目に `(p.38)` 等を表示)
+2. 数値は**原本から逐語コピー** (LLM は自由文だけ生成、数値は引用のみ)
+3. **「医師の診断に代わるものではない」フッタ**を a/b ともに常時表示
+4. b) の「Watch / Action」ラベル分けで、コントロール可能性を明示
+
+#### コスト試算 (遺伝子検査 1 件あたり)
+
+| 工程 | トークン | コスト |
+|---|---|---|
+| Lv2 サマリー抽出入力 (PDF p.9-33) | ~30K | $0.009 (Gemini 2.5 Flash) |
+| a) サマリー版生成 (出力) | ~3K | $0.008 |
+| b) 要注意抽出 (出力) | ~1K | $0.003 |
+| **計** | | **~$0.02 / 件 (約 3 円)** |
+
+遺伝子検査は**生涯 1 回**なのでユーザー 1 人あたり**生涯 3 円**で完結。
 
 ---
 
@@ -330,7 +442,7 @@ create table lab_companies (
 | リージャーラボラトリー | `['blood']` | `csv_and_pdf` | (なし、CSV キー連携) | 1 |
 | PREVENT メディカル | `['cancer_urine']` | `pdf` | `検査ID / バーコードNo` | 2 |
 | LAiF | `['ai_prediction']` | `pdf` | (TBD) | 2 or 3 |
-| (遺伝子検査会社 TBD) | `['genetics']` | `pdf` | (TBD) | 2 or 3 |
+| **ジェノプランジャパン** | `['genetics']` | `pdf` | **認証キー / 固有検体番号** (`^[A-Z]{4}-[A-Z]{4}-[A-Z]{4}$`) | 2 |
 
 #### `kit_shipments` — 検査キット出荷台帳
 
@@ -419,6 +531,9 @@ create table test_artifacts (
   schema_version     text not null default '1.0',
   age_at_test        int,                             -- 年齢のみ (生年月日は保存しない)
   sex                text,                            -- male | female | other
+  display_mode       text not null default 'single',  -- 'single' | 'three_mode' (§6.4)
+                                                      -- five_mode 適用: 5pg 以上で自動 three_mode
+  page_count         int,                             -- 原本 PDF のページ数 (three_mode 判定用)
   imported_at        timestamptz not null default now(),
   imported_by        text not null,                   -- user | wellfort_batch | wellfort_manual
   status             text not null default 'active',  -- active | superseded | withdrawn
@@ -435,17 +550,56 @@ create table test_artifact_files (
   id                 uuid primary key default gen_random_uuid(),
   test_artifact_id   uuid not null references test_artifacts(id) on delete cascade,
   file_kind          text not null,                   -- 'scan_md' | 'raw_pdf_redacted' | 'raw_csv'
+                                                      -- | 'summary_md'    (§6.4 a)
+                                                      -- | 'highlights_md' (§6.4 b)
+                                                      -- | 'extracted_json' (Lv2/Lv3 抽出データ)
   storage_url        text not null,                   -- s3://wellfort-diagnosis/...
   sha256             text not null,
   size_bytes         bigint not null,
+  llm_model          text,                            -- 生成モデル (例: 'gemini-2.5-flash')
+  llm_generated_at   timestamptz,                     -- summary_md / highlights_md の場合
   created_at         timestamptz not null default now()
 );
 ```
 
 **設計のポイント**:
-- 1 検査 = 1 `test_artifacts` 行 + 複数の `test_artifact_files` 行 (md / pdf / csv の複数アーティファクト)
-- 遺伝子検査のように md 不要な検査は `file_kind: 'raw_pdf_redacted'` のみ 1 行
-- パイロットの `scan_results` は `test_artifacts` + `test_artifact_files (file_kind='scan_md')` で表現可能 → **互換マイグレーション可**
+- 1 検査 = 1 `test_artifacts` 行 + 複数の `test_artifact_files` 行
+- 3 モード適用検査では `file_kind` が `summary_md` / `highlights_md` / `raw_pdf_redacted` の 3 行が並ぶ
+- 単一モードの検査は `scan_md` + `raw_pdf_redacted` の 2 行
+- パイロットの `scan_results` は `test_artifacts` + `file_kind='scan_md'` で表現可能 → **互換マイグレーション可**
+
+#### `test_artifact_items` — a/b の項目データ + c) への deep-link (§6.4 新規)
+
+3 モード表示の根幹。a) サマリー / b) 要注意 で表示する個々の「項目」を行として保持し、各行に PDF 全編ページ番号 (deep-link 先) を持たせる。
+
+```sql
+create table test_artifact_items (
+  id                  uuid primary key default gen_random_uuid(),
+  test_artifact_id    uuid not null references test_artifacts(id) on delete cascade,
+  category            text,           -- 'がん > 消化器' / '一般疾患 > 代謝疾患' / '体質' 等
+  item_name           text not null,  -- '大腸がん' / 'アルツハイマー病' / 'HbA1c' 等
+  risk_value          text,           -- 原本逐語コピー (例: '4.47倍' / '8.4 mg/dL H')
+  risk_multiplier     numeric,        -- 数値化 (例: 4.47)
+  risk_level          text,           -- 'high' | 'slightly_high' | 'normal' | 'slightly_low' | 'low'
+  is_actionable       boolean,        -- §6.4 b) の Action / Watch 判定
+  pdf_page            int,            -- deep-link target → c) 全編の該当ページ
+  summary_line        text,           -- a) で表示する 1-2 行コメント (LLM 生成)
+  order_in_summary    int,            -- a) サマリー版での表示順
+  order_in_highlights int,            -- b) 要注意抜粋版での表示順 (null なら b には出ない)
+  source_md_anchor    text,           -- scan_md / summary_md 内のアンカー
+  created_at          timestamptz not null default now()
+);
+create index on test_artifact_items(test_artifact_id, order_in_summary);
+create index on test_artifact_items(test_artifact_id, order_in_highlights);
+create index on test_artifact_items(test_artifact_id, risk_level);
+```
+
+**運用**:
+- 取込時に LLM が `extracted_json` を生成し、その内容を `test_artifact_items` に行展開
+- a) で表示する項目: `order_in_summary IS NOT NULL` で order 順
+- b) で表示する項目: `order_in_highlights IS NOT NULL AND is_actionable = true AND risk_level IN ('high','slightly_high')` で order 順
+- 「タップで全編 p.X に飛ぶ」は `pdf_page` を使う
+- 遺伝子検査 1 件 = 472 + 100 = **約 572 行** (全体項目 + 主要項目)。Lv3 完全抽出時はさらに増える
 
 ### 7.4 ER 図
 
@@ -492,11 +646,24 @@ create table test_artifact_files (
 │   - source              │                           │
 │   - test_type           │                           │
 │   - external_test_id    │ ← lab_tests と同値で照合 │
+│   - display_mode        │ single | three_mode       │
+│   - page_count          │                           │
 │                                                     │
 │ test_artifact_files ──┐                             │
 │   - test_artifact_id  │ (FK)                        │
-│   - file_kind         │                             │
-│   - storage_url       │ (redacted PDF / scan_md)    │
+│   - file_kind         │ scan_md / summary_md /     │
+│   - storage_url       │ highlights_md / raw_pdf /  │
+│   - llm_model         │ extracted_json             │
+│                                                     │
+│ test_artifact_items ──┐  (§6.4 NEW)                 │
+│   - test_artifact_id  │ (FK)                        │
+│   - item_name          │ 大腸がん / HbA1c 等        │
+│   - risk_value          │ 4.47倍 / 8.4 mg/dL H      │
+│   - risk_level          │ high / slightly_high...   │
+│   - is_actionable       │ b 抽出フラグ              │
+│   - pdf_page            │ → c 全編への deep-link    │
+│   - order_in_summary    │                           │
+│   - order_in_highlights │                           │
 │                                                     │
 │ diagnosis_inputs / diagnosis_results (既存)          │
 │                                                     │
@@ -580,7 +747,7 @@ create table test_artifact_files (
 |---|---|---|---|---|
 | リージャーラボラトリー (血液) | CSV + PDF | TBD (SFTP?) | 対応打診 | **Workflow 2** (CSV キーで紐付け) |
 | PREVENT メディカル (がんリスク) | PDF | 郵送 + メール? | 要相談 | Workflow 2 (検査ID OCR) |
-| 遺伝子検査会社 (TBD) | PDF (208pg) | TBD | 要相談 | Workflow 2 + Workflow 3 補助 |
+| **ジェノプランジャパン (遺伝子)** | PDF (207pg) | TBD | 要相談 | Workflow 2 (認証キー OCR、p.2/p.207 から抽出) |
 | LAiF (AI 疾病予測) | PDF | TBD | 要相談 | Workflow 2 (検査ID OCR) |
 
 → Phase 1 移行時に各検査会社と**配信プロトコル契約**を結ぶ必要あり (`lab_integration_workflow.md §5` 実装ロードマップ参照)
@@ -614,13 +781,19 @@ create table test_artifact_files (
 
 - [ ] 検査会社からの配信プロトコル: SFTP / メール添付 / API webhook / 手動 UL のどれを主とするか
 - [ ] CSV のスキーマ確定 (血液検査・リージャーラボラトリー版)
-- [ ] 遺伝子検査の検査 ID 体系 (検査会社未定)
 - [ ] LAiF の検査 ID 体系
 - [ ] PII redaction の実装 (PyMuPDF / pdf-redact-tool / 自前 Gemini プロンプト)
 - [ ] 検査結果の改訂・再発行への対応 (同 external_test_id で新版が来た場合の supersede ロジック)
 - [ ] 検査キャンセル・返金時のデータ削除ポリシー
 - [ ] `scan_results` (パイロット) → `test_artifacts` (本設計) のマイグレーション手順
 - [ ] サブスク終了時のデータ取扱 (個情法上の請求権、エクスポート機能)
+- [ ] **3 モード適用閾値の最終決定**: 「5pg 以上」は仮置き。テスト実装後に再評価
+- [ ] **b) 要注意事項の定義**: 案 D (リスク≥1.5 倍 + actionable) は推奨。テスト実装後に閾値・抽出ロジックを再評価
+- [ ] **遺伝子検査 抽出レベル選択**: Lv2 (サマリー) を Phase 1 主軸の推奨。Lv3 (完全抽出) を Phase 2 に持ち越すか、それとも Lv2 で十分か、運用ログから判断
+- [ ] **LLM サマリー の医療レビュー要否**: ハルシネーション抑止策 (出典ページ・逐語数値) は技術側で実装するが、最終公開前に医療従事者レビューを介すべきか
+- [ ] **PDF embed の deep-link** (`#page=N`) のブラウザ互換性確認 (Safari / iOS / Android Chrome / モバイル WebView)
+- [ ] **「← 要約に戻る」ナビゲーション**の実装方式 (アプリ内 history stack vs URL hash)
+- [ ] **遺伝子検査 472 個 vs 100 個**: Elith 提供データはどちらをメインにするか (現状は両方を `test_artifact_items` に持つ案)
 
 ---
 
@@ -629,3 +802,4 @@ create table test_artifact_files (
 | Ver | 日付 | 内容 |
 |---|---|---|
 | 0.1 | 2026-05-28 | 初版。Google Sheet マトリクス、サンプル PDF 4 種の実態を踏まえて、ファイルストレージ階層 (顧客系/診断系の物理分離) と DB スキーマ (lab_companies / kit_shipments / lab_tests / lab_intake_files / test_artifacts / test_artifact_files) を規定 |
+| 0.2 | 2026-05-28 | 遺伝子検査 207pg の全構造を検証 → §4.3 を実態反映 (検査会社=ジェノプランジャパン、認証キー=CBAD-DMID-BOAQ 形式)。§6.2 LLM 変換戦略を改訂し**3 段階抽出** (Lv1 メタ / Lv2 サマリー (推奨) / Lv3 完全) を導入。新規 §6.4 **結果表示モード設計 (a サマリー / b 要注意 / c 全編 + deep-link + 戻る)** を追加。`test_artifacts` に `display_mode` / `page_count` カラム追加、`test_artifact_files` の `file_kind` enum に `summary_md` / `highlights_md` / `extracted_json` を追加、`test_artifact_items` テーブルを新設 (a/b の項目 + pdf_page による deep-link)。§7.4 ER 図と §9 連携プロトコル、§11 TBD も更新 |
