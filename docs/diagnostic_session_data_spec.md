@@ -3,10 +3,10 @@
 | 項目 | 内容 |
 |---|---|
 | 文書名 | Scan-Chat Medical AI — 診断セッション データ仕様書 |
-| バージョン | 0.1 (Draft) |
-| 作成日 | 2026-05-23 |
+| バージョン | 0.2 (Draft) |
+| 作成日 | 2026-05-23 (v0.1) / 2026-05-28 (v0.2) |
 | 対象 | 1 回の診断で生まれる成果物（scan / 問診 / AI 診断）のデータ構造・保存先・連携仕様 |
-| 関連文書 | `docs/data_integration_requirements.md`（ユーザー単位の ID/ 認証連携）|
+| 関連文書 | `docs/data_integration_requirements.md`（ユーザー単位の ID/ 認証連携）/ `docs/lab_integration_workflow.md` (検査機関連携) |
 
 > 本書は **「1 回の検査・診断セッション」単位**で生まれる成果物の取り回しを定義します。
 > 「ユーザー単位の認証・ID マッピング」は `data_integration_requirements.md` を参照のこと。
@@ -97,13 +97,67 @@ customer_id (1) ─── (n) diagnosis_user_id [このユーザーの認証実�
 
 `scan_md` は **ユーザー検証フェーズを通過した「確定 Markdown」** を指す。Gemini が生成した raw 出力は Scan-Chat-AI の `/api/scan` レスポンスに含まれるが、これは**そのまま永続化されない**。ユーザーが **セル単位で確認・編集** した後の Markdown のみが Supabase #2 / S3 に書き込まれ、Elith 診断 AI に渡される。
 
-ユーザー検証フェーズの UX 仕様は `docs/scan_feature_requirements.md` §5 を参照。要点:
+#### 統一フォーマット — YAML front-matter + Markdown 本体
+
+`scan_md` は **入力ソース (a/b 共通)** で同一の構造を持つ。冒頭に YAML front-matter で**メタデータ**を、続けて検査種別ごとの**標準 Markdown 本体**を置く。
+
+```markdown
+---
+diagnostic_user_id: 7b3f8c2d-9e4a-4b1c-...   # 必須 / 内部識別子 (PII ではない)
+source: wellfort_lab                           # 必須 / user_upload | wellfort_lab
+test_type: blood                               # 必須 / health_checkup | blood | genetics | cancer_urine | ai_prediction
+test_date: 2026-05-15                          # 必須 / 検査日 (YYYY-MM-DD)
+external_test_id: WF-2026-XYZ-001              # 任意 / 検査機関の検査 ID (トレース用)
+lab_name: タカセクリニック検査センター            # 任意 / 検査機関名
+schema_version: 1.0                            # 必須
+imported_at: 2026-05-28T10:00:00+09:00         # 必須 / 取込タイムスタンプ
+imported_by: wellfort_batch                    # 必須 / user | wellfort_batch | wellfort_manual
+age_at_test: 45                                # 任意 / 生年月日から年齢のみ抽出して保存
+sex: male                                      # 任意 / male | female | other
+---
+
+## 左側検査表
+<!-- bbox: 0.05,0.05,0.95,0.65 -->
+
+| No | 検査項目 | 検査項目詳細 | 読み取った値 | 単位 | 下限値 | 上限値 | 判定 | 備考 |
+|----|----------|--------------|--------------|------|--------|--------|------|------|
+| 1  | AST      | AST(GOT)     | 18           | U/L  | 13     | 30     | -    | -    |
+```
+
+front-matter のキー (PII 取扱を含む):
+
+| key | 必須 | 型 | 用途 | PII? |
+|---|---|---|---|---|
+| `diagnostic_user_id` | ◯ | uuid | 内部識別子 (両系統の橋渡し) | 匿名 |
+| `source` | ◯ | enum | `user_upload` / `wellfort_lab` | - |
+| `test_type` | ◯ | enum | 後述の検査種別 | - |
+| `test_date` | ◯ | date | 検査日 (時系列分析用) | - |
+| `external_test_id` | - | string | 検査機関の検査 ID | - |
+| `lab_name` | - | string | 検査機関名 (問合せ用) | - |
+| `schema_version` | ◯ | string | スキーマ進化への追従 | - |
+| `imported_at` | ◯ | datetime | 取込日時 | - |
+| `imported_by` | ◯ | enum | `user` / `wellfort_batch` / `wellfort_manual` | - |
+| `age_at_test` | - | int | **年齢のみ** (生年月日は保存禁止) | - |
+| `sex` | - | enum | 性別 (診断に必要) | - |
+| **氏名・生年月日・住所** | ✕ **保存禁止** | - | front-matter にも本体にも入れない | **PII** |
+
+#### `source: user_upload` のユーザー検証フェーズ
+
+ユーザーが本アプリで撮影・アップロードした場合は、Gemini 生出力をそのまま永続化せず、UI で**セル単位の人間確認**を経てから確定 `scan_md` を書き出す。UX 仕様は `docs/scan_feature_requirements.md` §5 を参照。要点:
 
 - 表全体のトリミング画像 + 領域 bbox オーバーレイをハブ画面とする
 - ブロックをタップすると 9 列テーブルを展開、**セル単位**で着色 (黄=要確認 / 緑=確認済 or 元から OK)
 - 疑念セルをタップするとモーダルで該当行の全セルを入力フィールドとして表示
 - 各疑念セルは「直接修正」または「このまま OK」で個別に解消できる
 - 行内の疑念セル**全て**が解消されたら行が緑になり、全行緑で「✓ 確認して送信」が活性化
+
+#### `source: wellfort_lab` の取込フェーズ
+
+Wellfort 側が代理アップロードする場合 (固定フォーマットの 血液・遺伝子・がんリスク・AI予測 等) は、本アプリのユーザー検証 UI は介在しない。代わりに、Wellfort 側のバッチパイプラインで以下を実施:
+
+1. **ユーザー割当** — `diagnostic_user_id` を検査機関から取得 or 検査ID で逆引き (詳細: `docs/lab_integration_workflow.md`)
+2. **PII 除去** — front-matter の `age_at_test` / `sex` のみ抽出、氏名・生年月日・住所は破棄
+3. **スキーマ正規化** — 検査種別ごとの標準 Markdown 本体に整形 (§3.6)
 
 #### Gemini 生出力 (中間データ、永続化されない)
 
@@ -156,6 +210,73 @@ customer_id (1) ─── (n) diagnosis_user_id [このユーザーの認証実�
 - 不明値は `(?)`、推測補完禁止
 - 「備考」列の `【要確認】` は Gemini 監査官が検出した不整合シグナルで、Elith 側は重み付けに利用可能
 - 「推論値」列は **本フォーマットに存在しない** (中間データ、永続化禁止)
+
+#### 検査種別ごとの本体スキーマ
+
+`test_type` の値ごとに、Markdown 本体の標準セクション構成を定める。Elith 側パーサが `test_type` で分岐できるよう、**セクション見出しと表の列構成は固定**する。
+
+##### `test_type: health_checkup` (人間ドック / 定期健康診断)
+
+ユーザー撮影 (source: `user_upload`) でも Wellfort 取込でも同じ。9 列固定 (上述)。
+
+##### `test_type: blood` (Wellfort 経由・血液検査)
+
+```markdown
+## 血液検査値表
+| No | 検査項目 | 検査項目詳細 | 読み取った値 | 単位 | 下限値 | 上限値 | 判定 | 備考 |
+|----|----------|--------------|--------------|------|--------|--------|------|------|
+| 1  | HbA1c    | HbA1c (NGSP) | 6.2          | %    | 4.6    | 6.2    | -    | -    |
+```
+
+`health_checkup` と同じ 9 列。違いは `source: wellfort_lab` で固定フォーマットゆえ Gemini 介在不要。
+
+##### `test_type: genetics` (Wellfort 経由・遺伝子検査)
+
+```markdown
+## 遺伝子リスク評価
+| 疾患カテゴリ | リスクランク | 相対リスク | コメント |
+|---|---|---|---|
+| 大腸がん | 高 | 1.8 | APC 変異検出 |
+| 2型糖尿病 | 中 | 1.3 | - |
+
+## 詳細所見
+- 高リスク所見: ...
+- 中リスク所見: ...
+```
+
+##### `test_type: cancer_urine` (Wellfort 経由・がんリスク検査)
+
+```markdown
+## がんリスク評価 (尿検体)
+| 指標 | 値 | リスクランク | 備考 |
+|---|---|---|---|
+| ポルフィリン量 | 12.4 ng/mL | 中 | - |
+| インデックス値 | 4.2 | 高 | 要精査 |
+
+## 推奨事項
+- 3 ヶ月以内の精密検査推奨
+```
+
+##### `test_type: ai_prediction` (Wellfort 経由・AI 疾病予測)
+
+```markdown
+## AI 疾病予測結果
+| 予測項目 | 確率 | 95% 信頼区間 | 予測根拠 (top 3) |
+|---|---|---|---|
+| 5 年以内の 2 型糖尿病発症 | 18% | 14-22% | HbA1c, BMI, 家族歴 |
+| 10 年以内の心血管イベント | 8% | 5-11% | LDL-C, 血圧, 喫煙歴 |
+
+## モデル情報
+- model_name: <vendor>/<model>
+- model_version: 1.2.0
+```
+
+##### 共通規約
+
+- セクション見出しと表の列構成は `schema_version` 単位で**不変** (Elith 側のパース安定性のため)
+- 数値型は単位付きで文字列化 (例: `12.4 ng/mL`) — Elith 側で正規化
+- 不明値は `(?)`、推測補完禁止
+- 表に表現できない自由テキスト所見は `## 詳細所見` セクションへ箇条書きで
 
 ### 3.3 `interrogation_md` のフォーマット（予定）
 

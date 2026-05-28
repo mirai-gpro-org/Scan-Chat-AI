@@ -3,7 +3,7 @@
 | 項目 | 内容 |
 |---|---|
 | 文書名 | Wellfort Web アプリ 設計コンセプト |
-| バージョン | 0.2 (Draft) |
+| バージョン | 0.3 (Draft) |
 | 作成日 | 2026-05-28 |
 | 位置づけ | プロダクトのミッション・ビジョン・戦略の**最上位**文書。技術詳細は本書から参照する各仕様書に委ねる |
 | 想定読者 | 経営層・プロジェクト関係者・新規参画メンバ・パートナー (Elith 等) |
@@ -197,14 +197,35 @@ Elith から戻る診断結果報告書を起点に、LLM で再構成して **�
 
 Wellfort 社側が個人別に自動または手動でアップロード:
 
-| 種別 | フォーマット |
-|---|---|
-| 血液検査 | **固定** |
-| 遺伝子検査 | **固定** |
-| がんリスク検査 (尿) | **固定** |
-| AI 疾病予測 (Elith 以外) | **固定** |
+| 種別 | フォーマット | `test_type` |
+|---|---|---|
+| 血液検査 | **固定** | `blood` |
+| 遺伝子検査 | **固定** | `genetics` |
+| がんリスク検査 (尿) | **固定** | `cancer_urine` |
+| AI 疾病予測 (Elith 以外) | **固定** | `ai_prediction` |
 
 → 固定フォーマットなので、将来 Document AI Custom Extractor に移行する候補 (Phase 2 以降)
+
+#### データ形式
+
+a/b いずれの取込経路でも **同一の `scan_md`** フォーマット (YAML front-matter + 検査種別ごとの標準 Markdown 本体) で保存する。これにより下流 Elith は出自を意識せず消費可能。詳細スキーマ: `diagnostic_session_data_spec.md §3.2`
+
+#### ユーザー割当 (b 経由のみの課題)
+
+Wellfort 側で受領した PDF をどの `diagnostic_user_id` に紐付けるかは、以下 3 つの Workflow を併用:
+
+| 優先度 | Workflow | 概要 | 適用 Phase |
+|---|---|---|---|
+| ★★★ | **ID 同伴方式** | 検査キット発送時に `diagnostic_user_id` をバーコード等で検査機関に渡し、結果に同伴して戻してもらう | Phase 2 主軸 |
+| ★★ | **検査ID 逆引き方式** | 発注時の `external_test_id ↔ diagnostic_user_id` マッピングで逆引き | **Phase 1 主軸** |
+| ★ | **AI 抽出 + 人間承認** (補助) | PDF から氏名等を OCR → 顧客マスタと候補突合 → 担当者が承認 | フォールバック |
+
+**重要原則** (`data_integration_requirements §1.3-7` 準拠):
+- 氏名・生年月日の OCR 自動割当**だけ**で確定するのは禁止 (誤割当 = PHI 漏洩)
+- 氏名・生年月日・住所は `scan_md` に**保存しない** (front-matter には `age_at_test` (年齢のみ) と `sex` のみ)
+- 全 Workflow で監査ログ 10 年保管
+
+詳細フロー・実装要件: `lab_integration_workflow.md`
 
 ### c) Elith AI への連携 (AWS S3 自動連携)
 
@@ -288,7 +309,8 @@ Wellfort 社側が個人別に自動または手動でアップロード:
 | `system_architecture_overview.md` | 技術アーキテクチャ全体図・4 コンポーネント・設計ポリシー |
 | `device_and_auth_requirements.md` | 認証 (Google One Tap → マイナ+JPKI)・デバイス対応 |
 | `data_integration_requirements.md` | データ連携・Elith 接続・diagnostic_user_id 設計 |
-| `diagnostic_session_data_spec.md` | 検査セッションのデータ仕様 (scan_md, interrogation_md) |
+| `diagnostic_session_data_spec.md` | 検査セッションのデータ仕様 (scan_md 統一フォーマット、検査種別スキーマ、interrogation_md) |
+| `lab_integration_workflow.md` | **検査機関連携・ユーザー割当ワークフロー** (Workflow 1/2/3) |
 | `scan_feature_requirements.md` | スキャン機能の詳細要件 |
 | `scan_chat_medical_ai_proposal.pdf` | スキャン・問診の UI/UX 提案書 (機能 1〜4 のワイヤーフレーム) |
 | `ai_app_ui_ux_proposal.pdf` | **ダッシュボード UI/UX 提案書** (4 アプローチのモック + AI 時代の設計手法 + UI 破綻サンプル) |
@@ -302,3 +324,4 @@ Wellfort 社側が個人別に自動または手動でアップロード:
 |---|---|---|
 | 0.1 | 2026-05-28 | パイロット版完了時点のコンセプトを最上位文書として整理。Mission / Vision、5 つの戦略目標、入力データ 3 ソース (a/b/c)、認証ロードマップ (Google One Tap → マイナ+JPKI)、「読ませるレポート」→「行動を促すダッシュボード」を明文化 |
 | 0.2 | 2026-05-28 | §2 プロダクト哲学を **4 つの UI アプローチ** (プログレッシブ・ディスクロージャー / アクション・タスク化 / 対話型ヘルスコーチ / シチュエーション別カード) で具体化。AI 時代の UI 設計手法 (静的ワイヤーフレームの限界、コードベース・プロトタイピング推奨) を追加。アンチパターン「スクロール地獄」を明示。`ai_app_ui_ux_proposal.pdf` (ダッシュボードモック + 設計手法) を関連ドキュメントに追加 |
+| 0.3 | 2026-05-28 | §5 (b) Wellfort 経由データの**形式**と**ユーザー割当**を明確化。a/b 共通の統一 `scan_md` フォーマット (YAML front-matter + 検査種別スキーマ) を採用方針として明文化。3 つの割当 Workflow (ID 同伴 / 検査ID 逆引き / AI 抽出+人間承認) を Phase 別に併用。新規 `lab_integration_workflow.md` を関連ドキュメントに追加 |
