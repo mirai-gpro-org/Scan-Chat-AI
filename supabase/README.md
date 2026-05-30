@@ -92,7 +92,7 @@ http://127.0.0.1:54323 にアクセス → `customer` / `diagnosis` schema を�
 
 | schema.table | 行数 | 主な内容 |
 |---|---:|---|
-| customer.customer_profiles | 10 | 物部 慶幸 / 田中 花子 / 山田 太郎 ... |
+| customer.customer_profiles | 10 | 真鍋 慶次郎 / 田中 花子 / 山田 太郎 ... |
 | customer.lab_companies     |  5 | リージャー / PREVENT / ジェノプラン / LAiF / 北里 |
 | customer.subscription_plans |  3 | 基本 / がんリスク付 / AI 予測付 (年3回パック) |
 | customer.subscriptions     |  6 | active 5 + paused 1 |
@@ -107,7 +107,7 @@ http://127.0.0.1:54323 にアクセス → `customer` / `diagnosis` schema を�
 
 | 顧客 | diagnostic_user_id | 状況 |
 |---|---|---|
-| 物部 慶幸 (55) | `d0000001-...` | サンプル PDF と同一人物。AI 予測付パック、検査履歴 5 件 + ユーザー UL 1 件、Elith 診断結果あり |
+| 真鍋 慶次郎 (55) | `d0000001-...` | サンプル PDF と同一人物。AI 予測付パック、検査履歴 5 件 + ユーザー UL 1 件、Elith 診断結果あり |
 | 田中 花子 (41) | `d0000002-...` | がんリスク付パック、年 1 回目完了、次回 4 月 (現在発送中) |
 | 山田 太郎 (67) | `d0000003-...` | AI 予測付、年 3 回目完了、次回 4 月 |
 | 鈴木 一郎 (33) | `d0000004-...` | 契約直後、まだ検査なし |
@@ -120,7 +120,7 @@ http://127.0.0.1:54323 にアクセス → `customer` / `diagnosis` schema を�
 
 ## クエリ例
 
-### 「物部様」のダッシュボード相当データ取得
+### 「真鍋様」のダッシュボード相当データ取得
 
 ```sql
 -- 進捗中の検査キット (今回 + 次回)
@@ -180,5 +180,5 @@ SUPABASE_SERVICE_ROLE_KEY=<supabase status の service_role key>
 ## 注意事項
 
 - **dev profile の RLS は緩めです**。本番移行時に `data_integration_requirements.md §6` の RLS ポリシーへ差し替えてください。
-- **本サンプルデータの氏名は架空**です (物部慶幸はサンプル PDF の表記を流用)。
+- **本サンプルデータの氏名は架空**です (真鍋慶次郎はサンプル PDF の表記を流用)。
 - **再シード** (`supabase db reset`) でデータは初期化されます。

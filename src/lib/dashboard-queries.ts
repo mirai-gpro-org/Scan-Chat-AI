@@ -46,7 +46,7 @@ export interface DashboardData {
   subscription: (Subscription & { plan_name: string | null }) | null;
 }
 
-const DEFAULT_USER = 'd0000001-0000-0000-0000-000000000000'; // 物部 慶幸
+const DEFAULT_USER = 'd0000001-0000-0000-0000-000000000000'; // 真鍋 慶次郎
 
 /** dashboard.astro から呼ぶ。 */
 export async function loadDashboard(diagnosticUserId?: string | null): Promise<DashboardData | { error: string }> {
@@ -185,7 +185,7 @@ export async function getMetricTrend(
   return out;
 }
 
-/** ユーザー氏名を「物部様」形式で返す。なければ「お客様」。 */
+/** ユーザー氏名を「真鍋様」形式で返す。なければ「お客様」。 */
 export function formatGreeting(data: DashboardData): string {
   if (data.appUser?.display_name_cache) return data.appUser.display_name_cache;
   if (data.customer?.family_name) return `${data.customer.family_name}様`;
