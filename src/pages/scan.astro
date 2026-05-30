@@ -39,11 +39,31 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
           検査用紙をカメラで読み取り、AI が項目を自動で認識します。
         </p>
       </div>
-      <ul class="w-full space-y-1.5 rounded-2xl bg-slate-50 p-3 text-left text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-200">
-        <li class="flex gap-2"><span aria-hidden>💡</span>明るい場所で撮影してください</li>
-        <li class="flex gap-2"><span aria-hidden>📄</span>用紙全体が枠に収まるようにかざします</li>
-        <li class="flex gap-2"><span aria-hidden>🔒</span>画像はサーバに保存されません</li>
-      </ul>
+      {/* ━━━ メインアクション: ファイル (primary) + カメラ (secondary) ━━━ */}
+      <div class="w-full space-y-2">
+        <label
+          for="scan-file"
+          class="group flex w-full cursor-pointer flex-col items-center justify-center gap-1 rounded-2xl bg-gradient-to-br from-brand-600 to-cyan-600 px-5 py-5 text-center font-semibold text-white shadow-lg shadow-brand-500/30 transition hover:from-brand-700 hover:to-cyan-700 hover:shadow-xl active:scale-[0.98]"
+        >
+          <span class="text-3xl">📎</span>
+          <span class="text-base">ファイルをアップロード</span>
+          <span class="text-[11px] font-normal text-white/85">PDF / JPEG / PNG / WebP / HEIC<span class="text-white/65"> (最大 4 MB)</span></span>
+        </label>
+        <input
+          id="scan-file"
+          type="file"
+          class="hidden"
+          accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"
+        />
+
+        <button
+          id="scan-start"
+          class="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 active:scale-[0.98] dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+        >
+          <span class="text-lg">📷</span>
+          <span>カメラで撮影</span>
+        </button>
+      </div>
 
       {/* ━━━ これまでにスキャンした検査一覧 ━━━ */}
       {uploads.length > 0 && (
@@ -93,30 +113,18 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
           )}
         </section>
       )}
-      <div class="mt-auto flex w-full flex-col gap-2">
-        <button id="scan-start" class="btn-primary w-full !py-4 text-lg">
-          📷 カメラで撮影
-        </button>
 
-        <div class="my-1 flex items-center gap-3">
-          <span class="h-px flex-1 bg-slate-200 dark:bg-slate-700"></span>
-          <span class="text-xs text-slate-500">または</span>
-          <span class="h-px flex-1 bg-slate-200 dark:bg-slate-700"></span>
-        </div>
-
-        <label for="scan-file" class="btn-secondary w-full cursor-pointer !py-4 text-center text-lg">
-          📎 ファイルを選択
-        </label>
-        <input
-          id="scan-file"
-          type="file"
-          class="hidden"
-          accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"
-        />
-        <p class="text-center text-xs text-slate-500">
-          PDF / JPEG / PNG / WebP / HEIC <span class="text-slate-400">(最大 4 MB)</span>
-        </p>
-      </div>
+      {/* ━━━ 撮影のコツ (折りたたみ) ━━━ */}
+      <details class="w-full text-left">
+        <summary class="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700 dark:text-slate-400">
+          💡 きれいに読み取るコツ
+        </summary>
+        <ul class="mt-2 space-y-1 rounded-xl bg-slate-50 p-3 text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-200">
+          <li class="flex gap-2"><span aria-hidden>💡</span>明るい場所で撮影してください</li>
+          <li class="flex gap-2"><span aria-hidden>📄</span>用紙全体が枠に収まるようにかざします</li>
+          <li class="flex gap-2"><span aria-hidden>🔒</span>画像はサーバに保存されません</li>
+        </ul>
+      </details>
     </section>
 
     <!-- ============================================================== -->
