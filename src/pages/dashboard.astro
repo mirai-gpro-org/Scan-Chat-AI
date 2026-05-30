@@ -99,6 +99,7 @@ const totalChars  = sections.reduce((sum, s) => sum + (s.char_count || 0), 0);
           shipments={data?.shipments ?? []}
           nextTestAt={data?.subscription?.next_test_at}
           planName={data?.subscription?.plan_name}
+          diagnosticUserId={data?.diagnosticUserId ?? ''}
         />
 
         <TestHistoryList artifacts={data?.artifacts ?? []} />
