@@ -101,6 +101,8 @@ const computed: Computed[] = series.map((s) => {
 });
 ---
 
+{/* 大型グラフ用のパラメータ (モーダル内で使う) */}
+{(() => null)()}
 {series.length === 0 ? null : (
   <section class="card">
     <header class="mb-3 flex items-center justify-between">
@@ -111,93 +113,53 @@ const computed: Computed[] = series.map((s) => {
     </header>
 
     <div class="flex flex-col gap-4 sm:grid sm:grid-cols-3 sm:gap-3">
-      {computed.map(({ s, pts, refY, trendColor, diff }) => {
+      {computed.map(({ s, pts, refY, trendColor, diff }, idx) => {
         const last = s.points[s.points.length - 1];
-        const first = s.points[0];
         const arrow = diff > 0 ? '↗' : diff < 0 ? '↘' : '→';
-        const comment = commentFor(s.label, first.value, last.value, s.referenceUpper, diff);
         return (
-          <details class="group rounded-xl border border-slate-200 bg-white p-3 transition open:shadow-md dark:border-slate-700 dark:bg-slate-900">
-            <summary class="cursor-pointer list-none">
-              <div class="mb-1 flex items-baseline justify-between gap-2">
-                <h3 class="text-xs font-semibold text-slate-700 dark:text-slate-200">{s.label}</h3>
-                <span class="text-[10px] text-slate-500">単位 {s.unit}</span>
-              </div>
-              <div class="mb-1 flex items-baseline gap-2">
-                <span class="text-xl font-bold tabular-nums" style={`color: ${trendColor}`}>{last.raw}</span>
-                <span class="text-xs font-medium" style={`color: ${trendColor}`}>
-                  {arrow} {diff > 0 ? '+' : ''}{diff.toFixed(diff % 1 === 0 ? 0 : 1)}
-                </span>
-              </div>
-              <svg viewBox={`0 0 ${W} ${H}`} class="w-full h-auto" role="img" aria-label={`${s.label}の推移`}>
-                {refY !== null && (
-                  <>
-                    <line x1={PAD_L} y1={refY} x2={W - PAD_R} y2={refY}
-                      stroke="#ef4444" stroke-width="1" stroke-dasharray="3 3" opacity="0.5" />
-                    <text x={W - PAD_R} y={refY - 2} text-anchor="end"
-                      class="fill-red-500" style="font-size: 9px">
-                      基準 {s.referenceUpper}
-                    </text>
-                  </>
-                )}
-                <line x1={PAD_L} y1={H - PAD_B} x2={W - PAD_R} y2={H - PAD_B}
-                  stroke="#cbd5e1" stroke-width="1" />
-                <path d={buildPath(pts)} fill="none" stroke={trendColor} stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
-                {pts.map((p) => (
-                  <>
-                    <circle cx={p.x} cy={p.y} r="3.5" fill="white" stroke={trendColor} stroke-width="2" />
-                    <text x={p.x} y={H - PAD_B + 14} text-anchor="middle"
-                      class="fill-slate-500" style="font-size: 9px">
-                      {`${new Date(p.date).getMonth() + 1}/${new Date(p.date).getDate()}`}
-                    </text>
-                  </>
-                ))}
-              </svg>
-              <div class="mt-1 flex items-center justify-end gap-1 text-[10px] text-brand-600 group-open:hidden">
-                <span>詳細を見る</span><span>›</span>
-              </div>
-              <div class="mt-1 hidden items-center justify-end gap-1 text-[10px] text-brand-600 group-open:flex">
-                <span>閉じる</span><span>›</span>
-              </div>
-            </summary>
-
-            {/* ─ 展開時の詳細 ─ */}
-            <div class="mt-3 space-y-3 border-t border-slate-200 pt-3 dark:border-slate-700">
-              <p class="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">{comment}</p>
-              <div class="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
-                <table class="w-full table-auto text-[11px]">
-                  <thead class="bg-slate-50 dark:bg-slate-800">
-                    <tr>
-                      <th class="px-2 py-1 text-left font-medium text-slate-600 dark:text-slate-300">検査日</th>
-                      <th class="px-2 py-1 text-right font-medium text-slate-600 dark:text-slate-300">値 ({s.unit})</th>
-                      <th class="px-2 py-1 text-right font-medium text-slate-600 dark:text-slate-300">基準</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {s.points.map((p, i) => {
-                      const prev = i > 0 ? s.points[i - 1] : null;
-                      const delta = prev ? p.value - prev.value : 0;
-                      const over = s.referenceUpper != null && p.value > s.referenceUpper;
-                      return (
-                        <tr class="border-t border-slate-100 dark:border-slate-800">
-                          <td class="px-2 py-1 text-slate-700 dark:text-slate-200">{formatJpDate(p.date)}</td>
-                          <td class={`px-2 py-1 text-right tabular-nums ${over ? 'text-red-600 font-semibold' : 'text-slate-700 dark:text-slate-200'}`}>
-                            {p.raw}
-                            {prev && (
-                              <span class={`ml-1 text-[10px] ${delta > 0 ? 'text-amber-600' : delta < 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
-                                ({delta > 0 ? '+' : ''}{delta.toFixed(delta % 1 === 0 ? 0 : 1)})
-                              </span>
-                            )}
-                          </td>
-                          <td class="px-2 py-1 text-right text-[10px] text-slate-400">{s.referenceUpper ? `〜${s.referenceUpper}` : '-'}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+          <article class="rounded-xl border border-slate-200 bg-white p-3 transition hover:border-brand-300 hover:shadow-md dark:border-slate-700 dark:bg-slate-900">
+            <div class="mb-1 flex items-baseline justify-between gap-2">
+              <h3 class="text-xs font-semibold text-slate-700 dark:text-slate-200">{s.label}</h3>
+              <span class="text-[10px] text-slate-500">単位 {s.unit}</span>
             </div>
-          </details>
+            <div class="mb-1 flex items-baseline gap-2">
+              <span class="text-xl font-bold tabular-nums" style={`color: ${trendColor}`}>{last.raw}</span>
+              <span class="text-xs font-medium" style={`color: ${trendColor}`}>
+                {arrow} {diff > 0 ? '+' : ''}{diff.toFixed(diff % 1 === 0 ? 0 : 1)}
+              </span>
+            </div>
+            <svg viewBox={`0 0 ${W} ${H}`} class="w-full h-auto" role="img" aria-label={`${s.label}の推移`}>
+              {refY !== null && (
+                <>
+                  <line x1={PAD_L} y1={refY} x2={W - PAD_R} y2={refY}
+                    stroke="#ef4444" stroke-width="1" stroke-dasharray="3 3" opacity="0.5" />
+                  <text x={W - PAD_R} y={refY - 2} text-anchor="end"
+                    class="fill-red-500" style="font-size: 9px">
+                    基準 {s.referenceUpper}
+                  </text>
+                </>
+              )}
+              <line x1={PAD_L} y1={H - PAD_B} x2={W - PAD_R} y2={H - PAD_B}
+                stroke="#cbd5e1" stroke-width="1" />
+              <path d={buildPath(pts)} fill="none" stroke={trendColor} stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
+              {pts.map((p) => (
+                <>
+                  <circle cx={p.x} cy={p.y} r="3.5" fill="white" stroke={trendColor} stroke-width="2" />
+                  <text x={p.x} y={H - PAD_B + 14} text-anchor="middle"
+                    class="fill-slate-500" style="font-size: 9px">
+                    {`${new Date(p.date).getMonth() + 1}/${new Date(p.date).getDate()}`}
+                  </text>
+                </>
+              ))}
+            </svg>
+            <button
+              type="button"
+              data-trend-open={idx}
+              class="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-lg bg-slate-50 px-2 py-1.5 text-[11px] font-medium text-brand-600 hover:bg-brand-50 dark:bg-slate-800 dark:text-brand-300 dark:hover:bg-brand-500/10"
+            >
+              詳細を見る ›
+            </button>
+          </article>
         );
       })}
     </div>
@@ -207,3 +169,220 @@ const computed: Computed[] = series.map((s) => {
     </p>
   </section>
 )}
+
+{/* ━━━━ 詳細モーダル (各指標分を予め DOM 配置、hidden で隠す) ━━━━ */}
+{computed.map(({ s, refY, trendColor, diff }, idx) => {
+  const last = s.points[s.points.length - 1];
+  const first = s.points[0];
+  const arrow = diff > 0 ? '↗' : diff < 0 ? '↘' : '→';
+  const comment = commentFor(s.label, first.value, last.value, s.referenceUpper, diff);
+
+  // 大型 SVG (モーダル用) のスケール: viewBox サイズを 4 倍程度に
+  const MW = 800;
+  const MH = 360;
+  const ML = 56, MR = 24, MT = 28, MB = 48;
+  const innerW = MW - ML - MR;
+  const innerH = MH - MT - MB;
+  const values = s.points.map((p) => p.value);
+  let mMin = Math.min(...values);
+  let mMax = Math.max(...values);
+  if (s.referenceUpper) {
+    mMin = Math.min(mMin, s.referenceUpper);
+    mMax = Math.max(mMax, s.referenceUpper);
+  }
+  const mSpan = Math.max(mMax - mMin, 1);
+  mMin -= mSpan * 0.1;
+  mMax += mSpan * 0.1;
+  const xStep = s.points.length > 1 ? innerW / (s.points.length - 1) : 0;
+  const mPts = s.points.map((p, i) => ({
+    x: ML + xStep * i,
+    y: MT + innerH * (1 - (p.value - mMin) / (mMax - mMin)),
+    v: p.value, raw: p.raw, date: p.date,
+  }));
+  const mRefY = s.referenceUpper
+    ? MT + innerH * (1 - (s.referenceUpper - mMin) / (mMax - mMin))
+    : null;
+  const mPath = mPts.length === 0 ? '' :
+    mPts.map((p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`)).join(' ');
+
+  // Y 軸目盛 (4 段階)
+  const yTicks = Array.from({ length: 4 }, (_, i) => ({
+    val: mMin + (mMax - mMin) * (i / 3),
+    ty: MT + innerH * (1 - i / 3),
+  }));
+  const fmtY = (n: number) => n.toFixed(s.unit === 'mmHg' ? 0 : 1);
+
+  return (
+    <div
+      id={`trend-modal-${idx}`}
+      data-trend-modal
+      hidden
+      class="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={`trend-modal-title-${idx}`}
+    >
+      <div data-trend-close class="sheet-backdrop"></div>
+      <div
+        class="relative z-10 mx-auto w-full max-w-3xl rounded-t-3xl sm:rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900 max-h-[92vh] overflow-y-auto"
+      >
+        <header class="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-slate-200 bg-white/95 px-5 py-3 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
+          <div class="flex items-baseline gap-2">
+            <h2 id={`trend-modal-title-${idx}`} class="text-base font-bold text-slate-800 dark:text-slate-100">
+              📈 {s.label} の数値変動
+            </h2>
+            <span class="text-[11px] text-slate-500">単位 {s.unit}</span>
+          </div>
+          <button
+            type="button"
+            data-trend-close
+            aria-label="閉じる"
+            class="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >✕</button>
+        </header>
+
+        <div class="space-y-4 px-5 py-4">
+          {/* 最新値 + トレンド */}
+          <div class="flex items-baseline gap-3">
+            <span class="text-3xl font-bold tabular-nums" style={`color: ${trendColor}`}>{last.raw}</span>
+            <span class="text-base font-medium" style={`color: ${trendColor}`}>
+              {arrow} {diff > 0 ? '+' : ''}{diff.toFixed(diff % 1 === 0 ? 0 : 1)} {s.unit}
+            </span>
+            <span class="text-xs text-slate-500">最新 / 初回比</span>
+          </div>
+
+          {/* 大型グラフ */}
+          <div class="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+            <svg viewBox={`0 0 ${MW} ${MH}`} class="w-full h-auto" role="img" aria-label={`${s.label}の推移 (拡大)`}>
+              {/* Y 軸グリッド */}
+              {yTicks.map((t) => (
+                <>
+                  <line x1={ML} y1={t.ty} x2={MW - MR} y2={t.ty}
+                    stroke="#e2e8f0" stroke-width="1" opacity="0.6" />
+                  <text x={ML - 6} y={t.ty + 4} text-anchor="end"
+                    class="fill-slate-500" style="font-size: 12px">
+                    {fmtY(t.val)}
+                  </text>
+                </>
+              ))}
+              {/* 基準値ライン */}
+              {mRefY !== null && (
+                <>
+                  <line x1={ML} y1={mRefY} x2={MW - MR} y2={mRefY}
+                    stroke="#ef4444" stroke-width="1.5" stroke-dasharray="6 4" opacity="0.7" />
+                  <text x={MW - MR} y={mRefY - 4} text-anchor="end"
+                    class="fill-red-500 font-medium" style="font-size: 12px">
+                    基準上限 {s.referenceUpper}
+                  </text>
+                </>
+              )}
+              {/* X 軸 */}
+              <line x1={ML} y1={MH - MB} x2={MW - MR} y2={MH - MB}
+                stroke="#94a3b8" stroke-width="1.5" />
+              {/* 折れ線 + 塗り */}
+              <path d={mPath} fill="none" stroke={trendColor} stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
+              {/* 点 + 値ラベル + 日付 */}
+              {mPts.map((p) => (
+                <>
+                  <circle cx={p.x} cy={p.y} r="6" fill="white" stroke={trendColor} stroke-width="3" />
+                  <text x={p.x} y={p.y - 12} text-anchor="middle"
+                    class="fill-slate-700 font-medium" style="font-size: 13px">
+                    {p.raw}
+                  </text>
+                  <text x={p.x} y={MH - MB + 18} text-anchor="middle"
+                    class="fill-slate-500" style="font-size: 11px">
+                    {`${new Date(p.date).getFullYear()}/${new Date(p.date).getMonth() + 1}/${new Date(p.date).getDate()}`}
+                  </text>
+                </>
+              ))}
+            </svg>
+          </div>
+
+          {/* コメント */}
+          <div class="rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 dark:border-amber-700/50 dark:bg-amber-900/20">
+            <h3 class="mb-1 text-xs font-bold text-amber-900 dark:text-amber-200">💬 アドバイス</h3>
+            <p class="text-[13px] leading-relaxed text-amber-900 dark:text-amber-100">{comment}</p>
+          </div>
+
+          {/* 詳細データ表 */}
+          <div class="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
+            <table class="w-full table-auto text-sm">
+              <thead class="bg-slate-50 dark:bg-slate-800">
+                <tr>
+                  <th class="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300">検査日</th>
+                  <th class="px-3 py-2 text-right font-medium text-slate-600 dark:text-slate-300">値 ({s.unit})</th>
+                  <th class="px-3 py-2 text-right font-medium text-slate-600 dark:text-slate-300">前回比</th>
+                  <th class="px-3 py-2 text-right font-medium text-slate-600 dark:text-slate-300">基準</th>
+                </tr>
+              </thead>
+              <tbody>
+                {s.points.map((p, i) => {
+                  const prev = i > 0 ? s.points[i - 1] : null;
+                  const delta = prev ? p.value - prev.value : 0;
+                  const over = s.referenceUpper != null && p.value > s.referenceUpper;
+                  return (
+                    <tr class="border-t border-slate-100 dark:border-slate-800">
+                      <td class="px-3 py-2 text-slate-700 dark:text-slate-200">{formatJpDate(p.date)}</td>
+                      <td class={`px-3 py-2 text-right tabular-nums ${over ? 'text-red-600 font-semibold' : 'text-slate-700 dark:text-slate-200'}`}>
+                        {p.raw}
+                      </td>
+                      <td class={`px-3 py-2 text-right text-[12px] tabular-nums ${delta > 0 ? 'text-amber-600' : delta < 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
+                        {prev ? `${delta > 0 ? '+' : ''}${delta.toFixed(delta % 1 === 0 ? 0 : 1)}` : '-'}
+                      </td>
+                      <td class="px-3 py-2 text-right text-[12px] text-slate-400">{s.referenceUpper ? `〜${s.referenceUpper}` : '-'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <p class="text-[11px] text-slate-500">
+            ※ 赤点線=基準値上限。前回比は橙=上昇、緑=改善。
+          </p>
+        </div>
+
+        <footer class="sticky bottom-0 border-t border-slate-200 bg-white/95 px-5 py-3 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
+          <button
+            type="button"
+            data-trend-close
+            class="btn-primary w-full"
+          >閉じる</button>
+        </footer>
+      </div>
+    </div>
+  );
+})}
+
+<script is:inline>
+  (function () {
+    function openModal(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.hidden = false;
+      document.body.style.overflow = 'hidden';
+    }
+    function closeAll() {
+      document.querySelectorAll('[data-trend-modal]').forEach((el) => {
+        el.hidden = true;
+      });
+      document.body.style.overflow = '';
+    }
+    document.addEventListener('click', (e) => {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      const opener = target.closest('[data-trend-open]');
+      if (opener) {
+        const idx = opener.getAttribute('data-trend-open');
+        openModal('trend-modal-' + idx);
+        return;
+      }
+      if (target.closest('[data-trend-close]')) {
+        closeAll();
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeAll();
+    });
+  })();
+</script>
