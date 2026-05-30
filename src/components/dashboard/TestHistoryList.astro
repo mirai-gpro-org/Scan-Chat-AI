@@ -1,0 +1,64 @@
+---
+import type { TestArtifact } from '../../types/supabase';
+import { testTypeLabel, formatJpDate } from '../../lib/dashboard-queries';
+
+interface Props {
+  artifacts: TestArtifact[];
+}
+const { artifacts } = Astro.props as Props;
+---
+
+<section class="card">
+  <header class="mb-3 flex items-center justify-between">
+    <h2 class="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100">
+      <span>📊</span><span>検査履歴</span>
+    </h2>
+    <span class="text-[10px] text-slate-500">{artifacts.length} 件</span>
+  </header>
+
+  {artifacts.length === 0 ? (
+    <p class="rounded-xl bg-slate-50 px-3 py-6 text-center text-xs text-slate-500 dark:bg-slate-800/40">
+      過去の検査履歴はありません
+    </p>
+  ) : (
+    <ul class="space-y-2">
+      {artifacts.slice(0, 6).map((a) => {
+        const tt = testTypeLabel(a.test_type);
+        const isThreeMode = a.display_mode === 'three_mode';
+        return (
+          <li>
+            <a
+              href={`/result/${a.id}`}
+              class="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 transition hover:border-brand-300 hover:shadow-sm dark:border-slate-700 dark:bg-slate-900"
+            >
+              <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-brand-50 to-cyan-50 text-base dark:from-brand-500/20 dark:to-cyan-500/20">
+                {tt.emoji}
+              </span>
+              <div class="flex-1">
+                <div class="flex items-baseline justify-between gap-2">
+                  <h3 class="text-sm font-medium text-slate-800 dark:text-slate-100">{tt.name}</h3>
+                  <time class="text-[10px] text-slate-500">{formatJpDate(a.test_date)}</time>
+                </div>
+                <div class="mt-0.5 flex items-center gap-2 text-[10px] text-slate-500">
+                  <span>{a.lab_name ?? a.source}</span>
+                  {a.page_count && a.page_count > 1 && <span>· {a.page_count}pg</span>}
+                  {isThreeMode && (
+                    <span class="rounded-full bg-cyan-100 px-1.5 py-0.5 font-medium text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300">
+                      3 モード
+                    </span>
+                  )}
+                  {a.source === 'user_upload' && (
+                    <span class="rounded-full bg-slate-100 px-1.5 py-0.5 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                      自分でUP
+                    </span>
+                  )}
+                </div>
+              </div>
+              <span class="text-slate-400">›</span>
+            </a>
+          </li>
+        );
+      })}
+    </ul>
+  )}
+</section>
