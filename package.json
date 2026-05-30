@@ -5,7 +5,7 @@
   "private": true,
   "description": "Scan-Chat Medical AI — pilot scaffold (Astro + Tailwind + Vercel + Gemini)",
   "engines": {
-    "node": "20.x"
+    "node": ">=20"
   },
   "scripts": {
     "dev": "astro dev",
