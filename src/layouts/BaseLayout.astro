@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css';
+import GoogleOneTap from '../components/GoogleOneTap.astro';
 
 interface Props {
   title?: string;
@@ -26,5 +27,7 @@ const {
     <div class="mx-auto flex min-h-screen w-full max-w-md flex-col safe-top safe-bottom">
       <slot />
     </div>
+    {/* Google One Tap (PUBLIC_GOOGLE_CLIENT_ID 未設定なら何もレンダリングしない) */}
+    <GoogleOneTap />
   </body>
 </html>
