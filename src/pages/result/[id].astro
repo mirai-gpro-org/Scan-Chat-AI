@@ -11,6 +11,11 @@ const url = new URL(Astro.request.url);
 const u = url.searchParams.get('u') ?? '';
 // mode = summary (a) | highlights (b) | full (c)
 const mode = url.searchParams.get('mode') ?? 'summary';
+// PDF deep link target page (a/b の [pN] クリックで mode=full&page=N に遷移してくる)
+const initialPage = (() => {
+  const p = parseInt(url.searchParams.get('page') ?? '', 10);
+  return Number.isFinite(p) && p > 0 ? p : 1;
+})();
 
 const result = await loadResult(id ?? '');
 const hasError = 'error' in result;
@@ -26,9 +31,23 @@ const linkFor = (m: string) => {
   return `?${qs.toString()}`;
 };
 
+/** [pN] → PDF 該当ページへの deep link (?mode=full&page=N) に変換 */
 function md(text: string): string {
-  return marked.parse(text ?? '', { async: false }) as string;
+  if (!text) return '';
+  const linked = text.replace(/\[p(\d+)\]/g, (_, n) => {
+    const qs = new URLSearchParams();
+    if (u) qs.set('u', u);
+    qs.set('mode', 'full');
+    qs.set('page', String(n));
+    const cls = 'pdf-page-link inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 no-underline hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300';
+    return `<a href="?${qs.toString()}#pdf-viewer" class="${cls}" data-pdf-page="${n}" title="原本 PDF の ${n} ページ目を見る">📄 p${n}</a>`;
+  });
+  return marked.parse(linked, { async: false }) as string;
 }
+
+const pdfSrcWithPage = data?.samplePdfUrl
+  ? `${data.samplePdfUrl}#page=${initialPage}`
+  : null;
 ---
 
 <BaseLayout title={data ? `${tt.name} | Wellfort` : '検査結果 | Wellfort'}>
@@ -215,19 +234,22 @@ function md(text: string): string {
             </div>
 
             {/* 原本 PDF を iframe で */}
-            {data.samplePdfUrl && (
-              <article class="card">
+            {pdfSrcWithPage && (
+              <article id="pdf-viewer" class="card scroll-mt-24">
                 <header class="mb-2 flex items-center justify-between gap-2">
                   <h3 class="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100">
                     <span>📄</span><span>原本 PDF — {data.samplePdfLabel}</span>
                   </h3>
-                  <a href={data.samplePdfUrl} target="_blank" rel="noopener" class="text-[11px] font-medium text-brand-600 hover:underline">別タブで開く ↗</a>
+                  <span class="text-[11px] text-slate-500">p{initialPage} から表示</span>
+                  <a href={data.samplePdfUrl ?? '#'} target="_blank" rel="noopener" class="text-[11px] font-medium text-brand-600 hover:underline">別タブで開く ↗</a>
                 </header>
                 <iframe
-                  src={data.samplePdfUrl}
+                  id="result-pdf-iframe"
+                  data-pdf-base={data.samplePdfUrl}
+                  src={pdfSrcWithPage}
                   title={data.samplePdfLabel ?? '原本 PDF'}
                   class="w-full rounded-lg border border-slate-200 dark:border-slate-700"
-                  style="height: clamp(420px, 65vh, 720px);"
+                  style="height: clamp(420px, 75vh, 900px);"
                   loading="lazy"
                 ></iframe>
               </article>
@@ -289,3 +311,23 @@ function md(text: string): string {
     </>
   )}
 </BaseLayout>
+
+<script is:inline>
+  // PDF deep link: [pN] クリックでサーバラウンドトリップせず iframe を直接更新
+  (function () {
+    document.addEventListener('click', function (e) {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      const a = target.closest('a.pdf-page-link');
+      if (!a) return;
+      const iframe = document.getElementById('result-pdf-iframe');
+      if (!iframe) return; // iframe が無いタブ → 通常遷移
+      const page = a.getAttribute('data-pdf-page');
+      const base = iframe.getAttribute('data-pdf-base');
+      if (!page || !base) return;
+      e.preventDefault();
+      iframe.setAttribute('src', base + '#page=' + page);
+      iframe.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  })();
+</script>

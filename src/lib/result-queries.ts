@@ -13,6 +13,7 @@
 import { getServerSupabase } from './supabase';
 import type { TestArtifact, DiagnosisResult } from '../types/supabase';
 import { findSection, type ElithSection } from './elith-parser';
+import { getElithSampleFor } from './elith-samples';
 
 export interface ResultData {
   artifact: TestArtifact;
@@ -92,7 +93,12 @@ export async function loadResult(
     .limit(1)
     .maybeSingle();
 
-  const sections = (latestResult?.report as ElithSection[] | null) ?? [];
+  // 検査種別ごとの専用サンプル Elith を優先 (本番では artifact ごとの
+  // 個別 diagnosis_results に紐付ける)
+  const sampleSections = getElithSampleFor(artifact.test_type);
+  const sections: ElithSection[] = sampleSections
+    ?? ((latestResult?.report as ElithSection[] | null) ?? []);
+
   const summarySection = findSection(sections, 'アブストラクト');
   const highlightSections = HIGHLIGHT_NAMES
     .map((n) => findSection(sections, n))
