@@ -469,10 +469,20 @@ const FALLBACK_QUESTIONS: Array<{ pattern: RegExp; args: PresentArgs }> = [
 ];
 
 function matchFallbackQuestion(text: string): PresentArgs | null {
+  // 復唱や前置き ("『毎日』ですね。次に運動について...") が混ざると
+  // 古い質問のキーワードに誤マッチするため、必ず最後の疑問文だけを対象にする。
+  const target = extractLastQuestion(text);
   for (const fb of FALLBACK_QUESTIONS) {
-    if (fb.pattern.test(text)) return fb.args;
+    if (fb.pattern.test(target)) return fb.args;
   }
   return null;
+}
+
+/** AI 発話全体から「?」「？」で終わる最後の文だけ取り出す。 */
+function extractLastQuestion(text: string): string {
+  const matches = text.match(/[^。.!?？\n]+[?？]/g);
+  if (!matches || matches.length === 0) return text.slice(-80);
+  return matches[matches.length - 1];
 }
 
 export async function initLiveController(refs: LiveRefs): Promise<void> {
@@ -893,11 +903,12 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       //   ① 既知の Q キーワードにマッチすれば、対応する選択肢を自動表示
       //   ② マッチしなければ voice + 補助テキスト入力で回答可能に
       if (!presentQuestionCalledThisTurn && /[?？][\s」』）)]*$/.test(cleanedAssistant)) {
+        const lastQ = extractLastQuestion(cleanedAssistant);
         const fb = matchFallbackQuestion(cleanedAssistant);
         if (fb) {
-          applyPresentQuestion({ ...fb, question: cleanedAssistant.slice(-80) });
+          applyPresentQuestion({ ...fb, question: lastQ });
         } else {
-          refs.questionText.textContent = cleanedAssistant.slice(-60);
+          refs.questionText.textContent = lastQ;
           showWidget('voice');
           flashFallback();
         }
