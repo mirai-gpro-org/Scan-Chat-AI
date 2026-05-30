@@ -1,21 +1,23 @@
 /**
- * AI 問診（Live API）コントローラ。
+ * AI 問診コントローラ (Phase 1.0 — engine 駆動)
+ *
+ * 設計:
+ *   - 問診票本体 (Q1-1〜Q5-2, 分岐, 進捗) はクライアントの InterviewEngine が制御
+ *   - Live API (LLM) は「ユーザー回答の温かい復唱」「セクション切替の導線発話」だけを担当
+ *   - LLM が問診順を決めないので、ループ・選択肢欠落・順序乱れが構造的にゼロ
  *
  * UI:
  *   - 音声 / テキスト切替トグル
- *   - LLM が present_question ツールで質問種別を宣言 → 動的に widget を切替
- *     ( chip / multi / slider / stepper / text )
- *   - 補助テキスト入力（音声モードでも常時利用可）
+ *   - 質問は engine が出す → 動的に widget を切替 (chip/multi/slider/stepper)
+ *   - 補助テキスト入力 (音声モードでも常時利用可)
  *   - ストリーミング transcript で AI/ユーザー発話をライブ表示
  */
 
 import {
   GoogleGenAI,
   Modality,
-  Type,
   type Session,
   type LiveServerMessage,
-  type ToolListUnion,
 } from '@google/genai';
 import { marked } from 'marked';
 import { LiveAudioManager } from './live-audio-manager';
@@ -27,6 +29,12 @@ import {
   type ChatMessage,
   type ChatSession,
 } from '../../lib/session-store';
+import {
+  InterviewEngine,
+  SECTIONS as INTERVIEW_SECTIONS,
+  type QuestionDef,
+  type AnswerValue,
+} from './interview-script';
 
 export interface LiveRefs {
   log: HTMLElement;
@@ -94,16 +102,41 @@ export interface LiveRefs {
 
 const SESSION_ID = 'default';
 
-// 健康アドバイス用 問診票 (docs/20260331_AI参考問診票.png) 準拠の 5 セクション
-const SECTIONS = [
-  { id: 'lifestyle', title: '嗜好品' },        // 喫煙・飲酒・カフェイン
-  { id: 'activity',  title: '運動・活動量' },
-  { id: 'diet',      title: '食生活' },
-  { id: 'sleep',     title: '睡眠' },
-  { id: 'wellness',  title: '心身の健康' },
-];
+// 問診票のセクションは interview-script.ts に集約済 (INTERVIEW_SECTIONS を使用)
+const SECTIONS = INTERVIEW_SECTIONS;
 
-const SYSTEM_INSTRUCTION = `あなたは健康問診の AI 看護師です。
+const SYSTEM_INSTRUCTION = `あなたは健康問診の AI 看護師アシスタントです。問診票本体は画面のシステムが自動で出します。あなたの役割は限定的です。
+
+【絶対ルール】
+A. 質問を絶対に発話しない (画面のシステムが質問を出しています)。
+B. ツール呼び出しは一切不要 (廃止済)。
+C. 診断・処方は禁止。
+D. ユーザー回答が届くたびに、短く 1 文だけ温かく復唱する。
+
+【復唱例】
+- chip: 「『◯◯』ですね、ありがとうございます。」
+- multi: 「『◯◯』と『◯◯』、承知いたしました。」
+- slider: 「◯点ですね。」
+- stepper(0): 「ないんですね、わかりました。」
+- stepper(>0): 「◯◯ですね。」
+
+【セクション切替時】
+画面側から「次のセクション: 食生活」のような指示が来たら、復唱の後に 1 文だけ
+「次は食生活についてお伺いしますね。」のような優しい導線を添える。質問は発話しない。
+
+【セッション開始時】
+最初の発話 (1 ターン限り、絶対に繰り返さない):
+  「こんにちは、ウェルフォートの AI 問診です。下の画面の質問にお答えください。」
+質問は発話しない (画面に出ています)。
+
+【問診完了時】
+「お疲れさまでした、ご協力ありがとうございます。」と一言お礼。
+
+【緊急対応】
+ユーザーが胸痛 / 呼吸困難 / 意識消失 / 激しい頭痛 / 大量出血等を訴えたら、
+即座に「すぐに 119 番にお電話ください」と案内する。`;
+
+const _OBSOLETE_SYSTEM_INSTRUCTION = `あなたは健康問診の AI 看護師です。
 
 【絶対ルール — 違反禁止】
 A. 質問を発話する**全てのターン**で、必ず present_question を呼ぶ。呼ばずに質問だけ発話するのは禁止。
@@ -167,326 +200,16 @@ D. 診断・処方はしない。
 
 【完了時】Q5-2 終了で complete_interview を呼び、優しくお礼を言う。
 【緊急対応】胸痛/呼吸困難/意識消失/激しい頭痛/大量出血等 → 即 flag_emergency を呼び 119 を案内。`;
+void _OBSOLETE_SYSTEM_INSTRUCTION;
 
-const TOOLS: ToolListUnion = [
-  {
-    functionDeclarations: [
-      {
-        name: 'present_question',
-        description: '次の質問と、それに対する回答 UI を表示する',
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            section_id: { type: Type.STRING },
-            section_title: { type: Type.STRING },
-            percent: { type: Type.NUMBER, description: '0-100 の全体進捗' },
-            question: { type: Type.STRING, description: '画面に表示する質問文' },
-            answer_kind: {
-              type: Type.STRING,
-              description: 'chip | multi | slider | stepper | text',
-            },
-            chips: {
-              type: Type.ARRAY,
-              description: '単一選択肢（answer_kind=chip 時）',
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  label: { type: Type.STRING },
-                  emoji: { type: Type.STRING },
-                },
-              },
-            },
-            multi_options: {
-              type: Type.ARRAY,
-              description: '複数選択肢（answer_kind=multi 時）',
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  label: { type: Type.STRING },
-                  emoji: { type: Type.STRING },
-                },
-              },
-            },
-            multi_title: {
-              type: Type.STRING,
-              description: 'モーダルのタイトル（answer_kind=multi 時）',
-            },
-            slider_low_label: { type: Type.STRING },
-            slider_high_label: { type: Type.STRING },
-            stepper_unit: { type: Type.STRING },
-            stepper_max: { type: Type.NUMBER },
-            allow_skip: { type: Type.BOOLEAN },
-          },
-          required: ['section_id', 'section_title', 'percent', 'question', 'answer_kind'],
-        },
-      },
-      {
-        name: 'complete_interview',
-        description: '全ての問診が完了した時に呼ぶ',
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            summary: { type: Type.STRING },
-          },
-        },
-      },
-      {
-        name: 'flag_emergency',
-        description: '緊急対応が必要な所見を検知した時に呼ぶ',
-        parameters: {
-          type: Type.OBJECT,
-          properties: { reason: { type: Type.STRING } },
-          required: ['reason'],
-        },
-      },
-    ],
-  },
-];
+// TOOLS は廃止。engine 駆動になったため tool calling 一切不要 (定数自体も削除)。
 
-interface ChoiceOption {
-  label: string;
-  emoji?: string;
-}
+// (旧 _OBSOLETE_TOOLS の Gemini Type 依存定義は engine 駆動化により全削除済)
 
-interface PresentArgs {
-  section_id?: string;
-  section_title?: string;
-  percent?: number;
-  question?: string;
-  answer_kind?: string;
-  chips?: ChoiceOption[];
-  multi_options?: ChoiceOption[];
-  multi_title?: string;
-  slider_low_label?: string;
-  slider_high_label?: string;
-  stepper_unit?: string;
-  stepper_max?: number;
-  allow_skip?: boolean;
-}
-
-/**
- * Live API (音声 + tool 並行) は時々 present_question を呼び忘れる。
- * AI の発話文に既知の Q キーワードを含む場合、選択肢を逆引きして自動表示する。
- * 順序は重要 — より具体的なパターンを先に。
- */
-const FALLBACK_QUESTIONS: Array<{ pattern: RegExp; args: PresentArgs }> = [
-  // Q1-1 喫煙
-  { pattern: /(たばこ|煙草|喫煙)/, args: {
-    section_id: 'lifestyle', section_title: '嗜好品', percent: 5,
-    question: '普段たばこを吸われますか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '吸わない', emoji: '🚭' },
-      { label: '以前吸っていた', emoji: '🍃' },
-      { label: '吸っている', emoji: '🚬' },
-    ],
-  }},
-  // Q1-4 カフェイン (より具体的に)
-  { pattern: /(カフェイン|コーヒー)/, args: {
-    section_id: 'lifestyle', section_title: '嗜好品', percent: 18,
-    question: 'カフェイン入り飲料はどのくらい摂りますか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '毎日', emoji: '☀️' },
-      { label: '週に数回', emoji: '📅' },
-      { label: '月に数回', emoji: '🗓' },
-      { label: 'ほとんど摂らない', emoji: '🚫' },
-    ],
-  }},
-  // Q1-2 アルコール
-  { pattern: /(アルコール|お酒|飲酒|よく飲む)/, args: {
-    section_id: 'lifestyle', section_title: '嗜好品', percent: 10,
-    question: 'よく飲むアルコールを教えてください',
-    answer_kind: 'multi',
-    multi_title: 'よく飲むアルコールをすべて選んでください',
-    multi_options: [
-      { label: 'ビール', emoji: '🍺' },
-      { label: '日本酒', emoji: '🍶' },
-      { label: '焼酎', emoji: '🥃' },
-      { label: 'ワイン', emoji: '🍷' },
-      { label: 'ハイボール・チューハイ', emoji: '🍹' },
-      { label: 'その他' },
-      { label: '飲まない', emoji: '🚫' },
-    ],
-  }},
-  // Q2-3 座っている時間
-  { pattern: /(座って|座る|デスク).*(時間|どれくらい|どのくらい)/, args: {
-    section_id: 'activity', section_title: '運動・活動量', percent: 33,
-    question: '1日に座っている時間はどれくらいですか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '4時間以下' },
-      { label: '5-8時間' },
-      { label: '9-12時間' },
-      { label: '13時間以上' },
-    ],
-  }},
-  // Q2-2 運動時間 (Q2-1 で「ほとんどしない」を選んだ場合はそもそも到達しない)
-  { pattern: /(1回|一回|運動).*(時間|何分|長さ|分)/, args: {
-    section_id: 'activity', section_title: '運動・活動量', percent: 28,
-    question: '1回の運動時間はどれくらいですか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '15分' },
-      { label: '30分' },
-      { label: '60分' },
-      { label: '60分以上', emoji: '💪' },
-    ],
-  }},
-  // Q2-1 運動習慣
-  { pattern: /運動/, args: {
-    section_id: 'activity', section_title: '運動・活動量', percent: 23,
-    question: '普段、運動をする習慣はありますか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '週3回以上', emoji: '🏃' },
-      { label: '週1-2回', emoji: '🚶' },
-      { label: 'ほとんどしない', emoji: '🧘' },
-    ],
-  }},
-  // Q3-1 朝食
-  { pattern: /朝食|朝.*食/, args: {
-    section_id: 'diet', section_title: '食生活', percent: 42,
-    question: '朝食はどのくらいの頻度で食べますか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '毎日', emoji: '☀️' },
-      { label: '週4-6回' },
-      { label: '週1-3回' },
-      { label: 'ほとんど食べない', emoji: '🚫' },
-    ],
-  }},
-  // Q3-2 外食
-  { pattern: /外食/, args: {
-    section_id: 'diet', section_title: '食生活', percent: 46,
-    question: '外食はどのくらいの頻度ですか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '週5回以上' },
-      { label: '週2-4回' },
-      { label: '週1回' },
-      { label: 'ほとんどしない' },
-    ],
-  }},
-  // Q3-3 魚
-  { pattern: /(魚|魚介)/, args: {
-    section_id: 'diet', section_title: '食生活', percent: 50,
-    question: '魚をどのくらいの頻度で食べますか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '週3回以上', emoji: '🐟' },
-      { label: '週1-2回' },
-      { label: '月数回' },
-      { label: 'ほとんど食べない', emoji: '🚫' },
-    ],
-  }},
-  // Q3-4 野菜
-  { pattern: /野菜/, args: {
-    section_id: 'diet', section_title: '食生活', percent: 54,
-    question: '野菜は十分に取れていますか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '十分', emoji: '🥗' },
-      { label: '普通', emoji: '🥬' },
-      { label: '少ない', emoji: '🥦' },
-      { label: 'ほとんど食べない', emoji: '🚫' },
-    ],
-  }},
-  // Q3-5 食事制限
-  { pattern: /(食事制限|ダイエット|ヴィーガン|糖質制限)/, args: {
-    section_id: 'diet', section_title: '食生活', percent: 57,
-    question: '食事制限はされていますか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '特になし', emoji: '✅' },
-      { label: 'ダイエット中', emoji: '⚖️' },
-      { label: 'ヴィーガン', emoji: '🌱' },
-      { label: '糖質制限', emoji: '🍞' },
-      { label: 'その他' },
-    ],
-  }},
-  // Q3-6 サプリ
-  { pattern: /サプリ/, args: {
-    section_id: 'diet', section_title: '食生活', percent: 60,
-    question: 'サプリメントは摂取していますか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '摂っていない', emoji: '🚫' },
-      { label: '摂っている', emoji: '💊' },
-    ],
-  }},
-  // Q4-1 睡眠時間
-  { pattern: /(睡眠時間|何時間.*(寝|睡眠)|平均.*睡眠)/, args: {
-    section_id: 'sleep', section_title: '睡眠', percent: 68,
-    question: '平均的な睡眠時間はどのくらいですか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '5時間以下', emoji: '😴' },
-      { label: '6時間' },
-      { label: '7時間' },
-      { label: '8時間' },
-      { label: '9時間以上', emoji: '💤' },
-    ],
-  }},
-  // Q4-2 睡眠悩み
-  { pattern: /(寝つき|無呼吸|いびき|夜中.*目|睡眠.*悩|睡眠.*問題)/, args: {
-    section_id: 'sleep', section_title: '睡眠', percent: 76,
-    question: '睡眠の悩みはありますか？',
-    answer_kind: 'multi',
-    multi_title: '当てはまるものをすべて選んでください',
-    multi_options: [
-      { label: '寝つきが悪い', emoji: '😣' },
-      { label: '夜中に目が覚める', emoji: '🌙' },
-      { label: '朝早く目覚める', emoji: '🌅' },
-      { label: 'いびき・無呼吸を指摘された', emoji: '😪' },
-      { label: '特になし', emoji: '✅' },
-    ],
-  }},
-  // Q5-2 ストレス (slider 表現を先に判定)
-  { pattern: /ストレス/, args: {
-    section_id: 'wellness', section_title: '心身の健康', percent: 95,
-    question: 'ストレス度はどれくらいですか？(1〜10)',
-    answer_kind: 'slider',
-    slider_low_label: '全くない',
-    slider_high_label: '非常に高い',
-  }},
-  // Q5-1 症状
-  { pattern: /(症状|気になる|頭痛|肩こり|腰痛|関節痛)/, args: {
-    section_id: 'wellness', section_title: '心身の健康', percent: 88,
-    question: '気になる症状はありますか？',
-    answer_kind: 'multi',
-    multi_title: '当てはまるものをすべて選んでください',
-    multi_options: [
-      { label: '頭痛', emoji: '🤕' },
-      { label: '肩こり', emoji: '😣' },
-      { label: '腰痛', emoji: '🦴' },
-      { label: '関節痛', emoji: '🦵' },
-      { label: '冷え性', emoji: '🥶' },
-      { label: '倦怠感', emoji: '😪' },
-      { label: '消化不良', emoji: '😖' },
-      { label: '便秘・下痢', emoji: '🚽' },
-      { label: 'その他' },
-      { label: '特になし', emoji: '✅' },
-    ],
-  }},
-];
-
-function matchFallbackQuestion(text: string): PresentArgs | null {
-  // 復唱や前置き ("『毎日』ですね。次に運動について...") が混ざると
-  // 古い質問のキーワードに誤マッチするため、必ず最後の疑問文だけを対象にする。
-  const target = extractLastQuestion(text);
-  for (const fb of FALLBACK_QUESTIONS) {
-    if (fb.pattern.test(target)) return fb.args;
-  }
-  return null;
-}
-
-/** AI 発話全体から「?」「？」で終わる最後の文だけ取り出す。 */
-function extractLastQuestion(text: string): string {
-  const matches = text.match(/[^。.!?？\n]+[?？]/g);
-  if (!matches || matches.length === 0) return text.slice(-80);
-  return matches[matches.length - 1];
-}
+// 旧 ChoiceOption / PresentArgs / FALLBACK_QUESTIONS / matchFallbackQuestion /
+// extractLastQuestion は engine 駆動化 (interview-script.ts) により全削除済。
+// 必要な型は QuestionDef / AnswerValue (interview-script から import)。
+type ChoiceOption = { label: string; emoji?: string };
 
 export async function initLiveController(refs: LiveRefs): Promise<void> {
   let session: ChatSession = loadChatSession(SESSION_ID) ?? createEmptySession(SESSION_ID);
@@ -505,9 +228,12 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   let duplicateAssistantCount = 0;
 
   let mode: 'voice' | 'text' = 'voice';
-  let currentPresent: PresentArgs | null = null;
+  let currentQ: QuestionDef | null = null;
   let muted = false;
+  const engine = new InterviewEngine();
+  // 後方互換: 旧 fallback パス由来の参照を温存 (本実装では未使用)
   let presentQuestionCalledThisTurn = false;
+  void presentQuestionCalledThisTurn;
 
   if (session.messages.length > 0 && refs.resumeBanner) {
     refs.resumeBanner.hidden = false;
@@ -524,7 +250,8 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     stopLive();
     clearChatSession(SESSION_ID);
     session = createEmptySession(SESSION_ID);
-    currentPresent = null;
+    currentQ = null;
+    engine.reset();
     refs.resumeBanner && (refs.resumeBanner.hidden = true);
     renderHistory();
     renderProgress(0, '準備中…');
@@ -683,8 +410,8 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       p.classList.toggle('on', p.dataset.mode === mode);
       p.setAttribute('aria-selected', String(p.dataset.mode === mode));
     });
-    if (currentPresent) {
-      showWidget(mapKind(currentPresent.answer_kind));
+    if (currentQ) {
+      showWidget(mapKind(currentQ.answer_kind));
     } else {
       // 質問待機中: モードに応じたプレースホルダ
       if (mode === 'voice') {
@@ -744,16 +471,55 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     document.body.style.overflow = '';
   }
 
-  function submitAnswer(text: string): void {
-    if (!text) return;
-    appendMessage({ role: 'user', text, ts: Date.now() });
-    sendToModel(text);
-    // 回答送ったら voice/loading 表示に戻す（次の present_question を待つ）
-    refs.questionText.textContent = '…';
-    showWidget('voice');
-    refs.skipBtn.hidden = true;
-    currentPresent = null;
-    presentQuestionCalledThisTurn = false;
+  /**
+   * ユーザー回答を受けて engine から次の Q を決定し、画面を即更新する。
+   * AI には「回答に対する温かい復唱 (+任意のセクション導線)」だけ依頼する。
+   * AI に「次の質問は何か」は伝えず、質問を発話させない。
+   */
+  function submitAnswer(rawAnswer: string): void {
+    if (!rawAnswer) return;
+    const cq = currentQ;
+    if (!cq) {
+      // 未開始時は単純に AI へ渡す (例: 「リセット後の自由発話」)
+      appendMessage({ role: 'user', text: rawAnswer, ts: Date.now() });
+      sendToModel(rawAnswer);
+      return;
+    }
+
+    appendMessage({ role: 'user', text: rawAnswer, ts: Date.now() });
+
+    const answerValue = toAnswerValue(cq, rawAnswer);
+    const { next, isComplete } = engine.recordAndAdvance(answerValue);
+
+    if (isComplete || !next) {
+      showCompletion();
+      sendToModel(`ユーザーが最後の質問「${cq.question}」に「${rawAnswer}」と回答し、これで全問終了です。「お疲れさまでした、ご協力ありがとうございました」と温かく一言だけお願いします。質問は絶対に発話しないでください。`);
+      return;
+    }
+
+    const sectionChanged = cq.section_id !== next.section_id;
+    applyQuestionToUI(next);
+
+    const msg = sectionChanged
+      ? `ユーザーが「${rawAnswer}」と回答しました。これから「${next.section_title}」のセクションに進みます。1 文だけ温かく復唱し、続けて「次は${next.section_title}についてお伺いしますね」と一言だけ添えてください。質問は絶対に発話しないでください (画面に出ています)。`
+      : `ユーザーが「${rawAnswer}」と回答しました。1 文だけ温かく復唱してください。質問は絶対に発話しないでください (画面に出ています)。`;
+    sendToModel(msg);
+  }
+
+  /** UI に入る生文字列を engine が扱える型に変換 */
+  function toAnswerValue(q: QuestionDef, raw: string): AnswerValue {
+    if (q.answer_kind === 'multi') {
+      return raw.split('、').map((s) => s.trim()).filter(Boolean);
+    }
+    if (q.answer_kind === 'slider') {
+      const m = /^(\d+(?:\.\d+)?)/.exec(raw);
+      return m ? Number(m[1]) : 5;
+    }
+    if (q.answer_kind === 'stepper') {
+      const m = /^(\d+(?:\.\d+)?)/.exec(raw);
+      return m ? Number(m[1]) : 0;
+    }
+    return raw;
   }
 
   function sendFallback(): void {
@@ -820,20 +586,20 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
         speechConfig: { languageCode: 'ja-JP' },
         inputAudioTranscription: {},
         outputAudioTranscription: {},
-        tools: TOOLS,
+        // engine 駆動で tool calling は使わない → tools フィールド自体を渡さない
       },
       callbacks: {
         onopen: () => {
           setStatus('🎙 接続済 — 話せます / タップ可');
           setConnected(true);
-          // セッション開始直後に AI を kickoff（ユーザーには見せない）。
-          // 公式ガイドに従い "discrete な初回入力" は sendClientContent({turnComplete:true})
-          // で投げる。sendRealtimeInput はストリーミング向けで turn 完結が曖昧になり、
-          // モデルが挨拶を繰り返す原因になり得る。
+          // engine 起動: 最初の Q を画面に即表示 (AI を待たない)
+          const firstQ = engine.start();
+          applyQuestionToUI(firstQ);
+          // AI には挨拶だけを依頼 (質問はさせない)
           setTimeout(() => {
             try {
               liveSession?.sendClientContent({
-                turns: [{ role: 'user', parts: [{ text: '問診を始めてください。挨拶は短く 1 回だけにして、すぐに Q1-1 (喫煙) を present_question で呼んでください。' }] }],
+                turns: [{ role: 'user', parts: [{ text: '問診を始めます。「こんにちは、ウェルフォートの AI 問診です。下の画面の質問にお答えください」と 1 文だけ挨拶してください。質問は絶対に発話しないでください (画面の問診票エンジンが自動で質問を出しています)。' }] }],
                 turnComplete: true,
               });
             } catch {}
@@ -934,28 +700,18 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
         return;
       }
 
-      // セーフネット: AI が「?」で終わる質問をしたのに present_question を呼ばなかった
-      //   ① 既知の Q キーワードにマッチすれば、対応する選択肢を自動表示
-      //   ② マッチしなければ voice + 補助テキスト入力で回答可能に
-      // ループ抑制: 重複発話では fallback を発火しない
-      if (!presentQuestionCalledThisTurn && !isDuplicate &&
-          /[?？][\s」』）)]*$/.test(cleanedAssistant)) {
-        const lastQ = extractLastQuestion(cleanedAssistant);
-        const fb = matchFallbackQuestion(cleanedAssistant);
-        if (fb) {
-          applyPresentQuestion({ ...fb, question: lastQ });
-        } else {
-          refs.questionText.textContent = lastQ;
-          showWidget('voice');
-          flashFallback();
-        }
-      }
+      // engine 駆動なので AI 発話に対する fallback / present_question 推定は不要。
+      // (重複発話の自動切断ガードは残してある — 上で処理済)
     }
 
-    // 4) tool call
+    // 4) tool call (engine 駆動では使わないが、AI が誤って呼んだ場合のため response は返す)
     const calls = msg.toolCall?.functionCalls;
     if (calls && calls.length > 0 && liveSession) {
-      const responses = calls.map((fc) => handleFunctionCall(fc));
+      const responses = calls.map((fc) => ({
+        id: fc.id ?? '',
+        name: fc.name ?? '',
+        response: { result: 'ignored — engine 駆動で tool は廃止しました' },
+      }));
       liveSession.sendToolResponse({ functionResponses: responses });
     }
 
@@ -965,109 +721,62 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     if (msg.goAway) setStatus('まもなく切断（再接続してください）');
   }
 
-  function handleFunctionCall(fc: {
-    id?: string;
-    name?: string;
-    args?: Record<string, unknown>;
-  }): { id: string; name: string; response: Record<string, unknown> } {
-    const id = fc.id ?? '';
-    const name = fc.name ?? '';
-    try {
-      if (name === 'present_question') {
-        applyPresentQuestion(fc.args as PresentArgs);
-      } else if (name === 'complete_interview') {
-        const summary = String((fc.args as { summary?: unknown })?.summary ?? '問診ありがとうございました');
-        appendMessage({ role: 'system', text: `✅ 問診完了: ${summary}`, ts: Date.now() });
-        renderProgress(100, '完了');
-        renderSectionDots(SECTIONS.length);
-        refs.questionText.textContent = '✨ お疲れさまでした。ダッシュボードで「今日の気付き」をご覧ください。';
-        showWidget('voice');
-        // ダッシュボード側 HealthInsightCard が完了を検知できるよう保存
-        session.progress = 100;
-        saveChatSession(session);
-      } else if (name === 'flag_emergency') {
-        const reason = String((fc.args as { reason?: unknown })?.reason ?? '緊急の可能性');
-        appendMessage({
-          role: 'system',
-          text: `⚠️ 緊急: ${reason} — 119 または救急受診を検討してください。`,
-          ts: Date.now(),
-        });
-      }
-      return { id, name, response: { result: 'ok' } };
-    } catch (err) {
-      return { id, name, response: { result: 'error', detail: String(err) } };
+  // 旧 handleFunctionCall (present_question / complete_interview / flag_emergency) は
+  // engine 駆動化に伴い削除。tool 呼び出しは handleServerMessage の section 4 で
+  // 一括 ignored 応答を返す。
+
+  /** engine から受け取った Q を画面に反映する (engine 駆動の核) */
+  function applyQuestionToUI(q: QuestionDef): void {
+    currentQ = q;
+
+    const percent = clamp(Math.round(q.percent), 0, 100);
+    session.progress = percent;
+    saveChatSession(session);
+    renderProgress(percent, q.section_title);
+
+    const sectionIdx = SECTIONS.findIndex((s) => s.id === q.section_id);
+    renderSectionDots(sectionIdx);
+
+    refs.questionText.textContent = q.question;
+    refs.skipBtn.hidden = true; // engine 版ではスキップ未対応 (将来追加)
+
+    const kind = mapKind(q.answer_kind);
+    if (kind === 'chip') {
+      renderChips(q.chips ?? []);
+    } else if (kind === 'multi') {
+      renderMulti(q.multi_options ?? [], q.multi_title ?? '該当するものをすべて選んでください');
+    } else if (kind === 'slider') {
+      refs.sliderLow.textContent = q.slider_low_label ?? '低い';
+      refs.sliderHigh.textContent = q.slider_high_label ?? '高い';
+      refs.sliderInput.value = '5';
+      refs.sliderValue.textContent = '5';
+    } else if (kind === 'stepper') {
+      refs.stepperUnit.textContent = q.stepper_unit ?? '回';
+      refs.stepperValue.textContent = '0';
+      refs.stepperValue.dataset.max = String(q.stepper_max ?? 99);
+    }
+    showWidget(kind);
+
+    // multi はモーダルを自動展開 (タップ一手間を省く)
+    if (kind === 'multi') {
+      setTimeout(() => openMultiModal(), 150);
     }
   }
 
-  function applyPresentQuestion(args: PresentArgs): void {
-    // 保険: AI が present_question を呼んだが不完全な指定をしているケースを補完する。
-    //   ① chip/multi で chips/multi_options が空 → fallback で補完
-    //   ② text/voice 指定だが、質問が fallback (chip/multi) にマッチ → fallback で上書き
-    //      (Live API が answer_kind を text に取り違えることがある)
-    const aiKind = mapKind(args.answer_kind);
-    const fb = matchFallbackQuestion(args.question ?? '');
-    if (fb) {
-      const fbKind = mapKind(fb.answer_kind);
-      if (aiKind === 'chip' && (!args.chips || args.chips.length === 0)) {
-        args = { ...args, chips: fb.chips ?? [] };
-      } else if (aiKind === 'multi' && (!args.multi_options || args.multi_options.length === 0)) {
-        args = {
-          ...args,
-          multi_options: fb.multi_options ?? [],
-          multi_title: args.multi_title ?? fb.multi_title,
-        };
-      } else if ((aiKind === 'text' || aiKind === 'voice') &&
-                 (fbKind === 'chip' || fbKind === 'multi' || fbKind === 'slider')) {
-        // text を誤選択 → fallback の kind と選択肢で完全上書き
-        args = {
-          ...args,
-          answer_kind: fb.answer_kind,
-          chips: fb.chips,
-          multi_options: fb.multi_options,
-          multi_title: args.multi_title ?? fb.multi_title,
-          slider_low_label: fb.slider_low_label,
-          slider_high_label: fb.slider_high_label,
-        };
-      }
-    }
-
-    currentPresent = args;
-    presentQuestionCalledThisTurn = true;
-
-    const percent = clamp(Math.round(Number(args.percent) || 0), 0, 100);
-    session.progress = percent;
+  /** 問診完了表示 + chat session を完了状態にして HealthInsightCard を起動 */
+  function showCompletion(): void {
+    currentQ = null;
+    renderProgress(100, '完了');
+    renderSectionDots(SECTIONS.length);
+    refs.questionText.textContent = '✨ お疲れさまでした。ダッシュボードで「今日の気付き」をご覧ください。';
+    showWidget('voice');
+    session.progress = 100;
     saveChatSession(session);
-    renderProgress(percent, args.section_title ?? '');
-
-    const sectionIdx = SECTIONS.findIndex((s) => s.id === args.section_id);
-    renderSectionDots(sectionIdx);
-
-    refs.questionText.textContent = args.question ?? '';
-    refs.skipBtn.hidden = !args.allow_skip;
-
-    const finalKind = mapKind(args.answer_kind);
-
-    if (finalKind === 'chip') {
-      renderChips(args.chips ?? []);
-    } else if (finalKind === 'multi') {
-      renderMulti(args.multi_options ?? [], args.multi_title ?? '該当するものをすべて選んでください');
-    } else if (finalKind === 'slider') {
-      refs.sliderLow.textContent = args.slider_low_label ?? '低い';
-      refs.sliderHigh.textContent = args.slider_high_label ?? '高い';
-      refs.sliderInput.value = '5';
-      refs.sliderValue.textContent = '5';
-    } else if (finalKind === 'stepper') {
-      refs.stepperUnit.textContent = args.stepper_unit ?? '本';
-      refs.stepperValue.textContent = '0';
-      refs.stepperValue.dataset.max = String(args.stepper_max ?? 99);
-    }
-
-    showWidget(finalKind);
-
-    // multi はモーダルを自動展開 (「+ 選択肢から選ぶ」を押す手間を省く)
-    if (finalKind === 'multi') {
-      setTimeout(() => openMultiModal(), 150);
-    }
+    appendMessage({
+      role: 'system',
+      text: '✅ 問診完了 — ダッシュボードに移動して結果をご確認ください。',
+      ts: Date.now(),
+    });
   }
 
   function renderChips(chips: ChoiceOption[]): void {
