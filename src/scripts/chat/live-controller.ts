@@ -158,8 +158,11 @@ D. 診断・処方はしない。
 - ユーザーの質問・雑談には短く答え、すぐ問診に戻る（present_question を呼んで）。
 - 「わからない/答えたくない/スキップ」は尊重し、次の質問へ。
 
-【セッション開始時】
-最初の発話: 「こんにちは、ウェルフォートの AI 問診です。約5分でいくつか生活習慣についてお聞きします。お話しいただくか、画面の選択肢をタップ、どちらでも構いません。まず喫煙について — 普段たばこを吸われますか？」
+【セッション開始時 — このターンは 1 回限り】
+最初の発話 (1 ターンだけ、絶対に繰り返さない):
+  「こんにちは、ウェルフォートの AI 問診です。まずは喫煙について — 普段たばこを吸われますか？」
+同時に Q1-1 を present_question で呼ぶ。
+2 ターン目以降は挨拶を**絶対に**繰り返さず、Q1-1 のユーザー回答に応じて Q1-2 へ進む。
 同時に Q1-1 を呼ぶ。
 
 【完了時】Q5-2 終了で complete_interview を呼び、優しくお礼を言う。
@@ -826,7 +829,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
           setTimeout(() => {
             try {
               liveSession?.sendClientContent({
-                turns: [{ role: 'user', parts: [{ text: 'よろしくお願いします。' }] }],
+                turns: [{ role: 'user', parts: [{ text: '問診を始めてください。挨拶は短く 1 回だけにして、すぐに Q1-1 (喫煙) を present_question で呼んでください。' }] }],
                 turnComplete: true,
               });
             } catch {}
