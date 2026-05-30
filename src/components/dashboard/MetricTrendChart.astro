@@ -117,7 +117,13 @@ const computed: Computed[] = series.map((s) => {
         const last = s.points[s.points.length - 1];
         const arrow = diff > 0 ? '↗' : diff < 0 ? '↘' : '→';
         return (
-          <article class="rounded-xl border border-slate-200 bg-white p-3 transition hover:border-brand-300 hover:shadow-md dark:border-slate-700 dark:bg-slate-900">
+          <article
+            data-trend-open={idx}
+            role="button"
+            tabindex="0"
+            aria-label={`${s.label} の数値変動 詳細`}
+            class="cursor-pointer rounded-xl border border-slate-200 bg-white p-3 transition hover:border-brand-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-900"
+          >
             <div class="mb-1 flex items-baseline justify-between gap-2">
               <h3 class="text-xs font-semibold text-slate-700 dark:text-slate-200">{s.label}</h3>
               <span class="text-[10px] text-slate-500">単位 {s.unit}</span>
@@ -152,13 +158,9 @@ const computed: Computed[] = series.map((s) => {
                 </>
               ))}
             </svg>
-            <button
-              type="button"
-              data-trend-open={idx}
-              class="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-lg bg-slate-50 px-2 py-1.5 text-[11px] font-medium text-brand-600 hover:bg-brand-50 dark:bg-slate-800 dark:text-brand-300 dark:hover:bg-brand-500/10"
-            >
+            <div class="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-lg bg-slate-50 px-2 py-1.5 text-[11px] font-medium text-brand-600 pointer-events-none dark:bg-slate-800 dark:text-brand-300">
               詳細を見る ›
-            </button>
+            </div>
           </article>
         );
       })}
@@ -177,10 +179,11 @@ const computed: Computed[] = series.map((s) => {
   const arrow = diff > 0 ? '↗' : diff < 0 ? '↘' : '→';
   const comment = commentFor(s.label, first.value, last.value, s.referenceUpper, diff);
 
-  // 大型 SVG (モーダル用) のスケール: viewBox サイズを 4 倍程度に
-  const MW = 800;
-  const MH = 360;
-  const ML = 56, MR = 24, MT = 28, MB = 48;
+  // 大型 SVG (モーダル用) — 解像度を高めに取り、font-size/stroke-width も
+  // viewBox 単位で大きめにして縮小表示時のシャープさを確保
+  const MW = 1200;
+  const MH = 600;
+  const ML = 90, MR = 40, MT = 50, MB = 80;
   const innerW = MW - ML - MR;
   const innerH = MH - MT - MB;
   const values = s.points.map((p) => p.value);
@@ -252,15 +255,22 @@ const computed: Computed[] = series.map((s) => {
           </div>
 
           {/* 大型グラフ */}
-          <div class="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
-            <svg viewBox={`0 0 ${MW} ${MH}`} class="w-full h-auto" role="img" aria-label={`${s.label}の推移 (拡大)`}>
+          <div class="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+            <svg
+              viewBox={`0 0 ${MW} ${MH}`}
+              preserveAspectRatio="xMidYMid meet"
+              class="w-full"
+              style="height: clamp(280px, 55vh, 540px); shape-rendering: geometricPrecision;"
+              role="img"
+              aria-label={`${s.label}の推移 (拡大)`}
+            >
               {/* Y 軸グリッド */}
               {yTicks.map((t) => (
                 <>
                   <line x1={ML} y1={t.ty} x2={MW - MR} y2={t.ty}
-                    stroke="#e2e8f0" stroke-width="1" opacity="0.6" />
-                  <text x={ML - 6} y={t.ty + 4} text-anchor="end"
-                    class="fill-slate-500" style="font-size: 12px">
+                    stroke="#e2e8f0" stroke-width="2" opacity="0.7" />
+                  <text x={ML - 12} y={t.ty + 8} text-anchor="end"
+                    class="fill-slate-500" style="font-size: 22px">
                     {fmtY(t.val)}
                   </text>
                 </>
@@ -269,28 +279,28 @@ const computed: Computed[] = series.map((s) => {
               {mRefY !== null && (
                 <>
                   <line x1={ML} y1={mRefY} x2={MW - MR} y2={mRefY}
-                    stroke="#ef4444" stroke-width="1.5" stroke-dasharray="6 4" opacity="0.7" />
-                  <text x={MW - MR} y={mRefY - 4} text-anchor="end"
-                    class="fill-red-500 font-medium" style="font-size: 12px">
+                    stroke="#ef4444" stroke-width="3" stroke-dasharray="12 8" opacity="0.75" />
+                  <text x={MW - MR} y={mRefY - 8} text-anchor="end"
+                    class="fill-red-500 font-medium" style="font-size: 22px; font-weight: 600;">
                     基準上限 {s.referenceUpper}
                   </text>
                 </>
               )}
               {/* X 軸 */}
               <line x1={ML} y1={MH - MB} x2={MW - MR} y2={MH - MB}
-                stroke="#94a3b8" stroke-width="1.5" />
-              {/* 折れ線 + 塗り */}
-              <path d={mPath} fill="none" stroke={trendColor} stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
+                stroke="#94a3b8" stroke-width="3" />
+              {/* 折れ線 */}
+              <path d={mPath} fill="none" stroke={trendColor} stroke-width="5" stroke-linejoin="round" stroke-linecap="round" />
               {/* 点 + 値ラベル + 日付 */}
               {mPts.map((p) => (
                 <>
-                  <circle cx={p.x} cy={p.y} r="6" fill="white" stroke={trendColor} stroke-width="3" />
-                  <text x={p.x} y={p.y - 12} text-anchor="middle"
-                    class="fill-slate-700 font-medium" style="font-size: 13px">
+                  <circle cx={p.x} cy={p.y} r="11" fill="white" stroke={trendColor} stroke-width="5" />
+                  <text x={p.x} y={p.y - 22} text-anchor="middle"
+                    class="fill-slate-800" style="font-size: 28px; font-weight: 700;">
                     {p.raw}
                   </text>
-                  <text x={p.x} y={MH - MB + 18} text-anchor="middle"
-                    class="fill-slate-500" style="font-size: 11px">
+                  <text x={p.x} y={MH - MB + 32} text-anchor="middle"
+                    class="fill-slate-500" style="font-size: 20px;">
                     {`${new Date(p.date).getFullYear()}/${new Date(p.date).getMonth() + 1}/${new Date(p.date).getDate()}`}
                   </text>
                 </>
