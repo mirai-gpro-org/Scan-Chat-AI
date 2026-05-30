@@ -1,5 +1,11 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+
+export const prerender = false;
+
+const url = new URL(Astro.request.url);
+const rawU = url.searchParams.get('u');
+const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
 ---
 
 <BaseLayout title="AI 問診 | Scan-Chat Medical AI">
@@ -58,7 +64,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     前回の続きから再開します。
   </div>
 
-  <main class="flex flex-1 flex-col gap-3 px-5 pt-3 pb-4">
+  <main
+    id="chat-main"
+    class="flex flex-1 flex-col gap-3 px-5 pt-3 pb-4"
+    data-diagnostic-user-id={diagnosticUserId ?? ''}
+  >
     <div
       id="chat-log"
       class="card flex-1 space-y-3 overflow-y-auto"
@@ -280,7 +290,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
 
   document.addEventListener('DOMContentLoaded', () => {
+    const main = document.getElementById('chat-main');
+    const diagnosticUserId = main?.dataset.diagnosticUserId || null;
+
     void initLiveController({
+      diagnosticUserId,
       log: $('chat-log'),
       status: $('chat-status'),
       resetBtn: $<HTMLButtonElement>('reset-btn'),

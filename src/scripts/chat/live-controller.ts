@@ -83,6 +83,13 @@ export interface LiveRefs {
   fallbackSend: HTMLButtonElement;
 
   skipBtn: HTMLButtonElement;
+
+  /**
+   * 任意。指定すると `/api/live-token` POST body に乗り、サーバが当該ユーザーの
+   * 検査文脈を返す。返って来た文脈は system instruction の先頭に prepend される。
+   * dev profile では URL `?u=<uuid>` を流用、本番では Auth 連携に置換予定。
+   */
+  diagnosticUserId?: string | null;
 }
 
 const SESSION_ID = 'default';
@@ -552,19 +559,31 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   // ── Live API 接続 ──────────────────────────────
 
   async function startLive(): Promise<void> {
-    const res = await fetch('/api/live-token', { method: 'POST' });
+    const res = await fetch('/api/live-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ diagnosticUserId: refs.diagnosticUserId ?? null }),
+    });
     if (!res.ok) {
       const body = await res.text();
       throw new Error(`token mint ${res.status}: ${body}`);
     }
-    const { token, model } = (await res.json()) as { token: string; model: string };
+    const { token, model, userContext } = (await res.json()) as {
+      token: string;
+      model: string;
+      userContext?: string | null;
+    };
+
+    const instruction = userContext
+      ? `${userContext}\n\n---\n\n${SYSTEM_INSTRUCTION}`
+      : SYSTEM_INSTRUCTION;
 
     const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: 'v1alpha' } });
     liveSession = await ai.live.connect({
       model,
       config: {
         responseModalities: [Modality.AUDIO],
-        systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+        systemInstruction: { parts: [{ text: instruction }] },
         speechConfig: { languageCode: 'ja-JP' },
         inputAudioTranscription: {},
         outputAudioTranscription: {},
