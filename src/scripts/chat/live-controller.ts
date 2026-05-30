@@ -966,6 +966,24 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   }
 
   function applyPresentQuestion(args: PresentArgs): void {
+    // 保険: AI が present_question を呼んだが chips/multi_options が空のケース
+    //   → 質問テキストから fallback を引いて補完する (UI 上「空の選択肢領域」を防ぐ)
+    const kind = mapKind(args.answer_kind);
+    if ((kind === 'chip' && (!args.chips || args.chips.length === 0)) ||
+        (kind === 'multi' && (!args.multi_options || args.multi_options.length === 0))) {
+      const fb = matchFallbackQuestion(args.question ?? '');
+      if (fb) {
+        args = {
+          ...fb,
+          ...args,
+          chips: args.chips && args.chips.length > 0 ? args.chips : fb.chips,
+          multi_options: args.multi_options && args.multi_options.length > 0 ? args.multi_options : fb.multi_options,
+          multi_title: args.multi_title ?? fb.multi_title,
+          answer_kind: fb.answer_kind,
+        };
+      }
+    }
+
     currentPresent = args;
     presentQuestionCalledThisTurn = true;
 
@@ -980,24 +998,24 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     refs.questionText.textContent = args.question ?? '';
     refs.skipBtn.hidden = !args.allow_skip;
 
-    const kind = mapKind(args.answer_kind);
+    const finalKind = mapKind(args.answer_kind);
 
-    if (kind === 'chip') {
+    if (finalKind === 'chip') {
       renderChips(args.chips ?? []);
-    } else if (kind === 'multi') {
+    } else if (finalKind === 'multi') {
       renderMulti(args.multi_options ?? [], args.multi_title ?? '該当するものをすべて選んでください');
-    } else if (kind === 'slider') {
+    } else if (finalKind === 'slider') {
       refs.sliderLow.textContent = args.slider_low_label ?? '低い';
       refs.sliderHigh.textContent = args.slider_high_label ?? '高い';
       refs.sliderInput.value = '5';
       refs.sliderValue.textContent = '5';
-    } else if (kind === 'stepper') {
+    } else if (finalKind === 'stepper') {
       refs.stepperUnit.textContent = args.stepper_unit ?? '本';
       refs.stepperValue.textContent = '0';
       refs.stepperValue.dataset.max = String(args.stepper_max ?? 99);
     }
 
-    showWidget(kind);
+    showWidget(finalKind);
   }
 
   function renderChips(chips: ChoiceOption[]): void {
