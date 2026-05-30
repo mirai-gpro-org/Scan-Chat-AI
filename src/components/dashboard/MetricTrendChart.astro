@@ -179,11 +179,13 @@ const computed: Computed[] = series.map((s) => {
   const arrow = diff > 0 ? '↗' : diff < 0 ? '↘' : '→';
   const comment = commentFor(s.label, first.value, last.value, s.referenceUpper, diff);
 
-  // 大型 SVG (モーダル用) — 解像度を高めに取り、font-size/stroke-width も
-  // viewBox 単位で大きめにして縮小表示時のシャープさを確保
-  const MW = 1200;
-  const MH = 600;
-  const ML = 90, MR = 40, MT = 50, MB = 80;
+  // 大型 SVG (モーダル用):
+  //   - viewBox は実画面解像度に近い 600x300 に揃え、subpixel 整列を確保
+  //   - 1 viewBox unit ≈ 1 CSS px に対応するのでベクター→ラスタライズ時に
+  //     hinting が崩れず、テキストの輪郭がシャープに出る
+  const MW = 600;
+  const MH = 300;
+  const ML = 48, MR = 16, MT = 18, MB = 36;
   const innerW = MW - ML - MR;
   const innerH = MH - MT - MB;
   const values = s.points.map((p) => p.value);
@@ -260,7 +262,7 @@ const computed: Computed[] = series.map((s) => {
               viewBox={`0 0 ${MW} ${MH}`}
               preserveAspectRatio="xMidYMid meet"
               class="w-full"
-              style="height: clamp(280px, 55vh, 540px); shape-rendering: geometricPrecision;"
+              style="height: clamp(260px, 55vh, 520px); text-rendering: geometricPrecision; shape-rendering: geometricPrecision; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Hiragino Sans', 'Noto Sans JP', sans-serif;"
               role="img"
               aria-label={`${s.label}の推移 (拡大)`}
             >
@@ -268,9 +270,9 @@ const computed: Computed[] = series.map((s) => {
               {yTicks.map((t) => (
                 <>
                   <line x1={ML} y1={t.ty} x2={MW - MR} y2={t.ty}
-                    stroke="#e2e8f0" stroke-width="2" opacity="0.7" />
-                  <text x={ML - 12} y={t.ty + 8} text-anchor="end"
-                    class="fill-slate-500" style="font-size: 22px">
+                    stroke="#e2e8f0" stroke-width="1" opacity="0.8" />
+                  <text x={ML - 6} y={t.ty + 4} text-anchor="end"
+                    fill="#64748b" style="font-size: 11px;">
                     {fmtY(t.val)}
                   </text>
                 </>
@@ -279,28 +281,28 @@ const computed: Computed[] = series.map((s) => {
               {mRefY !== null && (
                 <>
                   <line x1={ML} y1={mRefY} x2={MW - MR} y2={mRefY}
-                    stroke="#ef4444" stroke-width="3" stroke-dasharray="12 8" opacity="0.75" />
-                  <text x={MW - MR} y={mRefY - 8} text-anchor="end"
-                    class="fill-red-500 font-medium" style="font-size: 22px; font-weight: 600;">
+                    stroke="#ef4444" stroke-width="1.5" stroke-dasharray="6 4" opacity="0.8" />
+                  <text x={MW - MR} y={mRefY - 4} text-anchor="end"
+                    fill="#dc2626" style="font-size: 11px; font-weight: 600;">
                     基準上限 {s.referenceUpper}
                   </text>
                 </>
               )}
               {/* X 軸 */}
               <line x1={ML} y1={MH - MB} x2={MW - MR} y2={MH - MB}
-                stroke="#94a3b8" stroke-width="3" />
+                stroke="#94a3b8" stroke-width="1.5" />
               {/* 折れ線 */}
-              <path d={mPath} fill="none" stroke={trendColor} stroke-width="5" stroke-linejoin="round" stroke-linecap="round" />
+              <path d={mPath} fill="none" stroke={trendColor} stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
               {/* 点 + 値ラベル + 日付 */}
               {mPts.map((p) => (
                 <>
-                  <circle cx={p.x} cy={p.y} r="11" fill="white" stroke={trendColor} stroke-width="5" />
-                  <text x={p.x} y={p.y - 22} text-anchor="middle"
-                    class="fill-slate-800" style="font-size: 28px; font-weight: 700;">
+                  <circle cx={p.x} cy={p.y} r="5" fill="white" stroke={trendColor} stroke-width="2.5" />
+                  <text x={p.x} y={p.y - 11} text-anchor="middle"
+                    fill="#1e293b" style="font-size: 13px; font-weight: 700;">
                     {p.raw}
                   </text>
-                  <text x={p.x} y={MH - MB + 32} text-anchor="middle"
-                    class="fill-slate-500" style="font-size: 20px;">
+                  <text x={p.x} y={MH - MB + 14} text-anchor="middle"
+                    fill="#64748b" style="font-size: 10px;">
                     {`${new Date(p.date).getFullYear()}/${new Date(p.date).getMonth() + 1}/${new Date(p.date).getDate()}`}
                   </text>
                 </>
