@@ -932,8 +932,11 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
         appendMessage({ role: 'system', text: `✅ 問診完了: ${summary}`, ts: Date.now() });
         renderProgress(100, '完了');
         renderSectionDots(SECTIONS.length);
-        refs.questionText.textContent = '✨ お疲れさまでした。問診が完了しました。';
+        refs.questionText.textContent = '✨ お疲れさまでした。ダッシュボードで「今日の気付き」をご覧ください。';
         showWidget('voice');
+        // ダッシュボード側 HealthInsightCard が完了を検知できるよう保存
+        session.progress = 100;
+        saveChatSession(session);
       } else if (name === 'flag_emergency') {
         const reason = String((fc.args as { reason?: unknown })?.reason ?? '緊急の可能性');
         appendMessage({

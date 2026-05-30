@@ -1,0 +1,192 @@
+---
+/**
+ * 問診回答 + 検査結果を統合した「今日の気付き」カード。
+ *
+ * クライアント側で localStorage の chat session を読み、/api/insight を POST。
+ * 結果を本カード内に描画する。問診未実施なら CTA (問診へ) を出す。
+ */
+interface Props {
+  diagnosticUserId: string;
+}
+const { diagnosticUserId } = Astro.props as Props;
+---
+
+<section class="card" id="insight-card" data-diagnostic-user-id={diagnosticUserId}>
+  <header class="mb-3 flex items-center justify-between">
+    <h2 class="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100">
+      <span>🌱</span><span>今日の気付き</span>
+    </h2>
+    <span id="insight-meta" class="text-[10px] text-slate-500"></span>
+  </header>
+
+  {/* 状態は JS で切替: empty / loading / content / error */}
+
+  <div id="insight-empty" class="rounded-xl bg-slate-50 px-3 py-4 text-center text-xs text-slate-500 dark:bg-slate-800/40">
+    📝 まずは AI 問診を完了すると、検査結果と合わせた個別アドバイスが表示されます。
+    <a
+      id="insight-cta"
+      href="/chat"
+      class="mt-2 inline-flex items-center justify-center rounded-lg bg-brand-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-brand-700"
+    >
+      🩺 問診を始める ›
+    </a>
+  </div>
+
+  <div id="insight-loading" hidden class="flex items-center gap-2 rounded-xl bg-brand-50 px-3 py-3 text-xs text-brand-700 dark:bg-brand-500/10 dark:text-brand-300">
+    <span class="inline-block h-3 w-3 animate-spin rounded-full border-2 border-brand-400 border-t-transparent"></span>
+    <span>あなたへの気付きを生成中…</span>
+  </div>
+
+  <div
+    id="insight-content"
+    hidden
+    class="space-y-2 rounded-xl bg-gradient-to-br from-brand-50 to-cyan-50 px-4 py-3 text-[13px] leading-relaxed text-slate-800 dark:from-brand-500/10 dark:to-cyan-500/10 dark:text-slate-100"
+  ></div>
+
+  <div id="insight-error" hidden class="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-900/30 dark:text-red-200"></div>
+
+  <div class="mt-2 flex items-center justify-end gap-2">
+    <button
+      id="insight-refresh"
+      type="button"
+      hidden
+      class="text-[11px] text-slate-500 hover:text-brand-600 hover:underline"
+    >🔄 再生成</button>
+  </div>
+</section>
+
+<script>
+  type ChatMessage = {
+    role: 'user' | 'assistant' | 'system';
+    text: string;
+    ts: number;
+  };
+  type ChatSession = {
+    id: string;
+    messages: ChatMessage[];
+    progress: number;
+    updatedAt: number;
+  };
+
+  const KEY_PREFIX = 'scan-chat-ai:chat:';
+  const SESSION_ID = 'default';
+  const INSIGHT_CACHE_KEY = (uid: string) => `scan-chat-ai:insight:${uid || 'anonymous'}`;
+  const INSIGHT_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+
+  const card = document.getElementById('insight-card');
+  if (card) {
+    const diagnosticUserId = card.dataset.diagnosticUserId || '';
+    const meta = document.getElementById('insight-meta');
+    const empty = document.getElementById('insight-empty');
+    const loading = document.getElementById('insight-loading');
+    const content = document.getElementById('insight-content');
+    const errorBox = document.getElementById('insight-error');
+    const refreshBtn = document.getElementById('insight-refresh');
+    const cta = document.getElementById('insight-cta') as HTMLAnchorElement | null;
+
+    if (cta && diagnosticUserId) {
+      cta.href = `/chat?u=${encodeURIComponent(diagnosticUserId)}`;
+    }
+
+    function show(state: 'empty' | 'loading' | 'content' | 'error') {
+      if (empty) empty.hidden = state !== 'empty';
+      if (loading) loading.hidden = state !== 'loading';
+      if (content) content.hidden = state !== 'content';
+      if (errorBox) errorBox.hidden = state !== 'error';
+      if (refreshBtn) refreshBtn.hidden = state !== 'content' && state !== 'error';
+    }
+
+    function loadSession(): ChatSession | null {
+      try {
+        const raw = localStorage.getItem(`${KEY_PREFIX}${SESSION_ID}`);
+        if (!raw) return null;
+        return JSON.parse(raw) as ChatSession;
+      } catch {
+        return null;
+      }
+    }
+
+    function renderInsight(text: string, generatedAt: string) {
+      if (!content) return;
+      content.innerHTML = '';
+      const paragraphs = text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+      for (const p of paragraphs) {
+        const el = document.createElement('p');
+        el.textContent = p;
+        content.appendChild(el);
+      }
+      if (meta) {
+        const d = new Date(generatedAt);
+        meta.textContent = `生成: ${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      }
+      show('content');
+    }
+
+    function showError(msg: string) {
+      if (errorBox) errorBox.textContent = `⚠️ ${msg}`;
+      show('error');
+    }
+
+    function readCache(uid: string): { insight: string; generatedAt: string; sessionTs: number } | null {
+      try {
+        const raw = localStorage.getItem(INSIGHT_CACHE_KEY(uid));
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (Date.now() - new Date(parsed.generatedAt).getTime() > INSIGHT_TTL_MS) return null;
+        return parsed;
+      } catch {
+        return null;
+      }
+    }
+
+    function writeCache(uid: string, payload: { insight: string; generatedAt: string; sessionTs: number }) {
+      try {
+        localStorage.setItem(INSIGHT_CACHE_KEY(uid), JSON.stringify(payload));
+      } catch {}
+    }
+
+    async function generate(force = false) {
+      const session = loadSession();
+      if (!session || session.messages.length === 0 || session.progress < 100) {
+        show('empty');
+        return;
+      }
+
+      // 同一セッションのキャッシュがあれば使う
+      if (!force) {
+        const cached = readCache(diagnosticUserId);
+        if (cached && cached.sessionTs === session.updatedAt) {
+          renderInsight(cached.insight, cached.generatedAt);
+          return;
+        }
+      }
+
+      show('loading');
+      try {
+        const res = await fetch('/api/insight', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            diagnosticUserId: diagnosticUserId || null,
+            chatMessages: session.messages.map((m) => ({ role: m.role, text: m.text })),
+          }),
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok || !payload.insight) {
+          throw new Error(payload.error || `HTTP ${res.status}`);
+        }
+        writeCache(diagnosticUserId, {
+          insight: payload.insight,
+          generatedAt: payload.generatedAt,
+          sessionTs: session.updatedAt,
+        });
+        renderInsight(payload.insight, payload.generatedAt);
+      } catch (err) {
+        showError(err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    refreshBtn?.addEventListener('click', () => generate(true));
+    generate(false);
+  }
+</script>
