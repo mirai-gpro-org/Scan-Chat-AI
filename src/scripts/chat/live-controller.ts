@@ -966,20 +966,33 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   }
 
   function applyPresentQuestion(args: PresentArgs): void {
-    // 保険: AI が present_question を呼んだが chips/multi_options が空のケース
-    //   → 質問テキストから fallback を引いて補完する (UI 上「空の選択肢領域」を防ぐ)
-    const kind = mapKind(args.answer_kind);
-    if ((kind === 'chip' && (!args.chips || args.chips.length === 0)) ||
-        (kind === 'multi' && (!args.multi_options || args.multi_options.length === 0))) {
-      const fb = matchFallbackQuestion(args.question ?? '');
-      if (fb) {
+    // 保険: AI が present_question を呼んだが不完全な指定をしているケースを補完する。
+    //   ① chip/multi で chips/multi_options が空 → fallback で補完
+    //   ② text/voice 指定だが、質問が fallback (chip/multi) にマッチ → fallback で上書き
+    //      (Live API が answer_kind を text に取り違えることがある)
+    const aiKind = mapKind(args.answer_kind);
+    const fb = matchFallbackQuestion(args.question ?? '');
+    if (fb) {
+      const fbKind = mapKind(fb.answer_kind);
+      if (aiKind === 'chip' && (!args.chips || args.chips.length === 0)) {
+        args = { ...args, chips: fb.chips ?? [] };
+      } else if (aiKind === 'multi' && (!args.multi_options || args.multi_options.length === 0)) {
         args = {
-          ...fb,
           ...args,
-          chips: args.chips && args.chips.length > 0 ? args.chips : fb.chips,
-          multi_options: args.multi_options && args.multi_options.length > 0 ? args.multi_options : fb.multi_options,
+          multi_options: fb.multi_options ?? [],
           multi_title: args.multi_title ?? fb.multi_title,
+        };
+      } else if ((aiKind === 'text' || aiKind === 'voice') &&
+                 (fbKind === 'chip' || fbKind === 'multi' || fbKind === 'slider')) {
+        // text を誤選択 → fallback の kind と選択肢で完全上書き
+        args = {
+          ...args,
           answer_kind: fb.answer_kind,
+          chips: fb.chips,
+          multi_options: fb.multi_options,
+          multi_title: args.multi_title ?? fb.multi_title,
+          slider_low_label: fb.slider_low_label,
+          slider_high_label: fb.slider_high_label,
         };
       }
     }
