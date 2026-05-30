@@ -260,6 +260,221 @@ interface PresentArgs {
   allow_skip?: boolean;
 }
 
+/**
+ * Live API (音声 + tool 並行) は時々 present_question を呼び忘れる。
+ * AI の発話文に既知の Q キーワードを含む場合、選択肢を逆引きして自動表示する。
+ * 順序は重要 — より具体的なパターンを先に。
+ */
+const FALLBACK_QUESTIONS: Array<{ pattern: RegExp; args: PresentArgs }> = [
+  // Q1-1 喫煙
+  { pattern: /(たばこ|煙草|喫煙)/, args: {
+    section_id: 'lifestyle', section_title: '嗜好品', percent: 5,
+    question: '普段たばこを吸われますか？',
+    answer_kind: 'chip',
+    chips: [
+      { label: '吸わない', emoji: '🚭' },
+      { label: '以前吸っていた', emoji: '🍃' },
+      { label: '吸っている', emoji: '🚬' },
+    ],
+  }},
+  // Q1-4 カフェイン (より具体的に)
+  { pattern: /(カフェイン|コーヒー)/, args: {
+    section_id: 'lifestyle', section_title: '嗜好品', percent: 18,
+    question: 'カフェイン入り飲料はどのくらい摂りますか？',
+    answer_kind: 'chip',
+    chips: [
+      { label: '毎日', emoji: '☀️' },
+      { label: '週に数回', emoji: '📅' },
+      { label: '月に数回', emoji: '🗓' },
+      { label: 'ほとんど摂らない', emoji: '🚫' },
+    ],
+  }},
+  // Q1-2 アルコール
+  { pattern: /(アルコール|お酒|飲酒|よく飲む)/, args: {
+    section_id: 'lifestyle', section_title: '嗜好品', percent: 10,
+    question: 'よく飲むアルコールを教えてください',
+    answer_kind: 'multi',
+    multi_title: 'よく飲むアルコールをすべて選んでください',
+    multi_options: [
+      { label: 'ビール', emoji: '🍺' },
+      { label: '日本酒', emoji: '🍶' },
+      { label: '焼酎', emoji: '🥃' },
+      { label: 'ワイン', emoji: '🍷' },
+      { label: 'ハイボール・チューハイ', emoji: '🍹' },
+      { label: 'その他' },
+      { label: '飲まない', emoji: '🚫' },
+    ],
+  }},
+  // Q2-3 座っている時間
+  { pattern: /(座って|座る|デスク).*(時間|どれくらい|どのくらい)/, args: {
+    section_id: 'activity', section_title: '運動・活動量', percent: 33,
+    question: '1日に座っている時間はどれくらいですか？',
+    answer_kind: 'chip',
+    chips: [
+      { label: '4時間以下' },
+      { label: '5-8時間' },
+      { label: '9-12時間' },
+      { label: '13時間以上' },
+    ],
+  }},
+  // Q2-2 運動時間
+  { pattern: /(1回|一回|運動).*(時間|何分|長さ|分)/, args: {
+    section_id: 'activity', section_title: '運動・活動量', percent: 28,
+    question: '1回の運動時間はどれくらいですか？',
+    answer_kind: 'chip',
+    chips: [
+      { label: 'ほとんどしない', emoji: '🚫' },
+      { label: '15分' },
+      { label: '30分' },
+      { label: '60分' },
+      { label: '60分以上', emoji: '💪' },
+    ],
+  }},
+  // Q2-1 運動習慣
+  { pattern: /運動/, args: {
+    section_id: 'activity', section_title: '運動・活動量', percent: 23,
+    question: '普段、運動をする習慣はありますか？',
+    answer_kind: 'chip',
+    chips: [
+      { label: '週3回以上', emoji: '🏃' },
+      { label: '週1-2回', emoji: '🚶' },
+      { label: 'ほとんどしない', emoji: '🧘' },
+    ],
+  }},
+  // Q3-1 朝食
+  { pattern: /朝食|朝.*食/, args: {
+    section_id: 'diet', section_title: '食生活', percent: 42,
+    question: '朝食はどのくらいの頻度で食べますか？',
+    answer_kind: 'chip',
+    chips: [
+      { label: '毎日', emoji: '☀️' },
+      { label: '週4-6回' },
+      { label: '週1-3回' },
+      { label: 'ほとんど食べない', emoji: '🚫' },
+    ],
+  }},
+  // Q3-2 外食
+  { pattern: /外食/, args: {
+    section_id: 'diet', section_title: '食生活', percent: 46,
+    question: '外食はどのくらいの頻度ですか？',
+    answer_kind: 'chip',
+    chips: [
+      { label: '週5回以上' },
+      { label: '週2-4回' },
+      { label: '週1回' },
+      { label: 'ほとんどしない' },
+    ],
+  }},
+  // Q3-3 魚
+  { pattern: /(魚|魚介)/, args: {
+    section_id: 'diet', section_title: '食生活', percent: 50,
+    question: '魚をどのくらいの頻度で食べますか？',
+    answer_kind: 'chip',
+    chips: [
+      { label: '週3回以上', emoji: '🐟' },
+      { label: '週1-2回' },
+      { label: '月数回' },
+      { label: 'ほとんど食べない', emoji: '🚫' },
+    ],
+  }},
+  // Q3-4 野菜
+  { pattern: /野菜/, args: {
+    section_id: 'diet', section_title: '食生活', percent: 54,
+    question: '野菜は十分に取れていますか？',
+    answer_kind: 'chip',
+    chips: [
+      { label: '十分', emoji: '🥗' },
+      { label: '普通', emoji: '🥬' },
+      { label: '少ない', emoji: '🥦' },
+      { label: 'ほとんど食べない', emoji: '🚫' },
+    ],
+  }},
+  // Q3-5 食事制限
+  { pattern: /(食事制限|ダイエット|ヴィーガン|糖質制限)/, args: {
+    section_id: 'diet', section_title: '食生活', percent: 57,
+    question: '食事制限はされていますか？',
+    answer_kind: 'chip',
+    chips: [
+      { label: '特になし', emoji: '✅' },
+      { label: 'ダイエット中', emoji: '⚖️' },
+      { label: 'ヴィーガン', emoji: '🌱' },
+      { label: '糖質制限', emoji: '🍞' },
+      { label: 'その他' },
+    ],
+  }},
+  // Q3-6 サプリ
+  { pattern: /サプリ/, args: {
+    section_id: 'diet', section_title: '食生活', percent: 60,
+    question: 'サプリメントは摂取していますか？',
+    answer_kind: 'chip',
+    chips: [
+      { label: '摂っていない', emoji: '🚫' },
+      { label: '摂っている', emoji: '💊' },
+    ],
+  }},
+  // Q4-1 睡眠時間
+  { pattern: /(睡眠時間|何時間.*(寝|睡眠)|平均.*睡眠)/, args: {
+    section_id: 'sleep', section_title: '睡眠', percent: 68,
+    question: '平均的な睡眠時間はどのくらいですか？',
+    answer_kind: 'chip',
+    chips: [
+      { label: '5時間以下', emoji: '😴' },
+      { label: '6時間' },
+      { label: '7時間' },
+      { label: '8時間' },
+      { label: '9時間以上', emoji: '💤' },
+    ],
+  }},
+  // Q4-2 睡眠悩み
+  { pattern: /(寝つき|無呼吸|いびき|夜中.*目|睡眠.*悩|睡眠.*問題)/, args: {
+    section_id: 'sleep', section_title: '睡眠', percent: 76,
+    question: '睡眠の悩みはありますか？',
+    answer_kind: 'multi',
+    multi_title: '当てはまるものをすべて選んでください',
+    multi_options: [
+      { label: '寝つきが悪い', emoji: '😣' },
+      { label: '夜中に目が覚める', emoji: '🌙' },
+      { label: '朝早く目覚める', emoji: '🌅' },
+      { label: 'いびき・無呼吸を指摘された', emoji: '😪' },
+      { label: '特になし', emoji: '✅' },
+    ],
+  }},
+  // Q5-2 ストレス (slider 表現を先に判定)
+  { pattern: /ストレス/, args: {
+    section_id: 'wellness', section_title: '心身の健康', percent: 95,
+    question: 'ストレス度はどれくらいですか？(1〜10)',
+    answer_kind: 'slider',
+    slider_low_label: '全くない',
+    slider_high_label: '非常に高い',
+  }},
+  // Q5-1 症状
+  { pattern: /(症状|気になる|頭痛|肩こり|腰痛|関節痛)/, args: {
+    section_id: 'wellness', section_title: '心身の健康', percent: 88,
+    question: '気になる症状はありますか？',
+    answer_kind: 'multi',
+    multi_title: '当てはまるものをすべて選んでください',
+    multi_options: [
+      { label: '頭痛', emoji: '🤕' },
+      { label: '肩こり', emoji: '😣' },
+      { label: '腰痛', emoji: '🦴' },
+      { label: '関節痛', emoji: '🦵' },
+      { label: '冷え性', emoji: '🥶' },
+      { label: '倦怠感', emoji: '😪' },
+      { label: '消化不良', emoji: '😖' },
+      { label: '便秘・下痢', emoji: '🚽' },
+      { label: 'その他' },
+      { label: '特になし', emoji: '✅' },
+    ],
+  }},
+];
+
+function matchFallbackQuestion(text: string): PresentArgs | null {
+  for (const fb of FALLBACK_QUESTIONS) {
+    if (fb.pattern.test(text)) return fb.args;
+  }
+  return null;
+}
+
 export async function initLiveController(refs: LiveRefs): Promise<void> {
   let session: ChatSession = loadChatSession(SESSION_ID) ?? createEmptySession(SESSION_ID);
   const audio = new LiveAudioManager();
@@ -675,11 +890,17 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       assistantBuf = '';
 
       // セーフネット: AI が「?」で終わる質問をしたのに present_question を呼ばなかった
-      //   → 補助テキスト入力にフォーカスして、ユーザーが回答できる状態を担保
+      //   ① 既知の Q キーワードにマッチすれば、対応する選択肢を自動表示
+      //   ② マッチしなければ voice + 補助テキスト入力で回答可能に
       if (!presentQuestionCalledThisTurn && /[?？][\s」』）)]*$/.test(cleanedAssistant)) {
-        refs.questionText.textContent = cleanedAssistant.slice(-60);
-        showWidget('voice');
-        flashFallback();
+        const fb = matchFallbackQuestion(cleanedAssistant);
+        if (fb) {
+          applyPresentQuestion({ ...fb, question: cleanedAssistant.slice(-80) });
+        } else {
+          refs.questionText.textContent = cleanedAssistant.slice(-60);
+          showWidget('voice');
+          flashFallback();
+        }
       }
     }
 
