@@ -16,6 +16,7 @@
 import {
   GoogleGenAI,
   Modality,
+  ActivityHandling,
   type Session,
   type LiveServerMessage,
 } from '@google/genai';
@@ -554,9 +555,6 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       });
       return;
     }
-    // AI が応答する直前にマイクを mute (VAD 誤検出で発話が interrupted されるのを防ぐ)
-    // 再生完了で audio.onPlaybackEnd → setInputMuted(false)
-    audio.setInputMuted(true);
     liveSession.sendRealtimeInput({ text });
   }
 
@@ -592,6 +590,13 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
         speechConfig: { languageCode: 'ja-JP' },
         inputAudioTranscription: {},
         outputAudioTranscription: {},
+        // VAD / barge-in は LLM (サーバ) 側に委ねる:
+        //   - automaticActivityDetection: 既定 ON のまま (ユーザー回答の終端検出には必要)
+        //   - activityHandling: NO_INTERRUPTION で AI 発話中の barge-in を抑止
+        //     (周辺ノイズで AI 発話が途中で切れる現象を防ぐ)
+        realtimeInputConfig: {
+          activityHandling: ActivityHandling.NO_INTERRUPTION,
+        },
         // engine 駆動で tool calling は使わない → tools フィールド自体を渡さない
       },
       callbacks: {
@@ -604,8 +609,6 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
           // AI には「挨拶 + Q1-1 の読み上げ」だけを依頼
           setTimeout(() => {
             try {
-              // 挨拶読み上げ中の VAD 誤検出を防ぐためマイクを mute
-              audio.setInputMuted(true);
               liveSession?.sendClientContent({
                 turns: [{ role: 'user', parts: [{ text:
                   `問診を始めます。次の 2 文を発話してください:
@@ -639,8 +642,6 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
         audio: { data: b64, mimeType: 'audio/pcm;rate=16000' },
       });
     });
-    // AI 再生終了でマイク mute 解除 (VAD 誤検出による中断防止)
-    audio.setOnPlaybackEnd(() => audio.setInputMuted(false));
   }
 
   function stopLive(): void {
