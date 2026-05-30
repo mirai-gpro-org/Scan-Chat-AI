@@ -15,7 +15,22 @@ import type {
   Subscription,
   TestArtifact,
 } from '../types/supabase';
-import type { ElithSection } from './elith-parser';
+import { extractMetricCards, type ElithSection, type MetricCard } from './elith-parser';
+
+export interface MetricTrendPoint {
+  date: string;       // ISO date
+  value: number;
+  /** chip 表示用 — 元の "8.4" や "132/85" */
+  raw: string;
+}
+
+export interface MetricTrendSeries {
+  label: string;       // '尿酸' | '血圧 (収縮期)' | '空腹時血糖'
+  unit: string;
+  /** 参考の基準上限 (折れ線グラフに点線で描画) */
+  referenceUpper?: number;
+  points: MetricTrendPoint[];
+}
 
 export interface DashboardData {
   diagnosticUserId: string;
@@ -121,6 +136,53 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
     shipments,
     subscription,
   };
+}
+
+/**
+ * 過去 N 件の diagnosis_results から主要 3 指標 (尿酸/血圧収縮期/空腹時血糖)
+ * を時系列で抽出。グラフ描画用。
+ */
+export async function getMetricTrend(
+  diagnosticUserId: string,
+  limit = 6,
+): Promise<MetricTrendSeries[]> {
+  const sb = getServerSupabase();
+  if (!sb) return [];
+
+  const { data, error } = await sb
+    .schema('diagnosis')
+    .from('diagnosis_results')
+    .select('received_at, report')
+    .eq('diagnostic_user_id', diagnosticUserId)
+    .in('status', ['published', 'extracted'])
+    .order('received_at', { ascending: true })
+    .limit(limit);
+
+  if (error || !data) return [];
+
+  const uric: MetricTrendPoint[] = [];
+  const bpSystolic: MetricTrendPoint[] = [];
+  const fpg: MetricTrendPoint[] = [];
+
+  for (const row of data) {
+    const sections = (row.report as ElithSection[] | null) ?? [];
+    if (sections.length === 0) continue;
+    const cards = extractMetricCards(sections);
+    const date = row.received_at as string;
+    for (const c of cards) {
+      const v = parseFloat(c.value.split('/')[0]); // 血圧は "132/85" の前半
+      if (Number.isNaN(v)) continue;
+      if (c.label === '尿酸')        uric.push({ date, value: v, raw: c.value });
+      else if (c.label === '血圧')   bpSystolic.push({ date, value: v, raw: c.value });
+      else if (c.label === '空腹時血糖') fpg.push({ date, value: v, raw: c.value });
+    }
+  }
+
+  const out: MetricTrendSeries[] = [];
+  if (uric.length > 0)       out.push({ label: '尿酸',       unit: 'mg/dL', referenceUpper: 7.0,  points: uric });
+  if (bpSystolic.length > 0) out.push({ label: '最高血圧',   unit: 'mmHg',  referenceUpper: 129,  points: bpSystolic });
+  if (fpg.length > 0)        out.push({ label: '空腹時血糖', unit: 'mg/dL', referenceUpper: 99,   points: fpg });
+  return out;
 }
 
 /** ユーザー氏名を「物部様」形式で返す。なければ「お客様」。 */

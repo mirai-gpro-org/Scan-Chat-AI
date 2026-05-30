@@ -7,8 +7,9 @@ import HealthCoachPreview from '../components/dashboard/HealthCoachPreview.astro
 import SituationalCards from '../components/dashboard/SituationalCards.astro';
 import KitProgressCard from '../components/dashboard/KitProgressCard.astro';
 import HealthInsightCard from '../components/dashboard/HealthInsightCard.astro';
+import MetricTrendChart from '../components/dashboard/MetricTrendChart.astro';
 import TestHistoryList from '../components/dashboard/TestHistoryList.astro';
-import { loadDashboard, formatGreeting } from '../lib/dashboard-queries';
+import { loadDashboard, formatGreeting, getMetricTrend } from '../lib/dashboard-queries';
 import {
   extractMetricCards,
   extractUrgentAlert,
@@ -25,6 +26,8 @@ const result = await loadDashboard(u);
 
 const hasError = 'error' in result;
 const data = hasError ? null : result;
+
+const metricTrend = data ? await getMetricTrend(data.diagnosticUserId) : [];
 
 const greeting    = data ? formatGreeting(data) : '';
 const sections    = data?.elithSections ?? [];
@@ -102,6 +105,8 @@ const totalChars  = sections.reduce((sum, s) => sum + (s.char_count || 0), 0);
         />
 
         <HealthInsightCard diagnosticUserId={data?.diagnosticUserId ?? ''} />
+
+        <MetricTrendChart series={metricTrend} />
 
         {situations.length > 0 && <SituationalCards cards={situations} />}
 
