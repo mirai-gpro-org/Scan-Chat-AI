@@ -29,3 +29,7 @@ pnpm-debug.log*
 
 # astro
 .astro/
+
+# supabase CLI (local-only working dirs)
+supabase/.branches/
+supabase/.temp/
