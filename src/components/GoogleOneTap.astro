@@ -37,9 +37,17 @@ const enabled = !!clientId;
       const supabaseUrl = import.meta.env.PUBLIC_SUPABASE_URL as string;
       const supabaseAnon = import.meta.env.PUBLIC_SUPABASE_ANON_KEY as string;
 
-      /** デモ専用: 特定メールアドレスをシード済 user に強制マッピング */
+      /** デモ専用: 特定メールアドレスをシード済 user に強制マッピング
+       *  (supabase/seed_admin_users.sql でデータコピー済) */
       const DEMO_EMAIL_TO_UID: Record<string, string> = {
-        'hamada@eentry.co.jp': 'd0000001-0000-0000-0000-000000000000',
+        'unfix.hamada@gmail.com':   '14410d5a-d515-4fe9-9a8e-bbb1040021ac',
+        'miyazawa@wellfort.co.jp':  '1c1ded05-6cce-4880-a5d8-3f964a43ba54',
+        'shindo@wellfort.co.jp':    '46b3651a-f14b-46bd-a24f-fe01256a1709',
+        'ohkawa@wellfort.co.jp':    '7cbe6588-5a99-4068-9c40-5fa2427c7122',
+        'okabe@wellfort.co.jp':     'f9d47b45-45ad-4ffc-bad3-1bf4de130a1c',
+        'honda@wellfort.co.jp':     'c0000020-0000-0000-0000-000000000000',
+        // 開発・テスト用 (元の物部 = 真鍋) もフォールバックとして残す
+        'hamada@eentry.co.jp':      'd0000001-0000-0000-0000-000000000000',
       };
 
       /** すでに ?u= が URL にある場合は One Tap を抑制 (フォールバックモード) */
