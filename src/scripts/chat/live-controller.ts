@@ -575,7 +575,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     };
 
     const instruction = userContext
-      ? `${userContext}\n\n---\n\n${SYSTEM_INSTRUCTION}`
+      ? `${SYSTEM_INSTRUCTION}\n\n---\n\n${userContext}`
       : SYSTEM_INSTRUCTION;
 
     const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: 'v1alpha' } });
