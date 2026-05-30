@@ -128,9 +128,13 @@ const totalChars  = sections.reduce((sum, s) => sum + (s.char_count || 0), 0);
             <div class="flex justify-between"><dt>shipments:</dt><dd>{data?.shipments.length} 件</dd></div>
             <div class="flex justify-between"><dt>Elith sections:</dt><dd>{sections.length} 件 / {totalChars.toLocaleString()} 字</dd></div>
             <div class="flex justify-between"><dt>abstract:</dt><dd>{abstract ? `${abstract.char_count}字` : 'なし'}</dd></div>
-            <p class="pt-2 text-[10px]">
-              他ユーザーで試す: ?u=d0000002 (田中) / d0000003 (山田) / d0000007 (渡辺)
-            </p>
+            <p class="pt-2 text-[10px]">他ユーザーで試す:</p>
+            <div class="flex flex-wrap gap-1 pt-1">
+              <a href="/dashboard?u=d0000001-0000-0000-0000-000000000000" class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300">真鍋 (主役)</a>
+              <a href="/dashboard?u=d0000002-0000-0000-0000-000000000000" class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300">田中</a>
+              <a href="/dashboard?u=d0000003-0000-0000-0000-000000000000" class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300">山田</a>
+              <a href="/dashboard?u=d0000007-0000-0000-0000-000000000000" class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300">渡辺</a>
+            </div>
           </dl>
         </details>
       </main>

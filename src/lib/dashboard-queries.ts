@@ -48,12 +48,30 @@ export interface DashboardData {
 
 const DEFAULT_USER = 'd0000001-0000-0000-0000-000000000000'; // 真鍋 慶次郎
 
+/**
+ * URL パラメータの ?u= で来る値を正規化する:
+ *   - 完全な uuid (36 char) → そのまま
+ *   - 短縮形 `d0000001` や `d0000001-0000-0000-0000-00000000000` (最終ブロック不足)
+ *     → 先頭 8 桁を取り、末尾を `-0000-0000-0000-000000000000` で埋めて返す
+ *   - 何もマッチしなければ null
+ */
+function normalizeDiagnosticUserId(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) {
+    return trimmed;
+  }
+  const m = /^([0-9a-f]{8})/i.exec(trimmed);
+  if (m) return `${m[1].toLowerCase()}-0000-0000-0000-000000000000`;
+  return null;
+}
+
 /** dashboard.astro から呼ぶ。 */
 export async function loadDashboard(diagnosticUserId?: string | null): Promise<DashboardData | { error: string }> {
   const sb = getServerSupabase();
   if (!sb) return { error: 'Supabase が未設定です。.env.local を確認してください。' };
 
-  const uid = diagnosticUserId?.trim() || DEFAULT_USER;
+  const normalized = diagnosticUserId ? normalizeDiagnosticUserId(diagnosticUserId) : null;
+  const uid = normalized ?? DEFAULT_USER;
 
   // diagnosis schema
   const dsb = sb.schema('diagnosis');
