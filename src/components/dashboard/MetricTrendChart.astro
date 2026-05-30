@@ -227,11 +227,11 @@ const computed: Computed[] = series.map((s) => {
       aria-modal="true"
       aria-labelledby={`trend-modal-title-${idx}`}
     >
-      <div data-trend-close class="sheet-backdrop"></div>
+      <div data-trend-close class="fixed inset-0 z-40 bg-slate-900/50"></div>
       <div
         class="relative z-10 mx-auto w-full max-w-3xl rounded-t-3xl sm:rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900 max-h-[92vh] overflow-y-auto"
       >
-        <header class="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-slate-200 bg-white/95 px-5 py-3 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
+        <header class="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3 dark:border-slate-700 dark:bg-slate-900">
           <div class="flex items-baseline gap-2">
             <h2 id={`trend-modal-title-${idx}`} class="text-base font-bold text-slate-800 dark:text-slate-100">
               📈 {s.label} の数値変動
@@ -354,7 +354,7 @@ const computed: Computed[] = series.map((s) => {
           </p>
         </div>
 
-        <footer class="sticky bottom-0 border-t border-slate-200 bg-white/95 px-5 py-3 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
+        <footer class="sticky bottom-0 border-t border-slate-200 bg-white px-5 py-3 dark:border-slate-700 dark:bg-slate-900">
           <button
             type="button"
             data-trend-close
