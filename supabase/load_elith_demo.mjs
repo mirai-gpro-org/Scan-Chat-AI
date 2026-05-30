@@ -57,7 +57,7 @@ const { data, error } = await supabase
     status: 'published',
   })
   .eq('id', targetId)
-  .select('id, schema_version, status, jsonb_array_length(report) as section_count')
+  .select('id, schema_version, status')
   .single();
 
 if (error) {
@@ -65,4 +65,6 @@ if (error) {
   process.exit(1);
 }
 console.log('updated', data);
+console.log(`  sections embedded: ${sample.length}`);
+console.log(`  total chars      : ${totalChars}`);
 console.log('Elith demo loaded into diagnosis.diagnosis_results id =', targetId);
