@@ -116,7 +116,13 @@ insert into customer.kit_shipments
   ('6000000b-0000-0000-0000-000000000000', 'ORD-2026-05-003', 'c0000007-0000-0000-0000-000000000000', '1a000001-0000-0000-0000-000000000000', 'blood',         null, null, null, 'タカセ倉庫', '2026-05-20 10:00+09', 'YT-1234-5678-9010', 'yamato', null, '2026-05-22', null, '2026-05-22 14:00+09', null, null, null),
 
   -- 返送済・検査中
-  ('6000000c-0000-0000-0000-000000000000', 'ORD-2026-04-001', 'c0000009-0000-0000-0000-000000000000', '1a000001-0000-0000-0000-000000000000', 'blood',         null, null, null, 'タカセ倉庫', '2026-04-15 10:00+09', 'YT-1234-5678-9011', 'yamato', null, '2026-04-17', null, '2026-04-17 19:00+09', '2026-04-19 09:00+09', '2026-04-22 10:00+09', null);
+  ('6000000c-0000-0000-0000-000000000000', 'ORD-2026-04-001', 'c0000009-0000-0000-0000-000000000000', '1a000001-0000-0000-0000-000000000000', 'blood',         null, null, null, 'タカセ倉庫', '2026-04-15 10:00+09', 'YT-1234-5678-9011', 'yamato', null, '2026-04-17', null, '2026-04-17 19:00+09', '2026-04-19 09:00+09', '2026-04-22 10:00+09', null),
+
+  -- 物部 進行中 (デモ主役の自己申告 UX 用) ------------------------
+  -- 発送済・未受取  → 「📦 受け取りました」ボタン表示
+  ('6000000d-0000-0000-0000-000000000000', 'ORD-2026-05-010', 'c0000001-0000-0000-0000-000000000000', '1a000001-0000-0000-0000-000000000000', 'blood',         '50000001-0000-0000-0000-000000000000', 2, 2, 'タカセ倉庫', '2026-05-26 10:00+09', 'YT-1234-5678-9020', 'yamato', 'https://track.kuronekoyamato.co.jp/?no=YT-1234-5678-9020', '2026-05-29', '2026-05-29', null, null, null, null),
+  -- 受取済・未返送 → 「💉 返送しました」ボタン表示
+  ('6000000e-0000-0000-0000-000000000000', 'ORD-2026-05-011', 'c0000001-0000-0000-0000-000000000000', '1a000002-0000-0000-0000-000000000000', 'cancer_urine',  '50000001-0000-0000-0000-000000000000', 2, 2, 'タカセ倉庫', '2026-05-22 10:00+09', 'YT-1234-5678-9021', 'yamato', 'https://track.kuronekoyamato.co.jp/?no=YT-1234-5678-9021', '2026-05-24', null, '2026-05-25 10:00+09', null, null, null);
 
 -- ============== lab_tests (検査ID 紐付け) ==============
 insert into customer.lab_tests
@@ -248,7 +254,7 @@ insert into diagnosis.diagnosis_results
 -- select count(*) as customers from customer.customer_profiles;          -- 10
 -- select count(*) as lab_companies from customer.lab_companies;          -- 5
 -- select count(*) as subscriptions from customer.subscriptions;          -- 6
--- select count(*) as kit_shipments from customer.kit_shipments;          -- 12
+-- select count(*) as kit_shipments from customer.kit_shipments;          -- 14
 -- select count(*) as lab_tests from customer.lab_tests;                  -- 9
 -- select count(*) as app_users from diagnosis.app_users;                 -- 10
 -- select count(*) as test_artifacts from diagnosis.test_artifacts;       -- 12
