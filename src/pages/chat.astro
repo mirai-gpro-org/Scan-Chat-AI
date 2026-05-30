@@ -11,7 +11,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
 <BaseLayout title="AI 問診 | Scan-Chat Medical AI">
   <header class="hero-gradient relative px-5 pt-5 pb-3">
     <div class="flex items-center justify-between">
-      <a href="/" class="text-sm text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white">
+      <a href={diagnosticUserId ? `/?u=${encodeURIComponent(diagnosticUserId)}` : '/'} class="text-sm text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white">
         ‹ メニュー
       </a>
       <div class="flex items-center gap-2">
