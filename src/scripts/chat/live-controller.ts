@@ -502,6 +502,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   /** 直近の assistant 完了発話 (ループ検出用) */
   let lastFinalizedAssistant = '';
   let lastFinalizedAssistantAt = 0;
+  let duplicateAssistantCount = 0;
 
   let mode: 'voice' | 'text' = 'voice';
   let currentPresent: PresentArgs | null = null;
@@ -905,15 +906,32 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       userBuf = '';
       assistantBuf = '';
 
-      // ループ検出: 直近 10 秒以内に同じ発話 (or 高類似) を完了したら抑制
+      // ループ検出: 直近 10 秒以内に同じ発話を完了したら重複カウント
       const now = Date.now();
       const isDuplicate =
         cleanedAssistant.length > 10 &&
         cleanedAssistant === lastFinalizedAssistant &&
-        now - lastFinalizedAssistantAt < 10_000;
-      if (!isDuplicate) {
+        now - lastFinalizedAssistantAt < 15_000;
+      if (isDuplicate) {
+        duplicateAssistantCount += 1;
+      } else {
+        duplicateAssistantCount = 0;
         lastFinalizedAssistant = cleanedAssistant;
         lastFinalizedAssistantAt = now;
+      }
+
+      // 重複 2 回 (合計 3 回同じ発話) でセッション切断 — AI の発話ループから抜けるため
+      if (duplicateAssistantCount >= 2) {
+        appendMessage({
+          role: 'system',
+          text: '⚠️ AI が同じ質問を繰り返しているため、セッションを自動切断しました。「リセット」ボタンで再開してください。',
+          ts: Date.now(),
+        });
+        setStatus('🔌 自動切断 — リセットして再開してください');
+        stopLive();
+        duplicateAssistantCount = 0;
+        lastFinalizedAssistant = '';
+        return;
       }
 
       // セーフネット: AI が「?」で終わる質問をしたのに present_question を呼ばなかった
@@ -1045,6 +1063,11 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     }
 
     showWidget(finalKind);
+
+    // multi はモーダルを自動展開 (「+ 選択肢から選ぶ」を押す手間を省く)
+    if (finalKind === 'multi') {
+      setTimeout(() => openMultiModal(), 150);
+    }
   }
 
   function renderChips(chips: ChoiceOption[]): void {
