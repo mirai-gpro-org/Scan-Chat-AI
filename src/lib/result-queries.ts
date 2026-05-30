@@ -26,7 +26,22 @@ export interface ResultData {
   fullSections: ElithSection[];
   /** UI モード判定 */
   isThreeMode: boolean;
+  /** docs/kensa_sample から public/ にコピーした原本 PDF の path (test_type ベース) */
+  samplePdfUrl: string | null;
+  /** 原本 PDF の表示用ラベル */
+  samplePdfLabel: string | null;
 }
+
+/**
+ * test_type → public/kensa_sample/ にあるサンプル PDF への URL。
+ * 本番では test_artifact_files.raw_pdf_redacted の Storage URL に置換予定 (Phase 1.5)。
+ */
+const SAMPLE_PDF_MAP: Record<string, { url: string; label: string }> = {
+  blood:         { url: '/kensa_sample/blood.pdf',         label: '血液検査 (リージャー)' },
+  cancer_urine:  { url: '/kensa_sample/cancer_urine.pdf',  label: 'がんリスク検査 (PREVENT)' },
+  genetics:      { url: '/kensa_sample/genetics.pdf',      label: '遺伝子検査 (Genoplan My Book, 207pg)' },
+  ai_prediction: { url: '/kensa_sample/ai_prediction.pdf', label: 'AI 疾病予測' },
+};
 
 /** Wellfort UI 表示順 (c) 全編で使用) */
 const FULL_ORDER = [
@@ -86,6 +101,8 @@ export async function loadResult(
     .map((n) => findSection(sections, n))
     .filter((s): s is ElithSection => s != null);
 
+  const samplePdf = SAMPLE_PDF_MAP[artifact.test_type] ?? null;
+
   return {
     artifact,
     latestResult: latestResult ?? null,
@@ -93,6 +110,8 @@ export async function loadResult(
     summarySection,
     highlightSections,
     fullSections,
-    isThreeMode: artifact.display_mode === 'three_mode' && sections.length > 0,
+    isThreeMode: artifact.display_mode === 'three_mode',
+    samplePdfUrl: samplePdf?.url ?? null,
+    samplePdfLabel: samplePdf?.label ?? null,
   };
 }
