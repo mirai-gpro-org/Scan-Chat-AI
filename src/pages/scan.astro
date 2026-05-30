@@ -1,6 +1,18 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import ScanOverlay from '../components/ScanOverlay.astro';
+import { getUserUploads } from '../lib/scan-queries';
+import { testTypeLabel, formatJpDate } from '../lib/dashboard-queries';
+
+export const prerender = false;
+
+const url = new URL(Astro.request.url);
+const rawU = url.searchParams.get('u');
+const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU)
+  ? rawU
+  : (rawU ? `${rawU.slice(0, 8)}-0000-0000-0000-000000000000` : null);
+const uploads = diagnosticUserId ? await getUserUploads(diagnosticUserId) : [];
+const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnosticUserId)}` : '/dashboard';
 ---
 
 <BaseLayout title="スキャン | Scan-Chat Medical AI">
@@ -17,21 +29,70 @@ import ScanOverlay from '../components/ScanOverlay.astro';
     <!-- ============================================================== -->
     <!-- パネル: ready（カメラ起動前のオンボーディング）                  -->
     <!-- ============================================================== -->
-    <section id="panel-ready" class="flex flex-1 flex-col items-center justify-center gap-6 text-center">
-      <div class="flex h-24 w-24 items-center justify-center rounded-3xl bg-brand-50 text-5xl dark:bg-brand-600/10">
+    <section id="panel-ready" class="flex flex-1 flex-col items-center gap-5 pt-2 text-center">
+      <div class="flex h-20 w-20 items-center justify-center rounded-3xl bg-brand-50 text-4xl dark:bg-brand-600/10">
         📋
       </div>
-      <div class="space-y-2">
-        <h2 class="text-xl font-bold">健診結果をスキャン</h2>
-        <p class="text-sm text-slate-600 dark:text-slate-300">
+      <div class="space-y-1">
+        <h2 class="text-lg font-bold">健診結果をスキャン</h2>
+        <p class="text-xs text-slate-600 dark:text-slate-300">
           検査用紙をカメラで読み取り、AI が項目を自動で認識します。
         </p>
       </div>
-      <ul class="w-full space-y-2 rounded-2xl bg-slate-50 p-4 text-left text-sm text-slate-700 dark:bg-slate-900 dark:text-slate-200">
+      <ul class="w-full space-y-1.5 rounded-2xl bg-slate-50 p-3 text-left text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-200">
         <li class="flex gap-2"><span aria-hidden>💡</span>明るい場所で撮影してください</li>
         <li class="flex gap-2"><span aria-hidden>📄</span>用紙全体が枠に収まるようにかざします</li>
         <li class="flex gap-2"><span aria-hidden>🔒</span>画像はサーバに保存されません</li>
       </ul>
+
+      {/* ━━━ これまでにスキャンした検査一覧 ━━━ */}
+      {uploads.length > 0 && (
+        <section class="w-full text-left">
+          <header class="mb-2 flex items-center justify-between px-1">
+            <h3 class="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200">
+              <span>📚</span>
+              <span>これまでにスキャンした検査</span>
+            </h3>
+            <a href={dashUrl} class="text-[10px] text-brand-600 hover:underline">全件 ›</a>
+          </header>
+          <ul class="space-y-1.5">
+            {uploads.slice(0, 5).map((a) => {
+              const tt = testTypeLabel(a.test_type);
+              const href = diagnosticUserId
+                ? `/result/${a.id}?u=${encodeURIComponent(diagnosticUserId)}`
+                : `/result/${a.id}`;
+              return (
+                <li>
+                  <a
+                    href={href}
+                    class="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3 py-2 transition hover:border-brand-300 hover:shadow-sm dark:border-slate-700 dark:bg-slate-900"
+                  >
+                    <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-brand-50 to-cyan-50 text-base dark:from-brand-500/20 dark:to-cyan-500/20">
+                      {tt.emoji}
+                    </span>
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-baseline justify-between gap-2">
+                        <h4 class="truncate text-sm font-medium text-slate-800 dark:text-slate-100">{tt.name}</h4>
+                        <time class="shrink-0 text-[10px] text-slate-500">{formatJpDate(a.test_date)}</time>
+                      </div>
+                      <p class="mt-0.5 truncate text-[10px] text-slate-500">
+                        {a.lab_name ?? 'ユーザー UL'}
+                        {a.page_count && a.page_count > 1 && <span> · {a.page_count}pg</span>}
+                      </p>
+                    </div>
+                    <span class="shrink-0 text-slate-400">›</span>
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+          {uploads.length > 5 && (
+            <p class="mt-2 text-center text-[10px] text-slate-500">
+              他 {uploads.length - 5} 件 — <a href={dashUrl} class="text-brand-600 hover:underline">ダッシュボードで確認</a>
+            </p>
+          )}
+        </section>
+      )}
       <div class="mt-auto flex w-full flex-col gap-2">
         <button id="scan-start" class="btn-primary w-full !py-4 text-lg">
           📷 カメラで撮影
