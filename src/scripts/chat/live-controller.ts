@@ -784,13 +784,32 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     currentQ = null;
     renderProgress(100, '完了');
     renderSectionDots(SECTIONS.length);
-    refs.questionText.textContent = '✨ お疲れさまでした。ダッシュボードで「今日の気付き」をご覧ください。';
+
+    const uid = refs.diagnosticUserId?.trim();
+    const dashUrl = uid ? `/dashboard?u=${encodeURIComponent(uid)}` : '/dashboard';
+
+    refs.questionText.innerHTML = `
+      <div class="flex flex-col items-center gap-3 py-2">
+        <p class="text-center text-base font-semibold text-slate-800 dark:text-slate-100">
+          ✨ お疲れさまでした、ご協力ありがとうございました。
+        </p>
+        <p class="text-center text-xs text-slate-600 dark:text-slate-300">
+          ダッシュボードに「今日の気付き」が自動生成されます。
+        </p>
+        <a
+          href="${dashUrl}"
+          class="mt-1 inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-brand-600 to-cyan-600 px-5 py-2 text-sm font-medium text-white shadow-md hover:from-brand-700 hover:to-cyan-700"
+        >
+          📊 ダッシュボードで結果を見る ›
+        </a>
+      </div>
+    `;
     showWidget('voice');
     session.progress = 100;
     saveChatSession(session);
     appendMessage({
       role: 'system',
-      text: '✅ 問診完了 — ダッシュボードに移動して結果をご確認ください。',
+      text: '✅ 問診完了 — ダッシュボードで「今日の気付き」をご確認ください。',
       ts: Date.now(),
     });
   }
