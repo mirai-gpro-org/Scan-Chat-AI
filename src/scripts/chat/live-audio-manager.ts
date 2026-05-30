@@ -16,6 +16,7 @@ const OUTPUT_SAMPLE_RATE = 24000;
 const PROCESS_BUFFER_SIZE = 4096;
 
 export type AudioChunkHandler = (base64Pcm16: string) => void;
+export type PlaybackEndHandler = () => void;
 
 export class LiveAudioManager {
   private inputCtx: AudioContext | null = null;
@@ -26,6 +27,18 @@ export class LiveAudioManager {
   private nextPlaybackTime = 0;
   private playingSources = new Set<AudioBufferSourceNode>();
   private onChunk: AudioChunkHandler = () => {};
+  private onPlaybackEnd: PlaybackEndHandler = () => {};
+  private inputMuted = false;
+
+  /** マイク入力を一時停止/再開。AI 発話中に VAD 誤検出 (周辺ノイズで interrupted) を防ぐ用途。 */
+  setInputMuted(muted: boolean): void {
+    this.inputMuted = muted;
+  }
+
+  /** AI の音声再生が完全に終わった時のコールバックを登録 */
+  setOnPlaybackEnd(cb: PlaybackEndHandler): void {
+    this.onPlaybackEnd = cb;
+  }
 
   /** ユーザー操作（クリック等）の同期文脈で呼ぶこと（iOS の autoplay 制限対策） */
   async start(onChunk: AudioChunkHandler): Promise<void> {
@@ -94,7 +107,12 @@ export class LiveAudioManager {
     src.start(start);
     this.nextPlaybackTime = start + buf.duration;
     this.playingSources.add(src);
-    src.onended = () => this.playingSources.delete(src);
+    src.onended = () => {
+      this.playingSources.delete(src);
+      if (this.playingSources.size === 0) {
+        try { this.onPlaybackEnd(); } catch {}
+      }
+    };
   }
 
   /** 割り込み: 残り再生を即停止（サーバ側 barge-in 通知時 or speaker mute 時） */
@@ -112,6 +130,7 @@ export class LiveAudioManager {
 
   private handleAudioProcess(ev: AudioProcessingEvent): void {
     if (!this.inputCtx) return;
+    if (this.inputMuted) return; // AI 発話中など。サーバへ送らない
     const input = ev.inputBuffer.getChannelData(0);
     const ratio = this.inputCtx.sampleRate / INPUT_SAMPLE_RATE;
     const outLen = Math.floor(input.length / ratio);
