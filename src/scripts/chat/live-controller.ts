@@ -499,6 +499,9 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   let userStreamBubble: HTMLElement | null = null;
   let assistantBuf = '';
   let userBuf = '';
+  /** 直近の assistant 完了発話 (ループ検出用) */
+  let lastFinalizedAssistant = '';
+  let lastFinalizedAssistantAt = 0;
 
   let mode: 'voice' | 'text' = 'voice';
   let currentPresent: PresentArgs | null = null;
@@ -902,10 +905,23 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       userBuf = '';
       assistantBuf = '';
 
+      // ループ検出: 直近 10 秒以内に同じ発話 (or 高類似) を完了したら抑制
+      const now = Date.now();
+      const isDuplicate =
+        cleanedAssistant.length > 10 &&
+        cleanedAssistant === lastFinalizedAssistant &&
+        now - lastFinalizedAssistantAt < 10_000;
+      if (!isDuplicate) {
+        lastFinalizedAssistant = cleanedAssistant;
+        lastFinalizedAssistantAt = now;
+      }
+
       // セーフネット: AI が「?」で終わる質問をしたのに present_question を呼ばなかった
       //   ① 既知の Q キーワードにマッチすれば、対応する選択肢を自動表示
       //   ② マッチしなければ voice + 補助テキスト入力で回答可能に
-      if (!presentQuestionCalledThisTurn && /[?？][\s」』）)]*$/.test(cleanedAssistant)) {
+      // ループ抑制: 重複発話では fallback を発火しない
+      if (!presentQuestionCalledThisTurn && !isDuplicate &&
+          /[?？][\s」』）)]*$/.test(cleanedAssistant)) {
         const lastQ = extractLastQuestion(cleanedAssistant);
         const fb = matchFallbackQuestion(cleanedAssistant);
         if (fb) {
