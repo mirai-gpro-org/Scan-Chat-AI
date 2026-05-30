@@ -313,3 +313,41 @@
 .md-region code {
   @apply rounded bg-slate-100 px-1 text-[0.85em] dark:bg-slate-800;
 }
+
+/* ─ サマリー / 要注意モードでの強調表示 (アイキャッチ箇条書き) ─ */
+.md-summary p {
+  @apply my-2 text-[13px];
+}
+.md-summary p:has(> strong:first-child:last-child) {
+  /* 見出し風の太字単体段落 */
+  @apply mt-4 mb-2 text-[14px] font-bold tracking-tight text-slate-800 dark:text-slate-100;
+}
+.md-summary ul {
+  @apply my-2 ml-0 space-y-1.5 text-[13px];
+  list-style: none;
+}
+.md-summary li {
+  @apply flex items-start gap-1.5 rounded-lg border-l-[3px] border-slate-200 bg-slate-50/70 px-3 py-2 leading-relaxed transition;
+  border-left-width: 3px;
+}
+.md-summary li:hover {
+  @apply border-brand-400 bg-slate-50;
+}
+@media (prefers-color-scheme: dark) {
+  .md-summary li {
+    background: rgb(30 41 59 / 0.35);
+    border-left-color: rgb(51 65 85);
+  }
+  .md-summary li:hover {
+    background: rgb(30 41 59 / 0.55);
+    border-left-color: rgb(96 165 250);
+  }
+}
+/* 行頭の絵文字をアイキャッチとして拡大表示 */
+.md-summary li::first-letter {
+  font-size: 1.4em;
+  line-height: 1;
+}
+.md-summary strong {
+  @apply font-bold text-slate-900 dark:text-slate-50;
+}
