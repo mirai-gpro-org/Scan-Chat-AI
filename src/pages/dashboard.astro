@@ -97,7 +97,7 @@ const totalChars  = sections.reduce((sum, s) => sum + (s.char_count || 0), 0);
           <section>
             <header class="mb-2 flex items-center justify-between">
               <h2 class="text-sm font-bold text-slate-800 dark:text-slate-100">📈 直近の検査結果</h2>
-              <span class="text-[10px] text-slate-500">血液検査より · タップで原本</span>
+              <span class="text-[10px] text-slate-500">AI診断結果 (Wellfort-Elith)</span>
             </header>
             <div class="grid grid-cols-3 gap-2">
               {metrics.map((m) => <MetricCard metric={m} href={linkFor(m.label)} />)}
