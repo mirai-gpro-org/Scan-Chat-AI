@@ -1,0 +1,278 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import { gateByUid, notFoundForNonAdmin } from '../../../lib/admin-auth';
+
+export const prerender = false;
+
+const url = new URL(Astro.request.url);
+const u = url.searchParams.get('u');
+const { allowed, uid } = gateByUid(u);
+if (!allowed) {
+  return notFoundForNonAdmin();
+}
+const qs = `?u=${encodeURIComponent(uid!)}`;
+
+const labCompanies = [
+  { value: 'rieger',   label: '🩸 リージャーラボラトリー (血液検査)',  testType: 'blood',         exts: ['pdf', 'csv'] },
+  { value: 'prevent',  label: '🎗️ PREVENT メディカル (がんリスク尿検査)', testType: 'cancer_urine', exts: ['pdf'] },
+  { value: 'genoplan', label: '🧬 ジェノプランジャパン (遺伝子検査)',     testType: 'genetics',      exts: ['pdf'] },
+  { value: 'laif',     label: '🤖 LAiF (AI 疾病予測)',                    testType: 'ai_prediction', exts: ['pdf'] },
+];
+---
+
+<BaseLayout title="検査結果アップロード | 管理画面">
+  <header class="hero-gradient px-5 pt-5 pb-4">
+    <div class="flex items-center justify-between">
+      <a href={`/admin${qs}`} class="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400">‹ 管理画面</a>
+      <p class="text-xs font-medium uppercase tracking-wider text-red-600/80 dark:text-red-300/80">ADMIN</p>
+      <span class="w-10"></span>
+    </div>
+    <h1 class="mt-2 text-lg font-bold tracking-tight">📤 検査結果アップロード</h1>
+    <p class="mt-1 text-[11px] text-slate-600 dark:text-slate-300">
+      ウェルフォート経由の検査結果ファイル (PDF / CSV) を一括取り込み
+    </p>
+  </header>
+
+  <main class="flex flex-1 flex-col gap-4 px-5 pb-8 pt-4">
+    {/* 1. 検査機関選択 */}
+    <section class="card">
+      <h2 class="mb-2 text-sm font-bold text-slate-800 dark:text-slate-100">① 検査機関を選択</h2>
+      <select
+        id="lab-company"
+        class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900"
+      >
+        <option value="">— 選択してください —</option>
+        {labCompanies.map((c) => (
+          <option value={c.value} data-test-type={c.testType} data-exts={c.exts.join(',')}>{c.label}</option>
+        ))}
+      </select>
+    </section>
+
+    {/* 2. ファイル選択 */}
+    <section class="card">
+      <h2 class="mb-2 text-sm font-bold text-slate-800 dark:text-slate-100">② ファイルを選択 (複数可)</h2>
+      <label
+        for="files-input"
+        id="files-drop"
+        class="flex w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center transition hover:border-brand-400 hover:bg-brand-50 dark:border-slate-700 dark:bg-slate-900/40"
+      >
+        <span class="text-3xl">📂</span>
+        <span class="text-sm font-medium text-slate-700 dark:text-slate-200">クリックまたはドラッグ&ドロップ</span>
+        <span class="text-[11px] text-slate-500" id="files-hint">PDF / CSV (最大 20 MB × 100 ファイル)</span>
+      </label>
+      <input
+        id="files-input"
+        type="file"
+        class="hidden"
+        multiple
+        accept="application/pdf,text/csv,application/vnd.ms-excel"
+      />
+    </section>
+
+    {/* 3. 選択ファイル一覧 (重複チェック後表示) */}
+    <section id="files-list-section" class="card" hidden>
+      <header class="mb-2 flex items-center justify-between">
+        <h2 class="text-sm font-bold text-slate-800 dark:text-slate-100">③ 選択ファイル <span id="files-count">0</span> 件</h2>
+        <button
+          id="check-btn"
+          type="button"
+          class="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
+        >🔍 重複チェック</button>
+      </header>
+      <ul id="files-list" class="space-y-2"></ul>
+      <p id="files-summary" class="mt-3 text-[11px] text-slate-600 dark:text-slate-300"></p>
+    </section>
+
+    {/* 4. アップロードボタン */}
+    <button
+      id="upload-btn"
+      type="button"
+      class="mt-2 w-full rounded-2xl bg-gradient-to-br from-brand-600 to-cyan-600 px-5 py-4 text-base font-semibold text-white shadow-lg shadow-brand-500/30 transition hover:from-brand-700 hover:to-cyan-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+      disabled
+    >
+      🚀 アップロード
+    </button>
+
+    {/* 5. 進行状況 / 完了表示 */}
+    <section id="progress-section" class="card" hidden>
+      <h2 class="mb-2 text-sm font-bold text-slate-800 dark:text-slate-100">アップロード結果</h2>
+      <ul id="progress-list" class="space-y-1.5 text-[12px]"></ul>
+      <p id="progress-summary" class="mt-3 text-[11px] text-slate-600 dark:text-slate-300"></p>
+    </section>
+  </main>
+</BaseLayout>
+
+<script>
+  type FileMeta = { file: File; status: 'new' | 'duplicate' | 'error'; detail?: string; checked: boolean };
+  type CheckResult = { filename: string; status: 'new' | 'duplicate'; existing_artifact_id?: string };
+
+  const labCompanyEl = document.getElementById('lab-company') as HTMLSelectElement;
+  const filesInputEl = document.getElementById('files-input') as HTMLInputElement;
+  const filesDropEl = document.getElementById('files-drop') as HTMLLabelElement;
+  const filesHintEl = document.getElementById('files-hint') as HTMLElement;
+  const filesListSection = document.getElementById('files-list-section') as HTMLElement;
+  const filesListEl = document.getElementById('files-list') as HTMLUListElement;
+  const filesCountEl = document.getElementById('files-count') as HTMLElement;
+  const filesSummaryEl = document.getElementById('files-summary') as HTMLElement;
+  const checkBtn = document.getElementById('check-btn') as HTMLButtonElement;
+  const uploadBtn = document.getElementById('upload-btn') as HTMLButtonElement;
+  const progressSection = document.getElementById('progress-section') as HTMLElement;
+  const progressListEl = document.getElementById('progress-list') as HTMLUListElement;
+  const progressSummaryEl = document.getElementById('progress-summary') as HTMLElement;
+
+  let files: FileMeta[] = [];
+
+  // 検査機関選択で accept を絞る
+  labCompanyEl.addEventListener('change', () => {
+    const opt = labCompanyEl.selectedOptions[0];
+    const exts = opt?.dataset.exts?.split(',') ?? [];
+    if (exts.length > 0) {
+      const mimes = exts.map((e) => {
+        if (e === 'pdf') return 'application/pdf';
+        if (e === 'csv') return 'text/csv';
+        return '';
+      }).filter(Boolean).join(',');
+      filesInputEl.accept = mimes;
+      filesHintEl.textContent = `${exts.map((e) => e.toUpperCase()).join(' / ')} (最大 20 MB × 100 ファイル)`;
+    }
+  });
+
+  // ドラッグ&ドロップ対応
+  filesDropEl.addEventListener('dragover', (e) => { e.preventDefault(); filesDropEl.classList.add('border-brand-500'); });
+  filesDropEl.addEventListener('dragleave', () => filesDropEl.classList.remove('border-brand-500'));
+  filesDropEl.addEventListener('drop', (e) => {
+    e.preventDefault();
+    filesDropEl.classList.remove('border-brand-500');
+    if (e.dataTransfer?.files) handleFiles(Array.from(e.dataTransfer.files));
+  });
+
+  filesInputEl.addEventListener('change', () => {
+    if (filesInputEl.files) handleFiles(Array.from(filesInputEl.files));
+  });
+
+  function handleFiles(selected: File[]) {
+    if (!labCompanyEl.value) {
+      alert('先に検査機関を選択してください');
+      return;
+    }
+    files = selected.map((f) => ({ file: f, status: 'new' as const, checked: true }));
+    renderList();
+    runCheck();
+  }
+
+  function renderList() {
+    filesCountEl.textContent = String(files.length);
+    filesListEl.innerHTML = '';
+    files.forEach((m, idx) => {
+      const li = document.createElement('li');
+      const badge = m.status === 'new'
+        ? '<span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">新規 ✅</span>'
+        : m.status === 'duplicate'
+        ? '<span class="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-200">重複 ⚠️</span>'
+        : '<span class="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700 dark:bg-red-900/40 dark:text-red-200">エラー ❌</span>';
+      const size = (m.file.size / 1024).toFixed(0);
+      li.className = 'flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900';
+      li.innerHTML = `
+        <input type="checkbox" data-idx="${idx}" ${m.checked ? 'checked' : ''} class="h-4 w-4 rounded border-slate-400 text-brand-600" />
+        <span class="flex-1 truncate text-[12px] text-slate-700 dark:text-slate-200">${m.file.name}</span>
+        <span class="text-[10px] text-slate-500">${size} KB</span>
+        ${badge}
+      `;
+      filesListEl.appendChild(li);
+    });
+    // checkbox イベント
+    filesListEl.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const idx = Number(cb.dataset.idx);
+        files[idx].checked = cb.checked;
+        updateSummary();
+      });
+    });
+    filesListSection.hidden = files.length === 0;
+    updateSummary();
+  }
+
+  function updateSummary() {
+    const checked = files.filter((f) => f.checked).length;
+    const dups = files.filter((f) => f.status === 'duplicate').length;
+    filesSummaryEl.textContent = `✅ アップロード対象: ${checked} 件 / ⚠️ 重複: ${dups} 件`;
+    uploadBtn.disabled = checked === 0;
+  }
+
+  async function runCheck() {
+    if (files.length === 0) return;
+    checkBtn.disabled = true;
+    checkBtn.textContent = '🔍 確認中…';
+    try {
+      const res = await fetch('/api/admin/lab-results/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lab_company: labCompanyEl.value,
+          filenames: files.map((f) => f.file.name),
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const payload = await res.json() as { results: CheckResult[] };
+      payload.results.forEach((r) => {
+        const m = files.find((f) => f.file.name === r.filename);
+        if (m) {
+          m.status = r.status;
+          if (r.status === 'duplicate') m.checked = false;
+        }
+      });
+    } catch (e) {
+      console.error(e);
+      // チェック失敗時は全て new として扱う (デフォルト)
+    } finally {
+      checkBtn.disabled = false;
+      checkBtn.textContent = '🔍 重複チェック';
+      renderList();
+    }
+  }
+
+  checkBtn.addEventListener('click', runCheck);
+
+  // アップロード
+  uploadBtn.addEventListener('click', async () => {
+    const targets = files.filter((f) => f.checked);
+    if (targets.length === 0) return;
+    if (!confirm(`${targets.length} 件のファイルをアップロードします。よろしいですか？`)) return;
+
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = '⏳ アップロード中…';
+    progressSection.hidden = false;
+    progressListEl.innerHTML = '';
+
+    const fd = new FormData();
+    fd.append('lab_company', labCompanyEl.value);
+    targets.forEach((m) => fd.append('files', m.file, m.file.name));
+
+    try {
+      const res = await fetch('/api/admin/lab-results/upload', {
+        method: 'POST',
+        body: fd,
+      });
+      const payload = await res.json() as {
+        uploaded?: { filename: string; status: string; artifact_id?: string }[];
+        failed?: { filename: string; status: string; detail?: string }[];
+      };
+      const uploaded = payload.uploaded ?? [];
+      const failed = payload.failed ?? [];
+      [...uploaded.map((r) => ({ ...r, ok: true })), ...failed.map((r) => ({ ...r, ok: false }))]
+        .forEach((r) => {
+          const li = document.createElement('li');
+          li.className = r.ok ? 'text-emerald-600 dark:text-emerald-300' : 'text-red-600 dark:text-red-300';
+          const detail = 'detail' in r ? r.detail : undefined;
+          li.textContent = r.ok ? `✅ ${r.filename}` : `❌ ${r.filename} — ${detail ?? r.status}`;
+          progressListEl.appendChild(li);
+        });
+      progressSummaryEl.textContent = `完了: ${uploaded.length} 件 / 失敗: ${failed.length} 件`;
+    } catch (e) {
+      progressSummaryEl.textContent = `通信エラー: ${e instanceof Error ? e.message : String(e)}`;
+    } finally {
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = '🚀 アップロード';
+    }
+  });
+</script>
