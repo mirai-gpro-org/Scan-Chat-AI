@@ -83,19 +83,28 @@ const totalChars  = sections.reduce((sum, s) => sum + (s.char_count || 0), 0);
 
         {urgentAlert && <UrgentAlertBanner alert={urgentAlert} />}
 
-        {metrics.length > 0 && (
+        {metrics.length > 0 && (() => {
+          // 各指標から「原本 PDF の該当ページ」へ deep link を作る:
+          //   尿酸・中性脂肪・血糖値 → 血液検査 (test_type='blood') の latest artifact
+          //   血圧 → 同上 (血液検査内に最高/最低血圧が含まれるため)
+          // PDF は 1pg 単位なので page=1 固定で十分。
+          const bloodArtifact = data?.artifacts.find((a) => a.test_type === 'blood') ?? null;
+          const linkFor = (label: string): string | null => {
+            if (!bloodArtifact || !u) return null;
+            return `/result/${bloodArtifact.id}?u=${encodeURIComponent(u)}&mode=full&page=1#pdf-viewer`;
+          };
+          return (
           <section>
             <header class="mb-2 flex items-center justify-between">
               <h2 class="text-sm font-bold text-slate-800 dark:text-slate-100">📈 直近の検査結果</h2>
-              {data?.latestResult?.summary_text && (
-                <span class="text-[10px] text-slate-500">サマリー版 (アブストラクト)</span>
-              )}
+              <span class="text-[10px] text-slate-500">血液検査より · タップで原本</span>
             </header>
             <div class="grid grid-cols-3 gap-2">
-              {metrics.map((m) => <MetricCard metric={m} />)}
+              {metrics.map((m) => <MetricCard metric={m} href={linkFor(m.label)} />)}
             </div>
           </section>
-        )}
+          );
+        })()}
 
         <DailyQuests quests={quests} />
 
