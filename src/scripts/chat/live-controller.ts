@@ -491,7 +491,16 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     }
 
     const sectionChanged = cq.section_id !== next.section_id;
-    applyQuestionToUI(next);
+
+    // ━━ フライング防止: 次の Q 表示を AI 復唱開始と同期させる ━━
+    //   engine 駆動で即座に applyQuestionToUI を呼ぶと、AI の音声復唱が
+    //   始まる前に次の選択肢が画面に出てしまい違和感が出る。
+    //   1) 即時: 受付確認の中間表示 + 選択肢を隠す
+    //   2) AI 依頼を送信
+    //   3) AI 音声の最初の chunk が来る or タイムアウト (1.6s) で次の Q 表示
+    refs.questionText.textContent = `✅ 「${rawAnswer}」で承りました…`;
+    showWidget('voice');
+    refs.skipBtn.hidden = true;
 
     // AI 依頼: 復唱 + (セクション切替時のみ導線) + 次の質問本文を読み上げ
     // 選択肢は読み上げさせない (画面に出ているため重複になる)
@@ -508,7 +517,34 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   ② 続けて次の質問を自然に読み上げ: 「${next.question}」
 選択肢は読み上げないでください (画面に表示されています)。`;
     sendToModel(msg);
+
+    // AI 音声の最初の chunk が再生開始した瞬間 (≒ 復唱開始) に次の Q を表示。
+    // 公式 audio chunk が来るのを待つため、1 回限りのリスナーを登録。
+    // タイムアウト (2 秒) でも fall-through し、必ず表示する。
+    schedulePendingQuestion(next);
   }
+
+  /** AI 音声開始 or タイムアウト で次の Q を画面に反映する */
+  let pendingNextQuestion: QuestionDef | null = null;
+  function schedulePendingQuestion(q: QuestionDef): void {
+    pendingNextQuestion = q;
+    const fallbackTimer = setTimeout(() => {
+      if (pendingNextQuestion === q) {
+        applyQuestionToUI(q);
+        pendingNextQuestion = null;
+      }
+    }, 2000);
+    // audioFirstChunkResolvers を介して、AI 音声 1st chunk 検出時に解決
+    audioFirstChunkResolvers.push(() => {
+      clearTimeout(fallbackTimer);
+      if (pendingNextQuestion === q) {
+        applyQuestionToUI(q);
+        pendingNextQuestion = null;
+      }
+    });
+  }
+  /** 次の AI 音声 chunk 受信時に発火するワンショットコールバック群 */
+  const audioFirstChunkResolvers: Array<() => void> = [];
 
   /** UI に入る生文字列を engine が扱える型に変換 */
   function toAnswerValue(q: QuestionDef, raw: string): AnswerValue {
@@ -662,7 +698,16 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     for (const p of parts) {
       const mime = p.inlineData?.mimeType ?? '';
       const data = p.inlineData?.data;
-      if (data && mime.startsWith('audio/pcm') && !muted) audio.playPcm(data);
+      if (data && mime.startsWith('audio/pcm') && !muted) {
+        audio.playPcm(data);
+        // 最初の音声 chunk = AI 復唱開始 → pending な次の Q を表示
+        if (audioFirstChunkResolvers.length > 0) {
+          const cbs = audioFirstChunkResolvers.splice(0, audioFirstChunkResolvers.length);
+          for (const cb of cbs) {
+            try { cb(); } catch {}
+          }
+        }
+      }
     }
 
     // 2) ストリーミング transcript (入力 = ユーザー)
