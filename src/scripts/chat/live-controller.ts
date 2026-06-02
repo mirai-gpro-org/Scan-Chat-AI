@@ -1014,6 +1014,20 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 function describeErr(err: unknown): string {
-  if (err instanceof Error) return err.message;
+  if (err instanceof Error) {
+    const msg = err.message;
+    const name = err.name;
+    // マイク権限関連: ユーザーに「何をすればよいか」を伝える
+    if (name === 'NotAllowedError' || /permission/i.test(msg)) {
+      return 'マイクの使用が許可されていません。\nブラウザの URL バーの 🎙 アイコンをタップ → 許可を選んでから再度お試しください。\n(iOS Safari の場合: 設定 → Safari → カメラ・マイクのアクセス → 確認 or 許可)';
+    }
+    if (name === 'NotFoundError' || /no .*device/i.test(msg)) {
+      return 'マイクが見つかりません。マイクが接続されているか、他のアプリで占有されていないかご確認ください。';
+    }
+    if (name === 'NotReadableError') {
+      return 'マイクが他のアプリで使用中です。他のアプリ (Zoom / Teams 等) を閉じてからお試しください。';
+    }
+    return msg;
+  }
   return String(err);
 }
