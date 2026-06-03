@@ -18,8 +18,9 @@ const ROOT = resolve(__dirname, '..');
 const FUNDING_DIR = resolve(ROOT, 'docs/funding_application');
 
 const TARGETS = [
-  { md: resolve(FUNDING_DIR, '要件定義書.md'),  pdf: resolve(FUNDING_DIR, '要件定義書.pdf'),  title: 'Scan-Chat Medical AI — 要件定義書 v2.1' },
-  { md: resolve(FUNDING_DIR, '見積書.md'),    pdf: resolve(FUNDING_DIR, '見積書.pdf'),    title: 'Scan-Chat Medical AI — 見積書 v2.1' },
+  { md: resolve(FUNDING_DIR, '要件定義書.md'),                            pdf: resolve(FUNDING_DIR, '要件定義書.pdf'),                            title: 'Scan-Chat Medical AI — 要件定義書 (UNFIX 担当範囲) v2.2' },
+  { md: resolve(FUNDING_DIR, '見積書.md'),                              pdf: resolve(FUNDING_DIR, '見積書.pdf'),                              title: 'Scan-Chat Medical AI — 見積書 v2.2' },
+  { md: resolve(FUNDING_DIR, '補助事業要件定義書_ウェルフォート_v2.0.md'),  pdf: resolve(FUNDING_DIR, '補助事業要件定義書_ウェルフォート_v2.0.pdf'),  title: '補助事業要件定義書 ウェルフォート v2.0 (ものづくり補助金事務局提出用)' },
 ];
 
 const CSS = `
