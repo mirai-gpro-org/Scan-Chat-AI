@@ -3,11 +3,14 @@ interface Props {
   greeting: string;
   /** Elith summary 1 行目 */
   summaryHint?: string | null;
+  /** ?u= 伝搬用 */
+  diagnosticUserId?: string;
 }
-const { greeting, summaryHint } = Astro.props as Props;
+const { greeting, summaryHint, diagnosticUserId } = Astro.props as Props;
 const opener = summaryHint
   ? `${greeting}、${summaryHint.slice(0, 60)}...`
-  : `${greeting}、今日のランチで何を食べる？`;
+  : `${greeting}、検査結果や生活習慣について何でも聞いてください。`;
+const href = diagnosticUserId ? `/coach?u=${encodeURIComponent(diagnosticUserId)}` : '/coach';
 ---
 
 <section class="rounded-2xl bg-gradient-to-br from-brand-50 via-cyan-50 to-emerald-50 p-4 shadow-sm dark:from-brand-900/30 dark:via-cyan-900/30 dark:to-emerald-900/30">
@@ -34,10 +37,10 @@ const opener = summaryHint
     </div>
   </div>
   <a
-    href="/chat"
+    href={href}
     class="mt-3 flex w-full items-center justify-between rounded-xl bg-white px-3 py-2.5 text-sm text-slate-500 shadow-sm transition hover:shadow-md dark:bg-slate-900 dark:text-slate-400"
   >
-    <span>コーチに相談する...</span>
+    <span>💬 コーチに相談する...</span>
     <span class="text-brand-600">→</span>
   </a>
 </section>

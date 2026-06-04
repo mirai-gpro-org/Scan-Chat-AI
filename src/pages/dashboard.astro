@@ -83,13 +83,31 @@ const totalChars  = sections.reduce((sum, s) => sum + (s.char_count || 0), 0);
 
         {urgentAlert && <UrgentAlertBanner alert={urgentAlert} />}
 
+        {/* AI 問診 + AI スキャン への動線 */}
+        <section class="grid grid-cols-2 gap-2">
+          <a
+            href={u ? `/chat?u=${encodeURIComponent(u)}` : '/chat'}
+            class="group flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-brand-500 via-indigo-500 to-cyan-500 px-3 py-3 text-white shadow-md shadow-brand-500/30 transition hover:-translate-y-0.5 hover:shadow-lg"
+          >
+            <span class="text-xl">🩺</span>
+            <span class="text-sm font-semibold">AI 問診を始める</span>
+          </a>
+          <a
+            href={u ? `/scan?u=${encodeURIComponent(u)}` : '/scan'}
+            class="group flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+          >
+            <span class="text-xl">📸</span>
+            <span class="text-sm font-semibold">AI スキャン</span>
+          </a>
+        </section>
+
         {metrics.length > 0 && (() => {
           // 各指標から「原本 PDF の該当ページ」へ deep link を作る:
           //   尿酸・中性脂肪・血糖値 → 血液検査 (test_type='blood') の latest artifact
           //   血圧 → 同上 (血液検査内に最高/最低血圧が含まれるため)
           // PDF は 1pg 単位なので page=1 固定で十分。
           const bloodArtifact = data?.artifacts.find((a) => a.test_type === 'blood') ?? null;
-          const linkFor = (label: string): string | null => {
+          const linkFor = (_label: string): string | null => {
             if (!bloodArtifact || !u) return null;
             return `/result/${bloodArtifact.id}?u=${encodeURIComponent(u)}&mode=full&page=1#pdf-viewer`;
           };
@@ -111,6 +129,7 @@ const totalChars  = sections.reduce((sum, s) => sum + (s.char_count || 0), 0);
         <HealthCoachPreview
           greeting={greeting}
           summaryHint={data?.latestResult?.summary_text}
+          diagnosticUserId={data?.diagnosticUserId}
         />
 
         <HealthInsightCard diagnosticUserId={data?.diagnosticUserId ?? ''} />
