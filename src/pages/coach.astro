@@ -2,14 +2,21 @@
 /**
  * AI ヘルスコーチ ページ。
  *
- * ユーザーの AI 診断結果 (Elith JSON 全 10 セクション + 検査履歴 + メトリック)
- * をサーバ側で context として読み込み、Gemini に「丸ごと」渡すことで
- * 結果を引用しながら答えるヘルスコーチを実現する。
+ * 表示デザイン・説明・機能は AI 問診 (chat.astro) と統一:
+ *   - hero-gradient ヘッダー (戻る / オンライン pill / リセット)
+ *   - モード切替: 🎙 音声 / ⌨ テキスト
+ *   - 開始 hero (大きな mic-fab)
+ *   - 開始後: チャットログ + 回答パネル (中断 / 音声 ON/OFF)
+ *   - 「話す / タップ どちらでも OK」 dual-mode 案内
  *
- * 3 種類の回答パターン:
- *   ① AI 診断結果から答えられる → 結果を引用
- *   ② 一般的な健康知識 → 「一般的に言われていますが」と但し書き
- *   ③ 医療アドバイス相当 → 拒否文言
+ * 機能:
+ *   - 音声入力: Web Speech API (SpeechRecognition, ja-JP)
+ *   - 音声出力: Web Speech API (SpeechSynthesis, 日本語 voice)
+ *   - テキスト入力: textarea
+ *   - 履歴: localStorage に直近 30 件保持、リセットで全消去
+ *
+ * Server-side で AI 診断 context を読み込み、Gemini に 3 ルール system prompt
+ * で問い合わせ (POST /api/coach/ask)。
  */
 
 import BaseLayout from '../layouts/BaseLayout.astro';
@@ -21,24 +28,19 @@ const url = new URL(Astro.request.url);
 const rawU = url.searchParams.get('u');
 const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
 
-// SSR: ユーザーの AI 診断結果を読み込んで context を構築
 const ctx = diagnosticUserId ? await buildCoachContext(diagnosticUserId).catch(() => null) : null;
 const hasContext = !!ctx;
 const displayName = ctx?.displayName ?? 'お客様';
 const sectionCount = ctx?.sections.length ?? 0;
 const urgentAlert = ctx?.urgentAlert ?? null;
-
-const opener = hasContext
-  ? `${displayName}、こんにちは 🌱 検査結果と AI 診断レポートを読み込みました。健康に関するご質問にお答えします。`
-  : 'AI ヘルスコーチへようこそ。';
 ---
 
 <BaseLayout title="AI ヘルスコーチ | Wellfort">
-  <header class="hero-gradient px-5 pt-5 pb-3">
+  <header class="hero-gradient relative px-5 pt-5 pb-3">
     <div class="flex items-center justify-between">
       <a
         href={diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnosticUserId)}` : '/dashboard'}
-        class="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400"
+        class="text-sm text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
       >‹ ダッシュボード</a>
       <div class="flex items-center gap-2">
         <span class="relative flex h-2 w-2">
@@ -50,9 +52,10 @@ const opener = hasContext
       <button
         id="reset-btn"
         type="button"
-        class="text-xs text-slate-500 hover:text-slate-800 dark:text-slate-400"
+        class="text-xs text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
       >リセット</button>
     </div>
+
     {hasContext && (
       <p class="mt-2 text-[11px] text-slate-600 dark:text-slate-300">
         {displayName} の AI 診断結果 (Elith {sectionCount} セクション) を参照中
@@ -82,114 +85,172 @@ const opener = hasContext
   )}
 
   {hasContext && (
-    <main
-      id="coach-main"
-      class="flex flex-1 flex-col px-5 pb-4"
-      data-diagnostic-user-id={diagnosticUserId}
-    >
+    <>
+      <div class="flex items-center justify-between px-5 pt-2 pb-1">
+        <div class="inline-flex rounded-full bg-slate-100 p-1 dark:bg-slate-800" role="tablist" id="mode-toggle">
+          <button type="button" data-mode="voice" class="mode-pill on" role="tab" aria-selected="true">
+            🎙 音声
+          </button>
+          <button type="button" data-mode="text" class="mode-pill" role="tab" aria-selected="false">
+            ⌨ テキスト
+          </button>
+        </div>
+        <span id="coach-status" class="text-xs text-slate-500">待機中</span>
+      </div>
+
       {urgentAlert && (
-        <div class="mt-3 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-700/60 dark:bg-red-900/30 dark:text-red-100">
+        <div class="mx-5 mt-1 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-[11px] text-red-900 dark:border-red-700/60 dark:bg-red-900/30 dark:text-red-100">
           <strong>🔴 緊急留意事項:</strong> {urgentAlert.title}
         </div>
       )}
 
-      <!-- 初期ロード表示 (チャット履歴がまだ無い時) -->
-      <div
-        id="coach-loading"
-        class="mt-4 flex flex-col items-center gap-3 rounded-2xl bg-gradient-to-br from-brand-50 via-cyan-50 to-emerald-50 p-5 text-center dark:from-brand-900/20 dark:via-cyan-900/20 dark:to-emerald-900/20"
+      <main
+        id="coach-main"
+        class="flex flex-1 flex-col gap-3 px-5 pt-3 pb-4"
+        data-diagnostic-user-id={diagnosticUserId}
       >
-        <div class="grid h-12 w-12 place-items-center rounded-full bg-gradient-to-br from-brand-500 to-cyan-500 text-white shadow-md">
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="11" width="18" height="10" rx="2"/>
-            <circle cx="12" cy="5" r="2"/>
-            <path d="M12 7v4"/>
-          </svg>
-        </div>
-        <p class="text-sm font-medium text-slate-800 dark:text-slate-100">{opener}</p>
-        <p class="text-[11px] text-slate-500">
-          例: 「尿酸値が高めですが、食事で気をつけることは？」<br/>
-          例: 「朝食は毎日食べた方がいいですか？」
-        </p>
-      </div>
-
-      <!-- チャットログ -->
-      <div
-        id="coach-log"
-        class="mt-3 flex-1 space-y-3 overflow-y-auto"
-        style="min-height: 30vh;"
-        aria-live="polite"
-      ></div>
-
-      <!-- 入力フォーム -->
-      <form id="coach-form" class="mt-3 flex items-end gap-2">
-        <button
-          id="coach-mic"
-          type="button"
-          class="coach-mic-btn shrink-0"
-          aria-label="音声入力を開始"
-          title="音声で質問する"
-          hidden
+        <div
+          id="coach-log"
+          class="card flex-1 space-y-3 overflow-y-auto"
+          style="min-height: 22vh; max-height: 45vh;"
+          aria-live="polite"
+          aria-atomic="false"
         >
-          <svg
-            class="coach-mic-icon"
-            width="22" height="22" viewBox="0 0 24 24"
-            fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            <rect x="9" y="2" width="6" height="12" rx="3"/>
-            <path d="M5 11a7 7 0 0 0 14 0"/>
-            <line x1="12" y1="18" x2="12" y2="22"/>
-            <line x1="8" y1="22" x2="16" y2="22"/>
-          </svg>
-        </button>
-        <textarea
-          id="coach-input"
-          rows="1"
-          maxlength="500"
-          class="min-h-[44px] flex-1 resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900"
-          placeholder="健康に関する質問を入力..."
-        ></textarea>
-        <button
-          id="coach-send"
-          type="submit"
-          class="btn-primary shrink-0 px-4 py-2.5 text-sm"
-        >送信</button>
-      </form>
-      <p id="coach-mic-hint" class="mt-1 text-center text-[10px] text-slate-400">
-        ※ 医療アドバイスには該当しません。診断・治療は主治医にご相談ください。
-      </p>
-    </main>
+          <div id="coach-empty" class="flex h-full flex-col items-center justify-center gap-2 py-6 text-center text-slate-400">
+            <span class="text-4xl">💬</span>
+            <p class="text-xs">下の <span class="font-medium text-brand-600">💬 相談を開始</span> から始めてください</p>
+          </div>
+        </div>
+
+        <section
+          id="answer-panel"
+          class="card border-brand-200 dark:border-brand-500/30"
+          style="background: linear-gradient(180deg, rgba(99,102,241,0.04) 0%, rgba(255,255,255,0) 60%);"
+        >
+          <!-- ━━━ START HERO（未開始時のみ表示） ━━━ -->
+          <div id="start-hero" class="flex flex-col items-center gap-3 py-2">
+            <p class="text-center text-xs text-slate-500">
+              下のボタンで相談を開始します
+            </p>
+            <button
+              id="start-btn"
+              type="button"
+              class="mic-fab mic-fab-hero"
+              aria-label="相談を開始する"
+            >
+              <svg
+                class="mic-icon"
+                width="44" height="44" viewBox="0 0 24 24"
+                fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M11 2v2"/>
+                <path d="M5 2v2"/>
+                <path d="M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1"/>
+                <path d="M8 15a6 6 0 0 0 12 0v-3"/>
+                <circle cx="20" cy="10" r="2"/>
+              </svg>
+              <span class="mic-label mt-1 text-xs font-semibold">相談を開始</span>
+            </button>
+            <div class="mt-1 flex items-center gap-2 rounded-full bg-slate-50 px-3 py-1.5 text-[11px] text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
+              <span>🎙 話す</span>
+              <span class="text-slate-400">/</span>
+              <span>⌨ 入力する</span>
+              <span class="text-slate-400">—</span>
+              <span class="font-medium text-brand-700 dark:text-brand-300">どちらでも OK</span>
+            </div>
+          </div>
+
+          <!-- ━━━ QA AREA（開始後に表示） ━━━ -->
+          <div id="qa-area" hidden>
+            <div class="mb-3 flex items-start gap-2">
+              <div id="coach-hint" class="flex-1 text-sm font-medium leading-relaxed text-slate-700 dark:text-slate-200">
+                {displayName}、健康に関するご質問にお答えします 🌱
+              </div>
+              <button
+                id="mic-btn"
+                type="button"
+                class="mic-fab compact shrink-0"
+                aria-label="音声入力を開始"
+              >
+                <span class="mic-icon text-lg">🎙</span>
+                <span class="mic-label text-[10px]">話す</span>
+              </button>
+              <button
+                id="speaker-btn"
+                type="button"
+                class="speaker-fab shrink-0"
+                aria-label="音声の ON/OFF"
+                title="音声 ON/OFF"
+              >
+                <svg
+                  class="speaker-ico speaker-ico-on"
+                  width="22" height="22" viewBox="0 0 24 24"
+                  fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                </svg>
+                <svg
+                  class="speaker-ico speaker-ico-off"
+                  width="22" height="22" viewBox="0 0 24 24"
+                  fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                  <line x1="22" y1="9" x2="16" y2="15"/>
+                  <line x1="16" y1="9" x2="22" y2="15"/>
+                </svg>
+                <span class="speaker-label text-[10px]">音声</span>
+              </button>
+            </div>
+
+            <!-- 二刀流ヒント -->
+            <div
+              id="dual-hint"
+              class="mb-2 flex items-center justify-center gap-2 rounded-full bg-brand-50 px-3 py-1 text-[11px] text-brand-700 dark:bg-brand-500/10 dark:text-brand-300"
+            >
+              <span>🎙 話してもOK</span>
+              <span class="text-brand-400">・</span>
+              <span>⌨ 入力してもOK</span>
+            </div>
+
+            <!-- 音声モード -->
+            <div id="ui-voice" class="flex flex-col items-center gap-2 py-3">
+              <div id="voice-indicator" class="grid place-items-center">
+                <span class="text-4xl animate-pulse">🎙</span>
+              </div>
+              <p class="text-center text-xs text-slate-500">
+                右上の「話す」ボタンを押して質問してください
+              </p>
+            </div>
+
+            <!-- テキストモード -->
+            <div id="ui-text" class="flex flex-col gap-2" hidden>
+              <textarea
+                id="text-input"
+                rows="2"
+                maxlength="500"
+                class="resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900"
+                placeholder="健康に関する質問を入力してください"
+              ></textarea>
+              <button id="text-submit" type="button" class="btn-primary">送信</button>
+            </div>
+          </div>
+        </section>
+
+        <p class="text-center text-[10px] text-slate-400">
+          ※ 医療アドバイスには該当しません。診断・治療は主治医にご相談ください。
+        </p>
+      </main>
+    </>
   )}
 </BaseLayout>
-
-<style>
-  .coach-mic-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 44px;
-    height: 44px;
-    border-radius: 9999px;
-    background: linear-gradient(135deg, #4f46e5 0%, #06b6d4 100%);
-    color: white;
-    box-shadow: 0 6px 18px -6px rgba(37, 99, 235, 0.5);
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
-  }
-  .coach-mic-btn:active { transform: scale(0.95); }
-  .coach-mic-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .coach-mic-btn.recording {
-    background: linear-gradient(135deg, #ef4444 0%, #f97316 100%);
-    animation: coach-mic-pulse 1.2s ease-in-out infinite;
-  }
-  @keyframes coach-mic-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55); }
-    50%      { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
-  }
-</style>
 
 <script>
   interface CoachMessage {
@@ -198,18 +259,15 @@ const opener = hasContext
     at: string;
   }
 
-  // ─── Web Speech API 型補完 ───
   interface SpeechRecognitionResult {
     readonly isFinal: boolean;
     readonly length: number;
-    item(index: number): { transcript: string };
     [index: number]: { transcript: string };
   }
   interface SpeechRecognitionEventLike extends Event {
     readonly resultIndex: number;
     readonly results: {
       readonly length: number;
-      item(index: number): SpeechRecognitionResult;
       [index: number]: SpeechRecognitionResult;
     };
   }
@@ -246,71 +304,66 @@ const opener = hasContext
       .replace(/'/g, '&#39;');
   }
 
-  /**
-   * 簡易 Markdown レンダラ (太字 / 改行のみ。LLM が出す表現の範囲で十分)
-   */
   function renderMarkdown(text: string): string {
-    const escaped = escapeHtml(text);
-    return escaped
+    return escapeHtml(text)
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
       .replace(/\n/g, '<br/>');
   }
 
   document.addEventListener('DOMContentLoaded', () => {
     const main = $opt('coach-main');
-    if (!main) return; // context 無し時はスキップ
+    if (!main) return;
 
     const diagnosticUserId = main.dataset.diagnosticUserId ?? '';
     if (!diagnosticUserId) return;
 
     const storageKey = STORAGE_KEY_PREFIX + diagnosticUserId;
-    const logEl = $('coach-log');
-    const loadingEl = $opt('coach-loading');
-    const form = $<HTMLFormElement>('coach-form');
-    const input = $<HTMLTextAreaElement>('coach-input');
-    const sendBtn = $<HTMLButtonElement>('coach-send');
-    const resetBtn = $<HTMLButtonElement>('reset-btn');
+
+    const logEl       = $('coach-log');
+    const emptyEl     = $opt('coach-empty');
+    const statusEl    = $('coach-status');
+    const resetBtn    = $<HTMLButtonElement>('reset-btn');
+    const modeToggle  = $('mode-toggle');
+
+    const startHero   = $('start-hero');
+    const startBtn    = $<HTMLButtonElement>('start-btn');
+    const qaArea      = $('qa-area');
+
+    const micBtn      = $<HTMLButtonElement>('mic-btn');
+    const speakerBtn  = $<HTMLButtonElement>('speaker-btn');
+
+    const uiVoice     = $('ui-voice');
+    const uiText      = $('ui-text');
+    const textInput   = $<HTMLTextAreaElement>('text-input');
+    const textSubmit  = $<HTMLButtonElement>('text-submit');
 
     let history: CoachMessage[] = loadHistory();
+    let mode: 'voice' | 'text' = 'voice';
+    let speakerOn = true;
     let sending = false;
 
+    // ─── 履歴 ───
     function loadHistory(): CoachMessage[] {
       try {
         const raw = localStorage.getItem(storageKey);
         if (!raw) return [];
         const arr = JSON.parse(raw);
-        if (!Array.isArray(arr)) return [];
-        return arr.filter(
-          (m): m is CoachMessage =>
-            m &&
-            typeof m.text === 'string' &&
-            (m.role === 'user' || m.role === 'assistant'),
-        );
-      } catch {
-        return [];
-      }
+        return Array.isArray(arr)
+          ? arr.filter((m): m is CoachMessage =>
+              m && typeof m.text === 'string' &&
+              (m.role === 'user' || m.role === 'assistant'))
+          : [];
+      } catch { return []; }
     }
-
     function saveHistory() {
-      try {
-        // 直近 30 件のみ保持 (ストレージ膨張防止)
-        localStorage.setItem(storageKey, JSON.stringify(history.slice(-30)));
-      } catch { /* ignore */ }
+      try { localStorage.setItem(storageKey, JSON.stringify(history.slice(-30))); } catch { /* ignore */ }
     }
 
-    function renderHistory() {
-      logEl.innerHTML = '';
-      for (const m of history) {
-        logEl.appendChild(makeBubble(m));
-      }
-      if (loadingEl) loadingEl.hidden = history.length > 0;
-      scrollToBottom();
-    }
-
+    // ─── レンダリング ───
     function makeBubble(m: CoachMessage): HTMLDivElement {
       const wrap = document.createElement('div');
       const isUser = m.role === 'user';
-      wrap.className = isUser ? 'flex justify-end' : 'flex justify-start';
+      wrap.className = isUser ? 'flex justify-end bubble-in' : 'flex justify-start bubble-in';
       const bubble = document.createElement('div');
       bubble.className = isUser
         ? 'max-w-[80%] rounded-2xl rounded-br-md bg-brand-600 px-3.5 py-2 text-sm text-white shadow-sm'
@@ -319,56 +372,66 @@ const opener = hasContext
       wrap.appendChild(bubble);
       return wrap;
     }
-
-    function pushMessage(m: CoachMessage) {
-      history.push(m);
-      saveHistory();
+    function renderHistory() {
+      logEl.innerHTML = '';
+      for (const m of history) logEl.appendChild(makeBubble(m));
+      if (emptyEl) emptyEl.hidden = history.length > 0;
+      if (history.length > 0 && emptyEl) {
+        logEl.removeChild(emptyEl);
+      }
+      scrollLog();
+    }
+    function appendBubble(m: CoachMessage) {
+      if (emptyEl && emptyEl.parentNode === logEl) logEl.removeChild(emptyEl);
       logEl.appendChild(makeBubble(m));
-      if (loadingEl) loadingEl.hidden = true;
-      scrollToBottom();
+      scrollLog();
     }
-
-    function scrollToBottom() {
-      requestAnimationFrame(() => {
-        logEl.scrollTop = logEl.scrollHeight;
-      });
+    function scrollLog() {
+      requestAnimationFrame(() => { logEl.scrollTop = logEl.scrollHeight; });
     }
+    function setStatus(text: string) { statusEl.textContent = text; }
 
-    function makePending(): { el: HTMLDivElement; remove: () => void } {
+    function makePending(): { remove: () => void } {
       const wrap = document.createElement('div');
-      wrap.className = 'flex justify-start';
+      wrap.className = 'flex justify-start bubble-in';
       const bubble = document.createElement('div');
       bubble.className =
         'max-w-[85%] rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-900';
       bubble.innerHTML =
-        '<span class="inline-flex items-center gap-1"><span class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style="animation-delay:0ms"></span><span class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style="animation-delay:120ms"></span><span class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style="animation-delay:240ms"></span><span class="ml-2 text-xs">あなたのAI診断結果を読込んでいます。少々お待ちください。</span></span>';
+        '<span class="inline-flex items-center gap-1">' +
+        '<span class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style="animation-delay:0ms"></span>' +
+        '<span class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style="animation-delay:120ms"></span>' +
+        '<span class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style="animation-delay:240ms"></span>' +
+        '<span class="ml-2 text-xs">あなたのAI診断結果を読込んでいます。少々お待ちください。</span>' +
+        '</span>';
       wrap.appendChild(bubble);
       logEl.appendChild(wrap);
-      scrollToBottom();
-      return {
-        el: wrap,
-        remove: () => wrap.remove(),
-      };
+      scrollLog();
+      return { remove: () => wrap.remove() };
     }
 
-    function makeError(msg: string): HTMLDivElement {
+    function appendError(msg: string) {
       const wrap = document.createElement('div');
-      wrap.className = 'flex justify-start';
+      wrap.className = 'flex justify-start bubble-in';
       const bubble = document.createElement('div');
       bubble.className =
         'max-w-[85%] rounded-2xl rounded-bl-md border border-red-200 bg-red-50 px-3.5 py-2 text-sm text-red-700 shadow-sm dark:border-red-700/60 dark:bg-red-900/30 dark:text-red-100';
       bubble.textContent = `⚠️ ${msg}`;
       wrap.appendChild(bubble);
-      return wrap;
+      logEl.appendChild(wrap);
+      scrollLog();
     }
 
+    // ─── API ───
     async function sendMessage(text: string) {
-      if (sending) return;
+      if (sending || !text.trim()) return;
       sending = true;
-      sendBtn.disabled = true;
-      input.disabled = true;
+      setStatus('問い合わせ中…');
 
-      pushMessage({ role: 'user', text, at: new Date().toISOString() });
+      const userMsg: CoachMessage = { role: 'user', text, at: new Date().toISOString() };
+      history.push(userMsg);
+      saveHistory();
+      appendBubble(userMsg);
 
       const pending = makePending();
 
@@ -386,152 +449,208 @@ const opener = hasContext
 
         if (!res.ok) {
           const body = await res.json().catch(() => null) as { error?: string } | null;
-          const msg = body?.error ?? `送信に失敗しました (HTTP ${res.status})`;
-          logEl.appendChild(makeError(msg));
-          scrollToBottom();
-        } else {
-          const data = await res.json() as { answer: string; generatedAt: string };
-          pushMessage({
-            role: 'assistant',
-            text: data.answer,
-            at: data.generatedAt ?? new Date().toISOString(),
-          });
+          appendError(body?.error ?? `送信に失敗しました (HTTP ${res.status})`);
+          setStatus('エラー');
+          return;
         }
+        const data = await res.json() as { answer: string; generatedAt: string };
+        const aiMsg: CoachMessage = { role: 'assistant', text: data.answer, at: data.generatedAt ?? new Date().toISOString() };
+        history.push(aiMsg);
+        saveHistory();
+        appendBubble(aiMsg);
+        setStatus('待機中');
+
+        if (mode === 'voice' && speakerOn) speak(data.answer);
       } catch (err) {
         pending.remove();
-        const detail = err instanceof Error ? err.message : String(err);
-        logEl.appendChild(makeError(`通信エラー: ${detail}`));
-        scrollToBottom();
+        appendError(`通信エラー: ${err instanceof Error ? err.message : String(err)}`);
+        setStatus('エラー');
       } finally {
         sending = false;
-        sendBtn.disabled = false;
-        input.disabled = false;
-        input.value = '';
-        autoResize();
-        input.focus();
       }
     }
 
-    function autoResize() {
-      input.style.height = 'auto';
-      input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+    // ─── 音声入力 (STT) ───
+    const win = window as unknown as {
+      SpeechRecognition?: SpeechRecognitionCtor;
+      webkitSpeechRecognition?: SpeechRecognitionCtor;
+    };
+    const SttCtor = win.SpeechRecognition ?? win.webkitSpeechRecognition;
+    const sttSupported = !!SttCtor;
+    let recog: SpeechRecognitionLike | null = null;
+    let recording = false;
+
+    function startRecording() {
+      if (recording || !sttSupported || !SttCtor) return;
+      cancelSpeak();
+      try { recog = new SttCtor(); }
+      catch { return; }
+      recog.lang = 'ja-JP';
+      recog.interimResults = true;
+      recog.continuous = false;
+
+      recog.onresult = (ev) => {
+        let interim = '';
+        let final = '';
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          const r = ev.results[i];
+          const t = r[0]?.transcript ?? '';
+          if (r.isFinal) final += t;
+          else interim += t;
+        }
+        if (final) {
+          stopRecording();
+          void sendMessage(final.trim());
+        } else if (interim) {
+          setStatus(`聞き取り中: ${interim.slice(0, 30)}`);
+        }
+      };
+      recog.onerror = (ev) => {
+        stopRecording();
+        if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+          setStatus('マイク権限が必要です');
+        } else if (ev.error === 'no-speech') {
+          setStatus('声が聞こえませんでした');
+        } else {
+          setStatus('音声入力エラー');
+        }
+      };
+      recog.onend = () => { if (recording) stopRecording(); };
+
+      try {
+        recog.start();
+        recording = true;
+        micBtn.classList.add('active');
+        micBtn.setAttribute('aria-label', '音声入力を停止');
+        micBtn.querySelector('.mic-icon')!.textContent = '⏸';
+        micBtn.querySelector('.mic-label')!.textContent = '停止';
+        setStatus('🎙 聞き取り中…');
+      } catch {
+        recording = false;
+      }
+    }
+    function stopRecording() {
+      recording = false;
+      micBtn.classList.remove('active');
+      micBtn.setAttribute('aria-label', '音声入力を開始');
+      micBtn.querySelector('.mic-icon')!.textContent = '🎙';
+      micBtn.querySelector('.mic-label')!.textContent = '話す';
+      if (recog) {
+        try { recog.stop(); } catch { /* ignore */ }
+        recog = null;
+      }
+      if (statusEl.textContent?.startsWith('🎙')) setStatus('待機中');
     }
 
-    form.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const text = input.value.trim();
-      if (!text) return;
-      void sendMessage(text);
+    // ─── 音声出力 (TTS) ───
+    function speak(text: string) {
+      if (!('speechSynthesis' in window)) return;
+      cancelSpeak();
+      const plain = text.replace(/\*\*/g, '').replace(/[#`]/g, '');
+      const utter = new SpeechSynthesisUtterance(plain);
+      utter.lang = 'ja-JP';
+      utter.rate = 1.0;
+      utter.pitch = 1.0;
+      const voices = speechSynthesis.getVoices();
+      const ja = voices.find((v) => v.lang?.startsWith('ja'));
+      if (ja) utter.voice = ja;
+      utter.onstart = () => setStatus('🔊 読み上げ中…');
+      utter.onend = () => { if (statusEl.textContent?.startsWith('🔊')) setStatus('待機中'); };
+      try { speechSynthesis.speak(utter); }
+      catch { /* ignore */ }
+    }
+    function cancelSpeak() {
+      if ('speechSynthesis' in window) {
+        try { speechSynthesis.cancel(); } catch { /* ignore */ }
+      }
+    }
+
+    // ─── モード切替 ───
+    function setMode(next: 'voice' | 'text') {
+      mode = next;
+      modeToggle.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((btn) => {
+        const on = btn.dataset.mode === next;
+        btn.classList.toggle('on', on);
+        btn.setAttribute('aria-selected', String(on));
+      });
+      uiVoice.hidden = next !== 'voice';
+      uiText.hidden = next !== 'text';
+      micBtn.hidden = next !== 'voice';
+      speakerBtn.hidden = next !== 'voice';
+      if (next === 'text') {
+        stopRecording();
+        cancelSpeak();
+        textInput.focus();
+      }
+    }
+
+    // ─── 開始 / リセット ───
+    function startSession() {
+      startHero.hidden = true;
+      qaArea.hidden = false;
+      setStatus('待機中');
+      if (mode === 'text') textInput.focus();
+    }
+
+    // ─── イベント配線 ───
+    modeToggle.addEventListener('click', (e) => {
+      const t = e.target as HTMLElement;
+      const btn = t.closest<HTMLButtonElement>('[data-mode]');
+      if (!btn) return;
+      const next = btn.dataset.mode === 'text' ? 'text' : 'voice';
+      setMode(next);
     });
 
-    input.addEventListener('input', autoResize);
-    input.addEventListener('keydown', (e) => {
+    startBtn.addEventListener('click', () => startSession());
+
+    micBtn.addEventListener('click', () => {
+      if (!sttSupported) {
+        setStatus('お使いのブラウザは音声入力に未対応です');
+        setMode('text');
+        return;
+      }
+      if (recording) stopRecording();
+      else startRecording();
+    });
+
+    speakerBtn.addEventListener('click', () => {
+      speakerOn = !speakerOn;
+      speakerBtn.classList.toggle('muted', !speakerOn);
+      speakerBtn.setAttribute('aria-label', speakerOn ? '音声 OFF' : '音声 ON');
+      if (!speakerOn) cancelSpeak();
+    });
+
+    textSubmit.addEventListener('click', () => {
+      const t = textInput.value.trim();
+      if (!t) return;
+      void sendMessage(t);
+      textInput.value = '';
+    });
+    textInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
-        const text = input.value.trim();
-        if (text) void sendMessage(text);
+        const t = textInput.value.trim();
+        if (!t) return;
+        void sendMessage(t);
+        textInput.value = '';
       }
     });
 
     resetBtn.addEventListener('click', () => {
-      if (history.length === 0) return;
+      if (history.length === 0 && startHero.hidden === false) return;
       if (!confirm('会話履歴をリセットしますか?')) return;
       history = [];
       saveHistory();
+      stopRecording();
+      cancelSpeak();
+      startHero.hidden = false;
+      qaArea.hidden = true;
       renderHistory();
+      setStatus('待機中');
     });
 
-    // ─── 音声入力 (Web Speech API) ───
-    setupMicInput();
-
-    function setupMicInput() {
-      const micBtn = $opt<HTMLButtonElement>('coach-mic');
-      const hint = $opt('coach-mic-hint');
-      if (!micBtn) return;
-
-      const win = window as unknown as {
-        SpeechRecognition?: SpeechRecognitionCtor;
-        webkitSpeechRecognition?: SpeechRecognitionCtor;
-      };
-      const Ctor = win.SpeechRecognition ?? win.webkitSpeechRecognition;
-      if (!Ctor) return; // 非対応ブラウザでは mic ボタンを出さない
-
-      micBtn.hidden = false;
-
-      let recog: SpeechRecognitionLike | null = null;
-      let recording = false;
-      let baseText = '';
-
-      function start() {
-        if (recording) return;
-        try {
-          recog = new Ctor!();
-        } catch {
-          return;
-        }
-        recog.lang = 'ja-JP';
-        recog.interimResults = true;
-        recog.continuous = false;
-        baseText = input.value;
-
-        recog.onresult = (ev) => {
-          let interim = '';
-          let final = '';
-          for (let i = ev.resultIndex; i < ev.results.length; i++) {
-            const r = ev.results[i];
-            const t = r[0]?.transcript ?? '';
-            if (r.isFinal) final += t;
-            else interim += t;
-          }
-          const sep = baseText && !baseText.endsWith(' ') ? ' ' : '';
-          input.value = baseText + sep + final + interim;
-          input.style.height = 'auto';
-          input.style.height = Math.min(input.scrollHeight, 120) + 'px';
-        };
-
-        recog.onerror = (ev) => {
-          stop();
-          if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
-            if (hint) hint.textContent = '⚠️ マイク権限が必要です。ブラウザ設定でマイクを許可してください。';
-          } else if (ev.error === 'no-speech') {
-            if (hint) hint.textContent = '声が聞こえませんでした。もう一度お試しください。';
-          }
-        };
-
-        recog.onend = () => {
-          stop();
-        };
-
-        try {
-          recog.start();
-          recording = true;
-          micBtn!.classList.add('recording');
-          micBtn!.setAttribute('aria-label', '音声入力を停止');
-          if (hint) hint.textContent = '🎙 話してください。タップで停止します。';
-        } catch {
-          recording = false;
-        }
-      }
-
-      function stop() {
-        recording = false;
-        micBtn!.classList.remove('recording');
-        micBtn!.setAttribute('aria-label', '音声入力を開始');
-        if (recog) {
-          try { recog.stop(); } catch { /* ignore */ }
-          recog = null;
-        }
-        if (hint) hint.textContent = '※ 医療アドバイスには該当しません。診断・治療は主治医にご相談ください。';
-        input.focus();
-      }
-
-      micBtn.addEventListener('click', () => {
-        if (recording) stop();
-        else start();
-      });
-    }
-
+    // 初期 render
     renderHistory();
-    input.focus();
+    if (history.length > 0) startSession(); // 会話履歴があれば hero をスキップ
   });
 </script>
