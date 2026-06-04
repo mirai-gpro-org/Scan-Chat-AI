@@ -9,11 +9,6 @@
  *   4. デモ用 email → diagnostic_user_id mapping を解決
  *   5. URL に ?u=<uuid> を付けて reload (既存ルーティングと互換)
  *
- * フォールバック:
- *   - 別ページに `#g-signin-button` 要素があれば、そこに「Sign in with Google」
- *     ボタンを描画 (One Tap auto-prompt がモバイル等で出ない時の保険)
- *   - `#g-signin-error` 要素があれば、認証エラー文言を流し込む
- *
  * 環境変数: PUBLIC_GOOGLE_CLIENT_ID
  *   未設定なら何もレンダリングしない (フォールバック: ?u= 直渡し)
  */
@@ -24,7 +19,7 @@ const enabled = !!clientId;
 {enabled && (
   <>
     {/* Google Identity Services client (async load) */}
-    <script is:inline async defer src="https://accounts.google.com/gsi/client"></script>
+    <script async defer src="https://accounts.google.com/gsi/client"></script>
 
     {/* One Tap init (callback は下の <script> で window に登録) */}
     <div
@@ -55,71 +50,49 @@ const enabled = !!clientId;
         'hamada@eentry.co.jp':      'd0000001-0000-0000-0000-000000000000',
       };
 
-      function showError(msg: string): void {
-        console.error('[OneTap]', msg);
-        const errEl = document.getElementById('g-signin-error');
-        if (errEl) {
-          errEl.textContent = msg;
-          errEl.hidden = false;
-        }
-      }
-
-      function setStatus(msg: string): void {
-        const stEl = document.getElementById('g-signin-status');
-        if (stEl) stEl.textContent = msg;
-      }
-
       /** すでに ?u= が URL にある場合は One Tap を抑制 (フォールバックモード) */
       const params = new URLSearchParams(window.location.search);
-      const hasU = params.has('u') && !!params.get('u');
+      if (params.has('u') && params.get('u')) {
+        // GSI が読み込まれた後に cancel
+        const cancelOneTap = () => {
+          const g = (window as unknown as { google?: { accounts?: { id?: { cancel: () => void } } } }).google;
+          if (g?.accounts?.id) g.accounts.id.cancel();
+        };
+        // 数回試行 (GSI 読込タイミング不定)
+        setTimeout(cancelOneTap, 500);
+        setTimeout(cancelOneTap, 1500);
+        setTimeout(cancelOneTap, 3000);
+      }
 
       type GsiResponse = { credential: string };
-      type GsiId = {
-        cancel: () => void;
-        renderButton: (parent: HTMLElement, opts: Record<string, unknown>) => void;
-        prompt: (cb?: (notification: unknown) => void) => void;
-        initialize?: (opts: Record<string, unknown>) => void;
-      };
-
-      function getGsi(): GsiId | null {
-        const g = (window as unknown as { google?: { accounts?: { id?: GsiId } } }).google;
-        return g?.accounts?.id ?? null;
-      }
 
       // Google One Tap のコールバック (data-callback の名前と一致)
       (window as unknown as Record<string, unknown>).__scanChatOnGoogleSignIn = async (response: GsiResponse) => {
         try {
-          setStatus('サインイン処理中…');
           if (!supabaseUrl || !supabaseAnon) {
-            showError('PUBLIC_SUPABASE_URL / PUBLIC_SUPABASE_ANON_KEY が未設定です。');
+            console.error('PUBLIC_SUPABASE_URL / PUBLIC_SUPABASE_ANON_KEY が未設定');
             return;
           }
           const sb = createClient(supabaseUrl, supabaseAnon);
 
+          // Google ID Token を Supabase Auth に渡してセッション作成
           const { data, error } = await sb.auth.signInWithIdToken({
             provider: 'google',
             token: response.credential,
           });
           if (error) {
-            showError(`認証エラー: ${error.message}`);
+            console.error('Supabase auth error:', error);
+            alert(`認証エラー: ${error.message}`);
             return;
           }
           const user = data.user;
           const email = user?.email?.toLowerCase() ?? '';
-          if (!email) {
-            showError('Google アカウントから email を取得できませんでした。');
-            return;
-          }
+          if (!email) return;
 
           // デモ用: 既知のメールアドレスはシード済 user にマッピング
           const fixed = DEMO_EMAIL_TO_UID[email];
           if (fixed) {
-            setStatus('ダッシュボードを開いています…');
             const url = new URL(window.location.href);
-            // 現在の path が `/` (index) なら `/dashboard` に飛ぶ
-            if (url.pathname === '/' || url.pathname === '') {
-              url.pathname = '/dashboard';
-            }
             url.searchParams.set('u', fixed);
             window.location.replace(url.toString());
             return;
@@ -129,7 +102,7 @@ const enabled = !!clientId;
           const sub = (user.user_metadata as Record<string, string> | undefined)?.sub ?? '';
           const displayName = (user.user_metadata as Record<string, string> | undefined)?.full_name ?? email;
           const csb = sb.schema('diagnosis');
-          const { error: upsertErr } = await csb.from('app_users').upsert(
+          await csb.from('app_users').upsert(
             {
               auth_user_id: user.id,
               google_sub: sub,
@@ -138,10 +111,6 @@ const enabled = !!clientId;
             } as never,
             { onConflict: 'auth_user_id' },
           );
-          if (upsertErr) {
-            showError(`プロフィール登録に失敗: ${upsertErr.message}`);
-            return;
-          }
 
           // 取得し直して diagnostic_user_id を URL に付与
           const { data: appUser } = await csb
@@ -149,56 +118,18 @@ const enabled = !!clientId;
             .select('diagnostic_user_id')
             .eq('auth_user_id', user.id)
             .maybeSingle();
-          const url = new URL(window.location.href);
-          if (url.pathname === '/' || url.pathname === '') url.pathname = '/dashboard';
           if (appUser?.diagnostic_user_id) {
-            setStatus('ダッシュボードを開いています…');
+            const url = new URL(window.location.href);
             url.searchParams.set('u', appUser.diagnostic_user_id);
             window.location.replace(url.toString());
           } else {
-            showError('お客様情報が見つかりません。サポートまでご連絡ください。');
+            // diagnostic_user_id が未生成 → リロードのみ
+            window.location.reload();
           }
         } catch (err) {
-          const detail = err instanceof Error ? err.message : String(err);
-          showError(`サインイン処理エラー: ${detail}`);
+          console.error('One Tap callback error:', err);
         }
       };
-
-      /** GSI client が ready になるまで待ってから処理を続行 */
-      function whenGsiReady(cb: (gsi: GsiId) => void, attempts = 30): void {
-        const gsi = getGsi();
-        if (gsi) { cb(gsi); return; }
-        if (attempts <= 0) return;
-        setTimeout(() => whenGsiReady(cb, attempts - 1), 200);
-      }
-
-      whenGsiReady((gsi) => {
-        // ?u= 有り → One Tap を抑制
-        if (hasU) {
-          gsi.cancel();
-          return;
-        }
-        // フォールバック ボタンを描画 (auto_prompt が出ないブラウザ向け)
-        const btnHost = document.getElementById('g-signin-button');
-        if (btnHost) {
-          try {
-            gsi.renderButton(btnHost, {
-              type: 'standard',
-              theme: 'filled_blue',
-              size: 'large',
-              text: 'signin_with',
-              shape: 'pill',
-              logo_alignment: 'left',
-              width: 280,
-            });
-          } catch (e) {
-            console.warn('[OneTap] renderButton failed', e);
-          }
-        }
-        // 念のため prompt() を呼んで FedCM/One Tap を起こす
-        try { gsi.prompt(); } catch { /* ignore */ }
-      });
     </script>
   </>
 )}
-
