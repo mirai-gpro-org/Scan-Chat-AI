@@ -33,6 +33,12 @@ const hasContext = !!ctx;
 const displayName = ctx?.displayName ?? 'お客様';
 const sectionCount = ctx?.sections.length ?? 0;
 const urgentAlert = ctx?.urgentAlert ?? null;
+
+// 開始ボタン押下時に AI が最初に喋る挨拶文 (会話履歴が空の時のみ)。
+// 緊急アラートがあれば追記。
+const initialGreeting = urgentAlert
+  ? `${displayName}、こんにちは🌱 AI ヘルスコーチです。最新の AI 診断結果を読み込みました。検査結果に「${urgentAlert.title}」の留意事項がございますので、もし気になることがあればお尋ねください。健康に関するご質問は何でもお気軽にどうぞ。`
+  : `${displayName}、こんにちは🌱 AI ヘルスコーチです。最新の AI 診断結果を読み込みました。健康に関するご質問は何でもお気軽にお尋ねください。`;
 ---
 
 <BaseLayout title="AI ヘルスコーチ | Wellfort">
@@ -108,6 +114,7 @@ const urgentAlert = ctx?.urgentAlert ?? null;
         id="coach-main"
         class="flex flex-1 flex-col gap-3 px-5 pt-3 pb-4"
         data-diagnostic-user-id={diagnosticUserId}
+        data-initial-greeting={initialGreeting}
       >
         <div
           id="coach-log"
@@ -316,6 +323,7 @@ const urgentAlert = ctx?.urgentAlert ?? null;
 
     const diagnosticUserId = main.dataset.diagnosticUserId ?? '';
     if (!diagnosticUserId) return;
+    const initialGreeting = main.dataset.initialGreeting ?? '';
 
     const storageKey = STORAGE_KEY_PREFIX + diagnosticUserId;
 
@@ -585,10 +593,26 @@ const urgentAlert = ctx?.urgentAlert ?? null;
     }
 
     // ─── 開始 / リセット ───
-    function startSession() {
+    function startSession(opts: { speakGreeting?: boolean } = {}) {
       startHero.hidden = true;
       qaArea.hidden = false;
       setStatus('待機中');
+
+      // 履歴が空なら、AI からの初期挨拶文を chat に投入 (音声モードなら読み上げ)
+      if (history.length === 0 && initialGreeting) {
+        const greetMsg: CoachMessage = {
+          role: 'assistant',
+          text: initialGreeting,
+          at: new Date().toISOString(),
+        };
+        history.push(greetMsg);
+        saveHistory();
+        appendBubble(greetMsg);
+        if (opts.speakGreeting && mode === 'voice' && speakerOn) {
+          speak(initialGreeting);
+        }
+      }
+
       if (mode === 'text') textInput.focus();
     }
 
@@ -601,7 +625,7 @@ const urgentAlert = ctx?.urgentAlert ?? null;
       setMode(next);
     });
 
-    startBtn.addEventListener('click', () => startSession());
+    startBtn.addEventListener('click', () => startSession({ speakGreeting: true }));
 
     micBtn.addEventListener('click', () => {
       if (!sttSupported) {
@@ -651,6 +675,7 @@ const urgentAlert = ctx?.urgentAlert ?? null;
 
     // 初期 render
     renderHistory();
-    if (history.length > 0) startSession(); // 会話履歴があれば hero をスキップ
+    // 会話履歴があれば hero をスキップ (挨拶は再生しない — 履歴に既にある)
+    if (history.length > 0) startSession();
   });
 </script>
