@@ -51,18 +51,22 @@ const totalChars  = sections.reduce((sum, s) => sum + (s.char_count || 0), 0);
       <img src="/wellfort_logo.png" alt="Wellfort" width="56" height="62" class="h-14 w-auto" />
       <h1 class="text-lg font-bold">Wellfort へようこそ</h1>
       <p class="text-sm text-slate-600 dark:text-slate-300">
-        Google アカウントでサインインしてください。<br/>
-        右上の <strong>One Tap</strong> ダイアログから 1 タップでご利用いただけます。
+        Google アカウントでサインインしてください。
       </p>
-      <div class="mt-2 flex animate-pulse items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-xs text-slate-500 dark:bg-slate-800">
-        <span class="relative flex h-2 w-2">
-          <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-400 opacity-75"></span>
-          <span class="relative inline-flex h-2 w-2 rounded-full bg-brand-500"></span>
-        </span>
-        サインイン待機中…
-      </div>
+
+      {/* GSI が描画する標準ボタン (One Tap が出ない場合の保険) */}
+      <div id="g-signin-button" class="mt-2 min-h-[44px]"></div>
+
+      <p id="g-signin-status" class="text-xs text-slate-500">サインイン待機中…</p>
+      <p
+        id="g-signin-error"
+        class="mt-1 max-w-xs rounded-md bg-red-50 px-3 py-2 text-[11px] text-red-700 dark:bg-red-900/30 dark:text-red-100"
+        hidden
+      ></p>
+
       <p class="mt-4 text-[10px] text-slate-400">
-        ダイアログが表示されない場合は、ブラウザの third-party Cookie を許可してください。
+        ダイアログが出ない場合は、上のボタンをタップ。<br/>
+        ブラウザの third-party Cookie 設定もご確認ください。
       </p>
     </main>
   )}
