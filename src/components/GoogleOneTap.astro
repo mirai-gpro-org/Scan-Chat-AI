@@ -2,12 +2,19 @@
 /**
  * Google One Tap (GSI client) + Supabase Auth 統合。
  *
+ * JavaScript API 方式 (g_id_onload は使わない) で初期化する。
+ * HTML data-callback 方式だと、GSI client 初期化時に
+ * `window[data-callback]` が未定義 → "callback is not a function"
+ * エラーで config が捨てられる race condition があるため。
+ *
  * 動作:
- *   1. Google GSI client を非同期ロード
- *   2. One Tap UI を自動表示 (PUBLIC_GOOGLE_CLIENT_ID が設定済 + ?u= が無いとき)
- *   3. 認証成功 → Supabase signInWithIdToken で session 作成
- *   4. デモ用 email → diagnostic_user_id mapping を解決
- *   5. URL に ?u=<uuid> を付けて reload (既存ルーティングと互換)
+ *   1. Google GSI client を非同期ロード (<script is:inline async>)
+ *   2. bundled module: handleCredentialResponse() を定義
+ *   3. google.accounts.id が ready になったら initialize() で
+ *      function 参照を直接渡し、prompt() で One Tap 起動
+ *   4. 認証成功 → signInWithIdToken → ?u=<uid> に redirect
+ *
+ * iOS Safari / ITP ブラウザ対応: itp_support: true
  *
  * 環境変数: PUBLIC_GOOGLE_CLIENT_ID
  *   未設定なら何もレンダリングしない (フォールバック: ?u= 直渡し)
@@ -19,27 +26,16 @@ const enabled = !!clientId;
 {enabled && (
   <>
     {/* Google Identity Services client (async load) */}
-    <script async defer src="https://accounts.google.com/gsi/client"></script>
-
-    {/* One Tap init (callback は下の <script> で window に登録) */}
-    <div
-      id="g_id_onload"
-      data-client_id={clientId}
-      data-callback="__scanChatOnGoogleSignIn"
-      data-auto_prompt="true"
-      data-cancel_on_tap_outside="false"
-      data-itp_support="true"
-      data-context="signin"
-    ></div>
+    <script is:inline async defer src="https://accounts.google.com/gsi/client"></script>
 
     <script>
       import { createClient } from '@supabase/supabase-js';
 
-      const supabaseUrl = import.meta.env.PUBLIC_SUPABASE_URL as string;
+      const supabaseUrl  = import.meta.env.PUBLIC_SUPABASE_URL as string;
       const supabaseAnon = import.meta.env.PUBLIC_SUPABASE_ANON_KEY as string;
+      const clientId     = import.meta.env.PUBLIC_GOOGLE_CLIENT_ID as string;
 
-      /** デモ専用: 特定メールアドレスをシード済 user に強制マッピング
-       *  (supabase/seed_admin_users.sql でデータコピー済) */
+      /** デモ専用: 特定メールアドレスをシード済 user に強制マッピング */
       const DEMO_EMAIL_TO_UID: Record<string, string> = {
         'unfix.hamada@gmail.com':   '14410d5a-d515-4fe9-9a8e-bbb1040021ac',
         'miyazawa@wellfort.co.jp':  '1c1ded05-6cce-4880-a5d8-3f964a43ba54',
@@ -47,28 +43,17 @@ const enabled = !!clientId;
         'ohkawa@wellfort.co.jp':    '7cbe6588-5a99-4068-9c40-5fa2427c7122',
         'okabe@wellfort.co.jp':     'f9d47b45-45ad-4ffc-bad3-1bf4de130a1c',
         'honda@wellfort.co.jp':     'c0000020-0000-0000-0000-000000000000',
-        // 開発・テスト用 (元の物部 = 真鍋) もフォールバックとして残す
         'hamada@eentry.co.jp':      'd0000001-0000-0000-0000-000000000000',
       };
 
-      /** すでに ?u= が URL にある場合は One Tap を抑制 (フォールバックモード) */
-      const params = new URLSearchParams(window.location.search);
-      if (params.has('u') && params.get('u')) {
-        // GSI が読み込まれた後に cancel
-        const cancelOneTap = () => {
-          const g = (window as unknown as { google?: { accounts?: { id?: { cancel: () => void } } } }).google;
-          if (g?.accounts?.id) g.accounts.id.cancel();
-        };
-        // 数回試行 (GSI 読込タイミング不定)
-        setTimeout(cancelOneTap, 500);
-        setTimeout(cancelOneTap, 1500);
-        setTimeout(cancelOneTap, 3000);
-      }
+      type GsiCredentialResponse = { credential: string };
+      type GsiId = {
+        initialize: (cfg: Record<string, unknown>) => void;
+        prompt: (cb?: (n: unknown) => void) => void;
+        cancel: () => void;
+      };
 
-      type GsiResponse = { credential: string };
-
-      // Google One Tap のコールバック (data-callback の名前と一致)
-      (window as unknown as Record<string, unknown>).__scanChatOnGoogleSignIn = async (response: GsiResponse) => {
+      async function handleCredentialResponse(response: GsiCredentialResponse) {
         try {
           if (!supabaseUrl || !supabaseAnon) {
             console.error('PUBLIC_SUPABASE_URL / PUBLIC_SUPABASE_ANON_KEY が未設定');
@@ -76,7 +61,6 @@ const enabled = !!clientId;
           }
           const sb = createClient(supabaseUrl, supabaseAnon);
 
-          // Google ID Token を Supabase Auth に渡してセッション作成
           const { data, error } = await sb.auth.signInWithIdToken({
             provider: 'google',
             token: response.credential,
@@ -90,16 +74,16 @@ const enabled = !!clientId;
           const email = user?.email?.toLowerCase() ?? '';
           if (!email) return;
 
-          // デモ用: 既知のメールアドレスはシード済 user にマッピング
+          const url = new URL(window.location.href);
+          if (url.pathname === '/' || url.pathname === '') url.pathname = '/dashboard';
+
           const fixed = DEMO_EMAIL_TO_UID[email];
           if (fixed) {
-            const url = new URL(window.location.href);
             url.searchParams.set('u', fixed);
             window.location.replace(url.toString());
             return;
           }
 
-          // 一般ユーザー: app_users へ upsert
           const sub = (user.user_metadata as Record<string, string> | undefined)?.sub ?? '';
           const displayName = (user.user_metadata as Record<string, string> | undefined)?.full_name ?? email;
           const csb = sb.schema('diagnosis');
@@ -113,24 +97,46 @@ const enabled = !!clientId;
             { onConflict: 'auth_user_id' },
           );
 
-          // 取得し直して diagnostic_user_id を URL に付与
           const { data: appUser } = await csb
             .from('app_users')
             .select('diagnostic_user_id')
             .eq('auth_user_id', user.id)
             .maybeSingle();
           if (appUser?.diagnostic_user_id) {
-            const url = new URL(window.location.href);
             url.searchParams.set('u', appUser.diagnostic_user_id);
             window.location.replace(url.toString());
           } else {
-            // diagnostic_user_id が未生成 → リロードのみ
             window.location.reload();
           }
         } catch (err) {
           console.error('One Tap callback error:', err);
         }
-      };
+      }
+
+      /** GSI client が ready になるまで待つ */
+      function whenGsiReady(cb: (gsi: GsiId) => void, attempts = 50): void {
+        const gsi = (window as unknown as { google?: { accounts?: { id?: GsiId } } }).google?.accounts?.id;
+        if (gsi) { cb(gsi); return; }
+        if (attempts <= 0) return;
+        setTimeout(() => whenGsiReady(cb, attempts - 1), 100);
+      }
+
+      whenGsiReady((gsi) => {
+        gsi.initialize({
+          client_id: clientId,
+          callback: handleCredentialResponse,
+          auto_select: false,
+          cancel_on_tap_outside: false,
+          itp_support: true,
+          context: 'signin',
+        });
+
+        // ?u= が既に URL にある場合は One Tap を出さない
+        const params = new URLSearchParams(window.location.search);
+        if (params.has('u') && params.get('u')) return;
+
+        gsi.prompt();
+      });
     </script>
   </>
 )}
