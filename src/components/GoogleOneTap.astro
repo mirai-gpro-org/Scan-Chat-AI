@@ -54,25 +54,32 @@ const enabled = !!clientId;
       };
 
       async function handleCredentialResponse(response: GsiCredentialResponse) {
+        console.log('[OneTap] callback fired, credential length:', response.credential?.length ?? 0);
         try {
           if (!supabaseUrl || !supabaseAnon) {
-            console.error('PUBLIC_SUPABASE_URL / PUBLIC_SUPABASE_ANON_KEY が未設定');
+            console.error('[OneTap] PUBLIC_SUPABASE_URL / PUBLIC_SUPABASE_ANON_KEY が未設定');
+            alert('Supabase 環境変数が未設定です');
             return;
           }
           const sb = createClient(supabaseUrl, supabaseAnon);
 
+          console.log('[OneTap] calling signInWithIdToken…');
           const { data, error } = await sb.auth.signInWithIdToken({
             provider: 'google',
             token: response.credential,
           });
           if (error) {
-            console.error('Supabase auth error:', error);
+            console.error('[OneTap] Supabase auth error:', error);
             alert(`認証エラー: ${error.message}`);
             return;
           }
           const user = data.user;
           const email = user?.email?.toLowerCase() ?? '';
-          if (!email) return;
+          console.log('[OneTap] signInWithIdToken OK, email:', email, 'uid:', user?.id);
+          if (!email) {
+            alert('Google から email を取得できませんでした');
+            return;
+          }
 
           const url = new URL(window.location.href);
           if (url.pathname === '/' || url.pathname === '') url.pathname = '/dashboard';
@@ -80,14 +87,16 @@ const enabled = !!clientId;
           const fixed = DEMO_EMAIL_TO_UID[email];
           if (fixed) {
             url.searchParams.set('u', fixed);
+            console.log('[OneTap] demo email match → redirect:', url.toString());
             window.location.replace(url.toString());
             return;
           }
 
+          console.log('[OneTap] non-demo email, upserting app_users…');
           const sub = (user.user_metadata as Record<string, string> | undefined)?.sub ?? '';
           const displayName = (user.user_metadata as Record<string, string> | undefined)?.full_name ?? email;
           const csb = sb.schema('diagnosis');
-          await csb.from('app_users').upsert(
+          const { error: upsertErr } = await csb.from('app_users').upsert(
             {
               auth_user_id: user.id,
               google_sub: sub,
@@ -96,6 +105,11 @@ const enabled = !!clientId;
             } as never,
             { onConflict: 'auth_user_id' },
           );
+          if (upsertErr) {
+            console.error('[OneTap] app_users upsert error:', upsertErr);
+            alert(`プロフィール登録失敗: ${upsertErr.message}`);
+            return;
+          }
 
           const { data: appUser } = await csb
             .from('app_users')
@@ -104,12 +118,15 @@ const enabled = !!clientId;
             .maybeSingle();
           if (appUser?.diagnostic_user_id) {
             url.searchParams.set('u', appUser.diagnostic_user_id);
+            console.log('[OneTap] redirect:', url.toString());
             window.location.replace(url.toString());
           } else {
-            window.location.reload();
+            console.warn('[OneTap] no diagnostic_user_id for', user.id);
+            alert('お客様情報が見つかりません。サポートまでご連絡ください。');
           }
         } catch (err) {
-          console.error('One Tap callback error:', err);
+          console.error('[OneTap] callback exception:', err);
+          alert(`サインイン処理エラー: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
 
@@ -121,7 +138,10 @@ const enabled = !!clientId;
         setTimeout(() => whenGsiReady(cb, attempts - 1), 100);
       }
 
+      console.log('[OneTap] module loaded, clientId:', clientId ? `${clientId.slice(0, 10)}…` : '(missing)');
+
       whenGsiReady((gsi) => {
+        console.log('[OneTap] GSI ready, initializing…');
         gsi.initialize({
           client_id: clientId,
           callback: handleCredentialResponse,
@@ -131,11 +151,16 @@ const enabled = !!clientId;
           context: 'signin',
         });
 
-        // ?u= が既に URL にある場合は One Tap を出さない
         const params = new URLSearchParams(window.location.search);
-        if (params.has('u') && params.get('u')) return;
+        if (params.has('u') && params.get('u')) {
+          console.log('[OneTap] ?u= present, skip prompt');
+          return;
+        }
 
-        gsi.prompt();
+        console.log('[OneTap] calling prompt()');
+        gsi.prompt((notification: unknown) => {
+          console.log('[OneTap] prompt notification:', notification);
+        });
       });
     </script>
   </>
