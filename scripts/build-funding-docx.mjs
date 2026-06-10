@@ -22,6 +22,7 @@ const TARGETS = [
   { md: '要件定義書.md',                           docx: '要件定義書.docx' },
   { md: '見積書.md',                             docx: '見積書.docx' },
   { md: '補助事業要件定義書_ウェルフォート_v2.0.md', docx: '補助事業要件定義書_ウェルフォート_v2.0.docx' },
+  { md: '選定理由書_UNFIX_v1.0.md',                docx: '選定理由書_UNFIX_v1.0.docx' },
 ];
 
 // pandoc の存在確認
