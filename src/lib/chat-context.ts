@@ -16,13 +16,22 @@ import {
 } from './elith-parser';
 
 /**
- * 内部に登録済のユーザー名 (customer.family_name) を取得する。
- * 問診では氏名を尋ねず、この値を問診結果へ自動付与するために使う。
+ * 内部に登録済の顧客プロフィール (氏名・生年月日・性別) を取得する。
+ * これらは問診で尋ねず、この値を問診結果へ自動付与するために使う。
  * service role key で読むため、サーバ側 (API route) からのみ呼ぶこと。
  */
-export async function getCustomerName(
+export interface CustomerProfile {
+  /** customer.family_name */
+  name: string | null;
+  /** customer.date_of_birth (ISO 日付文字列) */
+  dateOfBirth: string | null;
+  /** customer.sex ('male' | 'female' 等の生値) */
+  sex: string | null;
+}
+
+export async function getCustomerProfile(
   diagnosticUserId: string | null | undefined,
-): Promise<string | null> {
+): Promise<CustomerProfile | null> {
   if (!diagnosticUserId) return null;
   if (!/^[0-9a-f-]{36}$/i.test(diagnosticUserId)) return null;
 
@@ -32,12 +41,18 @@ export async function getCustomerName(
   const { data } = await sb
     .schema('customer')
     .from('customer_profiles')
-    .select('family_name')
+    .select('family_name, date_of_birth, sex')
     .eq('diagnostic_user_id', diagnosticUserId)
     .maybeSingle();
 
-  const name = data?.family_name?.trim();
-  return name ? name : null;
+  if (!data) return null;
+
+  const name = data.family_name?.trim();
+  return {
+    name: name ? name : null,
+    dateOfBirth: data.date_of_birth ?? null,
+    sex: data.sex ?? null,
+  };
 }
 
 export async function buildUserContextForChat(

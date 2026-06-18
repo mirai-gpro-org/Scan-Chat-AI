@@ -191,23 +191,8 @@ function examIs(a: Answers, ...list: string[]): boolean {
 
 const RAW: Omit<QuestionDef, 'section_title'>[] = [
   // ───── 基本情報 ─────
-  // ※「氏名」は問診で尋ねない。内部で取得済のユーザー名 (customer.family_name) を
-  //   問診結果へ自動付与する (live-controller の buildInterviewResult を参照)。
-  {
-    id: 'B-DOB', section_id: 'basic', answer_kind: 'text', numeric: true,
-    question: '生年月日を教えてください。',
-    example: '1980年1月30日 → 19800130',
-    placeholder: '例：19800130',
-  },
-  {
-    id: 'B-SEX', section_id: 'basic', answer_kind: 'chip',
-    question: '生物学的性別を教えてください。',
-    chips: [
-      { label: '男性', emoji: '👨' },
-      { label: '女性', emoji: '👩' },
-      { label: '答えたくない' },
-    ],
-  },
+  // ※「氏名」「生年月日」「生物学的性別」は問診で尋ねない。顧客DB (customer_profiles)
+  //   から内部取得した値を問診結果へ自動付与する (live-controller の showCompletion 参照)。
   {
     id: 'B-HEIGHT', section_id: 'basic', answer_kind: 'text', numeric: true,
     question: '身長を教えてください。（cm）',
