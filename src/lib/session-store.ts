@@ -59,7 +59,8 @@ export function createEmptySession(id = 'default'): ChatSession {
 
 /**
  * 問診結果ファイル。
- * 氏名は問診で尋ねず、内部で取得済のユーザー名 (`userName`) を付与する。
+ * 氏名・生年月日・生物学的性別は問診で尋ねず、顧客DBから内部取得した値
+ * (`userName` / `dateOfBirth` / `sex`) を付与する。
  * `answers` は設問 id → 回答値のマップ。
  */
 export interface InterviewResult {
@@ -67,6 +68,10 @@ export interface InterviewResult {
   diagnosticUserId: string | null;
   /** 内部で取得済のユーザー名 (customer.family_name) */
   userName: string | null;
+  /** 内部で取得済の生年月日 (customer.date_of_birth) */
+  dateOfBirth: string | null;
+  /** 内部で取得済の生物学的性別 (customer.sex) */
+  sex: string | null;
   answers: Record<string, string | string[] | number>;
   completedAt: number;
 }

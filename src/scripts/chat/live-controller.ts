@@ -237,8 +237,8 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   /** 回答受付〜次設問表示までの間は音声回答の二重取り込みを抑止する */
   let advancing = false;
   let muted = false;
-  /** 内部で取得済のユーザー名 (氏名は問診で尋ねず、結果へ自動付与する) */
-  let userName: string | null = null;
+  /** 内部で取得済の顧客プロフィール (氏名・生年月日・性別は問診で尋ねず結果へ付与) */
+  let userProfile: { name: string | null; dateOfBirth: string | null; sex: string | null } | null = null;
   const engine = new InterviewEngine();
   // 後方互換: 旧 fallback パス由来の参照を温存 (本実装では未使用)
   let presentQuestionCalledThisTurn = false;
@@ -755,14 +755,14 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       const body = await res.text();
       throw new Error(`token mint ${res.status}: ${body}`);
     }
-    const { token, model, userContext, userName: fetchedName } = (await res.json()) as {
+    const { token, model, userContext, userProfile: fetchedProfile } = (await res.json()) as {
       token: string;
       model: string;
       userContext?: string | null;
-      userName?: string | null;
+      userProfile?: { name: string | null; dateOfBirth: string | null; sex: string | null } | null;
     };
-    // 氏名は問診で尋ねない。内部取得のユーザー名を結果へ付与するため保持する。
-    userName = fetchedName ?? null;
+    // 氏名・生年月日・性別は問診で尋ねない。内部取得値を結果へ付与するため保持する。
+    userProfile = fetchedProfile ?? null;
 
     // NOTE: userContext 注入は AI ループの原因となったため一時 OFF。
     // 後で再有効化する場合は連結ロジックを再設計する。
@@ -1008,12 +1008,14 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     renderProgress(100, '完了');
     renderSectionDots(SECTIONS.length);
 
-    // 問診結果ファイルを生成。氏名は尋ねず、内部取得のユーザー名を付与する。
+    // 問診結果ファイルを生成。氏名・生年月日・性別は尋ねず、内部取得値を付与する。
     const uid = refs.diagnosticUserId?.trim() || null;
     saveInterviewResult({
       id: SESSION_ID,
       diagnosticUserId: uid,
-      userName,
+      userName: userProfile?.name ?? null,
+      dateOfBirth: userProfile?.dateOfBirth ?? null,
+      sex: userProfile?.sex ?? null,
       answers: engine.getAnswers(),
       completedAt: Date.now(),
     });
