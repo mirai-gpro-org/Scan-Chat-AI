@@ -1,5 +1,5 @@
 /**
- * AI 問診票 — クライアント駆動エンジン (Phase 1.0)
+ * AI 問診票 — クライアント駆動エンジン (Phase 2.0)
  *
  * 設計思想:
  *   Live API (LLM) に質問順 / 選択肢 / 分岐を任せると tool calling の
@@ -8,271 +8,654 @@
  *   LLM の役割は「ユーザー回答の温かい復唱」「セクション切替の導線発話」
  *   だけに限定する。
  *
- * 流れ:
- *   1) engine.start()                    → 最初の Q (Q1-1)
- *   2) UI が Q を render (chip 等を表示)
- *   3) ユーザーが回答 (タップ or 音声)
- *   4) engine.recordAndAdvance(answer)    → 次の Q (or 完了)
- *   5) LLM に「ユーザー回答 + 次の Q (任意)」を user text で送信
- *      LLM は復唱と導線だけ発話。tool calling 一切不要。
+ * 問診内容:
+ *   「ウェルテクト健康モニタリングサービス：共通アンケート」(PDF) を全面採用。
+ *   実施検査 (Q EXAM-TYPE) の回答で、後半の検査別設問を出し分ける。
+ *
+ * 回答 UI:
+ *   - text   : 自由入力 (数値入力ヒント可)
+ *   - chip   : 単一選択 (選択肢が少ない)
+ *   - multi  : 複数選択 (ボトムシート・チェックリスト / 選択肢が少ない)
+ *   - wheel  : ホイール (ドラム) 選択モーダル。選択肢が多い設問向け。
+ *              multi:true で複数選択に対応 (タップでトグル)。
+ *   - slider : 1〜10 のスケール
+ *   - matrix : 行 (項目) × 列 (頻度) のマトリクス選択 (Q 食品摂取頻度)
+ *
+ *   いずれの設問も「画面タップ」または「音声」で回答できる
+ *   (音声回答は live-controller が選択肢へマッチングしてエンジンに反映)。
  */
 
-export type SectionId = 'lifestyle' | 'activity' | 'diet' | 'sleep' | 'wellness';
+export type SectionId =
+  | 'basic'
+  | 'health'
+  | 'smoking'
+  | 'drinking'
+  | 'diet'
+  | 'exercise'
+  | 'meds'
+  | 'sleep'
+  | 'exam'
+  | 'examdetail'
+  | 'consent';
 
 export interface ChoiceOpt {
   label: string;
   emoji?: string;
 }
 
-export type AnswerKind = 'chip' | 'multi' | 'slider' | 'stepper' | 'text';
+export type AnswerKind = 'text' | 'chip' | 'multi' | 'wheel' | 'slider' | 'matrix';
+
+export type AnswerValue = string | string[] | number;
+export type Answers = Record<string, AnswerValue>;
 
 export interface QuestionDef {
   id: string;
   section_id: SectionId;
   section_title: string;
-  /** 進捗 0-100 (このQ表示時点) */
-  percent: number;
   question: string;
   answer_kind: AnswerKind;
+
+  /** chip 用 */
   chips?: ChoiceOpt[];
+
+  /** multi (ボトムシート) 用 */
   multi_options?: ChoiceOpt[];
   multi_title?: string;
+
+  /** wheel 用 */
+  wheel_options?: ChoiceOpt[];
+  wheel_title?: string;
+  /** wheel を複数選択にする */
+  multi?: boolean;
+
+  /** slider 用 */
   slider_low_label?: string;
   slider_high_label?: string;
-  stepper_unit?: string;
-  stepper_max?: number;
-  /** 任意分岐: 回答 (chip:string, multi:string[], slider/stepper:number, text:string) → 次の Q id */
-  next?: (answer: AnswerValue) => string | null;
-}
+  slider_min?: number;
+  slider_max?: number;
 
-export type AnswerValue = string | string[] | number;
+  /** matrix 用 */
+  matrix_rows?: string[];
+  matrix_cols?: ChoiceOpt[];
+
+  /** text 用 */
+  placeholder?: string;
+  /** 数値キーボードを促す */
+  numeric?: boolean;
+  /** 入力例 (UI のヒント / 音声導線) */
+  example?: string;
+
+  /** 表示条件。false なら設問をスキップする (分岐) */
+  when?: (a: Answers) => boolean;
+}
 
 export const SECTIONS: { id: SectionId; title: string }[] = [
-  { id: 'lifestyle', title: '嗜好品' },
-  { id: 'activity',  title: '運動・活動量' },
-  { id: 'diet',      title: '食生活' },
-  { id: 'sleep',     title: '睡眠' },
-  { id: 'wellness',  title: '心身の健康' },
+  { id: 'basic',      title: '基本情報' },
+  { id: 'health',     title: '健康状態・既往歴' },
+  { id: 'smoking',    title: '喫煙習慣' },
+  { id: 'drinking',   title: '飲酒習慣' },
+  { id: 'diet',       title: '食生活' },
+  { id: 'exercise',   title: '運動習慣' },
+  { id: 'meds',       title: '服薬・サプリメント' },
+  { id: 'sleep',      title: '睡眠・ストレス' },
+  { id: 'exam',       title: '実施検査の確認' },
+  { id: 'examdetail', title: '検査別の詳細' },
+  { id: 'consent',    title: '同意事項' },
 ];
 
-/** 問診票本体 */
-export const QUESTIONS: Record<string, QuestionDef> = {
-  'Q1-1': {
-    id: 'Q1-1', section_id: 'lifestyle', section_title: '嗜好品', percent: 5,
-    question: '普段たばこを吸われますか？',
-    answer_kind: 'chip',
+const SECTION_TITLE: Record<SectionId, string> = Object.fromEntries(
+  SECTIONS.map((s) => [s.id, s.title]),
+) as Record<SectionId, string>;
+
+// ── 選択肢マスタ ───────────────────────────────────────────────
+
+const opt = (labels: string[]): ChoiceOpt[] => labels.map((label) => ({ label }));
+
+/** 疾患リスト (現病歴 / 既往歴 共通) */
+const DISEASES = opt([
+  'なし', '胃がん', '大腸がん', '肺がん', '乳がん', '肝臓がん',
+  '甲状腺機能低下症', '甲状腺機能亢進症', '高脂血症', '高血圧', '骨粗鬆症',
+  '脳梗塞', '脳卒中', '脳出血', '大動脈瘤', '不整脈', '心筋梗塞', '狭心症',
+  'アルツハイマー病', 'うつ病', '1型糖尿病', '2型糖尿病', '肺気腫', '喘息',
+  'COPD', '人工透析', 'その他',
+]);
+
+const SYMPTOMS: ChoiceOpt[] = [
+  { label: 'なし', emoji: '✅' },
+  { label: '頭痛', emoji: '🤕' },
+  { label: '肩こり', emoji: '😣' },
+  { label: '腰痛', emoji: '🦴' },
+  { label: '眼精疲労', emoji: '👀' },
+  { label: '冷え性', emoji: '🥶' },
+  { label: '便秘・下痢', emoji: '🚽' },
+  { label: '慢性的な疲労感', emoji: '😪' },
+  { label: 'その他' },
+];
+
+const FAMILY_CANCER = opt([
+  'なし', '肺がん', '胃がん', '大腸がん', '乳がん',
+  '子宮がん', '前立腺がん', '膵臓がん', '肝臓がん', 'その他',
+]);
+
+const FAMILY_DISEASE = opt([
+  'なし', '高血圧', '糖尿病', '脂質異常症',
+  '心疾患', '脳血管疾患', '認知症', 'その他',
+]);
+
+const EXERCISE_TYPES: ChoiceOpt[] = [
+  { label: 'ウォーキング', emoji: '🚶' },
+  { label: 'ジョギング・ランニング', emoji: '🏃' },
+  { label: '水泳', emoji: '🏊' },
+  { label: '筋力トレーニング', emoji: '💪' },
+  { label: 'ヨガ・ストレッチ', emoji: '🧘' },
+  { label: 'スポーツ（球技・武道等）', emoji: '⚽' },
+  { label: '自転車', emoji: '🚲' },
+  { label: 'その他' },
+];
+
+const FOOD_ROWS = [
+  '野菜・海藻類', 'フルーツ', '魚・海産物', '赤身肉・加工肉',
+  '揚げ物・脂っこい食事', '塩分の多い食事', '間食・甘いもの',
+  'カフェイン（コーヒー、エナジードリンクなど）', 'ご飯（お米）',
+];
+const FOOD_COLS = opt(['ほぼ毎日', '週4〜5回', '週2〜3回', '週1回以下', 'ほとんど摂らない']);
+
+// 実施検査タイプ (Q EXAM-TYPE のラベル — when 分岐で参照)
+const T_WELLTECT = 'ウェルテクト（下記検査の複数パッケージ）';
+const T_GENE = '遺伝子検査（唾液検査）のみ';
+const T_CANCER = 'がんリスク検査（尿検査）のみ';
+const T_BLOOD = '血液検査のみ';
+const T_AIPRED = 'AI疾病予測のみ';
+const T_AIPREV = 'AI疾病予防のみ';
+
+// ── 分岐ヘルパ ─────────────────────────────────────────────────
+
+function asArray(v: AnswerValue | undefined): string[] {
+  if (Array.isArray(v)) return v;
+  if (v == null || v === '') return [];
+  return [String(v)];
+}
+
+/** 現病歴 (H-CURRENT) で「なし」以外の疾患を 1 つ以上選んでいるか */
+function hasCurrentDisease(a: Answers): boolean {
+  return asArray(a['H-CURRENT']).some((x) => x !== 'なし');
+}
+
+/** 実施検査タイプが list のいずれかに一致するか (未回答なら false = まだ出さない) */
+function examIs(a: Answers, ...list: string[]): boolean {
+  const t = a['EXAM-TYPE'];
+  return typeof t === 'string' && list.includes(t);
+}
+
+// ── 問診票本体 (PDF「共通アンケート」全 81 問を反映) ────────────
+
+const RAW: Omit<QuestionDef, 'section_title'>[] = [
+  // ───── 基本情報 ─────
+  {
+    id: 'B-NAME', section_id: 'basic', answer_kind: 'text',
+    question: 'お名前を教えてください。（氏名）',
+    placeholder: '例：山田 太郎',
+  },
+  {
+    id: 'B-DOB', section_id: 'basic', answer_kind: 'text', numeric: true,
+    question: '生年月日を教えてください。',
+    example: '1980年1月30日 → 19800130',
+    placeholder: '例：19800130',
+  },
+  {
+    id: 'B-SEX', section_id: 'basic', answer_kind: 'chip',
+    question: '生物学的性別を教えてください。',
     chips: [
-      { label: '吸わない',         emoji: '🚭' },
-      { label: '以前吸っていた',   emoji: '🍃' },
-      { label: '吸っている',       emoji: '🚬' },
+      { label: '男性', emoji: '👨' },
+      { label: '女性', emoji: '👩' },
+      { label: '答えたくない' },
     ],
   },
-  'Q1-2': {
-    id: 'Q1-2', section_id: 'lifestyle', section_title: '嗜好品', percent: 10,
-    question: 'よく飲むアルコールはありますか？',
-    answer_kind: 'multi',
-    multi_title: 'よく飲むアルコールをすべて選んでください',
-    multi_options: [
-      { label: 'ビール',                 emoji: '🍺' },
-      { label: '日本酒',                 emoji: '🍶' },
-      { label: '焼酎',                   emoji: '🥃' },
-      { label: 'ワイン',                 emoji: '🍷' },
-      { label: 'ハイボール・チューハイ', emoji: '🍹' },
-      { label: 'その他' },
-      { label: '飲まない',               emoji: '🚫' },
-    ],
-    next: (a) => {
-      const arr = Array.isArray(a) ? a : [];
-      const onlyNone = arr.length === 0 || (arr.length === 1 && arr[0] === '飲まない');
-      // 飲まないなら Q1-3 (酒量) をスキップして Q1-4 へ
-      return onlyNone ? 'Q1-4' : 'Q1-3';
-    },
+  {
+    id: 'B-HEIGHT', section_id: 'basic', answer_kind: 'text', numeric: true,
+    question: '身長を教えてください。（cm）',
+    example: '172cm → 172',
+    placeholder: '例：172',
   },
-  'Q1-3': {
-    id: 'Q1-3', section_id: 'lifestyle', section_title: '嗜好品', percent: 15,
-    question: '1日に飲むお酒の量はどれくらいですか？',
-    answer_kind: 'stepper',
-    stepper_unit: '杯',
-    stepper_max: 10,
+  {
+    id: 'B-WEIGHT', section_id: 'basic', answer_kind: 'text', numeric: true,
+    question: '体重を教えてください。（kg・数字のみ）',
+    example: '65kg → 65',
+    placeholder: '例：65',
   },
-  'Q1-4': {
-    id: 'Q1-4', section_id: 'lifestyle', section_title: '嗜好品', percent: 18,
-    question: 'カフェイン入り飲料はどのくらい摂りますか？',
-    answer_kind: 'chip',
+  {
+    id: 'B-WEIGHT-CHANGE', section_id: 'basic', answer_kind: 'multi',
+    question: 'ご自身の体重変化について、該当するものを教えてください。',
+    multi_title: '該当するものをすべて選んでください',
+    multi_options: opt([
+      '20歳の頃と比べて、今は10kg以上増加した',
+      'この1年間で体重の増加が3kg以上あった',
+      '該当するものはない',
+    ]),
+  },
+
+  // ───── 健康状態、既往歴・現病歴 ─────
+  {
+    id: 'H-SYMPTOMS', section_id: 'health', answer_kind: 'wheel', multi: true,
+    question: '現在気になる自覚症状を教えてください。',
+    wheel_title: '気になる自覚症状（複数選択可）',
+    wheel_options: SYMPTOMS,
+  },
+  {
+    id: 'H-CURRENT', section_id: 'health', answer_kind: 'wheel', multi: true,
+    question: '現在罹患している疾患を教えてください。',
+    wheel_title: '現在罹患している疾患（複数選択可）',
+    wheel_options: DISEASES,
+  },
+  {
+    id: 'H-PAST', section_id: 'health', answer_kind: 'wheel', multi: true,
+    question: '過去に罹患した疾患名を教えてください。',
+    wheel_title: '過去に罹患した疾患（複数選択可）',
+    wheel_options: DISEASES,
+  },
+  {
+    id: 'H-TREAT-STATUS', section_id: 'health', answer_kind: 'chip',
+    question: '選択いただいた疾患の治療状況を教えてください。',
+    chips: opt(['未治療', '治療中', '経過観察中', '完治']),
+    when: hasCurrentDisease,
+  },
+  {
+    id: 'H-TREAT-DETAIL', section_id: 'health', answer_kind: 'text',
+    question: '選択いただいた疾患の発症時期・治療法を教えてください。',
+    example: '2020年3月・外科手術',
+    placeholder: '例：2020年3月・外科手術',
+    when: hasCurrentDisease,
+  },
+
+  // ───── 喫煙習慣 ─────
+  {
+    id: 'S-STATUS', section_id: 'smoking', answer_kind: 'chip',
+    question: '喫煙習慣はありますか？',
     chips: [
-      { label: '毎日',           emoji: '☀️' },
-      { label: '週に数回',       emoji: '📅' },
-      { label: '月に数回',       emoji: '🗓' },
-      { label: 'ほとんど摂らない', emoji: '🚫' },
+      { label: '現在吸っている', emoji: '🚬' },
+      { label: '過去に吸っていたが現在は吸わない', emoji: '🍃' },
+      { label: '吸ったことはない', emoji: '🚭' },
     ],
   },
-  'Q2-1': {
-    id: 'Q2-1', section_id: 'activity', section_title: '運動・活動量', percent: 23,
-    question: '普段、運動をする習慣はありますか？',
-    answer_kind: 'chip',
+  {
+    id: 'S-QUIT-AGE', section_id: 'smoking', answer_kind: 'text', numeric: true,
+    question: '喫煙を止めた年齢を教えてください。',
+    example: '30歳 → 30（現在も吸っている場合は現在の年齢）',
+    placeholder: '例：30',
+    when: (a) => a['S-STATUS'] === '過去に吸っていたが現在は吸わない',
+  },
+  {
+    id: 'S-COUNT', section_id: 'smoking', answer_kind: 'text', numeric: true,
+    question: '1日の喫煙本数を教えてください。（喫煙者は現在、禁煙者は過去の本数）',
+    example: '1日10本 → 10',
+    placeholder: '例：10',
+    when: (a) => a['S-STATUS'] !== '吸ったことはない',
+  },
+  {
+    id: 'S-YEARS', section_id: 'smoking', answer_kind: 'text', numeric: true,
+    question: '喫煙している／していた年数を教えてください。',
+    example: '15年間 → 15',
+    placeholder: '例：15',
+    when: (a) => a['S-STATUS'] !== '吸ったことはない',
+  },
+
+  // ───── 飲酒習慣 ─────
+  {
+    id: 'D-FREQ', section_id: 'drinking', answer_kind: 'wheel',
+    question: '現在の飲酒習慣はありますか？',
+    wheel_title: '飲酒の頻度を選んでください',
+    wheel_options: opt([
+      '毎日飲む', '週4〜5日飲む', '週2〜3日飲む', '月2〜4回飲む',
+      '月1回以下飲む', '過去飲んでいたが、現在はまったく飲まない', '元々まったく飲まない',
+    ]),
+  },
+  {
+    id: 'D-UNTIL-AGE', section_id: 'drinking', answer_kind: 'text', numeric: true,
+    question: '何歳まで飲酒されていたか教えてください。',
+    example: '45歳 → 45（現在も飲む場合は現在の年齢）',
+    placeholder: '例：45',
+    when: (a) => a['D-FREQ'] !== '元々まったく飲まない',
+  },
+  {
+    id: 'D-YEARS', section_id: 'drinking', answer_kind: 'text', numeric: true,
+    question: '飲酒している／していた年数を教えてください。',
+    example: '15年 → 15',
+    placeholder: '例：15',
+    when: (a) => a['D-FREQ'] !== '元々まったく飲まない',
+  },
+  {
+    id: 'D-AMOUNT', section_id: 'drinking', answer_kind: 'chip',
+    question: '飲酒する／していた際の、1回あたりの飲酒量を教えてください。',
+    chips: opt(['1合未満（ビール中瓶1本未満）', '1〜2合', '2〜3合', '3合以上']),
+    when: (a) => a['D-FREQ'] !== '元々まったく飲まない',
+  },
+
+  // ───── 食生活 ─────
+  {
+    id: 'F-HABITS', section_id: 'diet', answer_kind: 'wheel', multi: true,
+    question: '食事について、以下のうち該当するものを教えてください。',
+    wheel_title: '食事について該当するもの（複数選択可）',
+    wheel_options: opt([
+      '朝食を抜くことが多い', '何でも食べる', '嚙みづらい', '噛めない',
+      '食べる速度が早い', '食べる速度が遅い',
+      '就寝2時間前以内の食事が週3回以上ある', '外食が多い',
+    ]),
+  },
+  {
+    id: 'F-FREQ', section_id: 'diet', answer_kind: 'matrix',
+    question: '以下の食品の摂取頻度を教えてください。',
+    matrix_rows: FOOD_ROWS,
+    matrix_cols: FOOD_COLS,
+  },
+  {
+    id: 'F-CAFFEINE', section_id: 'diet', answer_kind: 'text',
+    question: 'カフェインの1日あたりの摂取量について教えてください。',
+    example: 'コーヒー約2杯／エナジードリンク1本／飲まない など',
+    placeholder: '例：コーヒー約2杯',
+  },
+  {
+    id: 'F-RICE', section_id: 'diet', answer_kind: 'text',
+    question: '1回あたりのご飯（お米）の量を教えてください。',
+    example: '約150g／お茶碗に大盛り／食べない など',
+    placeholder: '例：150g',
+  },
+  {
+    id: 'F-VEG', section_id: 'diet', answer_kind: 'chip',
+    question: '1回あたりの野菜摂取量に対して、ご自身のお考えを教えてください。',
     chips: [
-      { label: '週3回以上',     emoji: '🏃' },
-      { label: '週1-2回',       emoji: '🚶' },
+      { label: '十分に摂れている', emoji: '🥗' },
+      { label: '普通', emoji: '🥬' },
+      { label: '不足していると感じる', emoji: '🥦' },
+    ],
+  },
+  {
+    id: 'F-DIET-RESTRICT', section_id: 'diet', answer_kind: 'chip',
+    question: 'ダイエットのための食事制限について教えてください。',
+    chips: opt(['食事制限している', '食事制限していない']),
+  },
+  {
+    id: 'F-DIET-METHOD', section_id: 'diet', answer_kind: 'multi',
+    question: '食事方法で意識しているものがあれば教えてください。',
+    multi_title: '意識している食事方法（複数選択可）',
+    multi_options: opt(['ヴィーガン・ベジタリアン', '野菜中心', '糖質制限', '外食中心', 'その他']),
+  },
+
+  // ───── 運動習慣 ─────
+  {
+    id: 'E-FREQ', section_id: 'exercise', answer_kind: 'chip',
+    question: '週あたりの運動頻度を教えてください。',
+    chips: [
+      { label: 'ほぼ毎日（週5日以上）', emoji: '🏃' },
+      { label: '週3〜4日', emoji: '🚶' },
+      { label: '週1〜2日' },
       { label: 'ほとんどしない', emoji: '🧘' },
     ],
-    next: (a) => (a === 'ほとんどしない' ? 'Q2-3' : 'Q2-2'),
   },
-  'Q2-2': {
-    id: 'Q2-2', section_id: 'activity', section_title: '運動・活動量', percent: 28,
-    question: '1回の運動時間はどれくらいですか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '15分' },
-      { label: '30分' },
-      { label: '60分' },
-      { label: '60分以上', emoji: '💪' },
-    ],
+  {
+    id: 'E-TIME', section_id: 'exercise', answer_kind: 'chip',
+    question: '1回あたりの運動時間を教えてください。',
+    chips: opt(['30分未満', '30〜60分', '60〜90分', '90分以上']),
+    when: (a) => a['E-FREQ'] !== 'ほとんどしない',
   },
-  'Q2-3': {
-    id: 'Q2-3', section_id: 'activity', section_title: '運動・活動量', percent: 33,
-    question: '1日に座っている時間はどれくらいですか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '4時間以下' },
-      { label: '5-8時間' },
-      { label: '9-12時間' },
-      { label: '13時間以上' },
-    ],
+  {
+    id: 'E-SPEED', section_id: 'exercise', answer_kind: 'chip',
+    question: '同年代の人と比較した歩く速さを教えてください。',
+    chips: [{ label: '速い', emoji: '⚡' }, { label: '遅い', emoji: '🐢' }],
   },
-  'Q3-1': {
-    id: 'Q3-1', section_id: 'diet', section_title: '食生活', percent: 42,
-    question: '朝食はどのくらいの頻度で食べますか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '毎日',             emoji: '☀️' },
-      { label: '週4-6回' },
-      { label: '週1-3回' },
-      { label: 'ほとんど食べない', emoji: '🚫' },
-    ],
+  {
+    id: 'E-SITTING', section_id: 'exercise', answer_kind: 'text', numeric: true,
+    question: '1日のうち座りっぱなしの時間を教えてください。（時間）',
+    example: '1日約8時間 → 8',
+    placeholder: '例：8',
   },
-  'Q3-2': {
-    id: 'Q3-2', section_id: 'diet', section_title: '食生活', percent: 46,
-    question: '外食はどのくらいの頻度ですか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '週5回以上' },
-      { label: '週2-4回' },
-      { label: '週1回' },
-      { label: 'ほとんどしない' },
-    ],
+  {
+    id: 'E-TYPE', section_id: 'exercise', answer_kind: 'wheel',
+    question: '主な運動の種類を教えてください。',
+    wheel_title: '主な運動の種類を選んでください',
+    wheel_options: EXERCISE_TYPES,
+    when: (a) => a['E-FREQ'] !== 'ほとんどしない',
   },
-  'Q3-3': {
-    id: 'Q3-3', section_id: 'diet', section_title: '食生活', percent: 50,
-    question: '魚をどのくらいの頻度で食べますか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '週3回以上',         emoji: '🐟' },
-      { label: '週1-2回' },
-      { label: '月数回' },
-      { label: 'ほとんど食べない', emoji: '🚫' },
-    ],
-  },
-  'Q3-4': {
-    id: 'Q3-4', section_id: 'diet', section_title: '食生活', percent: 54,
-    question: '野菜はしっかり摂れていますか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '十分',               emoji: '🥗' },
-      { label: '普通',               emoji: '🥬' },
-      { label: '少ない',             emoji: '🥦' },
-      { label: 'ほとんど食べない',   emoji: '🚫' },
-    ],
-  },
-  'Q3-5': {
-    id: 'Q3-5', section_id: 'diet', section_title: '食生活', percent: 57,
-    question: '食事制限はされていますか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '特になし',       emoji: '✅' },
-      { label: 'ダイエット中',   emoji: '⚖️' },
-      { label: 'ヴィーガン',     emoji: '🌱' },
-      { label: '糖質制限',       emoji: '🍞' },
-      { label: 'その他' },
-    ],
-  },
-  'Q3-6': {
-    id: 'Q3-6', section_id: 'diet', section_title: '食生活', percent: 60,
-    question: 'サプリメントは摂取していますか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '摂っていない', emoji: '🚫' },
-      { label: '摂っている',   emoji: '💊' },
-    ],
-  },
-  'Q4-1': {
-    id: 'Q4-1', section_id: 'sleep', section_title: '睡眠', percent: 68,
-    question: '平均的な睡眠時間はどのくらいですか？',
-    answer_kind: 'chip',
-    chips: [
-      { label: '5時間以下', emoji: '😴' },
-      { label: '6時間' },
-      { label: '7時間' },
-      { label: '8時間' },
-      { label: '9時間以上', emoji: '💤' },
-    ],
-  },
-  'Q4-2': {
-    id: 'Q4-2', section_id: 'sleep', section_title: '睡眠', percent: 76,
-    question: '睡眠の悩みはありますか？',
-    answer_kind: 'multi',
-    multi_title: '当てはまるものをすべて選んでください',
-    multi_options: [
-      { label: '寝つきが悪い',                   emoji: '😣' },
-      { label: '夜中に目が覚める',               emoji: '🌙' },
-      { label: '朝早く目覚める',                 emoji: '🌅' },
-      { label: 'いびき・無呼吸を指摘された',     emoji: '😪' },
-      { label: '特になし',                       emoji: '✅' },
-    ],
-  },
-  'Q5-1': {
-    id: 'Q5-1', section_id: 'wellness', section_title: '心身の健康', percent: 88,
-    question: '気になる症状はありますか？',
-    answer_kind: 'multi',
-    multi_title: '当てはまるものをすべて選んでください',
-    multi_options: [
-      { label: '頭痛',           emoji: '🤕' },
-      { label: '肩こり',         emoji: '😣' },
-      { label: '腰痛',           emoji: '🦴' },
-      { label: '関節痛',         emoji: '🦵' },
-      { label: '冷え性',         emoji: '🥶' },
-      { label: '倦怠感',         emoji: '😪' },
-      { label: '消化不良',       emoji: '😖' },
-      { label: '便秘・下痢',     emoji: '🚽' },
-      { label: 'その他' },
-      { label: '特になし',       emoji: '✅' },
-    ],
-  },
-  'Q5-2': {
-    id: 'Q5-2', section_id: 'wellness', section_title: '心身の健康', percent: 95,
-    question: 'ストレス度はどれくらいですか？(1〜10)',
-    answer_kind: 'slider',
-    slider_low_label: '全くない',
-    slider_high_label: '非常に高い',
-  },
-};
 
-/** デフォルトの問診順 */
-export const SEQUENCE: string[] = [
-  'Q1-1', 'Q1-2', 'Q1-3', 'Q1-4',
-  'Q2-1', 'Q2-2', 'Q2-3',
-  'Q3-1', 'Q3-2', 'Q3-3', 'Q3-4', 'Q3-5', 'Q3-6',
-  'Q4-1', 'Q4-2',
-  'Q5-1', 'Q5-2',
+  // ───── 服薬・サプリメント ─────
+  {
+    id: 'M-HAS', section_id: 'meds', answer_kind: 'chip',
+    question: '現在服用中の薬・定期的に摂取しているサプリメント・健康食品はありますか？',
+    chips: [{ label: 'ある', emoji: '💊' }, { label: 'ない', emoji: '🚫' }],
+  },
+  {
+    id: 'M-NAME', section_id: 'meds', answer_kind: 'text',
+    question: '服用中の薬・サプリメント・健康食品の名前を教えてください。（薬は用途もあれば）',
+    placeholder: '例：ロキソニン（頭痛）、ビタミンC',
+    when: (a) => a['M-HAS'] === 'ある',
+  },
+  {
+    id: 'M-PERIOD', section_id: 'meds', answer_kind: 'chip',
+    question: 'その薬・サプリメント・健康食品の摂取期間を教えてください。',
+    chips: opt(['1カ月未満', '1〜3カ月', '4〜6カ月', '7〜11カ月', '1年以上']),
+    when: (a) => a['M-HAS'] === 'ある',
+  },
+  {
+    id: 'M-FREQ', section_id: 'meds', answer_kind: 'chip',
+    question: 'その薬・サプリメント・健康食品の摂取頻度を教えてください。',
+    chips: opt(['週1〜3回', '週4〜6回', '毎日']),
+    when: (a) => a['M-HAS'] === 'ある',
+  },
+
+  // ───── 睡眠・ストレス ─────
+  {
+    id: 'SL-HOURS', section_id: 'sleep', answer_kind: 'chip',
+    question: '平均的な睡眠時間を教えてください。',
+    chips: [
+      { label: '5時間未満', emoji: '😴' },
+      { label: '5〜6時間' },
+      { label: '6〜7時間' },
+      { label: '7〜8時間' },
+      { label: '8時間以上', emoji: '💤' },
+    ],
+  },
+  {
+    id: 'SL-QUALITY', section_id: 'sleep', answer_kind: 'chip',
+    question: '睡眠の質を教えてください。',
+    chips: opt(['とても良い', '良い', '普通', '悪い', 'とても悪い']),
+  },
+  {
+    id: 'SL-STRESS', section_id: 'sleep', answer_kind: 'slider',
+    question: '仕事・家庭・環境など含む総合的なストレスについて点数をつけてください。（1〜10）',
+    slider_low_label: '全くない',
+    slider_high_label: '非常に強い',
+    slider_min: 1, slider_max: 10,
+  },
+
+  // ───── 実施検査確認 ─────
+  {
+    id: 'EXAM-TYPE', section_id: 'exam', answer_kind: 'wheel',
+    question: '今回実施いただく／いただいた検査について、当てはまるものを教えてください。',
+    wheel_title: '実施する検査を選んでください',
+    wheel_options: opt([T_WELLTECT, T_GENE, T_CANCER, T_BLOOD, T_AIPRED, T_AIPREV]),
+  },
+
+  // ───── 検査別の詳細 (EXAM-TYPE で出し分け) ─────
+
+  // 血液検査 (ウェルテクト / 血液検査のみ)
+  {
+    id: 'EX-WAIST', section_id: 'examdetail', answer_kind: 'text', numeric: true,
+    question: '【血液検査】腹囲を教えてください。（cm・数字のみ）',
+    example: '82cm → 82',
+    placeholder: '例：82',
+    when: (a) => examIs(a, T_WELLTECT, T_BLOOD),
+  },
+  {
+    id: 'EX-BP', section_id: 'examdetail', answer_kind: 'text',
+    question: '【血液検査】最高・最低血圧を教えてください。（数字のみ）',
+    example: '110/70mmHg → 110 70',
+    placeholder: '例：110 70',
+    when: (a) => examIs(a, T_WELLTECT, T_BLOOD),
+  },
+
+  // がんリスク検査 (ウェルテクト / がんリスク検査のみ)
+  {
+    id: 'EX-USERID', section_id: 'examdetail', answer_kind: 'text', numeric: true,
+    question: '【がんリスク検査】ユーザーIDを入力してください。',
+    example: '704000056',
+    placeholder: '例：704000056',
+    when: (a) => examIs(a, T_CANCER),
+  },
+  {
+    id: 'EX-URINE-DT', section_id: 'examdetail', answer_kind: 'text',
+    question: '【がんリスク検査】採尿した日付と時刻を教えてください。',
+    example: '4月1日7:30頃 → 4月1日7:30',
+    placeholder: '例：4月1日7:30',
+    when: (a) => examIs(a, T_WELLTECT, T_CANCER),
+  },
+  {
+    id: 'EX-URINE-ALC', section_id: 'examdetail', answer_kind: 'chip',
+    question: '【がんリスク検査】採尿前日の飲酒について教えてください。',
+    chips: opt(['あり', 'なし']),
+    when: (a) => examIs(a, T_WELLTECT, T_CANCER),
+  },
+  {
+    id: 'EX-URINE-MED', section_id: 'examdetail', answer_kind: 'chip',
+    question: '【がんリスク検査】採尿前日の薬・サプリメントについて教えてください。',
+    chips: opt(['なし', 'その他']),
+    when: (a) => examIs(a, T_WELLTECT, T_CANCER),
+  },
+  {
+    id: 'EX-URINE-MED-NAME', section_id: 'examdetail', answer_kind: 'text',
+    question: '採尿前日に摂取した薬・サプリメント名を教えてください。',
+    placeholder: '例：ビタミンC サプリ',
+    when: (a) => examIs(a, T_WELLTECT, T_CANCER) && a['EX-URINE-MED'] === 'その他',
+  },
+  {
+    id: 'EX-ALA-DT', section_id: 'examdetail', answer_kind: 'text',
+    question: '【がんリスク検査】ALAカプセルを採取した日付と時刻を教えてください。',
+    example: '3月31日21:00頃 → 3月31日21:00頃',
+    placeholder: '例：3月31日21:00頃',
+    when: (a) => examIs(a, T_WELLTECT, T_CANCER),
+  },
+  {
+    id: 'EX-URINATE', section_id: 'examdetail', answer_kind: 'chip',
+    question: '【がんリスク検査】ALAカプセル採取から採尿までに排尿があったか教えてください。',
+    chips: opt(['あり', 'なし']),
+    when: (a) => examIs(a, T_WELLTECT, T_CANCER),
+  },
+  {
+    id: 'EX-URINATE-CNT', section_id: 'examdetail', answer_kind: 'text',
+    question: '排尿回数と時刻を教えてください。',
+    example: '24:00頃に1回 → 24:00に1回',
+    placeholder: '例：24:00に1回',
+    when: (a) => examIs(a, T_WELLTECT, T_CANCER) && a['EX-URINATE'] === 'あり',
+  },
+  {
+    id: 'EX-FROZEN', section_id: 'examdetail', answer_kind: 'chip',
+    question: '【がんリスク検査】採尿検体を一時冷凍保存したかを教えてください。',
+    chips: opt(['冷凍した', '冷凍していない']),
+    when: (a) => examIs(a, T_WELLTECT, T_CANCER),
+  },
+
+  // 遺伝子検査 (ウェルテクト / 遺伝子検査のみ)
+  {
+    id: 'EX-FAM-CANCER1', section_id: 'examdetail', answer_kind: 'wheel', multi: true,
+    question: '【遺伝子検査】直系家族（父母）が診断されたがんがあれば教えてください。',
+    wheel_title: '直系家族（父母）のがん（複数選択可）',
+    wheel_options: FAMILY_CANCER,
+    when: (a) => examIs(a, T_WELLTECT, T_GENE),
+  },
+  {
+    id: 'EX-FAM-CANCER2', section_id: 'examdetail', answer_kind: 'wheel', multi: true,
+    question: '【遺伝子検査】祖父母・兄弟姉妹が診断されたがんがあれば教えてください。',
+    wheel_title: '祖父母・兄弟姉妹のがん（複数選択可）',
+    wheel_options: FAMILY_CANCER,
+    when: (a) => examIs(a, T_WELLTECT, T_GENE),
+  },
+  {
+    id: 'EX-FAM-DISEASE', section_id: 'examdetail', answer_kind: 'wheel', multi: true,
+    question: '【遺伝子検査】家族歴のある疾患を教えてください。',
+    wheel_title: '家族歴のある疾患（複数選択可）',
+    wheel_options: FAMILY_DISEASE,
+    when: (a) => examIs(a, T_WELLTECT, T_GENE),
+  },
+  {
+    id: 'EX-HAIR', section_id: 'examdetail', answer_kind: 'chip',
+    question: '【遺伝子検査】脱毛の症状があるか教えてください。',
+    chips: opt(['ある', 'ない']),
+    when: (a) => examIs(a, T_WELLTECT, T_GENE),
+  },
+  {
+    id: 'EX-FAM-HAIR', section_id: 'examdetail', answer_kind: 'chip',
+    question: '【遺伝子検査】直系家族（父母）の中で脱毛の症状がある人がいるか教えてください。',
+    chips: opt(['いる', 'いない']),
+    when: (a) => examIs(a, T_WELLTECT, T_GENE),
+  },
+  {
+    id: 'EX-NATION', section_id: 'examdetail', answer_kind: 'text',
+    question: '【遺伝子検査】あなたの国籍と人種を教えてください。',
+    example: '日本・アジア系 → 日本人・アジア系',
+    placeholder: '例：日本人・アジア系',
+    when: (a) => examIs(a, T_WELLTECT, T_GENE),
+  },
+  {
+    id: 'EX-BIRTH', section_id: 'examdetail', answer_kind: 'text',
+    question: '【遺伝子検査】あなたの生まれた場所を教えてください。',
+    example: '東京都 → 日本・東京都',
+    placeholder: '例：日本・東京都',
+    when: (a) => examIs(a, T_WELLTECT, T_GENE),
+  },
+  {
+    id: 'EX-RESIDENCE', section_id: 'examdetail', answer_kind: 'text',
+    question: '【遺伝子検査】あなたの現在の居住地を教えてください。',
+    example: '横浜市 → 日本・神奈川県',
+    placeholder: '例：日本・神奈川県',
+    when: (a) => examIs(a, T_WELLTECT, T_GENE),
+  },
+  {
+    id: 'EX-FATHER', section_id: 'examdetail', answer_kind: 'text',
+    question: '【遺伝子検査】あなたの父の人種と生まれた場所を教えてください。',
+    example: 'アジア系で東京都 → アジア系・東京都',
+    placeholder: '例：アジア系・東京都',
+    when: (a) => examIs(a, T_WELLTECT, T_GENE),
+  },
+  {
+    id: 'EX-MOTHER', section_id: 'examdetail', answer_kind: 'text',
+    question: '【遺伝子検査】あなたの母の人種と生まれた場所を教えてください。',
+    example: 'ヨーロッパ系でアメリカ ニューヨーク州 → ヨーロッパ系・アメリカ ニューヨーク州',
+    placeholder: '例：ヨーロッパ系・アメリカ ニューヨーク州',
+    when: (a) => examIs(a, T_WELLTECT, T_GENE),
+  },
+
+  // AI疾病予測 (ウェルテクト / AI疾病予測のみ)
+  {
+    id: 'EX-WEIGHT-CHG', section_id: 'examdetail', answer_kind: 'text',
+    question: '【AI疾病予測】直近1年の体重変化（〇kg）を教えてください。',
+    example: '5kg増えた → 5、3kg減った → -3',
+    placeholder: '例：5',
+    when: (a) => examIs(a, T_WELLTECT, T_AIPRED),
+  },
+
+  // ───── 同意事項 ─────
+  {
+    id: 'C-CONSENT', section_id: 'consent', answer_kind: 'chip',
+    question: '個人情報の取り扱いについて同意します。',
+    chips: [{ label: '同意する', emoji: '✅' }],
+  },
 ];
 
-export const FIRST_QUESTION_ID = 'Q1-1';
+/** 問診票本体 (section_title を補完して Record 化) */
+export const QUESTIONS: Record<string, QuestionDef> = Object.fromEntries(
+  RAW.map((q) => [q.id, { ...q, section_title: SECTION_TITLE[q.section_id] }]),
+);
 
-/** 標準的な次の Q id を返す。分岐がある Q は QuestionDef.next を使う。 */
-export function defaultNextId(currentId: string): string | null {
-  const idx = SEQUENCE.indexOf(currentId);
-  if (idx < 0 || idx >= SEQUENCE.length - 1) return null;
-  return SEQUENCE[idx + 1];
+/** 問診票の定義順 (分岐は when で間引く) */
+export const ORDER: string[] = RAW.map((q) => q.id);
+
+/** answers を踏まえて、表示すべき設問 id 列を返す */
+export function resolvePath(answers: Answers): string[] {
+  return ORDER.filter((id) => {
+    const q = QUESTIONS[id];
+    return q.when ? q.when(answers) : true;
+  });
 }
+
+export const FIRST_QUESTION_ID = ORDER[0];
 
 /** 問診エンジン本体 */
 export class InterviewEngine {
@@ -280,13 +663,18 @@ export class InterviewEngine {
   private readonly answers: Map<string, AnswerValue> = new Map();
 
   start(): QuestionDef {
-    this.currentId = FIRST_QUESTION_ID;
     this.answers.clear();
-    return QUESTIONS[FIRST_QUESTION_ID];
+    const path = resolvePath({});
+    this.currentId = path[0] ?? FIRST_QUESTION_ID;
+    return QUESTIONS[this.currentId];
   }
 
   current(): QuestionDef | null {
     return this.currentId ? QUESTIONS[this.currentId] ?? null : null;
+  }
+
+  private answersObj(): Answers {
+    return Object.fromEntries(this.answers);
   }
 
   /**
@@ -298,8 +686,9 @@ export class InterviewEngine {
       throw new Error('Interview not started — call start() first');
     }
     this.answers.set(this.currentId, answer);
-    const q = QUESTIONS[this.currentId];
-    const nextId = q.next ? q.next(answer) : defaultNextId(this.currentId);
+    const path = resolvePath(this.answersObj());
+    const idx = path.indexOf(this.currentId);
+    const nextId = idx >= 0 && idx < path.length - 1 ? path[idx + 1] : null;
     if (!nextId || !QUESTIONS[nextId]) {
       this.currentId = null;
       return { next: null, isComplete: true };
@@ -308,12 +697,21 @@ export class InterviewEngine {
     return { next: QUESTIONS[nextId], isComplete: false };
   }
 
-  /** 回答済の Q1-1〜 を { Q1-1: ..., Q1-2: [...], ... } として返す */
-  getAnswers(): Record<string, AnswerValue> {
-    return Object.fromEntries(this.answers);
+  /** 現在の進捗 (0-100) — 表示中の設問が、表示対象列の何番目かで算出 */
+  currentPercent(): number {
+    if (!this.currentId) return 100;
+    const path = resolvePath(this.answersObj());
+    const idx = path.indexOf(this.currentId);
+    if (idx < 0 || path.length <= 1) return 0;
+    return Math.round((idx / (path.length - 1)) * 100);
   }
 
-  /** 問診票全体のセクションが変わったかどうかを判定する補助 */
+  /** 回答済の設問を { id: value, ... } として返す */
+  getAnswers(): Answers {
+    return this.answersObj();
+  }
+
+  /** セクションが変わったかどうかを判定する補助 */
   static isSectionChanged(prev: QuestionDef | null, next: QuestionDef | null): boolean {
     if (!prev || !next) return false;
     return prev.section_id !== next.section_id;
@@ -327,15 +725,12 @@ export class InterviewEngine {
 
 /** 表示用: 回答を人間が読める短い文字列にまとめる */
 export function formatAnswerLabel(q: QuestionDef, a: AnswerValue): string {
-  if (q.answer_kind === 'multi') {
+  if (q.answer_kind === 'multi' || (q.answer_kind === 'wheel' && q.multi)) {
     const arr = Array.isArray(a) ? a : [];
     return arr.length === 0 ? 'なし' : arr.join('、');
   }
   if (q.answer_kind === 'slider') {
-    return `${a} / 10`;
-  }
-  if (q.answer_kind === 'stepper') {
-    return `${a}${q.stepper_unit ?? ''}`;
+    return `${a} / ${q.slider_max ?? 10}`;
   }
   return String(a);
 }

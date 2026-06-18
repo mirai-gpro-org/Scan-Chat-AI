@@ -36,6 +36,7 @@ import {
   type QuestionDef,
   type AnswerValue,
 } from './interview-script';
+import { openWheelPicker, openMatrixPicker, formatMatrix, closeAllPickers } from './wheel-picker';
 
 export interface LiveRefs {
   log: HTMLElement;
@@ -45,7 +46,8 @@ export interface LiveRefs {
 
   progressText: HTMLElement;
   sectionLabel: HTMLElement;
-  sectionDots: HTMLElement[];
+  /** セクション dot を動的生成するコンテナ */
+  sectionDots: HTMLElement;
 
   modeToggle: HTMLElement;
   micBtn: HTMLButtonElement;
@@ -61,6 +63,8 @@ export interface LiveRefs {
   uiVoice: HTMLElement;
   uiChip: HTMLElement;
   uiMulti: HTMLElement;
+  uiWheel: HTMLElement;
+  uiMatrix: HTMLElement;
   uiSlider: HTMLElement;
   uiStepper: HTMLElement;
   uiText: HTMLElement;
@@ -79,6 +83,7 @@ export interface LiveRefs {
 
   textInput: HTMLTextAreaElement;
   textSubmit: HTMLButtonElement;
+  textExample: HTMLElement;
 
   multiOpen: HTMLButtonElement;
   multiSummary: HTMLElement;
@@ -86,6 +91,11 @@ export interface LiveRefs {
   multiOptions: HTMLElement;
   multiTitle: HTMLElement;
   multiConfirm: HTMLButtonElement;
+
+  wheelOpen: HTMLButtonElement;
+  wheelSummary: HTMLElement;
+  matrixOpen: HTMLButtonElement;
+  matrixSummary: HTMLElement;
 
   fallbackZone: HTMLElement;
   fallbackInput: HTMLTextAreaElement;
@@ -106,11 +116,11 @@ const SESSION_ID = 'default';
 // 問診票のセクションは interview-script.ts に集約済 (INTERVIEW_SECTIONS を使用)
 const SECTIONS = INTERVIEW_SECTIONS;
 
-const SYSTEM_INSTRUCTION = `あなたは健康問診の AI 看護師アシスタントです。問診票本体は画面のシステムが自動で出します。あなたは「画面に出ている質問を温かく読み上げる係」です。
+const SYSTEM_INSTRUCTION = `あなたはウェルフォートの健康問診を担当する AI 看護師アシスタントです。問診票本体 (質問順・選択肢・分岐) は画面のシステムが自動で出します。あなたは「画面に出ている質問を温かく読み上げる係」です。
 
 【絶対ルール】
 A. 自分で勝手に質問を考えない。ユーザー回答後にこちらから「次の質問: 『xxx』」と指定された文だけを読み上げる。指定がないターンでは質問を発話しない。
-B. 選択肢を読み上げない (画面に表示されています)。
+B. 選択肢や入力例を長々と読み上げない (画面に表示されています)。回答方法が必要なときだけ「画面で回して選ぶか、声でお答えください」と一言添える程度にする。
 C. ツール呼び出しは一切不要 (廃止済)。
 D. 診断・処方は禁止。
 
@@ -121,7 +131,7 @@ D. 診断・処方は禁止。
   ③ 続けて、依頼された質問本文をそのまま自然に読み上げる: 「『xxx』」
 
 【セッション開始時】(1 ターン限り)
-最初の発話: 「こんにちは、ウェルフォートの AI 問診です。下に表示される質問にお答えください。まずは喫煙について — 」と前置きしてから、Q1-1 の質問文を読み上げる。
+最初の発話: 「こんにちは、ウェルフォートの AI 問診です。画面の質問に、タップでも音声でもお答えいただけます。」と前置きしてから、最初の質問文を読み上げる。
 
 【問診完了時】
 「お疲れさまでした、ご協力ありがとうございました」と一言お礼。
@@ -222,11 +232,17 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
   let mode: 'voice' | 'text' = 'voice';
   let currentQ: QuestionDef | null = null;
+  /** 回答受付〜次設問表示までの間は音声回答の二重取り込みを抑止する */
+  let advancing = false;
   let muted = false;
   const engine = new InterviewEngine();
   // 後方互換: 旧 fallback パス由来の参照を温存 (本実装では未使用)
   let presentQuestionCalledThisTurn = false;
   void presentQuestionCalledThisTurn;
+
+  // セクション dot を SECTIONS に合わせて動的生成
+  const sectionDotEls: HTMLElement[] = [];
+  buildSectionDots();
 
   if (session.messages.length > 0 && refs.resumeBanner) {
     refs.resumeBanner.hidden = false;
@@ -236,14 +252,30 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   applyModeUI();
   refs.fallbackZone.hidden = false; // 補助テキスト入力は常時表示
 
+  function buildSectionDots(): void {
+    refs.sectionDots.innerHTML = '';
+    sectionDotEls.length = 0;
+    SECTIONS.forEach((s, i) => {
+      const dot = document.createElement('div');
+      dot.className = 'section-dot';
+      dot.dataset.sectionDot = String(i);
+      dot.title = s.title;
+      refs.sectionDots.appendChild(dot);
+      sectionDotEls.push(dot);
+    });
+  }
+
   // ── イベント結線 ──────────────────────────────────
 
   refs.resetBtn.addEventListener('click', () => {
     if (!confirm('問診をリセットしますか？（履歴が削除されます）')) return;
     stopLive();
+    closeAllPickers();
+    closeMultiModal();
     clearChatSession(SESSION_ID);
     session = createEmptySession(SESSION_ID);
     currentQ = null;
+    advancing = false;
     engine.reset();
     refs.resumeBanner && (refs.resumeBanner.hidden = true);
     renderHistory();
@@ -330,6 +362,11 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       submitAnswer(labels.join('、'));
     }
   });
+
+  // wheel (ホイール選択モーダル)
+  refs.wheelOpen.addEventListener('click', () => void openWheelForCurrent());
+  // matrix (項目 × 頻度)
+  refs.matrixOpen.addEventListener('click', () => void openMatrixForCurrent());
 
   // slider
   refs.sliderInput.addEventListener('input', () => {
@@ -420,6 +457,8 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     switch (k) {
       case 'chip': return 'chip';
       case 'multi': return 'multi';
+      case 'wheel': return 'wheel';
+      case 'matrix': return 'matrix';
       case 'slider': return 'slider';
       case 'stepper': return 'stepper';
       case 'text': return 'text';
@@ -427,13 +466,15 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     }
   }
 
-  type WidgetKey = 'voice' | 'chip' | 'multi' | 'slider' | 'stepper' | 'text';
+  type WidgetKey = 'voice' | 'chip' | 'multi' | 'wheel' | 'matrix' | 'slider' | 'stepper' | 'text';
 
   function showWidget(key: WidgetKey): void {
     const map: Record<WidgetKey, HTMLElement> = {
       voice: refs.uiVoice,
       chip: refs.uiChip,
       multi: refs.uiMulti,
+      wheel: refs.uiWheel,
+      matrix: refs.uiMatrix,
       slider: refs.uiSlider,
       stepper: refs.uiStepper,
       text: refs.uiText,
@@ -443,8 +484,11 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     }
     // 自由記述 widget が出ているときは補助テキスト入力を非表示（重複防止）
     refs.fallbackZone.hidden = key === 'text';
-    // 「音声でも・タップでも」ヒント: chip/multi/slider/stepper の時に表示
-    refs.dualHint.hidden = !(key === 'chip' || key === 'multi' || key === 'slider' || key === 'stepper');
+    // 「音声でも・タップでも」ヒント: 選択式 widget の時に表示
+    refs.dualHint.hidden = !(
+      key === 'chip' || key === 'multi' || key === 'wheel' ||
+      key === 'matrix' || key === 'slider' || key === 'stepper'
+    );
   }
 
   function stepStep(delta: number): void {
@@ -464,22 +508,64 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     document.body.style.overflow = '';
   }
 
+  /** 現在の wheel 設問でホイール選択モーダルを開く */
+  async function openWheelForCurrent(): Promise<void> {
+    const q = currentQ;
+    if (!q || q.answer_kind !== 'wheel') return;
+    const initial = q.multi
+      ? (engine.getAnswers()[q.id] as string[] | undefined) ?? []
+      : [];
+    const result = await openWheelPicker({
+      title: q.wheel_title ?? q.question,
+      options: q.wheel_options ?? [],
+      multi: !!q.multi,
+      initial,
+    });
+    if (result === null) return; // キャンセル
+    if (q.multi) {
+      submitAnswer(result.length === 0 ? 'なし' : result.join('、'));
+    } else {
+      if (result.length === 0) return;
+      submitAnswer(result[0]);
+    }
+  }
+
+  /** 現在の matrix 設問でマトリクス選択モーダルを開く */
+  async function openMatrixForCurrent(): Promise<void> {
+    const q = currentQ;
+    if (!q || q.answer_kind !== 'matrix') return;
+    const result = await openMatrixPicker({
+      title: q.question,
+      rows: q.matrix_rows ?? [],
+      cols: q.matrix_cols ?? [],
+    });
+    if (result === null) return;
+    submitAnswer(formatMatrix(result));
+  }
+
   /**
    * ユーザー回答を受けて engine から次の Q を決定し、画面を即更新する。
    * AI には「回答に対する温かい復唱 (+任意のセクション導線)」だけ依頼する。
    * AI に「次の質問は何か」は伝えず、質問を発話させない。
    */
-  function submitAnswer(rawAnswer: string): void {
+  function submitAnswer(rawAnswer: string, opts: { silent?: boolean } = {}): void {
     if (!rawAnswer) return;
     const cq = currentQ;
     if (!cq) {
       // 未開始時は単純に AI へ渡す (例: 「リセット後の自由発話」)
-      appendMessage({ role: 'user', text: rawAnswer, ts: Date.now() });
+      if (!opts.silent) appendMessage({ role: 'user', text: rawAnswer, ts: Date.now() });
       sendToModel(rawAnswer);
       return;
     }
 
-    appendMessage({ role: 'user', text: rawAnswer, ts: Date.now() });
+    // 音声回答 (silent) は transcript バブルが既に出ているので二重表示しない
+    if (!opts.silent) appendMessage({ role: 'user', text: rawAnswer, ts: Date.now() });
+
+    // 受付〜次設問表示までは音声の二重取り込みを止める
+    advancing = true;
+    // 開いているモーダル (ホイール/マトリクス/複数選択) を閉じる
+    closeAllPickers();
+    closeMultiModal();
 
     const answerValue = toAnswerValue(cq, rawAnswer);
     const { next, isComplete } = engine.recordAndAdvance(answerValue);
@@ -548,18 +634,76 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
   /** UI に入る生文字列を engine が扱える型に変換 */
   function toAnswerValue(q: QuestionDef, raw: string): AnswerValue {
-    if (q.answer_kind === 'multi') {
+    if (q.answer_kind === 'multi' || (q.answer_kind === 'wheel' && q.multi)) {
       return raw.split('、').map((s) => s.trim()).filter(Boolean);
     }
     if (q.answer_kind === 'slider') {
-      const m = /^(\d+(?:\.\d+)?)/.exec(raw);
-      return m ? Number(m[1]) : 5;
-    }
-    if (q.answer_kind === 'stepper') {
-      const m = /^(\d+(?:\.\d+)?)/.exec(raw);
-      return m ? Number(m[1]) : 0;
+      const m = /(-?\d+(?:\.\d+)?)/.exec(raw);
+      return m ? Number(m[1]) : (q.slider_min ?? 1);
     }
     return raw;
+  }
+
+  /**
+   * 音声 transcript を現在設問の回答として取り込む。
+   * 選択式は選択肢へマッチング、自由記述は transcript をそのまま採用する。
+   */
+  function maybeHandleVoiceAnswer(transcript: string): void {
+    if (advancing) return; // 受付処理中は無視 (二重取り込み防止)
+    const q = currentQ;
+    if (!q) return;
+    const ans = interpretVoiceAnswer(q, transcript);
+    if (ans == null) return;
+    if (Array.isArray(ans)) {
+      submitAnswer(ans.length ? ans.join('、') : 'なし', { silent: true });
+    } else {
+      submitAnswer(ans, { silent: true });
+    }
+  }
+
+  /** transcript を設問種別ごとに解釈。マッチしなければ null (タップ待ち) */
+  function interpretVoiceAnswer(q: QuestionDef, transcript: string): string | string[] | null {
+    const t = normalizeVoice(transcript);
+    if (!t) return null;
+
+    if (q.answer_kind === 'text') {
+      // 自由記述は発話をそのまま回答に採用 (元の transcript を保持)
+      return transcript.trim();
+    }
+
+    if (q.answer_kind === 'slider') {
+      const min = q.slider_min ?? 1;
+      const max = q.slider_max ?? 10;
+      const m = /(-?\d+)/.exec(transcript);
+      if (!m) return null;
+      const n = Math.max(min, Math.min(max, Number(m[1])));
+      return String(n);
+    }
+
+    if (q.answer_kind === 'matrix') {
+      return null; // マトリクスはタップ操作のみ
+    }
+
+    const options =
+      q.answer_kind === 'chip' ? (q.chips ?? [])
+      : q.answer_kind === 'multi' ? (q.multi_options ?? [])
+      : (q.wheel_options ?? []);
+    if (options.length === 0) return null;
+
+    const isMulti = q.answer_kind === 'multi' || (q.answer_kind === 'wheel' && q.multi);
+
+    const matched = options
+      .map((o) => ({ label: o.label, core: normalizeVoice(o.label) }))
+      .filter(({ core }) => core && (t.includes(core) || core.includes(t)));
+
+    if (matched.length === 0) return null;
+
+    if (isMulti) {
+      return matched.map((m) => m.label);
+    }
+    // 単一: 最も具体的 (核が長い) 候補を採用
+    matched.sort((a, b) => b.core.length - a.core.length);
+    return matched[0].label;
   }
 
   function sendFallback(): void {
@@ -648,9 +792,9 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
               liveSession?.sendClientContent({
                 turns: [{ role: 'user', parts: [{ text:
                   `問診を始めます。次の 2 文を発話してください:
-  ① 「こんにちは、ウェルフォートの AI 問診です。まずは喫煙について — 」
+  ① 「こんにちは、ウェルフォートの AI 問診です。画面の質問に、タップでも音声でもお答えいただけます。」
   ② 続けて画面に表示されている最初の質問を読み上げ: 「${firstQ.question}」
-選択肢は読み上げないでください (画面に表示されています)。挨拶と質問を 1 回だけ、絶対に繰り返さないでください。`
+選択肢や入力例は読み上げないでください (画面に表示されています)。挨拶と質問を 1 回だけ、絶対に繰り返さないでください。`
                 } ] }],
                 turnComplete: true,
               });
@@ -728,10 +872,14 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     // 3) turn 完了で確定
     if (msg.serverContent?.turnComplete) {
       const cleanedAssistant = cleanTranscript(assistantBuf);
+      const finishedUser = userBuf.trim();
       finalizeStream('user', userBuf);
       finalizeStream('assistant', assistantBuf);
       userBuf = '';
       assistantBuf = '';
+
+      // 音声回答 → 選択肢へマッチングして engine に反映 (タップと等価)
+      if (finishedUser) maybeHandleVoiceAnswer(finishedUser);
 
       // ループ検出: 直近 10 秒以内に同じ発話を完了したら重複カウント
       const now = Date.now();
@@ -789,8 +937,9 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   /** engine から受け取った Q を画面に反映する (engine 駆動の核) */
   function applyQuestionToUI(q: QuestionDef): void {
     currentQ = q;
+    advancing = false; // 次設問が出たので音声回答の受付を再開
 
-    const percent = clamp(Math.round(q.percent), 0, 100);
+    const percent = clamp(engine.currentPercent(), 0, 100);
     session.progress = percent;
     saveChatSession(session);
     renderProgress(percent, q.section_title);
@@ -806,27 +955,48 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       renderChips(q.chips ?? []);
     } else if (kind === 'multi') {
       renderMulti(q.multi_options ?? [], q.multi_title ?? '該当するものをすべて選んでください');
+    } else if (kind === 'wheel') {
+      refs.wheelSummary.textContent = '';
+      refs.wheelOpen.textContent = q.multi ? '🎡 回して選ぶ（複数可）' : '🎡 回して選ぶ';
+    } else if (kind === 'matrix') {
+      refs.matrixSummary.textContent = '';
     } else if (kind === 'slider') {
+      const min = q.slider_min ?? 1;
+      const max = q.slider_max ?? 10;
+      const mid = String(Math.round((min + max) / 2));
+      refs.sliderInput.min = String(min);
+      refs.sliderInput.max = String(max);
       refs.sliderLow.textContent = q.slider_low_label ?? '低い';
       refs.sliderHigh.textContent = q.slider_high_label ?? '高い';
-      refs.sliderInput.value = '5';
-      refs.sliderValue.textContent = '5';
-    } else if (kind === 'stepper') {
-      refs.stepperUnit.textContent = q.stepper_unit ?? '回';
-      refs.stepperValue.textContent = '0';
-      refs.stepperValue.dataset.max = String(q.stepper_max ?? 99);
+      refs.sliderInput.value = mid;
+      refs.sliderValue.textContent = mid;
+    } else if (kind === 'text') {
+      refs.textInput.value = '';
+      refs.textInput.placeholder = q.placeholder ?? '自由にお答えください';
+      refs.textInput.setAttribute('inputmode', q.numeric ? 'numeric' : 'text');
+      if (q.example) {
+        refs.textExample.textContent = `入力例：${q.example}`;
+        refs.textExample.hidden = false;
+      } else {
+        refs.textExample.hidden = true;
+      }
     }
     showWidget(kind);
 
-    // multi はモーダルを自動展開 (タップ一手間を省く)
+    // 選択肢が多い設問はモーダルを自動展開 (タップ一手間を省く)
     if (kind === 'multi') {
       setTimeout(() => openMultiModal(), 150);
+    } else if (kind === 'wheel') {
+      setTimeout(() => void openWheelForCurrent(), 150);
+    } else if (kind === 'matrix') {
+      setTimeout(() => void openMatrixForCurrent(), 150);
     }
   }
 
   /** 問診完了表示 + chat session を完了状態にして HealthInsightCard を起動 */
   function showCompletion(): void {
     currentQ = null;
+    advancing = false;
     renderProgress(100, '完了');
     renderSectionDots(SECTIONS.length);
 
@@ -901,7 +1071,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   }
 
   function renderSectionDots(currentIdx: number): void {
-    refs.sectionDots.forEach((dot, i) => {
+    sectionDotEls.forEach((dot, i) => {
       dot.classList.remove('done', 'current');
       if (i < currentIdx) dot.classList.add('done');
       else if (i === currentIdx) dot.classList.add('current');
@@ -1056,6 +1226,19 @@ function escapeAttr(s: string): string {
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
+}
+
+/**
+ * 音声マッチング用の正規化。
+ * NFKC 正規化 → 括弧書き / 記号 / 空白を除去 → 小文字化。
+ * 例: 「ほぼ毎日（週5日以上）」→「ほぼ毎日」
+ */
+function normalizeVoice(s: string): string {
+  return s
+    .normalize('NFKC')
+    .replace(/[（(][^）)]*[）)]/g, '')
+    .replace(/[\s　・、。，．,.!！?？「」『』〜~ー\-/]/g, '')
+    .toLowerCase();
 }
 
 function describeErr(err: unknown): string {
