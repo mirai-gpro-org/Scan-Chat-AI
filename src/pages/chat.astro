@@ -31,11 +31,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
     </div>
 
     <div class="mt-3 flex items-center gap-1.5" id="section-dots" aria-label="セクション進捗">
-      <div class="section-dot" data-section-dot="0"></div>
-      <div class="section-dot" data-section-dot="1"></div>
-      <div class="section-dot" data-section-dot="2"></div>
-      <div class="section-dot" data-section-dot="3"></div>
-      <div class="section-dot" data-section-dot="4"></div>
+      <!-- セクション dot は問診定義 (SECTIONS) に合わせて動的生成 -->
     </div>
 
     <div class="mt-2 flex items-center justify-between text-xs">
@@ -202,6 +198,22 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
           <p id="multi-summary" class="text-center text-xs text-slate-500"></p>
         </div>
 
+        <!-- wheel ホイール選択 (選択肢が多い設問) -->
+        <div id="ui-wheel" class="flex flex-col gap-2" hidden>
+          <button id="wheel-open" type="button" class="btn-primary w-full">
+            🎡 回して選ぶ
+          </button>
+          <p id="wheel-summary" class="text-center text-xs text-slate-500"></p>
+        </div>
+
+        <!-- matrix マトリクス選択 (項目 × 頻度) -->
+        <div id="ui-matrix" class="flex flex-col gap-2" hidden>
+          <button id="matrix-open" type="button" class="btn-primary w-full">
+            🗂 項目ごとに選ぶ
+          </button>
+          <p id="matrix-summary" class="text-center text-xs text-slate-500"></p>
+        </div>
+
         <!-- slider 1-10 -->
         <div id="ui-slider" class="flex flex-col gap-3" hidden>
           <div class="flex items-center justify-center gap-3">
@@ -231,6 +243,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
 
         <!-- free text -->
         <div id="ui-text" class="flex flex-col gap-2" hidden>
+          <p id="text-example" class="text-xs text-slate-500" hidden></p>
           <textarea
             id="text-input"
             rows="2"
@@ -302,9 +315,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
 
       progressText: $('progress-text'),
       sectionLabel: $('section-label'),
-      sectionDots: Array.from(
-        document.querySelectorAll<HTMLElement>('[data-section-dot]'),
-      ),
+      sectionDots: $('section-dots'),
 
       modeToggle: $('mode-toggle'),
       micBtn: $<HTMLButtonElement>('mic-btn'),
@@ -320,6 +331,8 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
       uiVoice: $('ui-voice'),
       uiChip: $('ui-chip'),
       uiMulti: $('ui-multi'),
+      uiWheel: $('ui-wheel'),
+      uiMatrix: $('ui-matrix'),
       uiSlider: $('ui-slider'),
       uiStepper: $('ui-stepper'),
       uiText: $('ui-text'),
@@ -338,6 +351,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
 
       textInput: $<HTMLTextAreaElement>('text-input'),
       textSubmit: $<HTMLButtonElement>('text-submit'),
+      textExample: $('text-example'),
 
       multiOpen: $<HTMLButtonElement>('multi-open'),
       multiSummary: $('multi-summary'),
@@ -345,6 +359,11 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
       multiOptions: $('multi-options'),
       multiTitle: $('multi-title'),
       multiConfirm: $<HTMLButtonElement>('multi-confirm'),
+
+      wheelOpen: $<HTMLButtonElement>('wheel-open'),
+      wheelSummary: $('wheel-summary'),
+      matrixOpen: $<HTMLButtonElement>('matrix-open'),
+      matrixSummary: $('matrix-summary'),
 
       fallbackZone: $('fallback-text'),
       fallbackInput: $<HTMLTextAreaElement>('fallback-input'),
