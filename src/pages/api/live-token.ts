@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { GoogleGenAI } from '@google/genai';
 import { MODELS } from '../../lib/gemini';
-import { buildUserContextForChat } from '../../lib/chat-context';
+import { buildUserContextForChat, getCustomerName } from '../../lib/chat-context';
 
 export const prerender = false;
 
@@ -30,7 +30,7 @@ export const POST: APIRoute = async ({ request }) => {
   try {
     const ai = new GoogleGenAI({ apiKey, httpOptions: { apiVersion: 'v1alpha' } });
     const now = Date.now();
-    const [token, userContext] = await Promise.all([
+    const [token, userContext, userName] = await Promise.all([
       ai.authTokens.create({
         config: {
           uses: 1,
@@ -40,8 +40,9 @@ export const POST: APIRoute = async ({ request }) => {
         },
       }),
       buildUserContextForChat(diagnosticUserId).catch(() => null),
+      getCustomerName(diagnosticUserId).catch(() => null),
     ]);
-    return json({ token: token.name, model: MODELS.liveChat, userContext });
+    return json({ token: token.name, model: MODELS.liveChat, userContext, userName });
   } catch (err) {
     return json({ error: 'token mint failed', detail: String(err) }, 500);
   }

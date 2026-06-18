@@ -191,11 +191,8 @@ function examIs(a: Answers, ...list: string[]): boolean {
 
 const RAW: Omit<QuestionDef, 'section_title'>[] = [
   // ───── 基本情報 ─────
-  {
-    id: 'B-NAME', section_id: 'basic', answer_kind: 'text',
-    question: 'お名前を教えてください。（氏名）',
-    placeholder: '例：山田 太郎',
-  },
+  // ※「氏名」は問診で尋ねない。内部で取得済のユーザー名 (customer.family_name) を
+  //   問診結果へ自動付与する (live-controller の buildInterviewResult を参照)。
   {
     id: 'B-DOB', section_id: 'basic', answer_kind: 'text', numeric: true,
     question: '生年月日を教えてください。',
