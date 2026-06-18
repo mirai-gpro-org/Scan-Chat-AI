@@ -46,25 +46,35 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
 });
 
 const targetId = '80000001-0000-0000-0000-000000000000';
-const { data, error } = await supabase
-  .from('diagnosis_results')
-  .update({
-    report: sample,
-    summary_text: abstract?.text ?? null,
-    highlights_text: urgent?.text ?? null,
-    extracted_at: new Date().toISOString(),
-    extracted_by_model: 'gemini-2.5-flash',
-    status: 'published',
-  })
-  .eq('id', targetId)
-  .select('id, schema_version, status')
-  .single();
+// OEM デモ顧客 "山田 太郎" (da000001) の最新結果にも同じフル JSON を流し込む。
+// (demo_oem_account.sql 適用後に有効。未適用なら更新 0 件で無害にスキップ)
+const demoTargetId = '8a000001-0000-0000-0000-000000000000';
 
-if (error) {
-  console.error('update failed:', error);
-  process.exit(1);
+for (const id of [targetId, demoTargetId]) {
+  const { data, error } = await supabase
+    .from('diagnosis_results')
+    .update({
+      report: sample,
+      summary_text: abstract?.text ?? null,
+      highlights_text: urgent?.text ?? null,
+      extracted_at: new Date().toISOString(),
+      extracted_by_model: 'gemini-2.5-flash',
+      status: 'published',
+    })
+    .eq('id', id)
+    .select('id, schema_version, status');
+
+  if (error) {
+    console.error(`update failed (${id}):`, error);
+    process.exit(1);
+  }
+  if (!data || data.length === 0) {
+    console.warn(`  skipped (no row): ${id}`);
+    continue;
+  }
+  console.log('updated', data[0]);
 }
-console.log('updated', data);
+
 console.log(`  sections embedded: ${sample.length}`);
 console.log(`  total chars      : ${totalChars}`);
-console.log('Elith demo loaded into diagnosis.diagnosis_results id =', targetId);
+console.log('Elith demo loaded into diagnosis.diagnosis_results id =', targetId, '+', demoTargetId);
