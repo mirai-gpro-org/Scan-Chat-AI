@@ -246,6 +246,14 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
         <button id="scan-retake" type="button" class="btn-secondary">
           もう一度撮影する
         </button>
+
+        <!-- テスト用: Elith 連携バケット (S3) への書き出し -->
+        <div class="mt-1 rounded-xl border border-dashed border-slate-300 p-2 dark:border-slate-700">
+          <button id="scan-export-s3" type="button" class="btn-secondary w-full !py-2 text-sm" disabled>
+            ☁️ S3へ書き出し（Elith用・テスト）
+          </button>
+          <p id="scan-export-status" class="mt-1 break-words text-center text-[11px] text-slate-500" aria-live="polite"></p>
+        </div>
       </div>
     </section>
 
@@ -347,6 +355,49 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
     // block-detail パネルの閉じるボタン
     $('block-detail-close').onclick = () => {
       $('block-detail').hidden = true;
+    };
+
+    // テスト用: 確定 Markdown を S3 (Elith 連携) へ書き出す
+    const exportBtn = $<HTMLButtonElement>('scan-export-s3');
+    const exportStatus = $('scan-export-status');
+    exportBtn.disabled = false;
+    exportBtn.onclick = async () => {
+      // #scan-result は検証編集を反映した「下流送信用 Markdown」
+      const markdownClean = ($('scan-result') as HTMLPreElement).textContent?.trim() || r.markdownClean;
+      if (!markdownClean) {
+        exportStatus.textContent = '書き出す Markdown がありません。';
+        return;
+      }
+      const diagnosticUserId = new URLSearchParams(location.search).get('u');
+      exportBtn.disabled = true;
+      exportStatus.textContent = '書き出し中…';
+      try {
+        const res = await fetch('/api/scan/export', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            markdownClean,
+            diagnosticId,
+            diagnosticUserId,
+            hint: ($('scan-hint') as HTMLInputElement | null)?.value || null,
+          }),
+        });
+        const data = (await res.json()) as {
+          ok?: boolean; configured?: boolean; bucket?: string; folder?: string;
+          uploaded?: { key: string }[]; message?: string; error?: string;
+        };
+        if (data.ok && data.configured) {
+          exportStatus.textContent = `✅ S3へ書き出しました: s3://${data.bucket}/${data.folder} (${data.uploaded?.length ?? 0} ファイル)`;
+        } else if (data.configured === false) {
+          exportStatus.textContent = `ⓘ S3未設定のため変換のみ実行 (フォルダ: ${data.folder})。サーバ環境変数 AWS_S3_BUCKET/AWS_REGION を設定すると自動アップロードします。`;
+        } else {
+          exportStatus.textContent = `⚠️ 失敗: ${data.error ?? '不明なエラー'}`;
+        }
+      } catch (e) {
+        exportStatus.textContent = `⚠️ 通信エラー: ${e instanceof Error ? e.message : String(e)}`;
+      } finally {
+        exportBtn.disabled = false;
+      }
     };
   }
 
