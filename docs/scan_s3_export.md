@@ -74,11 +74,14 @@ JSON とファイル一覧をレスポンスでプレビュー返却する。
 
 | 変数 | 必須 | 用途 |
 |------|------|------|
-| `AWS_S3_BUCKET` | ○ | 書き出し先バケット |
-| `AWS_REGION` | ○ | リージョン (例 `ap-northeast-1`) |
-| `AWS_S3_PREFIX` | - | 共通プレフィックス (例 `scan-accuracy-test/`) |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | - | 明示キー (未指定は SDK 既定チェーン) |
+| `AWS_REGION` | ○ | リージョン (例 `ap-northeast-1`)。**これが書き出し有効化スイッチ**。未設定ならドライラン |
+| `AWS_S3_BUCKET` | - | 書き出し先バケット (既定 `wellfort-ai-input`) |
+| `AWS_S3_PREFIX` | - | 共通プレフィックス (既定 `scan-accuracy-test/`) |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | - | 明示キー (未指定は IAM ロール等 SDK 既定チェーン) |
 | `AWS_S3_ENDPOINT` | - | S3 互換エンドポイント (MinIO 等) |
+
+> 既定の書き出し先: `s3://wellfort-ai-input/scan-accuracy-test/{diagnostic_id}/`
+> `AWS_REGION` (＋認証 or IAM ロール) を設定すれば有効化される。
 
 ## 関連ファイル
 

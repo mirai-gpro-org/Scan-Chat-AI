@@ -27,6 +27,11 @@ export interface S3Config {
   secretAccessKey?: string;
 }
 
+/** Elith 連携バケット (AWS_S3_BUCKET で上書き可) */
+const DEFAULT_BUCKET = 'wellfort-ai-input';
+/** バケット内共通プレフィックス (AWS_S3_PREFIX で上書き可) */
+const DEFAULT_PREFIX = 'scan-accuracy-test/';
+
 function env(name: string): string | undefined {
   // Astro (Vite) は import.meta.env、Node 実行時は process.env を見る
   const fromMeta = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.[name];
@@ -35,14 +40,18 @@ function env(name: string): string | undefined {
   return fromProc != null && fromProc !== '' ? fromProc : undefined;
 }
 
+/**
+ * S3 設定を返す。バケット/プレフィックスは既定値あり。
+ * **AWS_REGION の有無を「書き出し有効化」のスイッチ**とする
+ * (未設定なら null = ドライラン。ローカル開発で誤アップロードしないため)。
+ */
 export function getS3Config(): S3Config | null {
-  const bucket = env('AWS_S3_BUCKET');
   const region = env('AWS_REGION');
-  if (!bucket || !region) return null;
+  if (!region) return null;
   return {
-    bucket,
+    bucket: env('AWS_S3_BUCKET') ?? DEFAULT_BUCKET,
     region,
-    prefix: env('AWS_S3_PREFIX') ?? '',
+    prefix: env('AWS_S3_PREFIX') ?? DEFAULT_PREFIX,
     endpoint: env('AWS_S3_ENDPOINT'),
     accessKeyId: env('AWS_ACCESS_KEY_ID'),
     secretAccessKey: env('AWS_SECRET_ACCESS_KEY'),
