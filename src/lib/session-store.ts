@@ -56,3 +56,41 @@ export function clearChatSession(id = 'default'): void {
 export function createEmptySession(id = 'default'): ChatSession {
   return { id, messages: [], progress: 0, updatedAt: Date.now() };
 }
+
+/**
+ * 問診結果ファイル。
+ * 氏名は問診で尋ねず、内部で取得済のユーザー名 (`userName`) を付与する。
+ * `answers` は設問 id → 回答値のマップ。
+ */
+export interface InterviewResult {
+  id: string;
+  diagnosticUserId: string | null;
+  /** 内部で取得済のユーザー名 (customer.family_name) */
+  userName: string | null;
+  answers: Record<string, string | string[] | number>;
+  completedAt: number;
+}
+
+export function saveInterviewResult(result: InterviewResult): void {
+  const store = safeStorage();
+  if (!store) return;
+  store.setItem(`${KEY_PREFIX}result:${result.id}`, JSON.stringify(result));
+}
+
+export function loadInterviewResult(id = 'default'): InterviewResult | null {
+  const store = safeStorage();
+  if (!store) return null;
+  const raw = store.getItem(`${KEY_PREFIX}result:${id}`);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as InterviewResult;
+  } catch {
+    return null;
+  }
+}
+
+export function clearInterviewResult(id = 'default'): void {
+  const store = safeStorage();
+  if (!store) return;
+  store.removeItem(`${KEY_PREFIX}result:${id}`);
+}

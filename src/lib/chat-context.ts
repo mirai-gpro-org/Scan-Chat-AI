@@ -15,6 +15,31 @@ import {
   type ElithSection,
 } from './elith-parser';
 
+/**
+ * 内部に登録済のユーザー名 (customer.family_name) を取得する。
+ * 問診では氏名を尋ねず、この値を問診結果へ自動付与するために使う。
+ * service role key で読むため、サーバ側 (API route) からのみ呼ぶこと。
+ */
+export async function getCustomerName(
+  diagnosticUserId: string | null | undefined,
+): Promise<string | null> {
+  if (!diagnosticUserId) return null;
+  if (!/^[0-9a-f-]{36}$/i.test(diagnosticUserId)) return null;
+
+  const sb = getServerSupabase();
+  if (!sb) return null;
+
+  const { data } = await sb
+    .schema('customer')
+    .from('customer_profiles')
+    .select('family_name')
+    .eq('diagnostic_user_id', diagnosticUserId)
+    .maybeSingle();
+
+  const name = data?.family_name?.trim();
+  return name ? name : null;
+}
+
 export async function buildUserContextForChat(
   diagnosticUserId: string | null | undefined,
 ): Promise<string | null> {
