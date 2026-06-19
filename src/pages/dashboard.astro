@@ -43,6 +43,12 @@ const quests      = data ? extractDailyQuests(sections) : [];
 const situations  = data ? extractSituationalCards(sections) : [];
 const abstract    = findSection(sections, 'アブストラクト');
 const totalChars  = sections.reduce((sum, s) => sum + (s.char_count || 0), 0);
+
+// OEM 相手先ブランド向けデモ顧客 (山田太郎 / da000001) はロゴを差し替える
+const DEMO_OEM_UID = 'da000001-0000-0000-0000-000000000000';
+const isDemoBrand = data?.diagnosticUserId === DEMO_OEM_UID;
+const logoSrc = isDemoBrand ? '/gan-checker-logo.svg' : '/wellfort_logo.png';
+const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Wellfort';
 ---
 
 <BaseLayout title={data ? `${greeting} | Wellfort` : 'マイページ | Wellfort'}>
@@ -68,9 +74,8 @@ const totalChars  = sections.reduce((sum, s) => sum + (s.char_count || 0), 0);
         <div class="flex items-center justify-between">
           <a href={u ? `/?u=${encodeURIComponent(u)}` : '/'} class="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400">‹ メニュー</a>
           <img
-            src="/wellfort_logo.png"
-            alt="Wellfort"
-            width="36"
+            src={logoSrc}
+            alt={logoAlt}
             height="40"
             class="h-10 w-auto select-none"
           />
