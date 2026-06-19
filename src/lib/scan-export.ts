@@ -45,6 +45,8 @@ export interface ScanExportMeta {
   model?: string | null;
   /** スキャン時の補足プロンプト (任意) */
   hint?: string | null;
+  /** 読込元ファイル名 (アップロード時)。書き出しファイル名に一部を組み込む */
+  sourceFileName?: string | null;
   /** 撮影/解析時刻。未指定なら exported_at と同じ */
   capturedAt?: Date;
   exportedAt?: Date;
@@ -57,7 +59,14 @@ export interface ScanExportJson {
   diagnostic_user_id: string | null;
   captured_at: string;
   exported_at: string;
-  source: { app: 'scan-chat-ai'; model: string | null; hint: string | null; note: string };
+  source: {
+    app: 'scan-chat-ai';
+    model: string | null;
+    hint: string | null;
+    /** 読込元ファイル名 (原本) */
+    file: string | null;
+    note: string;
+  };
   region_count: number;
   row_count: number;
   regions: ScanRegionJson[];
@@ -182,6 +191,7 @@ export function markdownToScanJson(markdownClean: string, meta: ScanExportMeta):
       app: 'scan-chat-ai',
       model: meta.model ?? null,
       hint: meta.hint ?? null,
+      file: meta.sourceFileName?.trim() || null,
       note: 'AIスキャン読込精度確認テスト用。命名・フォーマットは暫定。',
     },
     region_count: regions.length,
@@ -222,6 +232,25 @@ export function compactJstStamp(d: Date): string {
   );
 }
 
+/**
+ * 読込元ファイル名 → ファイル名に埋め込めるスラッグ。
+ * 例: "がんリスク検査 (2026).pdf" → "がんリスク検査-2026"
+ *  - ディレクトリ/拡張子を除去
+ *  - 空白・S3/FS で問題になる記号を `-` 化、連続 `-` を圧縮
+ *  - 40 文字に制限。空になったら '' (= スラッグ無し)
+ */
+export function sourceFileSlug(name: string | null | undefined): string {
+  if (!name) return '';
+  let base = name.replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '');
+  base = base
+    .normalize('NFKC')
+    .replace(/[\\/:*?"<>|#%\s]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  if (base.length > 40) base = base.slice(0, 40).replace(/-+$/, '');
+  return base;
+}
+
 function utf8Bytes(s: string): number {
   // サーバ/ブラウザ両対応の UTF-8 バイト長
   if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(s).length;
@@ -242,8 +271,11 @@ export function buildScanExportBundle(
   const cleanPrefix = prefix ? prefix.replace(/^\/+/, '').replace(/\/*$/, '/') : '';
   const folder = `${cleanPrefix}${meta.diagnosticId}/`;
 
-  const jsonName = `scan-${stamp}.json`;
-  const mdName = `scan-${stamp}.md`;
+  // 読込元ファイル名の一部を書き出しファイル名に組み込む (例 scan-血液検査-20260619T....json)
+  const slug = sourceFileSlug(meta.sourceFileName);
+  const stem = slug ? `scan-${slug}-${stamp}` : `scan-${stamp}`;
+  const jsonName = `${stem}.json`;
+  const mdName = `${stem}.md`;
 
   const jsonBody = JSON.stringify(json, null, 2);
   const mdBody = markdownClean.endsWith('\n') ? markdownClean : `${markdownClean}\n`;
@@ -253,6 +285,7 @@ export function buildScanExportBundle(
     schema_version: SCAN_EXPORT_SCHEMA_VERSION,
     kind: 'scan_test_export',
     created_at: (meta.exportedAt ?? new Date()).toISOString(),
+    source_file: meta.sourceFileName?.trim() || null,
     note: 'AIスキャン読込精度確認テスト用。命名/フォーマットは暫定。',
     artifacts: [
       { type: 'scan_json', file: jsonName, bytes: utf8Bytes(jsonBody), mime: 'application/json' },

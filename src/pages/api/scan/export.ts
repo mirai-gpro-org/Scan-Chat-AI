@@ -30,6 +30,7 @@ interface ExportBody {
   diagnosticUserId?: unknown;
   model?: unknown;
   hint?: unknown;
+  sourceFileName?: unknown;
   capturedAt?: unknown;
 }
 
@@ -68,6 +69,7 @@ export const POST: APIRoute = async ({ request }) => {
       diagnosticUserId,
       model: str(body.model),
       hint: str(body.hint),
+      sourceFileName: str(body.sourceFileName),
       capturedAt,
       exportedAt,
     },

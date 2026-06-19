@@ -21,13 +21,18 @@ JSON とファイル一覧をレスポンスでプレビュー返却する。
 
 ```
 {AWS_S3_PREFIX}{diagnostic_id}/
-  scan-{YYYYMMDDThhmmss(JST)}.json   ← 構造化データ (メイン)
-  scan-{YYYYMMDDThhmmss(JST)}.md     ← 確定 Markdown (読込精度の突合用)
-  manifest.json                       ← 索引
+  scan-{元ファイル名}-{YYYYMMDDThhmmss(JST)}.json   ← 構造化データ (メイン)
+  scan-{元ファイル名}-{YYYYMMDDThhmmss(JST)}.md     ← 確定 Markdown (読込精度の突合用)
+  manifest.json                                      ← 索引
 ```
 
 - `diagnostic_id`: 端末で発番済の UUID (無ければサーバ生成)
 - 時刻スタンプは JST のコンパクト ISO8601
+- `{元ファイル名}`: アップロードした読込元ファイル名をスラッグ化して埋め込む
+  (拡張子/ディレクトリ除去・空白や記号を `-` 化・40 文字制限)。
+  例: `血液検査.pdf` → `scan-血液検査-20260618T142005.json`。
+  カメラ撮影などファイル名が無い場合は `scan-{日時}.json` になる。
+  原本のファイル名は JSON の `source.file` と `manifest.source_file` にも保持。
 - `AWS_S3_PREFIX` 例: `scan-accuracy-test/`
 - 画像 (jpg) は**同梱しない**方針 (容量優先)。必要になれば manifest に追加する
 

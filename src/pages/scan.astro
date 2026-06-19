@@ -305,6 +305,9 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
     return el as T;
   }
 
+  // 直近の読込元ファイル名 (アップロード経由のみ。書き出しファイル名に組み込む)
+  let lastSourceFileName: string | null = null;
+
   type Panel = 'ready' | 'active' | 'result' | 'error';
   const panels: Record<Panel, HTMLElement> = {
     ready: $('panel-ready'),
@@ -380,6 +383,7 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
             diagnosticId,
             diagnosticUserId,
             hint: ($('scan-hint') as HTMLInputElement | null)?.value || null,
+            sourceFileName: lastSourceFileName,
           }),
         });
         const data = (await res.json()) as {
@@ -412,6 +416,10 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
         $('busy-overlay').hidden = state !== 'busy';
         const shot = $<HTMLButtonElement>('scan-shot');
         shot.textContent = state === 'busy' ? '解析中…' : '📷 撮影 & 解析';
+      },
+      onCapture: () => {
+        // カメラ撮影はファイル名なし。直前のアップロード名を引き継がない。
+        lastSourceFileName = null;
       },
       onAnalyze: (result) => {
         void renderResult(result);
@@ -449,6 +457,7 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
         // ファイル経由はカメラ起動なしで panel-active を表示し、video エリアは非表示にする
         show('active');
         $('scan-video').hidden = true;
+        lastSourceFileName = file.name; // 書き出しファイル名に組み込む
         const label = file.type === 'application/pdf' ? `PDF (${file.name})` : `画像 (${file.name})`;
         await controller.analyzeDataUrl(dataUrl, { sourceLabel: label });
       } catch (err) {
