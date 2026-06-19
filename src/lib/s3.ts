@@ -16,7 +16,15 @@
  */
 
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import type { ScanExportFile } from './scan-export';
+
+/** S3 へ PUT する 1 ファイル (scan-export / interview-export 共通) */
+export interface S3PutFile {
+  /** バケット内 key */
+  key: string;
+  contentType: string;
+  body: string;
+  bytes: number;
+}
 
 export interface S3Config {
   bucket: string;
@@ -70,7 +78,7 @@ export interface UploadedObject {
 }
 
 /** ファイル群をバケットへ PUT する。成功した key のリストを返す。 */
-export async function putScanFiles(files: ScanExportFile[]): Promise<UploadedObject[]> {
+export async function putFiles(files: S3PutFile[]): Promise<UploadedObject[]> {
   const cfg = getS3Config();
   if (!cfg) throw new Error('S3 is not configured (AWS_S3_BUCKET / AWS_REGION required)');
 
