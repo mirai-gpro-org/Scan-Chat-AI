@@ -85,61 +85,36 @@ export function findColumnIndex(headers: string[], keyword: string): number {
 
 /**
  * セル単位の疑念判定。返り値はその行で疑念がある「セルのインデックス集合」。
- * 行が空集合を返したらその行は「確度高」とみなす。
+ * 行が空集合を返したらその行は「確度高」とみなす (= 最初から緑)。
  *
- * 判定ロジック (5/24 仕様確認の OR):
- *   (a) いずれかのセルに `(?)` または `??` を含む       → そのセル
- *   (b) 備考列に【要確認/不整合/欠落/混線/捏造】タグ    → 備考セル
- *   (c) 読み取った値列に [強調] 注記                    → 値セル
- *   (c) 読み取った値列に H/L マーカ (値の隣)            → 値セル
- *   (d) 判定列が H/L/HH/LL                              → 判定セル
- *   (e) 桁数異常 (周辺行と整数部桁数が 2 以上乖離)      → 値セル
+ * 方針 (読取精度が高いので、基準値超えでは黄色にしない):
+ *   黄色 = 「LLM が判読の確度が低いと示したもの」だけに限定する。
+ *   (a) いずれかのセルに `(?)` または `??` を含む (= 読み取れなかった) → そのセル
+ *   (b) 備考列に【要確認/不整合/欠落/混線/捏造】タグ (= LLM が疑義を明記) → 備考セル
+ *
+ *   ※ 以前あった「読取値の H/L マーカ・[強調]・判定列 H/L・桁数異常」は
+ *      基準値超え/装飾の検出であり、判読確度とは無関係なため黄色対象から除外。
  */
 export function detectSuspiciousCells(
   row: TableRow,
   headers: string[],
-  digitAnomalyRowIdx?: Set<number>,
-  rowIdx?: number,
 ): Set<number> {
   const suspicious = new Set<number>();
   const remarksIdx = findColumnIndex(headers, '備考');
-  const valueIdx = findValueColumn(headers);
-  const judgeIdx = findColumnIndex(headers, '判定');
 
   row.cells.forEach((cell, i) => {
-    // (a) (?) or ?? — どのセルでも
+    // (a) (?) or ?? — どのセルでも (読み取り不能)
     if (/\(\?\)|\?\?/.test(cell)) {
       suspicious.add(i);
     }
-    // (b) 備考タグ
+    // (b) 備考タグ — LLM が判読の疑義を明記した行
     if (
       i === remarksIdx &&
       /【要確認|【不整合|【欠落|【混線|【捏造/.test(cell)
     ) {
       suspicious.add(i);
     }
-    // (c) [強調] / H・L 共起
-    if (i === valueIdx) {
-      if (/\[強調\]/.test(cell)) suspicious.add(i);
-      if (/[\s][HL][\s\[]|[\s][HL]$/.test(cell)) suspicious.add(i);
-    }
-    // (d) 判定列
-    if (i === judgeIdx) {
-      const j = cell.trim();
-      if (j === 'H' || j === 'L' || j === 'HH' || j === 'LL') {
-        suspicious.add(i);
-      }
-    }
   });
-  // (e) 桁数異常は値セルに付与
-  if (
-    digitAnomalyRowIdx &&
-    rowIdx !== undefined &&
-    digitAnomalyRowIdx.has(rowIdx) &&
-    valueIdx >= 0
-  ) {
-    suspicious.add(valueIdx);
-  }
   return suspicious;
 }
 
@@ -147,47 +122,8 @@ export function detectSuspiciousCells(
  * 行の「疑念」判定 (= 疑念セルが 1 つ以上ある)。
  * 互換用に残しているが、内部は detectSuspiciousCells.
  */
-export function isRowSuspicious(
-  row: TableRow,
-  headers: string[],
-  digitAnomalyRowIdx?: Set<number>,
-  rowIdx?: number,
-): boolean {
-  return (
-    detectSuspiciousCells(row, headers, digitAnomalyRowIdx, rowIdx).size > 0
-  );
-}
-
-function findValueColumn(headers: string[]): number {
-  // 「読み取った値」「結果」「値」のいずれか
-  for (const kw of ['読み取った値', '結果', '値']) {
-    const i = findColumnIndex(headers, kw);
-    if (i >= 0) return i;
-  }
-  return -1;
-}
-
-/**
- * 表の「読み取った値」列の整数部桁数を見て、中央値から 2 以上離れた行を返す。
- * 例: 多くの行が 2-3 桁の中で CA19-9 = 4048 (4 桁) のような行を flagged。
- */
-export function detectDigitAnomalies(model: TableModel): Set<number> {
-  const valueIdx = findValueColumn(model.headers);
-  if (valueIdx < 0) return new Set();
-  const intDigitCounts: number[] = [];
-  model.rows.forEach((row) => {
-    const raw = row.cells[valueIdx] ?? '';
-    const m = /(-?\d+)(\.\d+)?/.exec(raw);
-    intDigitCounts.push(m ? m[1].replace('-', '').length : 0);
-  });
-  const sorted = intDigitCounts.filter((n) => n > 0).sort((a, b) => a - b);
-  if (sorted.length < 4) return new Set(); // 少なすぎる時は判定しない
-  const median = sorted[Math.floor(sorted.length / 2)];
-  const anomalies = new Set<number>();
-  intDigitCounts.forEach((count, i) => {
-    if (count > 0 && Math.abs(count - median) >= 2) anomalies.add(i);
-  });
-  return anomalies;
+export function isRowSuspicious(row: TableRow, headers: string[]): boolean {
+  return detectSuspiciousCells(row, headers).size > 0;
 }
 
 /**
@@ -308,7 +244,6 @@ export interface VerificationRefs {
 interface RegionView {
   region: RegionResult;
   table: TableModel | null;
-  digitAnomalies: Set<number>;
   /** 各データ行の元の疑念セル集合 (state を考慮しない) */
   suspiciousCellsByRow: Array<Set<number>>;
 }
@@ -380,15 +315,10 @@ export class ScanVerificationController {
     const regions = this.result.regions ?? [];
     this.regions = regions.map((region) => {
       const table = parseTable(region.body);
-      const digitAnomalies = table
-        ? detectDigitAnomalies(table)
-        : new Set<number>();
       const suspiciousCellsByRow = table
-        ? table.rows.map((row, i) =>
-            detectSuspiciousCells(row, table.headers, digitAnomalies, i),
-          )
+        ? table.rows.map((row) => detectSuspiciousCells(row, table.headers))
         : [];
-      return { region, table, digitAnomalies, suspiciousCellsByRow };
+      return { region, table, suspiciousCellsByRow };
     });
   }
 
