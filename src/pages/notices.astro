@@ -1,0 +1,265 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { loadNotices } from '../lib/notice-queries';
+import { formatJpDate, DEFAULT_USER } from '../lib/dashboard-queries';
+
+export const prerender = false;
+
+const url = new URL(Astro.request.url);
+const rawU = url.searchParams.get('u');
+const u = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
+
+// 各セクションの展開状態 (?important=all / ?general=all / ?news=all)
+const expandImportant = url.searchParams.get('important') === 'all';
+const expandGeneral   = url.searchParams.get('general') === 'all';
+const expandNews      = url.searchParams.get('news') === 'all';
+
+// 認証連携が有効かつ ?u= が無い場合はダッシュボードと同様に sign-in gate へ寄せる。
+const authEnabled = !!import.meta.env.PUBLIC_GOOGLE_CLIENT_ID;
+const needsSignIn = authEnabled && !u;
+
+// dev profile (認証未連携) で ?u= が無い場合はダッシュボードと同じデフォルトユーザーを使う。
+const effectiveUid = u ?? (needsSignIn ? null : DEFAULT_USER);
+
+const result = !effectiveUid
+  ? null
+  : await loadNotices(effectiveUid, { expandImportant, expandGeneral, expandNews });
+
+const hasError = result ? 'error' in result : false;
+const data = !result || hasError ? null : (result as Exclude<typeof result, { error: string }>);
+
+const dashHref = u ? `/dashboard?u=${encodeURIComponent(u)}` : '/dashboard';
+
+/** u を保持しつつ section パラメータをマージしたリンクを作る。 */
+function noticesHref(overrides: Record<string, string | null>): string {
+  const p = new URLSearchParams();
+  if (u) p.set('u', u);
+  if (expandImportant) p.set('important', 'all');
+  if (expandGeneral) p.set('general', 'all');
+  if (expandNews) p.set('news', 'all');
+  for (const [k, v] of Object.entries(overrides)) {
+    if (v === null) p.delete(k);
+    else p.set(k, v);
+  }
+  const qs = p.toString();
+  return qs ? `/notices?${qs}` : '/notices';
+}
+
+const importantTitle = data ? `${data.userName}への重要なお知らせ` : '重要なお知らせ';
+---
+
+<BaseLayout title="お知らせ | Wellfort">
+  <header class="hero-gradient px-5 pt-6 pb-4">
+    <div class="flex items-center justify-between">
+      <a href={dashHref} class="text-sm text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white">
+        ‹ マイページ
+      </a>
+      <h1 class="text-base font-semibold">お知らせ</h1>
+      <span class="w-16"></span>
+    </div>
+  </header>
+
+  {needsSignIn && (
+    <main class="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+      <p class="text-sm text-slate-500">サインインが必要です。</p>
+      <a href="/" class="btn-secondary">トップへ</a>
+    </main>
+  )}
+
+  {hasError && (
+    <main class="flex flex-1 flex-col items-center justify-center gap-3 px-5 text-center">
+      <span class="text-4xl">⚠️</span>
+      <h2 class="text-lg font-bold">お知らせを読み込めませんでした</h2>
+      <p class="text-sm text-red-700">{(result as { error: string }).error}</p>
+    </main>
+  )}
+
+  {data && (
+    <main class="flex flex-1 flex-col gap-5 px-5 pb-10 pt-4">
+
+      {/* 1) 重要なお知らせ (個別 / 既読・未読) */}
+      <section>
+        <header class="mb-2 flex items-center justify-between gap-2">
+          <h2 class="flex items-center gap-1.5 text-sm font-bold text-slate-800 dark:text-slate-100">
+            <span>❗</span><span>{importantTitle}</span>
+            {data.importantUnreadCount > 0 && (
+              <span class="rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                未読 {data.importantUnreadCount}
+              </span>
+            )}
+          </h2>
+          {expandImportant ? (
+            <a href={noticesHref({ important: null })} class="shrink-0 text-xs font-medium text-brand-600 hover:underline">未読のみ</a>
+          ) : (
+            <a href={noticesHref({ important: 'all' })} class="shrink-0 text-xs font-medium text-brand-600 hover:underline">全て見る ›</a>
+          )}
+        </header>
+
+        {data.important.length === 0 ? (
+          <p class="rounded-2xl border border-dashed border-slate-300 p-4 text-center text-xs text-slate-500 dark:border-slate-700">
+            {expandImportant ? '重要なお知らせはありません' : '未読の重要なお知らせはありません'}
+          </p>
+        ) : (
+          <ul class="space-y-2">
+            {data.important.map((n) => {
+              const unread = !n.read_at;
+              return (
+                <li
+                  class={`rounded-2xl border p-4 shadow-sm transition ${
+                    unread
+                      ? 'border-rose-200 bg-rose-50/60 dark:border-rose-900/50 dark:bg-rose-950/20'
+                      : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900'
+                  }`}
+                  data-notice-id={n.id}
+                >
+                  <div class="flex items-start justify-between gap-2">
+                    <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-100">{n.title}</h3>
+                    {unread ? (
+                      <span class="shrink-0 rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-semibold text-white">未読</span>
+                    ) : (
+                      <span class="shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-300">既読</span>
+                    )}
+                  </div>
+                  <p class="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-slate-600 dark:text-slate-300">{n.body}</p>
+                  <div class="mt-2 flex items-center justify-between">
+                    <time class="text-[10px] text-slate-400">{formatJpDate(n.published_at)}</time>
+                    {unread ? (
+                      <button
+                        type="button"
+                        data-mark-read
+                        data-read="true"
+                        data-notice-id={n.id}
+                        class="rounded-lg border border-rose-300 bg-white px-2.5 py-1 text-[11px] font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-wait disabled:opacity-60 dark:border-rose-700 dark:bg-slate-900 dark:text-rose-300"
+                      >
+                        既読にする
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        data-mark-read
+                        data-read="false"
+                        data-notice-id={n.id}
+                        class="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500 transition hover:bg-slate-100 disabled:cursor-wait disabled:opacity-60 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300"
+                      >
+                        未読に戻す
+                      </button>
+                    )}
+                  </div>
+                  {n.link_url && (
+                    <a href={n.link_url} class="mt-2 inline-block text-xs font-medium text-brand-600 hover:underline">詳しく見る ›</a>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      {/* 2) 一般のお知らせ */}
+      <section>
+        <header class="mb-2 flex items-center justify-between gap-2">
+          <h2 class="flex items-center gap-1.5 text-sm font-bold text-slate-800 dark:text-slate-100">
+            <span>📢</span><span>一般のお知らせ</span>
+          </h2>
+          {data.general.length > 0 && (
+            expandGeneral ? (
+              <a href={noticesHref({ general: null })} class="shrink-0 text-xs font-medium text-brand-600 hover:underline">閉じる</a>
+            ) : (
+              <a href={noticesHref({ general: 'all' })} class="shrink-0 text-xs font-medium text-brand-600 hover:underline">もっと見る ›</a>
+            )
+          )}
+        </header>
+
+        {data.general.length === 0 ? (
+          <p class="rounded-2xl border border-dashed border-slate-300 p-4 text-center text-xs text-slate-500 dark:border-slate-700">
+            お知らせはありません
+          </p>
+        ) : (
+          <ul class="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900">
+            {data.general.map((a) => (
+              <li class="p-4">
+                {a.link_url ? (
+                  <a href={a.link_url} class="block">
+                    <p class="text-sm font-semibold text-slate-800 hover:text-brand-700 dark:text-slate-100">{a.title}</p>
+                  </a>
+                ) : (
+                  <p class="text-sm font-semibold text-slate-800 dark:text-slate-100">{a.title}</p>
+                )}
+                <p class="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-slate-600 dark:text-slate-300">{a.body}</p>
+                <time class="mt-2 block text-[10px] text-slate-400">{formatJpDate(a.published_at)}</time>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* 3) ニュース */}
+      <section>
+        <header class="mb-2 flex items-center justify-between gap-2">
+          <h2 class="flex items-center gap-1.5 text-sm font-bold text-slate-800 dark:text-slate-100">
+            <span>📰</span><span>ニュース</span>
+          </h2>
+          {data.news.length > 0 && (
+            expandNews ? (
+              <a href={noticesHref({ news: null })} class="shrink-0 text-xs font-medium text-brand-600 hover:underline">閉じる</a>
+            ) : (
+              <a href={noticesHref({ news: 'all' })} class="shrink-0 text-xs font-medium text-brand-600 hover:underline">もっと見る ›</a>
+            )
+          )}
+        </header>
+
+        {data.news.length === 0 ? (
+          <p class="rounded-2xl border border-dashed border-slate-300 p-4 text-center text-xs text-slate-500 dark:border-slate-700">
+            ニュースはありません
+          </p>
+        ) : (
+          <ul class="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900">
+            {data.news.map((a) => (
+              <li class="p-4">
+                {a.link_url ? (
+                  <a href={a.link_url} class="block">
+                    <p class="text-sm font-semibold text-slate-800 hover:text-brand-700 dark:text-slate-100">{a.title}</p>
+                  </a>
+                ) : (
+                  <p class="text-sm font-semibold text-slate-800 dark:text-slate-100">{a.title}</p>
+                )}
+                <p class="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-slate-600 dark:text-slate-300">{a.body}</p>
+                <time class="mt-2 block text-[10px] text-slate-400">{formatJpDate(a.published_at)}</time>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </main>
+  )}
+</BaseLayout>
+
+<script is:inline define:vars={{ diagnosticUserId: effectiveUid }}>
+  document.addEventListener('click', async (e) => {
+    const btn = e.target?.closest?.('button[data-mark-read]');
+    if (!btn) return;
+    const noticeId = btn.dataset.noticeId;
+    if (!noticeId || !diagnosticUserId) return;
+    const read = btn.dataset.read !== 'false';
+
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = '処理中…';
+
+    try {
+      const res = await fetch(`/api/notices/${noticeId}/read`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ diagnosticUserId, read }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload.ok) throw new Error(payload.error || `HTTP ${res.status}`);
+      // 状態変更に成功 → 再読込 (未読のみ表示なら既読化で一覧から消える)
+      window.location.reload();
+    } catch (err) {
+      alert(`更新に失敗しました: ${err instanceof Error ? err.message : String(err)}`);
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  });
+</script>

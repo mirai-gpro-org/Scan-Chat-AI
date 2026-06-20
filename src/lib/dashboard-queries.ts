@@ -46,7 +46,8 @@ export interface DashboardData {
   subscription: (Subscription & { plan_name: string | null }) | null;
 }
 
-const DEFAULT_USER = 'd0000001-0000-0000-0000-000000000000'; // 真鍋 慶次郎
+/** 認証未連携の dev profile で ?u= が無い時に使うデフォルトユーザー (真鍋 慶次郎)。 */
+export const DEFAULT_USER = 'd0000001-0000-0000-0000-000000000000';
 
 /**
  * URL パラメータの ?u= で来る値を正規化する:

@@ -19,6 +19,11 @@ major_version = 15
 [db.pooler]
 enabled = false
 
+[db.seed]
+enabled = true
+# seed.sql (顧客/検査) → seed_notices.sql (お知らせ) の順に適用
+sql_paths = ["./seed.sql", "./seed_notices.sql"]
+
 [studio]
 enabled = true
 port = 54323

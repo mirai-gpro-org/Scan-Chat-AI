@@ -37,3 +37,5 @@ export type AppUser              = Database['diagnosis']['Tables']['app_users'][
 export type TestArtifact         = Database['diagnosis']['Tables']['test_artifacts']['Row'];
 export type TestArtifactFile     = Database['diagnosis']['Tables']['test_artifact_files']['Row'];
 export type DiagnosisResult      = Database['diagnosis']['Tables']['diagnosis_results']['Row'];
+export type UserNotice           = Database['diagnosis']['Tables']['user_notices']['Row'];
+export type Announcement         = Database['diagnosis']['Tables']['announcements']['Row'];
