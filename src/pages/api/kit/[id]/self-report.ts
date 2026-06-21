@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { getServerSupabase } from '../../../../lib/supabase';
+import { isHpEdgeConfigured, submitKitSelfReport } from '../../../../lib/hp-edge';
 
 export const prerender = false;
 
@@ -29,6 +30,22 @@ export const POST: APIRoute = async ({ params, request }) => {
     return json({ error: 'missing or invalid diagnosticUserId' }, 400);
   }
 
+  // 本番: HP の kit-self-report Edge Function に委譲 (正本 = orders)。
+  // kit_shipment.id = orders.id = 本ルートの :id を order_id として渡す。
+  if (isHpEdgeConfigured()) {
+    try {
+      const result = await submitKitSelfReport({
+        orderId: id,
+        diagnosticUserId,
+        event: action,
+      });
+      return json({ ok: true, action, shipment: result });
+    } catch (err) {
+      return json({ error: err instanceof Error ? err.message : String(err) }, 502);
+    }
+  }
+
+  // dev フォールバック: モック customer スキーマを直接更新
   const sb = getServerSupabase();
   if (!sb) return json({ error: 'supabase not configured' }, 503);
 

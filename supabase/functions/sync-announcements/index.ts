@@ -33,28 +33,30 @@ Deno.serve(async (_req) => {
     );
 
     // 1) HP `news` を app_bridge ビュー経由で取得
-    //    想定列: source_news_id(=news.id) / title / content / image_url /
-    //            link_url / link_text / published_at / created_at / updated_at
+    //    ビュー列 (統合仕様書 §7-1 確定): source_news_id(=news.id) / title /
+    //    body(=news.content) / image_url / link_url / link_text /
+    //    published_at / published_until(NULL固定) / source_updated_at(=news.updated_at)
     const { data: source, error: srcErr } = await bridge
       .from("announcement_source")
       .select(
-        "source_news_id, title, content, image_url, link_url, link_text, published_at",
+        "source_news_id, title, body, image_url, link_url, link_text, published_at, published_until",
       );
     if (srcErr) throw srcErr;
 
-    // 2) announcements 形へマッピング (content→body, category='news' 固定)
-    //    HP news は HP/Web 双方掲載対象として visible_on_* を true にする。
+    // 2) announcements 形へマッピング (category='news' 固定)
+    //    フラグ (統合仕様書 §7-1): HP は native `news` を自サイト表示するため
+    //    visible_on_hp=false、Web 掲載目的のため visible_on_web=true。
     const rows = (source ?? []).map((n) => ({
       source_news_id: n.source_news_id,
       category: "news" as const,
       title: n.title,
-      body: n.content,
+      body: n.body,
       image_url: n.image_url,
       link_url: n.link_url,
       link_text: n.link_text,
       published_at: n.published_at,
-      published_until: null, // news に終了日カラムは無い (HP 回答) = 無期限
-      visible_on_hp: true,
+      published_until: n.published_until ?? null, // news に終了日無し = 無期限
+      visible_on_hp: false,
       visible_on_web: true,
     }));
 
