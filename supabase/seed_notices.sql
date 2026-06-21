@@ -79,3 +79,8 @@ insert into diagnosis.announcements
    'スマートフォンアプリ版の提供を予定',
    '年内にスマートフォンアプリ版のリリースを予定しています。続報をお待ちください。',
    null, '2026-03-01 10:00+09');
+
+-- 掲載面フラグ (可視性) を明示設定: general=Web のみ / news=HP+Web。
+-- 既定値に依存せず、db reset 後も Web 表示されるようにする。
+update diagnosis.announcements set visible_on_web = true, visible_on_hp = false where category = 'general';
+update diagnosis.announcements set visible_on_web = true, visible_on_hp = true  where category = 'news';

@@ -56,11 +56,13 @@ export async function loadNotices(
     importantQuery = importantQuery.is('read_at', null);
   }
 
-  // 一般のお知らせ / ニュース: プレビュー (3件) or 全件
+  // 一般のお知らせ / ニュース: プレビュー (3件) or 全件。
+  // visible_on_web=true のみ表示 (HP 管理画面の掲載面トグルを尊重)。
   let generalQuery = dsb
     .from('announcements')
     .select('*')
     .eq('category', 'general')
+    .eq('visible_on_web', true)
     .order('published_at', { ascending: false });
   if (!opts.expandGeneral) generalQuery = generalQuery.limit(ANNOUNCEMENT_PREVIEW_LIMIT);
 
@@ -68,6 +70,7 @@ export async function loadNotices(
     .from('announcements')
     .select('*')
     .eq('category', 'news')
+    .eq('visible_on_web', true)
     .order('published_at', { ascending: false });
   if (!opts.expandNews) newsQuery = newsQuery.limit(ANNOUNCEMENT_PREVIEW_LIMIT);
 

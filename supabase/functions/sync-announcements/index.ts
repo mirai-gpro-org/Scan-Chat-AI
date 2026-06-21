@@ -44,8 +44,8 @@ Deno.serve(async (_req) => {
     if (srcErr) throw srcErr;
 
     // 2) announcements 形へマッピング (category='news' 固定)
-    //    フラグ (統合仕様書 §7-1): HP は native `news` を自サイト表示するため
-    //    visible_on_hp=false、Web 掲載目的のため visible_on_web=true。
+    //    フラグ (引継ぎ文書「お知らせ機能_Web引継ぎ.md」の表示マッピング):
+    //    news は HP+Web 双方表示 → visible_on_hp=true / visible_on_web=true。
     const rows = (source ?? []).map((n) => ({
       source_news_id: n.source_news_id,
       category: "news" as const,
@@ -56,7 +56,7 @@ Deno.serve(async (_req) => {
       link_text: n.link_text,
       published_at: n.published_at,
       published_until: n.published_until ?? null, // news に終了日無し = 無期限
-      visible_on_hp: false,
+      visible_on_hp: true,
       visible_on_web: true,
     }));
 
