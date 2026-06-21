@@ -8,13 +8,17 @@
 // v0.5→v0.9 の変更: 取得元が app_bridge.announcement_source ビューから
 //   HP の news-feed Edge Function (HTTP) に変更。差分 pull (since) に対応。
 //
-// cadence: 日次〜数十分 (pg_cron / スケジューラから起動)。
+// 削除突合 (A-6 v1.0): HP `news` は削除追跡が無いため、フル同期 (since 未指定) 時に
+//   feed に存在しない news 由来 announcement を visible_on_web=false へ論理削除する。
+//   → 日次はフル同期 (SYNC_SINCE 未指定) を推奨。SYNC_SINCE 指定時は差分のみで突合しない。
+//
+// cadence: 日次フル (推奨) 〜 短間隔は差分 (pg_cron / スケジューラから起動)。
 //
 // 必要な env:
 //   HP_EDGE_BASE_URL          … HP #1 Edge Function ベース URL
 //   RESOLVE_SHARED_SECRET     … x-resolve-secret ヘッダ (HP 生成・Vault 共有)
 //   SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY … #2 (本プロジェクト、自動付与)
-//   SYNC_SINCE (任意)         … 差分 pull の updated_at 下限 (ISO8601)。未指定なら全件。
+//   SYNC_SINCE (任意)         … 差分 pull の updated_at 下限 (ISO8601)。未指定=全件+削除突合。
 // ============================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -83,7 +87,28 @@ Deno.serve(async (_req) => {
       upserted = count ?? rows.length;
     }
 
-    return Response.json({ success: true, data: { fetched: rows.length, upserted } });
+    // 4) 削除突合 (reconciliation) — A-6 v1.0:
+    //    HP `news` は削除追跡が無く feed から消えることで削除を表す。
+    //    フル同期時 (since 未指定) のみ、feed に存在しない news 由来 announcement を
+    //    visible_on_web=false に論理削除する。
+    let hidden = 0;
+    if (!since) {
+      const ids = rows.map((r) => r.source_news_id);
+      let q = diagnosis
+        .from("announcements")
+        .update({ visible_on_web: false }, { count: "exact" })
+        .eq("category", "news")
+        .eq("visible_on_web", true)
+        .not("source_news_id", "is", null);
+      if (ids.length > 0) {
+        q = q.not("source_news_id", "in", `(${ids.join(",")})`);
+      }
+      const { error: recErr, count } = await q;
+      if (recErr) throw recErr;
+      hidden = count ?? 0;
+    }
+
+    return Response.json({ success: true, data: { fetched: rows.length, upserted, hidden } });
   } catch (e) {
     return Response.json(
       { success: false, error: e instanceof Error ? e.message : String(e) },
