@@ -113,7 +113,7 @@ const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Wellfort';
 
       <main class="flex flex-1 flex-col gap-4 px-5 pb-8">
 
-        {urgentAlert && <UrgentAlertBanner alert={urgentAlert} />}
+        {/* 非表示 (緊急受診勧告 URGENT ALERT): {urgentAlert && <UrgentAlertBanner alert={urgentAlert} />} */}
 
         {/* AI 問診 + AI スキャン への動線 */}
         <section class="grid grid-cols-2 gap-2">
@@ -156,7 +156,7 @@ const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Wellfort';
           );
         })()}
 
-        <DailyQuests quests={quests} />
+        {/* 非表示 (本日の健康クエスト): <DailyQuests quests={quests} /> */}
 
         <HealthCoachPreview
           greeting={greeting}
@@ -164,11 +164,11 @@ const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Wellfort';
           diagnosticUserId={data?.diagnosticUserId}
         />
 
-        <HealthInsightCard diagnosticUserId={data?.diagnosticUserId ?? ''} />
+        {/* 非表示 (今日の気付き): <HealthInsightCard diagnosticUserId={data?.diagnosticUserId ?? ''} /> */}
 
         <MetricTrendChart series={metricTrend} />
 
-        {situations.length > 0 && <SituationalCards cards={situations} />}
+        {/* 非表示 (シチュエーション別アドバイス): {situations.length > 0 && <SituationalCards cards={situations} />} */}
 
         <KitProgressCard
           shipments={data?.shipments ?? []}
