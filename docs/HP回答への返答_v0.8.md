@@ -47,8 +47,12 @@
 
 ---
 
-## 4. 要確認（重要）: ニュースの生成経路が二重化していませんか？
+## 4. ニュースの生成経路の一本化 → **確定: 案A（HP news → pull 同期のみ）**
 
+> **決定（2026-06-21）**: news の正本は **HP `news` テーブル**。`sync-announcements` の pull 同期のみで `announcements(category=news)` を生成する。
+> **管理画面 `create_announcement` は general 専用**とし、news は作成しない運用。`sync-announcements` は Web 側で採用継続。
+
+（以下、検討の経緯）
 現状、`announcements`（category=news）への書込み経路が **2 つ**存在し得ます：
 
 1. **pull 同期**（v0.5 合意）: `sync-announcements` が `app_bridge.announcement_source`（HP `news` 由来）を取得して upsert（突合キー `source_news_id`）。
@@ -72,6 +76,6 @@
 | Web 表示の visible_on_web フィルタ | ✅ 実装 |
 | create_announcement/notice のカラム整合 | ✅ 確認（明示フラグ送信を依頼） |
 | #2 接続情報の受け渡し | 方式合意済・実施待ち（セキュアチャネル） |
-| news 生成経路の一本化 | ⏳ §4 で合意待ち |
+| news 生成経路の一本化 | ✅ 確定: 案A（HP news→pull同期のみ／管理画面は general 専用） |
 
 `astro check` / `build` 通過済み。接続情報受領後に管理画面→#2 の疎通（create_announcement/notice／検索／一覧）を確認します。
