@@ -139,6 +139,52 @@ export type Database = {
         Update: Partial<Database['diagnosis']['Tables']['diagnosis_results']['Insert']>;
         Relationships: [];
       };
+      user_notices: {
+        Row: {
+          id: string;
+          diagnostic_user_id: string;
+          title: string;
+          body: string;
+          link_url: string | null;
+          published_at: string;
+          read_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          diagnostic_user_id: string;
+          title: string;
+          body: string;
+          link_url?: string | null;
+          published_at?: string;
+          read_at?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<Database['diagnosis']['Tables']['user_notices']['Insert']>;
+        Relationships: [];
+      };
+      announcements: {
+        Row: {
+          id: string;
+          category: string;
+          title: string;
+          body: string;
+          link_url: string | null;
+          published_at: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          category: string;
+          title: string;
+          body: string;
+          link_url?: string | null;
+          published_at?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database['diagnosis']['Tables']['announcements']['Insert']>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

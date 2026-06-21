@@ -66,7 +66,7 @@ supabase db reset
 このコマンドで:
 - DB を初期化
 - `supabase/migrations/` の全 SQL を順次実行
-- `supabase/seed.sql` を実行
+- `supabase/seed.sql` → `supabase/seed_notices.sql` を実行 (config.toml の `[db.seed]` で指定)
 
 ### 3. Elith 実サンプル JSON の投入 (任意)
 
@@ -102,6 +102,8 @@ http://127.0.0.1:54323 にアクセス → `customer` / `diagnosis` schema を�
 | diagnosis.test_artifacts   | 12 | 5 検査種別 × user_upload / wellfort_lab を網羅 |
 | diagnosis.test_artifact_files | 24 | scan_md / summary_md / highlights_md / raw_pdf_redacted / raw_csv / extracted_json |
 | diagnosis.diagnosis_results |  3 | Elith JSON 簡略版。`load_elith_demo.mjs` で 1 件を実物に置換可 |
+| diagnosis.user_notices     |  4 | 個別の重要なお知らせ。真鍋 (未読2/既読1) + 田中 (未読1)。お知らせページ用 |
+| diagnosis.announcements    | 10 | 一般のお知らせ 5 + ニュース 5 (全ユーザー共通)。お知らせページ用 |
 
 ### 主な人物像
 
