@@ -10,6 +10,7 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '../types/supabase';
+import type { BridgeDatabase } from '../types/supabase-bridge';
 
 let browserClient: SupabaseClient<Database> | null = null;
 
@@ -34,4 +35,26 @@ export function getServerSupabase(): SupabaseClient<Database> | null {
   return createClient<Database>(url, service, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+}
+
+/**
+ * HP/EC #1 `app_bridge` 読み取り専用クライアント (SSR 専用)。
+ *
+ * 統合仕様書に基づき、Web は #1 の app_bridge スキーマのみを参照する。
+ * 認証は HP 発行の restricted ロール (`app_bridge_readonly`) JWT。
+ * env 未設定なら null を返し、呼び出し側はモック (customer スキーマ) へフォールバックする。
+ */
+export function getBridgeSupabase(): SupabaseClient<BridgeDatabase> | null {
+  const url = import.meta.env.HP_BRIDGE_SUPABASE_URL;
+  const key = import.meta.env.HP_BRIDGE_READONLY_KEY;
+  if (!url || !key) return null;
+  return createClient<BridgeDatabase>(url, key, {
+    db: { schema: 'app_bridge' },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+/** app_bridge への接続が構成済みか (dev フォールバック判定用)。 */
+export function isBridgeConfigured(): boolean {
+  return !!import.meta.env.HP_BRIDGE_SUPABASE_URL && !!import.meta.env.HP_BRIDGE_READONLY_KEY;
 }

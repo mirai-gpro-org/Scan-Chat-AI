@@ -6,7 +6,8 @@
  * app_users.auth_user_id → diagnostic_user_id 解決に置き換える。
  */
 
-import { getServerSupabase } from './supabase';
+import { getServerSupabase, isBridgeConfigured } from './supabase';
+import { loadBridgeBundle, type CustomerBundle } from './bridge-queries';
 import type {
   AppUser,
   CustomerProfile,
@@ -15,6 +16,8 @@ import type {
   Subscription,
   TestArtifact,
 } from '../types/supabase';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '../types/supabase';
 import { extractMetricCards, type ElithSection, type MetricCard } from './elith-parser';
 
 export interface MetricTrendPoint {
@@ -74,48 +77,63 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
   const normalized = diagnosticUserId ? normalizeDiagnosticUserId(diagnosticUserId) : null;
   const uid = normalized ?? DEFAULT_USER;
 
-  // diagnosis schema
+  // diagnosis schema (Web 所有) — appUser / artifacts / results は常に #2 から取得
   const dsb = sb.schema('diagnosis');
-  const csb = sb.schema('customer');
-
-  // 並行クエリ
   const [
     { data: appUser, error: appUserErr },
     { data: artifactsRaw, error: artErr },
     { data: resultsRaw, error: resErr },
-    { data: customer, error: custErr },
   ] = await Promise.all([
     dsb.from('app_users').select('*').eq('diagnostic_user_id', uid).maybeSingle(),
     dsb.from('test_artifacts').select('*').eq('diagnostic_user_id', uid).order('test_date', { ascending: false }),
     dsb.from('diagnosis_results').select('*').eq('diagnostic_user_id', uid).order('received_at', { ascending: false }),
-    csb.from('customer_profiles').select('*').eq('diagnostic_user_id', uid).maybeSingle(),
   ]);
 
   if (appUserErr) return { error: `app_users: ${appUserErr.message}` };
   if (artErr)     return { error: `test_artifacts: ${artErr.message}` };
   if (resErr)     return { error: `diagnosis_results: ${resErr.message}` };
-  if (custErr)    return { error: `customer_profiles: ${custErr.message}` };
 
   const artifacts = artifactsRaw ?? [];
   const results = resultsRaw ?? [];
   const latestResult = results[0] ?? null;
   const elithSections = (latestResult?.report as ElithSection[] | null) ?? [];
 
-  // 顧客が居なければ早期 return (kit_shipments も取れない)
-  if (!customer) {
-    return {
-      diagnosticUserId: uid,
-      appUser: appUser ?? null,
-      customer: null,
-      artifacts,
-      latestResult,
-      elithSections,
-      shipments: [],
-      subscription: null,
-    };
-  }
+  // 顧客/プラン/キットは app_bridge (本番) もしくは customer モック (dev) から取得
+  const bundle = isBridgeConfigured()
+    ? await loadBridgeBundle(uid)
+    : await loadMockCustomerBundle(sb, uid);
+  if ('error' in bundle) return bundle;
 
-  // customer schema から kit + subscription
+  return {
+    diagnosticUserId: uid,
+    appUser: appUser ?? null,
+    customer: bundle.customer,
+    artifacts,
+    latestResult,
+    elithSections,
+    shipments: bundle.shipments,
+    subscription: bundle.subscription,
+  };
+}
+
+/**
+ * dev フォールバック: モック `customer` スキーマから顧客バンドルを取得。
+ * 本番 (app_bridge 構成済) では loadBridgeBundle が使われる。
+ */
+async function loadMockCustomerBundle(
+  sb: SupabaseClient<Database>,
+  uid: string,
+): Promise<CustomerBundle | { error: string }> {
+  const csb = sb.schema('customer');
+
+  const { data: customer, error: custErr } = await csb
+    .from('customer_profiles')
+    .select('*')
+    .eq('diagnostic_user_id', uid)
+    .maybeSingle();
+  if (custErr) return { error: `customer_profiles: ${custErr.message}` };
+  if (!customer) return { customer: null, shipments: [], subscription: null };
+
   const [
     { data: shipmentsRaw, error: shipErr },
     { data: labCompanies, error: labErr },
@@ -145,16 +163,7 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
     ? { ...subRaw, plan_name: planById.get(subRaw.plan_id) ?? null }
     : null;
 
-  return {
-    diagnosticUserId: uid,
-    appUser: appUser ?? null,
-    customer,
-    artifacts,
-    latestResult,
-    elithSections,
-    shipments,
-    subscription,
-  };
+  return { customer, shipments, subscription };
 }
 
 /**
