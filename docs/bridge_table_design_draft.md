@@ -1,10 +1,15 @@
-# 【ドラフト v0.2】HP/EC ⇄ Web アプリ ブリッジテーブル設計
+# 【ドラフト v0.3】HP/EC ⇄ Web アプリ ブリッジテーブル設計
 
 - 作成: Web アプリ（Scan-Chat / マイページ）チーム
 - 宛先: HP/EC チーム（レビュー・返答依頼）
 - ステータス: **ドラフト（叩き台）**。HP/EC チームのコメント返答 → 改訂、のキャッチボール前提。
-- 変更履歴: v0.1 では診断系(#2)にブリッジを置く案だったが、**v0.2 でブリッジは HP/EC 系(#1) 内に設置**へ変更。
-- 関連: `docs/data_integration_requirements.md`（PII分離原則）, `docs/test_data_storage_and_db_design.md`
+- 変更履歴:
+  - v0.1: 診断系(#2)にブリッジを置く案。
+  - v0.2: ブリッジは HP/EC 系(#1) 内に設置へ変更。
+  - **v0.3: HP/EC 実スキーマ（`database-schema.md`）に整合。`lab_delivery` 廃止、`kit_shipment` を `orders` 由来に、本人解決を email 突合に。`docs/HP回答への返答_v0.3.md` と対。**
+- 関連: `docs/data_integration_requirements.md`（PII分離原則）, `docs/test_data_storage_and_db_design.md`, `docs/HP回答への返答_v0.3.md`
+
+> ⚠️ v0.3 重要修正: HP 側に `diagnostic_user_id` / `google_sub` / `kit_shipments` / `lab_tests` / `lab_companies` / `subscription_plans` は **存在しない**。実体は `customer_profiles`(+要列追加) / `orders` / `subscriptions` / `test_products`。検査結果(lab)系は **HP 非保持＝診断系 #2 が正本**。
 
 ---
 
@@ -20,8 +25,8 @@ Web アプリが顧客名・プラン・キット進捗・検査到着状況を�
         ▼                                            user_notices / announcements
  app_bridge スキーマ (本書の対象・最小項目)
    customer_account / subscription /     ◀── Web アプリが「読み取り専用」で参照
-   kit_shipment / lab_delivery               （restricted ロール / 専用キー）
-                                          ──▶ diagnostic_user_id で #2 のデータと突合
+   kit_shipment (orders由来)                 （restricted ロール / 専用キー）
+   ※lab_delivery は廃止(検査結果は#2が正本)  ──▶ diagnostic_user_id で #2 のデータと突合
 ```
 
 原則:
@@ -49,12 +54,14 @@ Web アプリが顧客名・プラン・キット進捗・検査到着状況を�
 
 現状は `GoogleOneTap.astro` の **ハードコード `DEMO_EMAIL_TO_UID`** で email→`diagnostic_user_id` を固定マップし、名前は seed の `display_name_cache` 依存。
 
-本番仕様（v0.2）:
-1. One Tap → `google_sub` / email を取得。
-2. **#1 の `app_bridge.customer_account` を `google_sub`(または email)で引く → `diagnostic_user_id` を得る**（`DEMO_EMAIL_TO_UID` 撤去）。
-   - 代替案: #2 `app_users.google_sub` で引く方式でも可。**どちらを“本人解決の正”にするか**は要相談（ブリッジに google_sub を載せるなら #1 解決が自然）。
-3. 未連携ユーザー（HP/EC で連携未完了）は弾く（適格性なし）。方針要確認。
-4. 表示名は `app_bridge.customer_account.display_name`（#1）から取得。`#2 app_users.display_name_cache` は将来撤去候補（当面は併存可）。
+本番仕様（v0.3・email 突合に確定）:
+> HP は `google_sub` 未保持・メール認証。Web=Google One Tap / HP=メール の橋渡しは **email** で行う。
+1. One Tap → Google から `google_sub` ＋ `email` を取得。
+2. **#1 の解決用 Edge Function `resolve-customer`（HP担当）へ email を渡す → `{ diagnostic_user_id, display_name }` を得る**（一致なしは未連携=null）。
+   - email 一覧を Web に晒さないため Edge Function 方式を推奨。代替は `customer_account` に email を載せ RLS 本人行 SELECT。
+3. Web は `google_sub ↔ diagnostic_user_id` を **#2 `app_users` に永続化**。次回以降は #2 の `google_sub` 解決のみ（#1 アクセス不要）。
+4. 未連携ユーザー（email 一致なし）は弾く（適格性なし）。
+5. 表示名は #2 `app_users.display_name_cache`（初回解決時に保存）を使用。`app_bridge.customer_account.google_sub` は不要（持たない）。
 
 ---
 
@@ -66,89 +73,77 @@ Web アプリが顧客名・プラン・キット進捗・検査到着状況を�
 
 | カラム | 型 | 由来(HP/EC) | 備考 |
 |---|---|---|---|
-| diagnostic_user_id | uuid PK | customer_profiles.diagnostic_user_id | 共有キー |
-| hp_customer_id | uuid not null | customer_profiles.user_id | HP側主キー |
-| google_sub | text null | customer_profiles.google_sub | 本人解決を #1 で行う場合に使用 |
-| display_name | text | family_name(+given) | 表示名「真鍋」想定（敬称はアプリ側付与） |
-| sex | text null | customer_profiles.sex | 要相談（PII最小化） |
-| birth_year | int null | date_of_birth の年のみ | 年齢計算用。生年月日フルは載せない案 |
-| status | text | 会員状態 | active / withdrawn 等 |
+| diagnostic_user_id | uuid PK | customer_profiles に**列追加**(HP発番) | 共有キー。default gen_random_uuid() |
+| hp_customer_id | uuid not null | customer_profiles.user_id | HP側主キー（Auth=auth.users.id） |
+| display_name | text | customer_profiles.name（**姓のみ**整形） | 表示名「真鍋」。敬称はアプリ側付与 |
+| sex | text null | customer_profiles.gender | PII最小化合意済 |
+| birth_year | int null | customer_profiles.birth_date の**年のみ** | 生年月日フルは載せない |
+| status | text | customer_profiles に**列追加**(会員状態) | active / withdrawn 等 |
 | synced_at | timestamptz | バッチ | 最終生成時刻 |
-| source_updated_at | timestamptz null | 元レコード更新時刻 | 差分・整合確認用 |
+| source_updated_at | timestamptz null | customer_profiles.updated_at | 差分・整合確認用 |
 
-### 4-2. `app_bridge.subscription` — プラン・契約要約
+> `google_sub` は**載せない**（HP 未保持）。本人解決は email 突合（§3）。
+
+### 4-2. `app_bridge.subscription` — プラン・契約要約（由来: `subscriptions` ＋ `test_products`）
 
 | カラム | 型 | 由来 | 備考 |
 |---|---|---|---|
 | diagnostic_user_id | uuid | | キー |
-| plan_code | text | プラン識別子 | basic / cancer / ai 等 |
-| plan_name | text | subscription_plans.name | 「年3回パック・AI予測付」等 |
-| status | text | subscriptions.status | active/paused/cancelled |
-| started_at | date | | |
-| next_test_at | date null | | 「次回検査予定」表示 |
-| last_test_at | date null | | |
-| cycle_year | int null | current_cycle_year | 参考 |
-| cycle_seq | int null | current_cycle_seq | 参考 |
+| plan_code | text | test_products の識別子 | |
+| plan_name | text | **test_products.name** | 商品名 |
+| status | text | subscriptions.status | active/paused/cancelled/payment_failed/expired |
+| started_at | date | subscriptions | |
+| next_test_at | date null | subscriptions | 「次回検査予定」表示 |
+| last_test_at | date null | subscriptions | |
 | synced_at | timestamptz | | |
 
-### 4-3. `app_bridge.kit_shipment` — 検査キット発送・進捗（1出荷1行）
+> `cycle_year/seq` は HP に相当列が無いため**削除**（必要になれば別途定義）。
 
-UI（KitProgressCard）が使う項目に限定。
+### 4-3. `app_bridge.kit_shipment` — 検査キット発送・進捗（由来: `orders`）
 
-| カラム | 型 | 由来(kit_shipments) | 備考 |
+UI（KitProgressCard）の**発送ステージ**に限定。検査完了ステージは #2(`test_artifacts`) から取得。
+
+| カラム | 型 | 由来(orders) | 備考 |
 |---|---|---|---|
-| id | uuid PK | kit_shipments.id | HP側ID流用案 |
-| diagnostic_user_id | uuid | customer_id を解決 | キー |
-| order_id | text | | |
-| test_type | text | | health_checkup/blood/genetics/cancer_urine/ai_prediction |
-| lab_name | text null | lab_companies.name | 名称解決して載せる |
-| shipped_at | timestamptz null | | |
-| tracking_no | text null | | |
-| carrier | text null | | |
-| carrier_tracking_url | text null | | |
-| expected_arrival_date | date null | | |
-| user_received_at | timestamptz null | | ※自己申告（後述） |
-| user_returned_at | timestamptz null | | ※自己申告（後述） |
-| lab_received_at | timestamptz null | | |
-| lab_completed_at | timestamptz null | | |
+| id | uuid PK | orders.id | HP側ID流用（uuid PK・不変） |
+| diagnostic_user_id | uuid | customer から解決 | キー |
+| order_id | text | orders.id / 注文番号 | |
+| test_type | text | 注文商品(test_products)から導出 | |
+| shipping_status | text | orders.shipping_status | |
+| instruction_sent_at | timestamptz null | orders.instruction_sent_at | 検査案内送付 |
+| shipped_at | timestamptz null | orders.shipped_at | |
+| tracking_no | text null | orders.tracking_number | |
+| delivered_at | timestamptz null | orders.delivered_at | 配達完了（配送業者） |
+| user_received_at | timestamptz null | 自己申告（案A Edge Function 経由→#1記録） | |
+| user_returned_at | timestamptz null | 自己申告（同上） | |
+| carrier / carrier_tracking_url / expected_arrival_date | text/date null | **NULL（HP未保持）** | UI で非表示フォールバック |
 | synced_at | timestamptz | | |
 
-### 4-4. `app_bridge.lab_delivery` — 検査結果の到着・取込状況（1検査1行）
+> `lab_received_at` / `lab_completed_at` は**削除**（検査側＝#2 `test_artifacts.collected_at/diagnosed_at` 等から取得）。
 
-| カラム | 型 | 由来(lab_tests) | 備考 |
-|---|---|---|---|
-| id | uuid PK | lab_tests.id | |
-| diagnostic_user_id | uuid | | キー |
-| shipment_id | uuid null | shipment_id | kit_shipment と対応 |
-| test_type | text | | |
-| lab_name | text null | lab_companies.name | |
-| external_test_id | text null | | |
-| sampled_at | date null | | |
-| reported_at | date null | | 「結果到着」日 |
-| status | text | lab_tests.status | pending/in_lab/reported/imported/failed |
-| synced_at | timestamptz | | |
+### 4-4.（廃止）~~`app_bridge.lab_delivery`~~
+
+検査結果の到着・取込状況は **診断系 #2 が正本**（`test_artifacts` / `diagnosis_results`）。HP は検査結果を保持しないため、**ブリッジには置かない**。検査ラボ → #2 取込は別フィーチャとして扱う。
 
 ---
 
-## 5. 自己申告（受取/返送）の書込み — 要相談
+## 5. 自己申告（受取/返送）の書込み — 案A 確定
 
-現状 Web には「📦受け取りました／💉返送しました」の自己申告があり `user_received_at/returned_at` を更新している。ブリッジは #1 内の**読み取り中心**ミラーなので、書込み正本をどうするか決めたい。
-
-- **案A（推奨）**: HP/EC が受取/返送用の API / Edge Function を #1 に用意し、Web はそこへ POST。正本は #1 の生テーブル、ブリッジへは内部バッチで反映。
-- 案B: `app_bridge` に Web からの insert 専用テーブル（user_event）を設け、HP がそれを取り込む。
+現状 Web には「📦受け取りました／💉返送しました」の自己申告があり `user_received_at/returned_at` を更新している。
+**案A 確定**: HP/EC が受取/返送用の Edge Function を #1 に用意（実績あり）、Web はそこへ POST。正本は #1、ブリッジへは内部反映。I/F（入力/出力）を別途すり合わせ。
 
 ---
 
-## 6. 同期（HP/EC 内部バッチ）の論点 — HP/EC へ確認したい
+## 6. 同期（HP/EC 内部バッチ）— 回答反映済み
 
-1. **生成方式**: 全件再生成 / 差分（`source_updated_at`）。差分なら元テーブルに更新時刻が必要。
-2. **頻度**: 顧客・プランは日次、キット発送・到着は数十分間隔、等。要件は？
-3. **退会・取消**: status による論理表現（物理削除しない案）でよいか。
-4. **キー安定性**: `customer_id` / `kit_shipments.id` / `lab_tests.id` は不変か（PK 流用可否）。
-5. **`diagnostic_user_id` 発番の責任分界**: HP/EC が発番・保持し、#2 `app_users` へも連携する想定でよいか。
-6. **PII 最小化合意**: §4-1 の display_name / sex / birth_year の可否。NG なら代替（年齢区分のみ等）。
-7. **Web 参照ロール**: `app_bridge` のみ SELECT 可能な restricted ロール／キーの発行と、RLS（本番は本人行のみ）の設計。
-8. **本人解決の正**: ログイン時の `google_sub`→`diagnostic_user_id` 解決を #1 ブリッジ / #2 app_users のどちらで行うか。
+1. **生成方式**: 差分（`updated_at` ベース）＋初回/整合補正に全件再生成。`customer_profiles`/`subscriptions`/`orders` は `updated_at` 保持。
+2. **頻度**: 顧客・プラン=**日次**。発送=倉庫CSV取込契機のため**取込イベント駆動 or 15〜30分間隔**。
+3. **退会・取消**: `subscriptions.status` で表現。`customer_account.status` 用に `customer_profiles` へ会員状態列を追加（HP）。
+4. **キー安定性**: `orders.id` / `subscriptions.id` は uuid PK で不変＝流用可。
+5. **`diagnostic_user_id` 発番**: HP/EC が `customer_profiles` に列追加・発番 → #2 `app_users` 連携（合意）。
+6. **PII 最小化**: display_name(姓)/sex(gender)/birth_year(年) 供給可（合意）。
+7. **Web 参照ロール**: `app_bridge` のみ SELECT 可の restricted ロール発行（HP）。本番 RLS の本人行絞り込みは email 突合(§3)前提。
+8. **本人解決**: email 突合に確定（§3）。`resolve-customer` Edge Function 推奨。
 
 ---
 
