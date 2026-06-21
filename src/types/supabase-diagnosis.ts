@@ -172,6 +172,14 @@ export type Database = {
           link_url: string | null;
           published_at: string;
           created_at: string;
+          // news 同期 / 掲載面トグル (20260621000010, 20260621000020)
+          source_news_id: string | null;
+          image_url: string | null;
+          link_text: string | null;
+          visible_on_hp: boolean;
+          visible_on_web: boolean;
+          published_until: string | null;
+          updated_at: string;
         };
         Insert: {
           id?: string;
@@ -181,6 +189,13 @@ export type Database = {
           link_url?: string | null;
           published_at?: string;
           created_at?: string;
+          source_news_id?: string | null;
+          image_url?: string | null;
+          link_text?: string | null;
+          visible_on_hp?: boolean;
+          visible_on_web?: boolean;
+          published_until?: string | null;
+          updated_at?: string;
         };
         Update: Partial<Database['diagnosis']['Tables']['announcements']['Insert']>;
         Relationships: [];
