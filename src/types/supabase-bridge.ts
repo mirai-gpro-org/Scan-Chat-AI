@@ -2,9 +2,10 @@
  * HP/EC #1 `app_bridge` スキーマの型 (手書き)。
  *
  * Web は #1 の app_bridge のみを read-only で参照する (生 PII テーブルは参照しない)。
- * 列定義は統合仕様書「web連携_統合仕様書.md」§5 / §7-1 に準拠。
+ * 列定義は統合仕様書「web連携_統合仕様書.md」§5 に準拠。
  *   - customer_account / subscription / kit_shipment (3 テーブル)
- *   - announcement_source (news の read-only 公開ビュー)
+ * ※ news の取得は app_bridge ビューではなく HP の news-feed Edge Function 経由
+ *   (案A v0.9)。`supabase/functions/sync-announcements` を参照。
  */
 
 export type BridgeDatabase = {
@@ -60,22 +61,7 @@ export type BridgeDatabase = {
         Relationships: [];
       };
     };
-    Views: {
-      announcement_source: {
-        Row: {
-          source_news_id: string;
-          title: string;
-          body: string;
-          image_url: string | null;
-          link_url: string | null;
-          link_text: string | null;
-          published_at: string;
-          published_until: string | null;
-          source_updated_at: string | null;
-        };
-        Relationships: [];
-      };
-    };
+    Views: Record<string, never>;
     Functions: Record<string, never>;
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
@@ -85,4 +71,3 @@ export type BridgeDatabase = {
 export type BridgeCustomerAccount = BridgeDatabase['app_bridge']['Tables']['customer_account']['Row'];
 export type BridgeSubscription    = BridgeDatabase['app_bridge']['Tables']['subscription']['Row'];
 export type BridgeKitShipment     = BridgeDatabase['app_bridge']['Tables']['kit_shipment']['Row'];
-export type BridgeAnnouncementSource = BridgeDatabase['app_bridge']['Views']['announcement_source']['Row'];

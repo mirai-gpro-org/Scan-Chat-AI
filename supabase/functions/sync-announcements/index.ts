@@ -1,52 +1,59 @@
 // ============================================================
 // sync-announcements — HP/EC `news` → diagnosis.announcements 片方向 pull 同期
 //
-// 方式 (HP/EC「web連携_IF仕様とマッピング」v0.4 合意): pull 型。
-//   #2 (本 Edge Function) が #1 `app_bridge.announcement_source` ビュー
-//   (news を read-only 公開) を取得し、diagnosis.announcements へ upsert する。
+// 方式 (案A 確定 / v0.9): pull 型。HP の `news-feed` Edge Function を呼び、
+//   announcements 形に整形済みの news を取得して #2 diagnosis.announcements へ upsert。
 //   突合キー: source_news_id (= news.id)。冪等。
+//
+// v0.5→v0.9 の変更: 取得元が app_bridge.announcement_source ビューから
+//   HP の news-feed Edge Function (HTTP) に変更。差分 pull (since) に対応。
 //
 // cadence: 日次〜数十分 (pg_cron / スケジューラから起動)。
 //
 // 必要な env:
-//   SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY   … #2 (本プロジェクト、自動付与)
-//   HP_BRIDGE_SUPABASE_URL / HP_BRIDGE_READONLY_KEY … #1 app_bridge 読み取り専用ロール
-//
-// ※ ドラフト: #1 接続情報・ビュー列が確定し次第、列マッピングを最終化する。
+//   HP_EDGE_BASE_URL          … HP #1 Edge Function ベース URL
+//   RESOLVE_SHARED_SECRET     … x-resolve-secret ヘッダ (HP 生成・Vault 共有)
+//   SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY … #2 (本プロジェクト、自動付与)
+//   SYNC_SINCE (任意)         … 差分 pull の updated_at 下限 (ISO8601)。未指定なら全件。
 // ============================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+interface NewsFeedItem {
+  source_news_id: string;
+  title: string;
+  body: string;
+  image_url: string | null;
+  link_url: string | null;
+  link_text: string | null;
+  published_at: string;
+  published_until: string | null;
+  updated_at: string | null;
+  // HP に visible_on_web を載せてもらう場合に使用 (案A v0.9 で依頼)。
+  // 未提供時は true 扱い (news → HP+Web 表示)。論理削除は false で届く想定。
+  visible_on_web?: boolean;
+}
+
 Deno.serve(async (_req) => {
   try {
-    // --- #1 (HP/EC) app_bridge 読み取り専用クライアント ---
-    const bridge = createClient(
-      Deno.env.get("HP_BRIDGE_SUPABASE_URL")!,
-      Deno.env.get("HP_BRIDGE_READONLY_KEY")!,
-      { db: { schema: "app_bridge" } },
-    );
+    const edgeBase = Deno.env.get("HP_EDGE_BASE_URL");
+    const secret = Deno.env.get("RESOLVE_SHARED_SECRET");
+    if (!edgeBase) throw new Error("HP_EDGE_BASE_URL is not configured");
 
-    // --- #2 (本プロジェクト) diagnosis 書込みクライアント ---
-    const diagnosis = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      { db: { schema: "diagnosis" } },
-    );
-
-    // 1) HP `news` を app_bridge ビュー経由で取得
-    //    ビュー列 (統合仕様書 §7-1 確定): source_news_id(=news.id) / title /
-    //    body(=news.content) / image_url / link_url / link_text /
-    //    published_at / published_until(NULL固定) / source_updated_at(=news.updated_at)
-    const { data: source, error: srcErr } = await bridge
-      .from("announcement_source")
-      .select(
-        "source_news_id, title, body, image_url, link_url, link_text, published_at, published_until",
-      );
-    if (srcErr) throw srcErr;
+    // 1) HP news-feed を取得 (差分 pull 対応: since)
+    const since = Deno.env.get("SYNC_SINCE");
+    const url = new URL(`${edgeBase}/functions/v1/news-feed`);
+    if (since) url.searchParams.set("since", since);
+    const feedRes = await fetch(url.toString(), {
+      method: "GET",
+      headers: { ...(secret ? { "x-resolve-secret": secret } : {}) },
+    });
+    if (!feedRes.ok) throw new Error(`news-feed HTTP ${feedRes.status}`);
+    const feed = (await feedRes.json()) as { success: boolean; data: NewsFeedItem[]; error?: string };
+    if (!feed.success) throw new Error(feed.error ?? "news-feed failed");
 
     // 2) announcements 形へマッピング (category='news' 固定)
-    //    フラグ (引継ぎ文書「お知らせ機能_Web引継ぎ.md」の表示マッピング):
-    //    news は HP+Web 双方表示 → visible_on_hp=true / visible_on_web=true。
-    const rows = (source ?? []).map((n) => ({
+    //    フラグ: news → HP+Web。visible_on_web は feed があれば尊重 (論理削除/掲載面トグル)。
+    const rows = (feed.data ?? []).map((n) => ({
       source_news_id: n.source_news_id,
       category: "news" as const,
       title: n.title,
@@ -55,12 +62,18 @@ Deno.serve(async (_req) => {
       link_url: n.link_url,
       link_text: n.link_text,
       published_at: n.published_at,
-      published_until: n.published_until ?? null, // news に終了日無し = 無期限
+      published_until: n.published_until ?? null,
       visible_on_hp: true,
-      visible_on_web: true,
+      visible_on_web: n.visible_on_web ?? true,
     }));
 
-    // 3) source_news_id を突合キーに冪等 upsert
+    // 3) #2 diagnosis.announcements へ source_news_id を突合キーに冪等 upsert
+    const diagnosis = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      { db: { schema: "diagnosis" } },
+    );
+
     let upserted = 0;
     if (rows.length > 0) {
       const { error: upErr, count } = await diagnosis
