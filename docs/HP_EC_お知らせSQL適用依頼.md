@@ -42,6 +42,33 @@ supabase db push    # 未適用マイグレのみ反映（破壊なし）
 
 > いずれの方法でも **DDL のみ**で、既存データは破壊しません。デモ用のサンプルお知らせ（`seed_notices.sql`）は**含めていません**（§3 参照）。
 
+### ⚠️ 前提: 基盤スキーマ（`diagnosis.app_users` など）が先に必要
+
+お知らせ系テーブルは `diagnosis.app_users` に **FK 依存**します。適用先 DB に基盤スキーマが無いと次のエラーになります：
+
+```
+ERROR: 42P01: relation "diagnosis.app_users" does not exist
+```
+
+この場合、**お知らせ系より前に基盤マイグレが未適用**です。次のどちらかをご確認ください：
+
+- **ケースA: 実行先 DB を間違えている**
+  アプリが現に `app_users` を読めている（ダッシュボードが表示できる）なら、その DB＝アプリの `PUBLIC_SUPABASE_URL` が指す**正しい #2 プロジェクト**で実行してください（別プロジェクト／空プロジェクトに当てていないか確認）。
+
+- **ケースB: その #2 が新規・空で、基盤マイグレ自体が未適用**
+  **全マイグレを順に適用**してください（これで base＋お知らせが一括で入り、`apply_notices.sql` は不要になります）：
+  ```bash
+  supabase db push      # 推奨: 未適用マイグレを順に全反映
+  ```
+  SQL Editor で手動実行する場合の順序：
+  1. `supabase/migrations/20260601000010_schemas_and_tables.sql`（schemas＋全テーブル）
+  2. `supabase/migrations/20260601000020_rls_policies.sql`
+  3. `supabase/migrations/20260620000010_notices.sql`
+  4. `supabase/migrations/20260621000010_announcements_news_sync.sql`
+  5. `supabase/migrations/20260621000020_announcements_visibility_align.sql`
+
+> `apply_notices.sql` は冒頭で前提チェックを行い、`app_users` が無い場合は上記を案内して安全に停止します。
+
 ## 2. 適用後の確認
 
 ```sql

@@ -14,6 +14,15 @@
 -- 注意: デモ用シードは含めない (DDL のみ)。テーブル作成だけでエラーは解消する。
 -- ============================================================
 
+-- 0) 前提チェック — base スキーマ未適用なら分かりやすく停止する
+do $$
+begin
+  if to_regclass('diagnosis.app_users') is null then
+    raise exception
+      '前提テーブル diagnosis.app_users がありません。先に基盤マイグレ 20260601000010_schemas_and_tables.sql を適用してください (supabase db push 推奨)。お知らせ系テーブルは app_users に FK 依存します。';
+  end if;
+end $$;
+
 -- 1) user_notices — ユーザー個別の重要なお知らせ (既読/未読)
 create table if not exists diagnosis.user_notices (
   id                 uuid primary key default gen_random_uuid(),
