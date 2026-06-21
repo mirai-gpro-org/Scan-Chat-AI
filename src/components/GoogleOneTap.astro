@@ -35,17 +35,6 @@ const enabled = !!clientId;
       const supabaseAnon = import.meta.env.PUBLIC_SUPABASE_ANON_KEY as string;
       const clientId     = import.meta.env.PUBLIC_GOOGLE_CLIENT_ID as string;
 
-      /** デモ専用: 特定メールアドレスをシード済 user に強制マッピング */
-      const DEMO_EMAIL_TO_UID: Record<string, string> = {
-        'unfix.hamada@gmail.com':   '14410d5a-d515-4fe9-9a8e-bbb1040021ac',
-        'miyazawa@wellfort.co.jp':  '1c1ded05-6cce-4880-a5d8-3f964a43ba54',
-        'shindo@wellfort.co.jp':    '46b3651a-f14b-46bd-a24f-fe01256a1709',
-        'ohkawa@wellfort.co.jp':    '7cbe6588-5a99-4068-9c40-5fa2427c7122',
-        'okabe@wellfort.co.jp':     'f9d47b45-45ad-4ffc-bad3-1bf4de130a1c',
-        'honda@wellfort.co.jp':     'c0000020-0000-0000-0000-000000000000',
-        'hamada@eentry.co.jp':      'd0000001-0000-0000-0000-000000000000',
-      };
-
       type GsiCredentialResponse = { credential: string };
       type GsiId = {
         initialize: (cfg: Record<string, unknown>) => void;
@@ -73,57 +62,39 @@ const enabled = !!clientId;
             alert(`認証エラー: ${error.message}`);
             return;
           }
-          const user = data.user;
-          const email = user?.email?.toLowerCase() ?? '';
-          console.log('[OneTap] signInWithIdToken OK, email:', email, 'uid:', user?.id);
-          if (!email) {
-            alert('Google から email を取得できませんでした');
+          const accessToken = data.session?.access_token;
+          console.log('[OneTap] signInWithIdToken OK, uid:', data.user?.id, 'hasToken:', !!accessToken);
+          if (!accessToken) {
+            alert('サインインセッションの取得に失敗しました');
             return;
           }
 
           const url = new URL(window.location.href);
           if (url.pathname === '/' || url.pathname === '') url.pathname = '/dashboard';
 
-          const fixed = DEMO_EMAIL_TO_UID[email];
-          if (fixed) {
-            url.searchParams.set('u', fixed);
-            console.log('[OneTap] demo email match → redirect:', url.toString());
-            window.location.replace(url.toString());
+          // サーバー側で本人解決 (本番: resolve-customer / dev: customer モック email 解決)。
+          // email/sub はサーバーがアクセストークンから検証するため、ここでは送らない。
+          console.log('[OneTap] resolving customer server-side…');
+          const res = await fetch('/api/auth/resolve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accessToken }),
+          });
+          const payload = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            console.error('[OneTap] resolve error:', payload);
+            alert(`連携処理エラー: ${payload.error ?? `HTTP ${res.status}`}`);
+            return;
+          }
+          if (!payload.linked || !payload.diagnosticUserId) {
+            console.warn('[OneTap] not linked');
+            alert('お客様情報が見つかりませんでした。検査のお申し込み状況をご確認のうえ、サポートまでご連絡ください。');
             return;
           }
 
-          console.log('[OneTap] non-demo email, upserting app_users…');
-          const sub = (user.user_metadata as Record<string, string> | undefined)?.sub ?? '';
-          const displayName = (user.user_metadata as Record<string, string> | undefined)?.full_name ?? email;
-          const csb = sb.schema('diagnosis');
-          const { error: upsertErr } = await csb.from('app_users').upsert(
-            {
-              auth_user_id: user.id,
-              google_sub: sub,
-              display_name_cache: displayName,
-              eligibility_checked_at: new Date().toISOString(),
-            } as never,
-            { onConflict: 'auth_user_id' },
-          );
-          if (upsertErr) {
-            console.error('[OneTap] app_users upsert error:', upsertErr);
-            alert(`プロフィール登録失敗: ${upsertErr.message}`);
-            return;
-          }
-
-          const { data: appUser } = await csb
-            .from('app_users')
-            .select('diagnostic_user_id')
-            .eq('auth_user_id', user.id)
-            .maybeSingle();
-          if (appUser?.diagnostic_user_id) {
-            url.searchParams.set('u', appUser.diagnostic_user_id);
-            console.log('[OneTap] redirect:', url.toString());
-            window.location.replace(url.toString());
-          } else {
-            console.warn('[OneTap] no diagnostic_user_id for', user.id);
-            alert('お客様情報が見つかりません。サポートまでご連絡ください。');
-          }
+          url.searchParams.set('u', payload.diagnosticUserId);
+          console.log('[OneTap] linked → redirect:', url.toString());
+          window.location.replace(url.toString());
         } catch (err) {
           console.error('[OneTap] callback exception:', err);
           alert(`サインイン処理エラー: ${err instanceof Error ? err.message : String(err)}`);
