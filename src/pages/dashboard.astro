@@ -11,6 +11,7 @@ import MetricTrendChart from '../components/dashboard/MetricTrendChart.astro';
 import TestHistoryList from '../components/dashboard/TestHistoryList.astro';
 import { loadDashboard, formatGreeting, getMetricTrend } from '../lib/dashboard-queries';
 import { countUnreadImportant } from '../lib/notice-queries';
+import { isBridgeConfigured } from '../lib/supabase';
 import {
   extractMetricCards,
   extractUrgentAlert,
@@ -23,6 +24,16 @@ export const prerender = false;
 
 const url = new URL(Astro.request.url);
 const u = url.searchParams.get('u');
+
+// === [一時デバッグ] HP↔#2 ブリッジ接続状態の可視化 ===
+// `?debug=bridge` を付けて開くとサーバー側 env の有無をUIに表示する。
+// 本番反映確認後に削除予定。
+const debugBridge = url.searchParams.get('debug') === 'bridge';
+const bridgeConfigured = isBridgeConfigured();
+const bridgeUrlSeen = !!(import.meta.env.HP_BRIDGE_SUPABASE_URL || (typeof process !== 'undefined' ? process.env?.HP_BRIDGE_SUPABASE_URL : ''));
+const bridgeKeySeen = !!(import.meta.env.HP_BRIDGE_READONLY_KEY  || (typeof process !== 'undefined' ? process.env?.HP_BRIDGE_READONLY_KEY  : ''));
+// サーバーログにも出す（Vercel の Logs で確認可能）
+console.log('[bridge-debug]', { bridgeConfigured, bridgeUrlSeen, bridgeKeySeen, build: 'v3-2026-06-22' });
 
 // 認証連携が有効 (Google One Tap が設定済) かつ ?u= が無い場合は、
 // 他人のデフォルトデータを露出させないように sign-in gate を出す。
@@ -57,6 +68,11 @@ const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Wellfort';
 ---
 
 <BaseLayout title={data ? `${greeting} | Wellfort` : 'マイページ | Wellfort'}>
+  {debugBridge && (
+    <div style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#111;color:#fff;font-size:12px;padding:6px 10px;font-family:monospace;">
+      bridge[configured={String(bridgeConfigured)} url={String(bridgeUrlSeen)} key={String(bridgeKeySeen)}] build=v3-2026-06-22
+    </div>
+  )}
   {needsSignIn && (
     <main class="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
       <img src="/wellfort_logo.png" alt="Wellfort" width="48" height="54" class="h-12 w-auto opacity-80" />
