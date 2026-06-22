@@ -8,6 +8,7 @@
 
 import { getServerSupabase, isBridgeConfigured } from './supabase';
 import { loadBridgeBundle, type CustomerBundle } from './bridge-queries';
+import { buildDemoDashboard, demoFallbackEnabled, demoMetricTrend } from './demo-data';
 import type {
   AppUser,
   CustomerProfile,
@@ -98,6 +99,12 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
   const latestResult = results[0] ?? null;
   const elithSections = (latestResult?.report as ElithSection[] | null) ?? [];
 
+  // テストフェーズ: 正規の検査履歴が無い顧客には共通のダミーを表示する。
+  // 実データ (artifacts / results) が入れば自動で実データに切替。
+  if (demoFallbackEnabled() && artifacts.length === 0 && results.length === 0) {
+    return buildDemoDashboard(uid, appUser?.display_name_cache ?? null);
+  }
+
   // 顧客/プラン/キットは app_bridge (本番) もしくは customer モック (dev) から取得
   const bundle = isBridgeConfigured()
     ? await loadBridgeBundle(uid)
@@ -186,7 +193,9 @@ export async function getMetricTrend(
     .order('received_at', { ascending: true })
     .limit(limit);
 
-  if (error || !data) return [];
+  if (error || !data || data.length === 0) {
+    return demoFallbackEnabled() ? demoMetricTrend() : [];
+  }
 
   const uric: MetricTrendPoint[] = [];
   const bpSystolic: MetricTrendPoint[] = [];
@@ -210,6 +219,7 @@ export async function getMetricTrend(
   if (uric.length > 0)       out.push({ label: '尿酸',       unit: 'mg/dL', referenceUpper: 7.0,  points: uric });
   if (bpSystolic.length > 0) out.push({ label: '最高血圧',   unit: 'mmHg',  referenceUpper: 129,  points: bpSystolic });
   if (fpg.length > 0)        out.push({ label: '空腹時血糖', unit: 'mg/dL', referenceUpper: 99,   points: fpg });
+  if (out.length === 0 && demoFallbackEnabled()) return demoMetricTrend();
   return out;
 }
 

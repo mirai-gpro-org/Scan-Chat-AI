@@ -11,6 +11,7 @@
 
 import { getServerSupabase } from './supabase';
 import type { UserNotice, Announcement } from '../types/supabase';
+import { buildDemoNotices, demoFallbackEnabled, demoUnreadImportant } from './demo-data';
 
 /** 一般のお知らせ / ニュースで初期表示する件数。 */
 export const ANNOUNCEMENT_PREVIEW_LIMIT = 3;
@@ -92,6 +93,19 @@ export async function loadNotices(
     newsQuery,
   ]);
 
+  const userName = appUser?.display_name_cache ?? 'お客様';
+
+  // テストフェーズ: お知らせテーブル未適用 (エラー) もしくは未投入 (空) の場合は
+  // 共通のダミーお知らせを表示する。実データが入れば自動で実データに切替。
+  const anyErr = importantErr || unreadErr || generalErr || newsErr;
+  const allEmpty =
+    (importantRaw?.length ?? 0) === 0 &&
+    (generalRaw?.length ?? 0) === 0 &&
+    (newsRaw?.length ?? 0) === 0;
+  if (demoFallbackEnabled() && (anyErr || allEmpty)) {
+    return buildDemoNotices(diagnosticUserId, userName);
+  }
+
   if (userErr)      return { error: `app_users: ${userErr.message}` };
   if (importantErr) return { error: `user_notices: ${importantErr.message}` };
   if (unreadErr)    return { error: `user_notices(count): ${unreadErr.message}` };
@@ -100,7 +114,7 @@ export async function loadNotices(
 
   return {
     diagnosticUserId,
-    userName: appUser?.display_name_cache ?? 'お客様',
+    userName,
     important: importantRaw ?? [],
     importantUnreadCount: unreadCount ?? 0,
     general: generalRaw ?? [],
@@ -121,6 +135,7 @@ export async function countUnreadImportant(diagnosticUserId: string): Promise<nu
     .select('id', { count: 'exact', head: true })
     .eq('diagnostic_user_id', diagnosticUserId)
     .is('read_at', null);
-  if (error) return 0;
+  if (error) return demoFallbackEnabled() ? demoUnreadImportant() : 0;
+  if ((count ?? 0) === 0 && demoFallbackEnabled()) return demoUnreadImportant();
   return count ?? 0;
 }
