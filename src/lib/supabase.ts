@@ -44,9 +44,18 @@ export function getServerSupabase(): SupabaseClient<Database> | null {
  * 認証は HP 発行の restricted ロール (`app_bridge_readonly`) JWT。
  * env 未設定なら null を返し、呼び出し側はモック (customer スキーマ) へフォールバックする。
  */
+// SSR ランタイムで非PUBLIC変数を確実に読むため、import.meta.env を優先しつつ
+// 取れない場合は process.env（Node ランタイム = Vercel SSR）にフォールバックする。
+function envOf(name: 'HP_BRIDGE_SUPABASE_URL' | 'HP_BRIDGE_READONLY_KEY'): string {
+  const v = (import.meta.env as Record<string, string | undefined>)[name];
+  if (v) return v;
+  if (typeof process !== 'undefined' && process.env) return (process.env as Record<string, string | undefined>)[name] ?? '';
+  return '';
+}
+
 export function getBridgeSupabase(): SupabaseClient<BridgeDatabase> | null {
-  const url = import.meta.env.HP_BRIDGE_SUPABASE_URL;
-  const key = import.meta.env.HP_BRIDGE_READONLY_KEY;
+  const url = envOf('HP_BRIDGE_SUPABASE_URL');
+  const key = envOf('HP_BRIDGE_READONLY_KEY');
   if (!url || !key) return null;
   return createClient<BridgeDatabase>(url, key, {
     db: { schema: 'app_bridge' },
@@ -56,5 +65,5 @@ export function getBridgeSupabase(): SupabaseClient<BridgeDatabase> | null {
 
 /** app_bridge への接続が構成済みか (dev フォールバック判定用)。 */
 export function isBridgeConfigured(): boolean {
-  return !!import.meta.env.HP_BRIDGE_SUPABASE_URL && !!import.meta.env.HP_BRIDGE_READONLY_KEY;
+  return !!envOf('HP_BRIDGE_SUPABASE_URL') && !!envOf('HP_BRIDGE_READONLY_KEY');
 }
