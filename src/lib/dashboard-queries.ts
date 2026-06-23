@@ -37,6 +37,10 @@ export interface MetricTrendSeries {
 
 export interface DashboardData {
   diagnosticUserId: string;
+  /** 検査結果(artifacts/results/trend)の実データ取得元 uid。デモ時は DEFAULT_USER。 */
+  resultUid: string;
+  /** テストフェーズのデモ(真鍋)フォールバックで結果を表示しているか。 */
+  usingDemoData: boolean;
   appUser: AppUser | null;
   customer: CustomerProfile | null;
   artifacts: TestArtifact[];
@@ -93,8 +97,35 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
   if (artErr)     return { error: `test_artifacts: ${artErr.message}` };
   if (resErr)     return { error: `diagnosis_results: ${resErr.message}` };
 
-  const artifacts = artifactsRaw ?? [];
-  const results = resultsRaw ?? [];
+  let artifacts = artifactsRaw ?? [];
+  let results = resultsRaw ?? [];
+  let resultUid = uid;
+  let usingDemoData = false;
+
+  // テストフェーズ用フォールバック:
+  //   当該ユーザーに検査データ(diagnosis_results)が無ければ、デモ(真鍋/DEFAULT_USER)の
+  //   結果を表示してダッシュボードを空にしない。本番で無効化したい場合は env
+  //   DEMO_FALLBACK=off を設定する。
+  const demoFallbackRaw = (import.meta.env as Record<string, string | undefined>).DEMO_FALLBACK
+    ?? (typeof process !== 'undefined' ? process.env?.DEMO_FALLBACK : undefined);
+  const demoFallbackEnabled = demoFallbackRaw !== 'off';
+
+  if (demoFallbackEnabled && results.length === 0 && uid !== DEFAULT_USER) {
+    const [
+      { data: demoArtifacts },
+      { data: demoResults },
+    ] = await Promise.all([
+      dsb.from('test_artifacts').select('*').eq('diagnostic_user_id', DEFAULT_USER).order('test_date', { ascending: false }),
+      dsb.from('diagnosis_results').select('*').eq('diagnostic_user_id', DEFAULT_USER).order('received_at', { ascending: false }),
+    ]);
+    if (demoResults && demoResults.length > 0) {
+      artifacts = demoArtifacts ?? [];
+      results = demoResults;
+      resultUid = DEFAULT_USER;
+      usingDemoData = true;
+    }
+  }
+
   const latestResult = results[0] ?? null;
   const elithSections = (latestResult?.report as ElithSection[] | null) ?? [];
 
@@ -106,6 +137,8 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
 
   return {
     diagnosticUserId: uid,
+    resultUid,
+    usingDemoData,
     appUser: appUser ?? null,
     customer: bundle.customer,
     artifacts,
