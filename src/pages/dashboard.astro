@@ -45,7 +45,8 @@ const result = needsSignIn ? null : await loadDashboard(u);
 const hasError = result ? 'error' in result : false;
 const data = !result || hasError ? null : (result as Exclude<typeof result, { error: string }>);
 
-const metricTrend = data ? await getMetricTrend(data.diagnosticUserId) : [];
+// 検査結果の取得元 uid（デモフォールバック時は真鍋/DEFAULT_USER）でトレンドも揃える
+const metricTrend = data ? await getMetricTrend(data.resultUid) : [];
 
 // ヘッダーの「お知らせ」バッジ用 — 未読の重要なお知らせ件数
 const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;
@@ -91,6 +92,11 @@ const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Wellfort';
 
   {!needsSignIn && !hasError && (
     <>
+      {data?.usingDemoData && (
+        <div class="bg-amber-50 text-amber-800 text-xs px-4 py-2 text-center border-b border-amber-200">
+          検査データがまだ無いため、サンプル（デモ）の検査結果を表示しています。
+        </div>
+      )}
       <header class="hero-gradient px-5 pt-6 pb-4">
         <div class="flex items-center justify-between">
           <span class="w-9"></span>
