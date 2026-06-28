@@ -239,7 +239,164 @@ AI問診の結果は **Elith の AI診断インプット**だけでなく、**a)
 
 ---
 
-## 6. 全体データフロー
+## 6. データモデル拡張 (提案評価 + 推奨 ER/DDL)
+
+検査・問診・プランを DB で管理する拡張案を精査し、推奨設計を示す。
+評価の土台は既存スキーマ (`Scan-Chat-AI/supabase/migrations/20260601000010_schemas_and_tables.sql`)。
+
+### 6.0 既存スキーマで「もうあるもの」
+
+| 既存 | 内容 | 含意 |
+|---|---|---|
+| `diagnosis.test_artifacts` + `test_artifact_files` | 4検査+健診の結果メタを**統一テーブル**で保持 (`test_type` enum) | 検査結果の入れ物は実質完成済 |
+| `customer.lab_companies` | 検査会社マスタ (`test_types[]`/`delivery_format`/`notification_method`) | PREVENT/Rieger/LAIF/Genoplan の器あり |
+| `customer.subscription_plans` | `tests_per_cycle text[]` / `genetics_once` / `cycle_months` | 対象有無は配列で部分的にある。**回数・タイミングは持てない** |
+| `customer.kit_shipments` / `lab_tests` | 発送進捗・検査ID紐付け | 検査の回数・タイミングを消費する側 |
+| 問診 | `interview-script.ts` に**ハードコード** (81問、`when` で階層分岐)。回答は JSON 書き出しのみで **DB 未保存** | DB 管理は新規 |
+
+### 6.1 評価サマリ (結論)
+
+| 提案 | 判定 | 推奨形 |
+|---|---|---|
+| 1) 4検査ごとにテーブル新設 | ⚠️ 見直し | 4テーブルは作らない。**検査マスタ `test_definitions` 1本**＋結果は既存 `test_artifacts` (+ 明細 `test_measurements`) |
+| 2) AI問診テーブルでマトリクス管理 | ✅ 採用 | **マスタ＋検査マッピング＋回答** の 3 層。階層は `parent_id`、**版管理必須**、出題エンジンの DB 化は段階移行 |
+| 3) 商品DBに列追加 vs リレーション | ✅ リレーション一択 | **`plan_test_items`** を新設し、現 `tests_per_cycle[]`/`genetics_once` を置換 |
+
+### 6.2 提案1: 検査の DB 化 — 「4テーブル新設」は非推奨
+
+- 結果の入れ物は `test_artifacts` で**既に統一済**。4テーブルに割ると進捗(`kit_shipments`)・結果(`test_artifacts`)・Elith書き出しが**毎回4分岐**し、検査が増えるたびにスキーマ改修になる。
+- 4検査は結果構造が**異種** (血液=数値パネル / 遺伝子=リスク項目 / がんリスク=スコア)。「4テーブル」ではなく「**1明細テーブル＋検査ごとのスキーマ定義 (マスタ)**」で吸収するのが定石 (`elith_s3_data_handoff_spec.md §7.1` の `measurements[]` と整合)。
+- 価値があるのは **検査マスタ `test_definitions` 1本**。現状 `test_type` は各テーブルの CHECK 制約に文字列散在で、検査機関・既定回数・フォーマットを管理する場所がない。
+
+```sql
+-- 非PIIの設定データ → catalog スキーマ新設を推奨
+create table catalog.test_definitions (
+  test_type        text primary key,   -- 'cancer_urine'|'blood'|'ai_prediction'|'genetics'|'health_checkup'
+  display_name     text not null,      -- 'がんリスク検査(尿)'
+  lab_company_id   uuid references customer.lab_companies(id),
+  result_format    text,               -- 'numeric_panel'|'risk_items'|'score' ...
+  elith_format_id  text,               -- 'CancerRiskAssessmentData' 等（S3受け渡しと直結）
+  is_genetics_once boolean default false,
+  is_active        boolean default true
+);
+
+-- 結果値の正規化が要る場合は 4テーブルでなく 1明細で
+create table diagnosis.test_measurements (
+  id uuid primary key default gen_random_uuid(),
+  test_artifact_id uuid references diagnosis.test_artifacts(id) on delete cascade,
+  name text, value text, value_num numeric, unit text,
+  ref_low text, ref_high text, flag text, note text
+);
+create index on diagnosis.test_measurements(test_artifact_id);
+```
+
+### 6.3 提案2: AI問診の DB 化 — 3 層 + 版管理で採用
+
+要件3 が「検査別に必要項目が異なる (マトリクス管理)」「検査別 CSV 出力」を求める以上、
+マッピングをコードに埋めるのは限界。**マスタ／マッピング／回答** の 3 層を推奨。
+
+```sql
+-- (1) 問診項目マスタ（階層は parent_id で表現）
+create table catalog.questionnaire_items (
+  id          uuid primary key default gen_random_uuid(),
+  code        text unique,            -- 'D-FREQ' 等（共通アンケートNo.に対応）
+  parent_id   uuid references catalog.questionnaire_items(id),  -- 飲酒有無 > 種類 > 摂取量
+  section     text,
+  question    text not null,
+  answer_kind text,                   -- text|chip|multi|wheel|slider|matrix
+  options     jsonb,                  -- 選択肢
+  show_when   jsonb,                  -- 表示条件（現 when() の宣言化：親回答=有 等）
+  sort_order  int,
+  version     int not null default 1  -- スナップショット用
+);
+
+-- (2) 問診項目 × 検査/Elith のマッピング（= 「マッピング_最終」gid=100284558 そのもの）
+create table catalog.questionnaire_item_targets (
+  item_id    uuid references catalog.questionnaire_items(id),
+  target     text not null,           -- 'cancer_urine'|'blood'|'ai_prediction'|'genetics'|'elith'
+  required   boolean default true,
+  output_col text,                    -- 検査別CSVの列名/順序
+  primary key (item_id, target)
+);
+
+-- (3) 回答（診断系・PIIなし）
+create table diagnosis.interview_answers (
+  id uuid primary key default gen_random_uuid(),
+  diagnostic_user_id uuid references diagnosis.app_users(diagnostic_user_id),
+  diagnostic_id uuid,
+  item_code text,
+  answer jsonb,
+  items_version int,                  -- どの版に回答したか
+  completed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index on diagnosis.interview_answers(diagnostic_user_id, diagnostic_id);
+```
+
+- **階層** (飲酒有無＞種類＞摂取量) は `parent_id` 自己参照＋`show_when`。現 `interview-script.ts` の `when()` を宣言的条件 (JSON) に置換し、エンジンは DB から読む。
+- **共通／独自項目**は (2) で自然に表現 (複数 target に紐づく=共通、1つだけ=独自)。
+- **版管理必須**: ユーザーは「回答時点の版」に答えるため `version`/`items_version` を保持。
+- **段階移行可**: まずマッピング表 (2) だけ DB 化して CSV/JSON 生成に使い、出題エンジンの DB 駆動化は後追いでよい。
+
+### 6.4 提案3: プラン×検査 — リレーションテーブル一択
+
+「対象有無・年間回数・タイミング」を持つ**属性付き多対多**＝中間テーブル案件。列追加は不可。
+
+| | 列追加 (a〜d対象/回数をプランに) | リレーション (推奨) |
+|---|---|---|
+| 検査の追加 | ALTER TABLE (スキーマ改修) | 行を足すだけ |
+| 回数・タイミング | 列が爆発 | 1行=1検査で素直 |
+| 付録Bマトリクスとの対応 | ずれる | **1:1 対応** |
+
+```sql
+create table customer.plan_test_items (
+  plan_id         uuid references customer.subscription_plans(id),
+  test_type       text references catalog.test_definitions(test_type),
+  included        boolean not null default true,
+  annual_count    int,                  -- 経営幹部=血液3 / スタンダード=血液1 …
+  first_time_only boolean default false, -- 遺伝子=初回1回
+  timing_rule     text,                 -- '3m'|'4m'|'6m'|'first_month'（付録B 発送間隔）
+  primary key (plan_id, test_type)
+);
+```
+
+- 現 `subscription_plans.tests_per_cycle text[]` + `genetics_once` は本表の**下位互換**なので**置換 (廃止)** を推奨。配列では「血液3／がんリスク3／遺伝子初回のみ」の**検査ごとの回数差**を表現できない (＝付録Bを表現できない)。
+- **重要前提**: 「商品DB」が 2 系統ある。
+  - `wellfort-site / public.test_products` (EC 販売商品、`category`/`features jsonb`)
+  - `Scan-Chat-AI / customer.subscription_plans` (診断アプリのプラン定義、kit発送が参照)
+  検査構成を消費するのは `kit_shipments`/`lab_tests` 側のため、**`plan_test_items` は `subscription_plans` に紐付け、EC の `test_products` はそのプランを参照する**のが筋 (二重管理回避)。→ §9 #9。
+
+### 6.5 推奨 ER (拡張部のみ)
+
+```
+catalog.test_definitions ──(test_type)──┐
+        │ lab_company_id                 │
+        ▼                                ▼
+customer.lab_companies        customer.plan_test_items ──(plan_id)──▶ customer.subscription_plans
+                                                                              │
+catalog.questionnaire_items ──(self parent_id 階層)                           ▼
+        │                                                          customer.subscriptions
+        ▼ item_id                                                  customer.kit_shipments / lab_tests
+catalog.questionnaire_item_targets ──(target=test_type|'elith')
+
+diagnosis.app_users ─┬─ diagnosis.test_artifacts ── test_artifact_files
+                     │                       └── test_measurements (新)
+                     ├─ diagnosis.interview_answers (新)
+                     └─ diagnosis.diagnosis_results
+```
+
+### 6.6 横断方針 (地雷回避)
+
+| 論点 | 方針 |
+|---|---|
+| マスタの置き場所 | `test_definitions`/`questionnaire_items`/`questionnaire_item_targets` は**非PII設定**→ **`catalog` スキーマ新設**。回答は健康情報なので `diagnosis` (氏名なし) |
+| Single Source of Truth | 現在の真実は付録Bマトリクス／「マッピング_最終」シート。DB化後は **seed 投入＋以後どちらを正にするか**を決める (§9 #10) |
+| 版管理 | 問診・プラン構成は時系列で変化。回答・契約は「その時点の版」に紐付け |
+| Elith S3 連携 | `test_definitions.elith_format_id` で `elith_s3_data_handoff_spec.md` の format_id と直結 → 要件4 出力がマスタ駆動になり保守が楽 |
+
+---
+
+## 7. 全体データフロー
 
 ```
 [契約(申込日)]
@@ -261,7 +418,7 @@ AI問診の結果は **Elith の AI診断インプット**だけでなく、**a)
 
 ---
 
-## 7. 既存実装とのギャップ (新規/拡張の所在)
+## 8. 既存実装とのギャップ (新規/拡張の所在)
 
 | 要件 | 既存で充足 | 新規/拡張が必要 |
 |---|---|---|
@@ -272,7 +429,7 @@ AI問診の結果は **Elith の AI診断インプット**だけでなく、**a)
 
 ---
 
-## 8. 未確定事項 (要確認サマリ)
+## 9. 未確定事項 (要確認サマリ)
 
 | # | 確認先 | 内容 | 関連 |
 |---|---|---|---|
@@ -284,6 +441,9 @@ AI問診の結果は **Elith の AI診断インプット**だけでなく、**a)
 | 6 | Elith | AI疾病予測(c)を `Other` で送るか専用 format_id が要るか | §5.3 |
 | 7 | Wellfort | 検査結果PDF/CSV → Elith向けJSON への構造化方式 (自動OCR/手入力/別紙CSV) | §5.3 |
 | 8 | Wellfort | 問診パターン判定をプランのどの属性で行うか (`tests_per_cycle[]` で十分か) | §4.2 |
+| 9 | Wellfort | 検査構成の正は `subscription_plans` か。EC `test_products` との二重管理をどう解消するか | §6.4 |
+| 10 | Wellfort | マスタ/マッピングの Single Source of Truth (シート→DB seed 後、以後どちらを正にするか) | §6.6 |
+| 11 | Wellfort | 検査結果値の正規化 (`test_measurements`) をどこまで行うか (全項目構造化 / 原本+一部) | §6.2 |
 
 ---
 
@@ -335,7 +495,7 @@ a)=がんリスク検査(尿)  b)=血液検査  c)=AI疾病予測(Elith以外)  
 - 数値 = 年間実施回数。`—` = そのプランでは対象外。
 - 「遺伝子検査」は全プラン**初回1回のみ** (`subscription_plans.genetics_once` に対応)。
 - 「フォーマット」: 複数=結果様式が一定でない (スキャン取込対象) / 固定=様式が定型 (検査機関の定型帳票)。
-- 次年度以降の各検査回数は出典で空欄 = 初年度に準ずる想定。**要確認** (§8)。
+- 次年度以降の各検査回数は出典で空欄 = 初年度に準ずる想定。**要確認** (§9)。
 
 ### B-3. 確認事項 (出典の注記。要件1・要件3に直結)
 
