@@ -11,6 +11,8 @@ interface ImportMetaEnv {
   readonly HP_BRIDGE_READONLY_KEY?: string;
   readonly HP_EDGE_BASE_URL?: string;
   readonly RESOLVE_SHARED_SECRET?: string;
+  // テストフェーズのダミー表示フォールバック。'false' で無効化 (既定 ON)。
+  readonly PUBLIC_DEMO_FALLBACK?: string;
 }
 
 interface ImportMeta {
