@@ -138,6 +138,8 @@ function demoSubscription(uid: string): Subscription & { plan_name: string | nul
 export function buildDemoDashboard(uid: string, displayName: string | null): DashboardData {
   return {
     diagnosticUserId: uid,
+    resultUid: uid,
+    usingDemoData: true,
     appUser: displayName
       ? ({
           diagnostic_user_id: uid, auth_user_id: null, google_sub: null,

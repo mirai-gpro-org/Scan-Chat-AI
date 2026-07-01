@@ -39,6 +39,7 @@ import {
   type AnswerValue,
 } from './interview-script';
 import { openWheelPicker, openMatrixPicker, formatMatrix, closeAllPickers } from './wheel-picker';
+import { getOrCreateDiagnosticId } from '../../lib/diagnostic-id';
 
 export interface LiveRefs {
   log: HTMLElement;
@@ -1001,6 +1002,31 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     }
   }
 
+  /** 問診結果を S3 (Elith 連携) へ書き出す。テスト用・fire-and-forget。 */
+  async function exportInterviewToS3(opts: {
+    uid: string | null;
+    answers: Record<string, AnswerValue>;
+    completedAt: number;
+  }): Promise<void> {
+    try {
+      await fetch('/api/interview/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          diagnosticId: getOrCreateDiagnosticId(),
+          diagnosticUserId: opts.uid,
+          userName: userProfile?.name ?? null,
+          dateOfBirth: userProfile?.dateOfBirth ?? null,
+          sex: userProfile?.sex ?? null,
+          answers: opts.answers,
+          completedAt: opts.completedAt,
+        }),
+      });
+    } catch {
+      /* テスト用途のため失敗は握りつぶす (UI を止めない) */
+    }
+  }
+
   /** 問診完了表示 + chat session を完了状態にして HealthInsightCard を起動 */
   function showCompletion(): void {
     currentQ = null;
@@ -1010,15 +1036,21 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
     // 問診結果ファイルを生成。氏名・生年月日・性別は尋ねず、内部取得値を付与する。
     const uid = refs.diagnosticUserId?.trim() || null;
+    const answers = engine.getAnswers();
+    const completedAt = Date.now();
     saveInterviewResult({
       id: SESSION_ID,
       diagnosticUserId: uid,
       userName: userProfile?.name ?? null,
       dateOfBirth: userProfile?.dateOfBirth ?? null,
       sex: userProfile?.sex ?? null,
-      answers: engine.getAnswers(),
-      completedAt: Date.now(),
+      answers,
+      completedAt,
     });
+
+    // S3 (Elith 連携) へ書き出し。スキャンと同じ diagnostic_id フォルダに同居させる。
+    // テスト用途のため fire-and-forget (失敗してもUIは止めない)。
+    void exportInterviewToS3({ uid, answers, completedAt });
 
     const dashUrl = uid ? `/dashboard?u=${encodeURIComponent(uid)}` : '/dashboard';
 

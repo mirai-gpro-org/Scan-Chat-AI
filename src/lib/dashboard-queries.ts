@@ -38,6 +38,10 @@ export interface MetricTrendSeries {
 
 export interface DashboardData {
   diagnosticUserId: string;
+  /** 検査結果(artifacts/results/trend)の実データ取得元 uid。デモ時は DEFAULT_USER。 */
+  resultUid: string;
+  /** テストフェーズのデモ(真鍋)フォールバックで結果を表示しているか。 */
+  usingDemoData: boolean;
   appUser: AppUser | null;
   customer: CustomerProfile | null;
   artifacts: TestArtifact[];
@@ -97,30 +101,50 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
 
     // クエリエラー時もテストフェーズはダミーへ (テーブル未適用等で 500 にしない)
     if (appUserErr || artErr || resErr) {
-      if (demoFallbackEnabled()) return buildDemoDashboard(uid, null);
+      if (demoFallbackEnabled()) return buildDemoDashboard(uid, appUser?.display_name_cache ?? null);
       if (appUserErr) return { error: `app_users: ${appUserErr.message}` };
       if (artErr)     return { error: `test_artifacts: ${artErr.message}` };
       return { error: `diagnosis_results: ${resErr!.message}` };
     }
 
-    const artifacts = artifactsRaw ?? [];
-    const results = resultsRaw ?? [];
+    let artifacts = artifactsRaw ?? [];
+    let results = resultsRaw ?? [];
+    let resultUid = uid;
+    let usingDemoData = false;
+
+    // フォールバック1: 当該ユーザーに結果が無ければ 真鍋(DEFAULT_USER) の実データを表示。
+    if (demoFallbackEnabled() && results.length === 0 && uid !== DEFAULT_USER) {
+      const [
+        { data: demoArtifacts },
+        { data: demoResults },
+      ] = await Promise.all([
+        dsb.from('test_artifacts').select('*').eq('diagnostic_user_id', DEFAULT_USER).order('test_date', { ascending: false }),
+        dsb.from('diagnosis_results').select('*').eq('diagnostic_user_id', DEFAULT_USER).order('received_at', { ascending: false }),
+      ]);
+      if (demoResults && demoResults.length > 0) {
+        artifacts = demoArtifacts ?? [];
+        results = demoResults;
+        resultUid = DEFAULT_USER;
+        usingDemoData = true;
+      }
+    }
+
+    // フォールバック2: 真鍋にも実データが無ければ 組込みダミー(demo-data) で画面を成立させる。
+    if (demoFallbackEnabled() && results.length === 0) {
+      return buildDemoDashboard(uid, appUser?.display_name_cache ?? null);
+    }
+
     const latestResult = results[0] ?? null;
     // report は jsonb 配列想定。配列以外 (null/オブジェクト/文字列) は空扱いにして throw を防ぐ。
     const elithSections: ElithSection[] = Array.isArray(latestResult?.report)
       ? (latestResult!.report as unknown as ElithSection[])
       : [];
 
-    // テストフェーズ: 正規の検査履歴が無い顧客には共通のダミーを表示する。
-    // 実データ (artifacts / results) が入れば自動で実データに切替。
-    if (demoFallbackEnabled() && artifacts.length === 0 && results.length === 0) {
-      return buildDemoDashboard(uid, appUser?.display_name_cache ?? null);
-    }
-
-    // 顧客/プラン/キットは app_bridge (本番) もしくは customer モック (dev) から取得
+    // 顧客/プラン/キットは app_bridge (本番) もしくは customer モック (dev) から取得。
+    // デモ表示中は結果元 (resultUid) に揃える。
     const bundle = isBridgeConfigured()
-      ? await loadBridgeBundle(uid)
-      : await loadMockCustomerBundle(sb, uid);
+      ? await loadBridgeBundle(resultUid)
+      : await loadMockCustomerBundle(sb, resultUid);
     // バンドル取得失敗時も画面は成立させる (顧客/プランは空扱い)
     const safeBundle: CustomerBundle = 'error' in bundle
       ? { customer: null, shipments: [], subscription: null }
@@ -128,6 +152,8 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
 
     return {
       diagnosticUserId: uid,
+      resultUid,
+      usingDemoData,
       appUser: appUser ?? null,
       customer: safeBundle.customer,
       artifacts,

@@ -239,6 +239,9 @@ export interface VerificationRefs {
   rowEditCellsContainer: HTMLElement;
   rowEditSaveBtn: HTMLButtonElement;
   rowEditCancelBtn: HTMLButtonElement;
+
+  /** 「確認して送信」確定時に awaited で呼ばれる (S3 書き出し等)。失敗してもよい。 */
+  onBeforeSubmit?: () => Promise<void> | void;
 }
 
 interface RegionView {
@@ -853,15 +856,23 @@ export class ScanVerificationController {
   }
 
   private bindSubmit(): void {
-    this.refs.submitBtn.addEventListener('click', () => {
+    this.refs.submitBtn.addEventListener('click', async () => {
       if (this.refs.submitBtn.disabled) return;
       const ok = window.confirm(
         'この内容で確定し、問診に進みますか?\n確定後は同じ画面で編集できません。',
       );
       if (!ok) return;
+      // 完了時に確定結果を S3 (Elith 連携) へ自動書き出し (best-effort)。
+      if (this.refs.onBeforeSubmit) {
+        this.refs.submitBtn.disabled = true;
+        this.refs.submitBtn.textContent = '☁️ 書き出し中…';
+        try {
+          await this.refs.onBeforeSubmit();
+        } catch {
+          /* テスト用途のため失敗は握りつぶし、遷移は続行 */
+        }
+      }
       // Phase 0: メモリ保持で /chat に遷移。
-      // 確定 markdown は sessionStorage 経由で問診画面に渡す案もあるが、
-      // 現状は遷移のみ。Phase 1 で Supabase 書込を追加予定。
       window.location.href = '/chat';
     });
   }

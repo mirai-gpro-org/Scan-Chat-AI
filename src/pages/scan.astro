@@ -332,39 +332,12 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
     finishEl.classList.toggle('bg-rose-200', hasBadFinish);
     finishEl.classList.toggle('text-rose-900', hasBadFinish);
 
-    // 検証 UI: 表トリミング画像 + ブロック詳細 + 行修正モーダル
     const diagnosticId = getOrCreateDiagnosticId();
-    const controller = new ScanVerificationController(
-      {
-        trimmedImage: $('trimmed-image'),
-        blockDetail: $('block-detail'),
-        blockDetailTitle: $('block-detail-title'),
-        blockDetailBody: $('block-detail-body'),
-        resultSummary: $('scan-result-summary'),
-        downstreamPreview: $('scan-result'),
-        submitBtn: $<HTMLButtonElement>('scan-submit'),
-        submitHint: $('scan-submit-hint'),
-        rowEditModal: $('row-edit-modal'),
-        rowEditTitle: $('row-edit-title'),
-        rowEditCellsContainer: $('row-edit-cells'),
-        rowEditSaveBtn: $<HTMLButtonElement>('row-edit-save'),
-        rowEditCancelBtn: $<HTMLButtonElement>('row-edit-cancel'),
-      },
-      r,
-      diagnosticId,
-    );
-    await controller.render();
-
-    // block-detail パネルの閉じるボタン
-    $('block-detail-close').onclick = () => {
-      $('block-detail').hidden = true;
-    };
-
-    // テスト用: 確定 Markdown を S3 (Elith 連携) へ書き出す
-    const exportBtn = $<HTMLButtonElement>('scan-export-s3');
     const exportStatus = $('scan-export-status');
-    exportBtn.disabled = false;
-    exportBtn.onclick = async () => {
+
+    // 確定 Markdown を S3 (Elith 連携) へ書き出す共有関数。
+    // 「確認して送信」(完了) 時の自動書き出しと、手動ボタンの両方から使う。
+    async function exportScanToS3(): Promise<void> {
       // #scan-result は検証編集を反映した「下流送信用 Markdown」
       const markdownClean = ($('scan-result') as HTMLPreElement).textContent?.trim() || r.markdownClean;
       if (!markdownClean) {
@@ -372,8 +345,7 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
         return;
       }
       const diagnosticUserId = new URLSearchParams(location.search).get('u');
-      exportBtn.disabled = true;
-      exportStatus.textContent = '書き出し中…';
+      exportStatus.textContent = '☁️ S3へ書き出し中…';
       try {
         const res = await fetch('/api/scan/export', {
           method: 'POST',
@@ -393,12 +365,51 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
         if (data.ok && data.configured) {
           exportStatus.textContent = `✅ S3へ書き出しました: s3://${data.bucket}/${data.folder} (${data.uploaded?.length ?? 0} ファイル)`;
         } else if (data.configured === false) {
-          exportStatus.textContent = `ⓘ S3未設定のため変換のみ実行 (フォルダ: ${data.folder})。サーバ環境変数 AWS_S3_BUCKET/AWS_REGION を設定すると自動アップロードします。`;
+          exportStatus.textContent = `ⓘ S3未設定のため変換のみ実行 (フォルダ: ${data.folder})。サーバ環境変数 AWS_REGION を設定すると自動アップロードします。`;
         } else {
           exportStatus.textContent = `⚠️ 失敗: ${data.error ?? '不明なエラー'}`;
         }
       } catch (e) {
         exportStatus.textContent = `⚠️ 通信エラー: ${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
+
+    // 検証 UI: 表トリミング画像 + ブロック詳細 + 行修正モーダル
+    const controller = new ScanVerificationController(
+      {
+        trimmedImage: $('trimmed-image'),
+        blockDetail: $('block-detail'),
+        blockDetailTitle: $('block-detail-title'),
+        blockDetailBody: $('block-detail-body'),
+        resultSummary: $('scan-result-summary'),
+        downstreamPreview: $('scan-result'),
+        submitBtn: $<HTMLButtonElement>('scan-submit'),
+        submitHint: $('scan-submit-hint'),
+        rowEditModal: $('row-edit-modal'),
+        rowEditTitle: $('row-edit-title'),
+        rowEditCellsContainer: $('row-edit-cells'),
+        rowEditSaveBtn: $<HTMLButtonElement>('row-edit-save'),
+        rowEditCancelBtn: $<HTMLButtonElement>('row-edit-cancel'),
+        // 完了 (確認して送信) 時に S3 へ自動書き出ししてから /chat へ遷移
+        onBeforeSubmit: exportScanToS3,
+      },
+      r,
+      diagnosticId,
+    );
+    await controller.render();
+
+    // block-detail パネルの閉じるボタン
+    $('block-detail-close').onclick = () => {
+      $('block-detail').hidden = true;
+    };
+
+    // 手動の書き出しボタン (完了前にも任意で書き出せる)
+    const exportBtn = $<HTMLButtonElement>('scan-export-s3');
+    exportBtn.disabled = false;
+    exportBtn.onclick = async () => {
+      exportBtn.disabled = true;
+      try {
+        await exportScanToS3();
       } finally {
         exportBtn.disabled = false;
       }
