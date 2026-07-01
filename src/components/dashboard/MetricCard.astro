@@ -16,13 +16,13 @@ const levelText: Record<MetricCardType['level'], string> = {
   slightly_low: 'やや低い',
   low: '低い',
 };
-const baseClass = `flex flex-col gap-1 rounded-2xl border-2 ${color.bg} ${color.border} p-3 shadow-sm transition hover:shadow-md`;
+const baseClass = `flex flex-col gap-1 rounded-2xl border-2 ${color.bg} ${color.border} p-3 shadow-sm transition-colors`;
 const Tag = href ? 'a' : 'div';
 ---
 
 <Tag
   href={href ?? undefined}
-  class={`${baseClass} ${href ? 'cursor-pointer hover:-translate-y-0.5' : ''}`}
+  class={`${baseClass} ${href ? 'cursor-pointer' : ''}`}
   title={href ? '原本の検査結果を見る' : undefined}
 >
   <div class="flex items-center justify-between">
