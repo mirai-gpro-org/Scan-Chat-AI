@@ -72,55 +72,75 @@ function normalizeDiagnosticUserId(raw: string): string | null {
 
 /** dashboard.astro から呼ぶ。 */
 export async function loadDashboard(diagnosticUserId?: string | null): Promise<DashboardData | { error: string }> {
-  const sb = getServerSupabase();
-  if (!sb) return { error: 'Supabase が未設定です。.env.local を確認してください。' };
-
   const normalized = diagnosticUserId ? normalizeDiagnosticUserId(diagnosticUserId) : null;
   const uid = normalized ?? DEFAULT_USER;
 
-  // diagnosis schema (Web 所有) — appUser / artifacts / results は常に #2 から取得
-  const dsb = sb.schema('diagnosis');
-  const [
-    { data: appUser, error: appUserErr },
-    { data: artifactsRaw, error: artErr },
-    { data: resultsRaw, error: resErr },
-  ] = await Promise.all([
-    dsb.from('app_users').select('*').eq('diagnostic_user_id', uid).maybeSingle(),
-    dsb.from('test_artifacts').select('*').eq('diagnostic_user_id', uid).order('test_date', { ascending: false }),
-    dsb.from('diagnosis_results').select('*').eq('diagnostic_user_id', uid).order('received_at', { ascending: false }),
-  ]);
+  try {
+    const sb = getServerSupabase();
+    if (!sb) {
+      // Supabase 未設定でもテストフェーズはダミーを見せる (500 にしない)
+      if (demoFallbackEnabled()) return buildDemoDashboard(uid, null);
+      return { error: 'Supabase が未設定です。.env.local を確認してください。' };
+    }
 
-  if (appUserErr) return { error: `app_users: ${appUserErr.message}` };
-  if (artErr)     return { error: `test_artifacts: ${artErr.message}` };
-  if (resErr)     return { error: `diagnosis_results: ${resErr.message}` };
+    // diagnosis schema (Web 所有) — appUser / artifacts / results は常に #2 から取得
+    const dsb = sb.schema('diagnosis');
+    const [
+      { data: appUser, error: appUserErr },
+      { data: artifactsRaw, error: artErr },
+      { data: resultsRaw, error: resErr },
+    ] = await Promise.all([
+      dsb.from('app_users').select('*').eq('diagnostic_user_id', uid).maybeSingle(),
+      dsb.from('test_artifacts').select('*').eq('diagnostic_user_id', uid).order('test_date', { ascending: false }),
+      dsb.from('diagnosis_results').select('*').eq('diagnostic_user_id', uid).order('received_at', { ascending: false }),
+    ]);
 
-  const artifacts = artifactsRaw ?? [];
-  const results = resultsRaw ?? [];
-  const latestResult = results[0] ?? null;
-  const elithSections = (latestResult?.report as ElithSection[] | null) ?? [];
+    // クエリエラー時もテストフェーズはダミーへ (テーブル未適用等で 500 にしない)
+    if (appUserErr || artErr || resErr) {
+      if (demoFallbackEnabled()) return buildDemoDashboard(uid, null);
+      if (appUserErr) return { error: `app_users: ${appUserErr.message}` };
+      if (artErr)     return { error: `test_artifacts: ${artErr.message}` };
+      return { error: `diagnosis_results: ${resErr!.message}` };
+    }
 
-  // テストフェーズ: 正規の検査履歴が無い顧客には共通のダミーを表示する。
-  // 実データ (artifacts / results) が入れば自動で実データに切替。
-  if (demoFallbackEnabled() && artifacts.length === 0 && results.length === 0) {
-    return buildDemoDashboard(uid, appUser?.display_name_cache ?? null);
+    const artifacts = artifactsRaw ?? [];
+    const results = resultsRaw ?? [];
+    const latestResult = results[0] ?? null;
+    // report は jsonb 配列想定。配列以外 (null/オブジェクト/文字列) は空扱いにして throw を防ぐ。
+    const elithSections: ElithSection[] = Array.isArray(latestResult?.report)
+      ? (latestResult!.report as unknown as ElithSection[])
+      : [];
+
+    // テストフェーズ: 正規の検査履歴が無い顧客には共通のダミーを表示する。
+    // 実データ (artifacts / results) が入れば自動で実データに切替。
+    if (demoFallbackEnabled() && artifacts.length === 0 && results.length === 0) {
+      return buildDemoDashboard(uid, appUser?.display_name_cache ?? null);
+    }
+
+    // 顧客/プラン/キットは app_bridge (本番) もしくは customer モック (dev) から取得
+    const bundle = isBridgeConfigured()
+      ? await loadBridgeBundle(uid)
+      : await loadMockCustomerBundle(sb, uid);
+    // バンドル取得失敗時も画面は成立させる (顧客/プランは空扱い)
+    const safeBundle: CustomerBundle = 'error' in bundle
+      ? { customer: null, shipments: [], subscription: null }
+      : bundle;
+
+    return {
+      diagnosticUserId: uid,
+      appUser: appUser ?? null,
+      customer: safeBundle.customer,
+      artifacts,
+      latestResult,
+      elithSections,
+      shipments: safeBundle.shipments,
+      subscription: safeBundle.subscription,
+    };
+  } catch (e) {
+    // 想定外の例外でも 500 にせず、テストフェーズはダミー／それ以外はエラー表示
+    if (demoFallbackEnabled()) return buildDemoDashboard(uid, null);
+    return { error: e instanceof Error ? e.message : String(e) };
   }
-
-  // 顧客/プラン/キットは app_bridge (本番) もしくは customer モック (dev) から取得
-  const bundle = isBridgeConfigured()
-    ? await loadBridgeBundle(uid)
-    : await loadMockCustomerBundle(sb, uid);
-  if ('error' in bundle) return bundle;
-
-  return {
-    diagnosticUserId: uid,
-    appUser: appUser ?? null,
-    customer: bundle.customer,
-    artifacts,
-    latestResult,
-    elithSections,
-    shipments: bundle.shipments,
-    subscription: bundle.subscription,
-  };
 }
 
 /**
@@ -182,8 +202,9 @@ export async function getMetricTrend(
   limit = 6,
 ): Promise<MetricTrendSeries[]> {
   const sb = getServerSupabase();
-  if (!sb) return [];
+  if (!sb) return demoFallbackEnabled() ? demoMetricTrend() : [];
 
+  try {
   const { data, error } = await sb
     .schema('diagnosis')
     .from('diagnosis_results')
@@ -202,7 +223,10 @@ export async function getMetricTrend(
   const fpg: MetricTrendPoint[] = [];
 
   for (const row of data) {
-    const sections = (row.report as ElithSection[] | null) ?? [];
+    // report は配列想定。配列以外は skip して throw を防ぐ。
+    const sections: ElithSection[] = Array.isArray(row.report)
+      ? (row.report as unknown as ElithSection[])
+      : [];
     if (sections.length === 0) continue;
     const cards = extractMetricCards(sections);
     const date = row.received_at as string;
@@ -221,6 +245,9 @@ export async function getMetricTrend(
   if (fpg.length > 0)        out.push({ label: '空腹時血糖', unit: 'mg/dL', referenceUpper: 99,   points: fpg });
   if (out.length === 0 && demoFallbackEnabled()) return demoMetricTrend();
   return out;
+  } catch {
+    return demoFallbackEnabled() ? demoMetricTrend() : [];
+  }
 }
 
 /** ユーザー氏名を「真鍋様」形式で返す。なければ「お客様」。 */
