@@ -17,6 +17,12 @@
     font-feature-settings: 'palt';
   }
 
+  /* モバイルでタップ/ホバー時に出る黒い半透明ハイライトを無効化
+     (数値変動カード等のタップ時に暗くなる問題の対策) */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
   /* Tailwind の display utility が HTML 標準の [hidden] を上書きしてしまうのを抑制 */
   [hidden] {
     display: none !important;
