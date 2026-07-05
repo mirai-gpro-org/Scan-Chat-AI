@@ -483,59 +483,10 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
   // 血液検査: 結果 (腹囲/血圧 等) はデメカルから取得するため問診では聴取しない
   //   (旧 EX-WAIST / EX-BP を削除。CLAUDE.md「血液=デメカル取得」)。
 
-  // がんリスク検査 (ウェルテクト / がんリスク検査のみ)
-  // ※ ユーザーID (旧 EX-USERID) は system 発番 (diagnostic_user_id) のため問診で尋ねない。
-  {
-    id: 'EX-URINE-DT', section_id: 'examdetail', answer_kind: 'text',
-    question: '【がんリスク検査】採尿した日付と時刻を教えてください。',
-    example: '4月1日7:30頃 → 4月1日7:30',
-    placeholder: '例：4月1日7:30',
-    when: (a) => examIs(a, T_WELLTECT, T_CANCER),
-  },
-  {
-    id: 'EX-URINE-ALC', section_id: 'examdetail', answer_kind: 'chip',
-    question: '【がんリスク検査】採尿前日の飲酒について教えてください。',
-    chips: opt(['あり', 'なし']),
-    when: (a) => examIs(a, T_WELLTECT, T_CANCER),
-  },
-  {
-    id: 'EX-URINE-MED', section_id: 'examdetail', answer_kind: 'chip',
-    question: '【がんリスク検査】採尿前日の薬・サプリメントについて教えてください。',
-    chips: opt(['なし', 'その他']),
-    when: (a) => examIs(a, T_WELLTECT, T_CANCER),
-  },
-  {
-    id: 'EX-URINE-MED-NAME', section_id: 'examdetail', answer_kind: 'text',
-    question: '採尿前日に摂取した薬・サプリメント名を教えてください。',
-    placeholder: '例：ビタミンC サプリ',
-    when: (a) => examIs(a, T_WELLTECT, T_CANCER) && a['EX-URINE-MED'] === 'その他',
-  },
-  {
-    id: 'EX-ALA-DT', section_id: 'examdetail', answer_kind: 'text',
-    question: '【がんリスク検査】ALAカプセルを採取した日付と時刻を教えてください。',
-    example: '3月31日21:00頃 → 3月31日21:00頃',
-    placeholder: '例：3月31日21:00頃',
-    when: (a) => examIs(a, T_WELLTECT, T_CANCER),
-  },
-  {
-    id: 'EX-URINATE', section_id: 'examdetail', answer_kind: 'chip',
-    question: '【がんリスク検査】ALAカプセル採取から採尿までに排尿があったか教えてください。',
-    chips: opt(['あり', 'なし']),
-    when: (a) => examIs(a, T_WELLTECT, T_CANCER),
-  },
-  {
-    id: 'EX-URINATE-CNT', section_id: 'examdetail', answer_kind: 'text',
-    question: '排尿回数と時刻を教えてください。',
-    example: '24:00頃に1回 → 24:00に1回',
-    placeholder: '例：24:00に1回',
-    when: (a) => examIs(a, T_WELLTECT, T_CANCER) && a['EX-URINATE'] === 'あり',
-  },
-  {
-    id: 'EX-FROZEN', section_id: 'examdetail', answer_kind: 'chip',
-    question: '【がんリスク検査】採尿検体を一時冷凍保存したかを教えてください。',
-    chips: opt(['冷凍した', '冷凍していない']),
-    when: (a) => examIs(a, T_WELLTECT, T_CANCER),
-  },
+  // がんリスク検査: 採取条件・結果は検査機関(PREVENT)側で取得し admin バッチ処理するため
+  //   問診では聴取しない (旧 EX-USERID / EX-URINE-DT / EX-URINE-ALC / EX-URINE-MED /
+  //   EX-URINE-MED-NAME / EX-ALA-DT / EX-URINATE / EX-URINATE-CNT / EX-FROZEN を削除)。
+  //   根拠: CLAUDE.md「がんリスク = Wellfort が検査機関から手動取得 → admin バッチ」。
 
   // 遺伝子検査 (ウェルテクト / 遺伝子検査のみ)
   {
