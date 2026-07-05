@@ -119,17 +119,6 @@ const SESSION_ID = 'default';
 // 問診票のセクションは interview-script.ts に集約済 (INTERVIEW_SECTIONS を使用)
 const SECTIONS = INTERVIEW_SECTIONS;
 
-/**
- * 読み上げ用に、質問文 **末尾** の単位・形式ヒント括弧を落とす。
- *   例: 「身長を教えてください。（cm）」→「身長を教えてください。」
- *       「体重を教えてください。（kg・数字のみ）」→「体重を教えてください。」
- * 画面表示 (applyQuestionToUI) は元の質問文をそのまま使う。中間の括弧は残す。
- */
-function spokenQuestion(q: string): string {
-  const stripped = q.replace(/(?:\s*[（(][^（）()]*[）)])+\s*$/u, '').trim();
-  return stripped || q;
-}
-
 const SYSTEM_INSTRUCTION = `あなたはウェルフォートの健康問診を担当する AI 看護師アシスタントです。問診票本体 (質問順・選択肢・分岐) は画面のシステムが自動で出します。あなたは「画面に出ている質問を温かく読み上げる係」です。
 
 【絶対ルール】
@@ -137,21 +126,19 @@ A. 質問は自分で考えない・先回りしない。システムから「�
 B. ★ユーザーの音声回答が聞こえたときは、短い復唱を 1 文だけ返す。次の質問は自分から言わない（直後にシステムが次の質問を指示します）。「次の質問:」等の枠や文言も自分で作らない。
 C. 選択肢や入力例を長々と読み上げない (画面に表示されています)。必要なときだけ「画面で選ぶか、声でお答えください」と一言。
 D. ツール呼び出しは一切不要 (廃止済)。診断・処方は禁止。
-E. ★問診の「終了・完了」を自分から宣言しない。何問あるか・いつ終わるかはあなたには分かりません（分岐で変わります）。「これで終わりです」「すべての質問が終わりました」「お疲れさまでした」「ご協力ありがとうございました」等の終了・締めの言葉は、システムが明示的に『これで全問終了です』と指示したときだけ言う。それ以外では絶対に言わない。
 
 【発話パターン (2 種類。混ぜない)】
 1) ユーザーの音声回答が聞こえたとき:
-   → 「『◯◯』ですね、ありがとうございます」と短く復唱するだけ。質問も終了の挨拶も絶対に言わない (次はシステムが指示します)。
+   → 「『◯◯』ですね、ありがとうございます」と短く復唱するだけ。質問は絶対に言わない。
 2) システムから指示文 (「次の質問: 『xxx』」「次の質問を読み上げてください」等) が届いたとき:
-   → その指示の手順どおりに、質問文をそのまま自然に読み上げる。
-   → 「次は◯◯について」等のセクション案内は自分から言わない (画面に表示されます)。
+   → その指示の手順どおりに発話する。セクション変更の案内があれば「次は◯◯についてお伺いしますね」と一言添えてから、質問文をそのまま自然に読み上げる。
    → 指示に「復唱・相槌は不要」とあれば復唱せず、質問文だけを読み上げる。
 
 【セッション開始時】(1 ターン限り)
 最初の発話: 「こんにちは、ウェルフォートの AI 問診です。画面の質問に、タップでも音声でもお答えいただけます。」と前置きしてから、最初の質問文を読み上げる。
 
 【問診完了時】
-システムから『これで全問終了です』と明示指示されたときだけ、「お疲れさまでした、ご協力ありがとうございました」と一言お礼。自分の判断で完了を宣言してはいけない。
+「お疲れさまでした、ご協力ありがとうございました」と一言お礼。
 
 【緊急対応】
 胸痛 / 呼吸困難 / 意識消失 / 激しい頭痛 / 大量出血等を訴えたら、即座に「すぐに 119 番にお電話ください」と案内する。`;
@@ -252,14 +239,6 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   /** 回答受付〜次設問表示までの間は音声回答の二重取り込みを抑止する */
   let advancing = false;
   let muted = false;
-  /**
-   * 直近に AI 音声を再生した時刻 (epoch ms)。AI 発話中はマイク送信をゲートし、
-   * スピーカー→マイクの回り込み音を「ユーザー発話」として再取り込みしないようにする
-   * (半二重)。barge-in は NO_INTERRUPTION で無効のため、ゲートしても機能低下は無い。
-   */
-  let lastAiAudioAt = 0;
-  /** AI 発話終了後、この時間はマイク送信を止める (回り込みの残響対策) */
-  const AI_SPEAKING_GATE_MS = 800;
   /** 内部で取得済の顧客プロフィール (氏名・生年月日・性別は問診で尋ねず結果へ付与) */
   let userProfile: { name: string | null; dateOfBirth: string | null; sex: string | null } | null = null;
   /** 申込情報から供給する EXAM-TYPE (今回実施検査)。空なら問診で通常設問として尋ねる。 */
@@ -606,35 +585,45 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       return;
     }
 
+    const sectionChanged = cq.section_id !== next.section_id;
+
     // ━━ フライング防止: 次の Q 表示を AI 復唱開始と同期させる ━━
     //   engine 駆動で即座に applyQuestionToUI を呼ぶと、AI の音声復唱が
     //   始まる前に次の選択肢が画面に出てしまい違和感が出る。
     //   1) 即時: 受付確認の中間表示 + 選択肢を隠す
     //   2) AI 依頼を送信
-    //   3) AI 音声の最初の chunk が来る or タイムアウト (2s) で次の Q 表示
+    //   3) AI 音声の最初の chunk が来る or タイムアウト (1.6s) で次の Q 表示
     refs.questionText.textContent = `✅ 「${rawAnswer}」で承りました…`;
     showWidget('voice');
     refs.skipBtn.hidden = true;
 
-    // AI 依頼: (タップ時のみ復唱) + 次の質問本文を読み上げ。
-    // 選択肢は読み上げさせない (画面に出ているため重複になる)。
-    //
-    // ★ セクション変更の口頭アナウンス (「次は◯◯について」) は行わない:
-    //   別発話単位になり Live API の割り込み処理の狭間で途切れやすいため。
-    //   セクション変更は画面 (セクションドット/ラベル) で示す。
+    // AI 依頼: 復唱 + (セクション切替時のみ導線) + 次の質問本文を読み上げ
+    // 選択肢は読み上げさせない (画面に出ているため重複になる)
     //
     // ★ 二重復唱の防止:
     //   音声回答 (silent) では、ユーザーの発話に対し Live API モデルが既に自発応答して
     //   復唱している。ここで再度「復唱」を依頼すると復唱が 2 回になるため、silent 時は
-    //   復唱を外し「次の質問の読み上げ」だけ依頼する。タップ回答は発話が無く自発
+    //   復唱(①)を外し「次の質問の読み上げ」だけ依頼する。タップ回答は発話が無く自発
     //   応答も無いので従来どおり復唱込みで依頼する。
-    const msg = opts.silent
-      ? `次の質問を自然に読み上げてください: 「${spokenQuestion(next.question)}」。復唱・相槌は不要です (お答えには既に応じています)。選択肢は読み上げないでください (画面に表示されています)。`
-      : `ユーザーが「${rawAnswer}」と回答しました。
+    let msg: string;
+    if (opts.silent) {
+      msg = sectionChanged
+        ? `次のセクション「${next.section_title}」に進みます。「次は${next.section_title}についてお伺いしますね」と一言添えてから、次の質問を自然に読み上げてください: 「${next.question}」。復唱・相槌は不要です (お答えには既に応じています)。選択肢は読み上げないでください (画面に表示されています)。`
+        : `次の質問を自然に読み上げてください: 「${next.question}」。復唱・相槌は不要です (お答えには既に応じています)。選択肢は読み上げないでください (画面に表示されています)。`;
+    } else {
+      msg = sectionChanged
+        ? `ユーザーが「${rawAnswer}」と回答しました。次のセクション「${next.section_title}」に進みます。
+発話手順 (1〜3 文):
+  ① 短く温かく復唱: 「『${rawAnswer}』ですね、ありがとうございます」
+  ② 「次は${next.section_title}についてお伺いしますね」
+  ③ 続けて次の質問を自然に読み上げ: 「${next.question}」
+選択肢は読み上げないでください (画面に表示されています)。`
+        : `ユーザーが「${rawAnswer}」と回答しました。
 発話手順 (2 文):
   ① 短く温かく復唱: 「『${rawAnswer}』ですね、ありがとうございます」
-  ② 続けて次の質問を自然に読み上げ: 「${spokenQuestion(next.question)}」
+  ② 続けて次の質問を自然に読み上げ: 「${next.question}」
 選択肢は読み上げないでください (画面に表示されています)。`;
+    }
     sendToModel(msg);
 
     // AI 音声の最初の chunk が再生開始した瞬間 (≒ 復唱開始) に次の Q を表示。
@@ -835,7 +824,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
                 turns: [{ role: 'user', parts: [{ text:
                   `問診を始めます。次の 2 文を発話してください:
   ① 「こんにちは、ウェルフォートの AI 問診です。画面の質問に、タップでも音声でもお答えいただけます。」
-  ② 続けて画面に表示されている最初の質問を読み上げ: 「${spokenQuestion(firstQ.question)}」
+  ② 続けて画面に表示されている最初の質問を読み上げ: 「${firstQ.question}」
 選択肢や入力例は読み上げないでください (画面に表示されています)。挨拶と質問を 1 回だけ、絶対に繰り返さないでください。`
                 } ] }],
                 turnComplete: true,
@@ -860,10 +849,6 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
     await audio.start((b64) => {
       if (!liveSession) return;
-      // 半二重: AI 発話中 (直近の再生から AI_SPEAKING_GATE_MS 以内) はマイク送信を止め、
-      //   スピーカー→マイクの回り込みを「ユーザー発話」として拾わないようにする。
-      //   これにより AI の質問読み上げが自己回り込みで割り込み切断される事象を防ぐ。
-      if (Date.now() - lastAiAudioAt < AI_SPEAKING_GATE_MS) return;
       liveSession.sendRealtimeInput({
         audio: { data: b64, mimeType: 'audio/pcm;rate=16000' },
       });
@@ -882,15 +867,14 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
   function handleServerMessage(msg: LiveServerMessage): void {
     // 1) PCM 音声 chunk → 再生（muted 中はスキップ）。
-    //    再生時刻を lastAiAudioAt に記録し、AI 発話中はマイク送信をゲートする(半二重)。
-    //    barge-in は NO_INTERRUPTION で無効化済のため、ゲートによる機能低下は無い。
+    //    VAD / echo / barge-in は Live API サーバ側が処理するため、ここで mic を
+    //    gating しない（barge-in が壊れる）。
     const parts = msg.serverContent?.modelTurn?.parts ?? [];
     for (const p of parts) {
       const mime = p.inlineData?.mimeType ?? '';
       const data = p.inlineData?.data;
       if (data && mime.startsWith('audio/pcm') && !muted) {
         audio.playPcm(data);
-        lastAiAudioAt = Date.now(); // AI 発話中はマイク送信をゲート (回り込み防止)
         // 最初の音声 chunk = AI 復唱開始 → pending な次の Q を表示
         if (audioFirstChunkResolvers.length > 0) {
           const cbs = audioFirstChunkResolvers.splice(0, audioFirstChunkResolvers.length);
