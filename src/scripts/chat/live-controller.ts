@@ -674,11 +674,6 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     if (advancing) return; // 受付処理中は無視 (二重取り込み防止)
     const q = currentQ;
     if (!q) return;
-    // 同意事項は音声で自動確定させない (タップ必須)。
-    //   AI が読み上げる「…同意します」がマイクに回り込み → ユーザー回答として認識 →
-    //   同意チップに自動マッチ → 最終設問のため完了処理 → flushPlayback で読み上げが
-    //   途中(「次は—」)で途切れる不具合を防ぐ。法的同意は明示タップが適切でもある。
-    if (q.section_id === 'consent') return;
     const ans = interpretVoiceAnswer(q, transcript);
     if (ans == null) return;
     if (Array.isArray(ans)) {

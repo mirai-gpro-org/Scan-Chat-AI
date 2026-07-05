@@ -34,8 +34,7 @@ export type SectionId =
   | 'exercise'
   | 'meds'
   | 'sleep'
-  | 'exam'
-  | 'consent';
+  | 'exam';
 
 export interface ChoiceOpt {
   label: string;
@@ -98,7 +97,6 @@ export const SECTIONS: { id: SectionId; title: string }[] = [
   { id: 'meds',       title: '服薬・サプリメント' },
   { id: 'sleep',      title: '睡眠・ストレス' },
   { id: 'exam',       title: '実施検査の確認' },
-  { id: 'consent',    title: '同意事項' },
 ];
 
 const SECTION_TITLE: Record<SectionId, string> = Object.fromEntries(
@@ -472,12 +470,10 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
   //   別途行う。旧: EX-FAM-CANCER1/2 / EX-FAM-DISEASE / EX-HAIR / EX-FAM-HAIR / EX-NATION /
   //   EX-BIRTH / EX-FATHER / EX-MOTHER / EX-WEIGHT-CHG を削除。
 
-  // ───── 同意事項 ─────
-  {
-    id: 'C-CONSENT', section_id: 'consent', answer_kind: 'chip',
-    question: '個人情報の取り扱いについて同意します。',
-    chips: [{ label: '同意する', emoji: '✅' }],
-  },
+  // ※「個人情報の取り扱いについて同意します」(旧 C-CONSENT) は削除。
+  //   参考問診票 (docs/20260331_AI参考問診票.png) / 要件定義書の AI問診=5セクション
+  //   (嗜好品・運動・食生活・睡眠・心身) に同意設問は無く、心身(ストレス)で終了する。
+  //   同意はアプリ登録/オンボーディングで取得する範疇であり、音声問診の設問ではない。
 ];
 
 /** 問診票本体 (section_title を補完して Record 化) */
