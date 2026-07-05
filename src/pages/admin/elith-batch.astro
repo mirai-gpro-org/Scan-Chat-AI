@@ -47,15 +47,18 @@ const formats = [
       <h2 class="mb-2 text-sm font-bold text-slate-800 dark:text-slate-100">② client_id の付け方</h2>
       <div class="flex flex-col gap-2 text-sm">
         <label class="flex items-center gap-2">
-          <input type="radio" name="cidmode" value="uuid" checked />
-          画像ごとに UUID を採番 (サンプル/実顧客未割当)
+          <input type="radio" name="cidmode" value="auto" checked />
+          テスト用IDを自動採番 (<code>test-…</code> / 実顧客未割当)
         </label>
         <label class="flex items-center gap-2">
           <input type="radio" name="cidmode" value="fixed" />
           固定 ID を使う:
           <input id="cid-fixed" type="text" placeholder="例: diagnostic_user_id" class="flex-1 rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-900" />
         </label>
-        <p class="text-[11px] text-slate-500">本番の実顧客は「固定ID」に diagnostic_user_id を入れる (PII非含有)。</p>
+        <p class="text-[11px] text-slate-500">
+          テスト中は「自動採番」でよい (画像ごとに <code>test-&lt;実行時刻&gt;-&lt;連番&gt;</code>)。
+          本番の実顧客割当 (diagnostic_user_id) UI は今後追加予定。
+        </p>
       </div>
     </section>
 
@@ -112,9 +115,16 @@ const formats = [
   }
 
   function cidMode(): { mode: string; fixed: string } {
-    const mode = (document.querySelector('input[name="cidmode"]:checked') as HTMLInputElement)?.value ?? 'uuid';
+    const mode = (document.querySelector('input[name="cidmode"]:checked') as HTMLInputElement)?.value ?? 'auto';
     const fixed = ($('cid-fixed') as HTMLInputElement).value.trim();
     return { mode, fixed };
+  }
+
+  // テスト用 client_id: 実行ごとに test-<yyyymmddhhmm>-<連番>
+  function batchStamp(): string {
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}`;
   }
 
   function addRow(r: Res): HTMLElement {
@@ -137,6 +147,7 @@ const formats = [
     if (!files.length) return;
     const formatId = ($('format') as HTMLSelectElement).value;
     const { mode, fixed } = cidMode();
+    const stamp = batchStamp();
     runBtn.disabled = true;
     progressEl.classList.remove('hidden');
     rowsEl.innerHTML = '';
@@ -152,6 +163,7 @@ const formats = [
         const dataUrl = await readAsDataUrl(file);
         const payload: Record<string, string> = { image: dataUrl, formatId, sourceFileName: file.name };
         if (mode === 'fixed' && fixed) payload.clientId = fixed;
+        else payload.clientId = `test-${stamp}-${String(i + 1).padStart(3, '0')}`;
         const res = await fetch('/api/admin/elith-scan', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
