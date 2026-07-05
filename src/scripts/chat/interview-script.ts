@@ -286,24 +286,21 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
     ],
   },
   {
-    id: 'S-QUIT-AGE', section_id: 'smoking', answer_kind: 'text', numeric: true,
+    id: 'S-QUIT-AGE', section_id: 'smoking', answer_kind: 'chip',
     question: '喫煙を止めた年齢を教えてください。',
-    example: '30歳 → 30（現在も吸っている場合は現在の年齢）',
-    placeholder: '例：30',
+    chips: opt(['30歳未満', '30〜39歳', '40〜49歳', '50〜59歳', '60歳以上']),
     when: (a) => a['S-STATUS'] === '過去に吸っていたが現在は吸わない',
   },
   {
-    id: 'S-COUNT', section_id: 'smoking', answer_kind: 'text', numeric: true,
+    id: 'S-COUNT', section_id: 'smoking', answer_kind: 'chip',
     question: '1日の喫煙本数を教えてください。（喫煙者は現在、禁煙者は過去の本数）',
-    example: '1日10本 → 10',
-    placeholder: '例：10',
+    chips: opt(['5本未満', '5〜10本', '11〜20本', '21〜30本', '31本以上']),
     when: (a) => a['S-STATUS'] !== '吸ったことはない',
   },
   {
-    id: 'S-YEARS', section_id: 'smoking', answer_kind: 'text', numeric: true,
+    id: 'S-YEARS', section_id: 'smoking', answer_kind: 'chip',
     question: '喫煙している／していた年数を教えてください。',
-    example: '15年間 → 15',
-    placeholder: '例：15',
+    chips: opt(['5年未満', '5〜10年', '10〜20年', '20〜30年', '30年以上']),
     when: (a) => a['S-STATUS'] !== '吸ったことはない',
   },
 
@@ -318,10 +315,9 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
     ]),
   },
   {
-    id: 'D-UNTIL-AGE', section_id: 'drinking', answer_kind: 'text', numeric: true,
+    id: 'D-UNTIL-AGE', section_id: 'drinking', answer_kind: 'chip',
     question: '何歳まで飲酒されていたか教えてください。',
-    example: '45歳 → 45',
-    placeholder: '例：45',
+    chips: opt(['30歳未満', '30〜39歳', '40〜49歳', '50〜59歳', '60歳以上']),
     // 「何歳まで飲酒していたか」は過去にやめた人だけに聞く (喫煙の S-QUIT-AGE と同じ設計)。
     // 現在の飲酒者には出さない (毎日飲む人に「何歳まで」は不自然)。
     when: (a) => a['D-FREQ'] === '過去飲んでいたが、現在はまったく飲まない',
@@ -410,10 +406,9 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
     chips: [{ label: '速い', emoji: '⚡' }, { label: '遅い', emoji: '🐢' }],
   },
   {
-    id: 'E-SITTING', section_id: 'exercise', answer_kind: 'text', numeric: true,
-    question: '1日のうち座りっぱなしの時間を教えてください。（時間）',
-    example: '1日約8時間 → 8',
-    placeholder: '例：8',
+    id: 'E-SITTING', section_id: 'exercise', answer_kind: 'chip',
+    question: '1日のうち座りっぱなしの時間を教えてください。',
+    chips: opt(['3時間未満', '3〜6時間', '6〜9時間', '9〜12時間', '12時間以上']),
   },
   {
     id: 'E-TYPE', section_id: 'exercise', answer_kind: 'wheel',
