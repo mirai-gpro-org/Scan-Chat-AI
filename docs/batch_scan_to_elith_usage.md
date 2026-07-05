@@ -51,16 +51,38 @@ GOOGLE_SERVICE_ACCOUNT_KEY_FILE=/path/sa.json \
 node scripts/batch-scan-to-elith.mjs --drive 1N19u4NybUjgkkJF-fpe1xaPXG_s-Ozgh --limit 3
 ```
 
-### 2b. ローカルフォルダ
+### 2b. ローカル / NAS フォルダ (DL済みの場合)
 
-`--input <dir>` で、事前にDLした画像を種別サブフォルダに置いて処理する。
+`--input <dir>` で、事前にDL済みの画像を種別サブフォルダごと処理する。
+Windows の NAS 割当ドライブ (例 `Z:`) もそのまま指定可 (日本語・スペースを含むパスは引用符で囲む)。
+
+想定レイアウト (入力フォルダ直下に種別サブフォルダ):
 
 ```
-samples/
-  がんリスク検査フォルダー/      → CancerRiskAssessmentData
-  検診・人間ドックサンプル/       → HealthCheckupData
-  遺伝子検査データサンプル/        → GeneticTestResultData
+Z:\Temp\濱田さん共有\
+  がんリスク検査フォルダー\      → CancerRiskAssessmentData
+  検診・人間ドックサンプル\       → HealthCheckupData
+  遺伝子検査データサンプル\        → GeneticTestResultData
 ```
+
+Windows (PowerShell) の実行例 — ドライラン (S3に書かない):
+
+```powershell
+$env:GEMINI_API_KEY="xxxxx"
+node scripts/batch-scan-to-elith.mjs --input "Z:\Temp\濱田さん共有" --limit 3
+```
+
+Windows (PowerShell) の実行例 — 本番アップロード:
+
+```powershell
+$env:GEMINI_API_KEY="xxxxx"
+$env:AWS_REGION="ap-northeast-1"; $env:AWS_S3_BUCKET="wellfort-ai-input"
+$env:AWS_ACCESS_KEY_ID="xxxx"; $env:AWS_SECRET_ACCESS_KEY="xxxx"
+node scripts/batch-scan-to-elith.mjs --input "Z:\Temp\濱田さん共有" --upload
+```
+
+> メモ: `--input` 指定時は Drive 認証 (SA/トークン) は不要。NAS 上の画像を読むだけ。
+> ドライランの生成物は `.\batch-out\` に出る (小容量の JSON のみ)。本番 `--upload` は S3 に直接書く。
 
 ## 3. まずドライラン (S3 に書かない)
 
