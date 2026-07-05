@@ -168,6 +168,29 @@ const T_BLOOD = '血液検査のみ';
 const T_AIPRED = 'AI疾病予測のみ';
 const T_AIPREV = 'AI疾病予防のみ';
 
+/**
+ * DB の test_type コード → EXAM-TYPE ラベル。
+ * 「今回実施する検査」は申込情報 (customer.lab_tests.test_type 等) から供給し、
+ * EXAM-TYPE 設問はユーザーに尋ねない (A案)。コードは lab-results/upload・
+ * dashboard-queries 等と共通 (blood / cancer_urine / genetics / ai_prediction)。
+ */
+export const TEST_TYPE_TO_EXAM_LABEL: Record<string, string> = {
+  blood: T_BLOOD,
+  cancer_urine: T_CANCER,
+  genetics: T_GENE,
+  ai_prediction: T_AIPRED,
+};
+
+/** DB test_type コード配列 → EXAM-TYPE 用ラベル配列 (未知コードは除外・重複排除)。 */
+export function examLabelsFromTestTypes(codes: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const c of codes) {
+    const label = TEST_TYPE_TO_EXAM_LABEL[c];
+    if (label && !out.includes(label)) out.push(label);
+  }
+  return out;
+}
+
 // ── 分岐ヘルパ ─────────────────────────────────────────────────
 
 function asArray(v: AnswerValue | undefined): string[] {
@@ -181,10 +204,13 @@ function hasCurrentDisease(a: Answers): boolean {
   return asArray(a['H-CURRENT']).some((x) => x !== 'なし');
 }
 
-/** 実施検査タイプが list のいずれかに一致するか (未回答なら false = まだ出さない) */
+/**
+ * 実施検査タイプが list のいずれかに一致するか (未回答なら false = まだ出さない)。
+ * EXAM-TYPE は申込情報から供給される配列 (複数検査可) の場合と、
+ * フォールバックで問診設問に答えた単一文字列の場合の両方を受ける。
+ */
 function examIs(a: Answers, ...list: string[]): boolean {
-  const t = a['EXAM-TYPE'];
-  return typeof t === 'string' && list.includes(t);
+  return asArray(a['EXAM-TYPE']).some((t) => list.includes(t));
 }
 
 // ── 問診票本体 (PDF「共通アンケート」全 81 問を反映) ────────────
@@ -451,10 +477,12 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
   },
 
   // ───── 実施検査確認 ─────
+  // 通常は申込情報 (customer.lab_tests.test_type) から供給され、この設問は提示しない。
+  // 申込情報が取れない場合のみフォールバックで提示する (複数検査可＝multi)。
   {
-    id: 'EXAM-TYPE', section_id: 'exam', answer_kind: 'wheel',
+    id: 'EXAM-TYPE', section_id: 'exam', answer_kind: 'wheel', multi: true,
     question: '今回実施いただく／いただいた検査について、当てはまるものを教えてください。',
-    wheel_title: '実施する検査を選んでください',
+    wheel_title: '実施する検査を選んでください（複数選択可）',
     wheel_options: opt([T_WELLTECT, T_GENE, T_CANCER, T_BLOOD, T_AIPRED, T_AIPREV]),
   },
 
@@ -477,13 +505,7 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
   },
 
   // がんリスク検査 (ウェルテクト / がんリスク検査のみ)
-  {
-    id: 'EX-USERID', section_id: 'examdetail', answer_kind: 'text', numeric: true,
-    question: '【がんリスク検査】ユーザーIDを入力してください。',
-    example: '704000056',
-    placeholder: '例：704000056',
-    when: (a) => examIs(a, T_CANCER),
-  },
+  // ※ ユーザーID (旧 EX-USERID) は system 発番 (diagnostic_user_id) のため問診で尋ねない。
   {
     id: 'EX-URINE-DT', section_id: 'examdetail', answer_kind: 'text',
     question: '【がんリスク検査】採尿した日付と時刻を教えてください。',
@@ -584,13 +606,7 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
     placeholder: '例：日本・東京都',
     when: (a) => examIs(a, T_WELLTECT, T_GENE),
   },
-  {
-    id: 'EX-RESIDENCE', section_id: 'examdetail', answer_kind: 'text',
-    question: '【遺伝子検査】あなたの現在の居住地を教えてください。',
-    example: '横浜市 → 日本・神奈川県',
-    placeholder: '例：日本・神奈川県',
-    when: (a) => examIs(a, T_WELLTECT, T_GENE),
-  },
+  // ※ 現在の居住地 (旧 EX-RESIDENCE) は申込情報 (住所) から取得済のため問診で尋ねない。
   {
     id: 'EX-FATHER', section_id: 'examdetail', answer_kind: 'text',
     question: '【遺伝子検査】あなたの父の人種と生まれた場所を教えてください。',
@@ -645,12 +661,31 @@ export const FIRST_QUESTION_ID = ORDER[0];
 export class InterviewEngine {
   private currentId: string | null = null;
   private readonly answers: Map<string, AnswerValue> = new Map();
+  /** 申込情報等から供給済で、ユーザーに提示しない設問 id (例 EXAM-TYPE) */
+  private readonly seeded: Set<string> = new Set();
 
-  start(): QuestionDef {
+  /**
+   * 問診を開始する。
+   * @param seed 申込情報等から供給する既知回答 (例 `{ 'EXAM-TYPE': [...] }`)。
+   *   指定した設問は「値だけ保持し、ユーザーには提示しない」。
+   *   空値 (null / 空配列) は無視し、通常どおり設問を提示する (フォールバック)。
+   */
+  start(seed: Answers = {}): QuestionDef {
     this.answers.clear();
-    const path = resolvePath({});
+    this.seeded.clear();
+    for (const [id, v] of Object.entries(seed)) {
+      if (v == null || v === '' || (Array.isArray(v) && v.length === 0)) continue;
+      this.answers.set(id, v);
+      this.seeded.add(id);
+    }
+    const path = this.visiblePath();
     this.currentId = path[0] ?? FIRST_QUESTION_ID;
     return QUESTIONS[this.currentId];
+  }
+
+  /** when 分岐を適用し、さらに seed 済 (提示しない) 設問を除いた提示対象の id 列 */
+  private visiblePath(): string[] {
+    return resolvePath(this.answersObj()).filter((id) => !this.seeded.has(id));
   }
 
   current(): QuestionDef | null {
@@ -670,7 +705,7 @@ export class InterviewEngine {
       throw new Error('Interview not started — call start() first');
     }
     this.answers.set(this.currentId, answer);
-    const path = resolvePath(this.answersObj());
+    const path = this.visiblePath();
     const idx = path.indexOf(this.currentId);
     const nextId = idx >= 0 && idx < path.length - 1 ? path[idx + 1] : null;
     if (!nextId || !QUESTIONS[nextId]) {
@@ -684,7 +719,7 @@ export class InterviewEngine {
   /** 現在の進捗 (0-100) — 表示中の設問が、表示対象列の何番目かで算出 */
   currentPercent(): number {
     if (!this.currentId) return 100;
-    const path = resolvePath(this.answersObj());
+    const path = this.visiblePath();
     const idx = path.indexOf(this.currentId);
     if (idx < 0 || path.length <= 1) return 0;
     return Math.round((idx / (path.length - 1)) * 100);
@@ -704,6 +739,7 @@ export class InterviewEngine {
   reset(): void {
     this.currentId = null;
     this.answers.clear();
+    this.seeded.clear();
   }
 }
 

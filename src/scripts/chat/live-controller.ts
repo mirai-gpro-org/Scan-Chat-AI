@@ -241,6 +241,8 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   let muted = false;
   /** 内部で取得済の顧客プロフィール (氏名・生年月日・性別は問診で尋ねず結果へ付与) */
   let userProfile: { name: string | null; dateOfBirth: string | null; sex: string | null } | null = null;
+  /** 申込情報から供給する EXAM-TYPE (今回実施検査)。空なら問診で通常設問として尋ねる。 */
+  let seededExamTypes: string[] = [];
   const engine = new InterviewEngine();
   // 後方互換: 旧 fallback パス由来の参照を温存 (本実装では未使用)
   let presentQuestionCalledThisTurn = false;
@@ -770,14 +772,17 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       const body = await res.text();
       throw new Error(`token mint ${res.status}: ${body}`);
     }
-    const { token, model, userContext, userProfile: fetchedProfile } = (await res.json()) as {
+    const { token, model, userContext, userProfile: fetchedProfile, examTypes } = (await res.json()) as {
       token: string;
       model: string;
       userContext?: string | null;
       userProfile?: { name: string | null; dateOfBirth: string | null; sex: string | null } | null;
+      examTypes?: string[] | null;
     };
     // 氏名・生年月日・性別は問診で尋ねない。内部取得値を結果へ付与するため保持する。
     userProfile = fetchedProfile ?? null;
+    // 今回実施検査 (EXAM-TYPE) も申込情報から供給し、問診では尋ねない (A案)。
+    seededExamTypes = Array.isArray(examTypes) ? examTypes.filter((x) => typeof x === 'string') : [];
 
     // NOTE: userContext 注入は AI ループの原因となったため一時 OFF。
     // 後で再有効化する場合は連結ロジックを再設計する。
@@ -807,7 +812,10 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
           setStatus('🎙 接続済 — 話せます / タップ可');
           setConnected(true);
           // engine 起動: 最初の Q を画面に即表示 (AI を待たない)
-          const firstQ = engine.start();
+          // EXAM-TYPE は申込情報から供給し設問を提示しない (空なら通常設問にフォールバック)。
+          const firstQ = engine.start(
+            seededExamTypes.length > 0 ? { 'EXAM-TYPE': seededExamTypes } : {},
+          );
           applyQuestionToUI(firstQ);
           // AI には「挨拶 + Q1-1 の読み上げ」だけを依頼
           setTimeout(() => {

@@ -14,6 +14,7 @@ import {
   extractUrgentAlert,
   type ElithSection,
 } from './elith-parser';
+import { examLabelsFromTestTypes } from '../scripts/chat/interview-script';
 
 /**
  * 内部に登録済の顧客プロフィール (氏名・生年月日・性別) を取得する。
@@ -53,6 +54,41 @@ export async function getCustomerProfile(
     dateOfBirth: data.date_of_birth ?? null,
     sex: data.sex ?? null,
   };
+}
+
+/**
+ * 今回実施する検査を申込情報から取得し、EXAM-TYPE 設問へ供給するラベル配列を返す。
+ * A案: customer.lab_tests.test_type (診断側との橋渡し diagnostic_user_id で直結) を採用。
+ * 該当が無ければ空配列 → 問診側はフォールバックで EXAM-TYPE を通常設問として尋ねる。
+ * service role key で読むため、サーバ側 (API route) からのみ呼ぶこと。
+ */
+export async function getAppliedExamLabels(
+  diagnosticUserId: string | null | undefined,
+): Promise<string[]> {
+  if (!diagnosticUserId) return [];
+  if (!/^[0-9a-f-]{36}$/i.test(diagnosticUserId)) return [];
+
+  const sb = getServerSupabase();
+  if (!sb) return [];
+
+  // 今回対象の検査 = まだ結果取り込み前 (pending|in_lab|reported) を優先。
+  // 見つからなければ全件から拾う (test-data フェーズの取りこぼし回避)。
+  const { data } = await sb
+    .schema('customer')
+    .from('lab_tests')
+    .select('test_type, status')
+    .eq('diagnostic_user_id', diagnosticUserId);
+
+  if (!data || data.length === 0) return [];
+
+  const active = data.filter(
+    (r) => r.status === 'pending' || r.status === 'in_lab' || r.status === 'reported',
+  );
+  const rows = active.length > 0 ? active : data;
+  const codes = rows
+    .map((r) => r.test_type)
+    .filter((t): t is string => typeof t === 'string');
+  return examLabelsFromTestTypes(codes);
 }
 
 export async function buildUserContextForChat(
