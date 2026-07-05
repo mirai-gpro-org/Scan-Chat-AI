@@ -35,7 +35,6 @@ export type SectionId =
   | 'meds'
   | 'sleep'
   | 'exam'
-  | 'examdetail'
   | 'consent';
 
 export interface ChoiceOpt {
@@ -99,7 +98,6 @@ export const SECTIONS: { id: SectionId; title: string }[] = [
   { id: 'meds',       title: '服薬・サプリメント' },
   { id: 'sleep',      title: '睡眠・ストレス' },
   { id: 'exam',       title: '実施検査の確認' },
-  { id: 'examdetail', title: '検査別の詳細' },
   { id: 'consent',    title: '同意事項' },
 ];
 
@@ -131,16 +129,6 @@ const SYMPTOMS: ChoiceOpt[] = [
   { label: '慢性的な疲労感', emoji: '😪' },
   { label: 'その他' },
 ];
-
-const FAMILY_CANCER = opt([
-  'なし', '肺がん', '胃がん', '大腸がん', '乳がん',
-  '子宮がん', '前立腺がん', '膵臓がん', '肝臓がん', 'その他',
-]);
-
-const FAMILY_DISEASE = opt([
-  'なし', '高血圧', '糖尿病', '脂質異常症',
-  '心疾患', '脳血管疾患', '認知症', 'その他',
-]);
 
 const EXERCISE_TYPES: ChoiceOpt[] = [
   { label: 'ウォーキング', emoji: '🚶' },
@@ -202,15 +190,6 @@ function asArray(v: AnswerValue | undefined): string[] {
 /** 現病歴 (H-CURRENT) で「なし」以外の疾患を 1 つ以上選んでいるか */
 function hasCurrentDisease(a: Answers): boolean {
   return asArray(a['H-CURRENT']).some((x) => x !== 'なし');
-}
-
-/**
- * 実施検査タイプが list のいずれかに一致するか (未回答なら false = まだ出さない)。
- * EXAM-TYPE は申込情報から供給される配列 (複数検査可) の場合と、
- * フォールバックで問診設問に答えた単一文字列の場合の両方を受ける。
- */
-function examIs(a: Answers, ...list: string[]): boolean {
-  return asArray(a['EXAM-TYPE']).some((t) => list.includes(t));
 }
 
 // ── 問診票本体 (PDF「共通アンケート」全 81 問を反映) ────────────
@@ -488,78 +467,10 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
   //   EX-URINE-MED-NAME / EX-ALA-DT / EX-URINATE / EX-URINATE-CNT / EX-FROZEN を削除)。
   //   根拠: CLAUDE.md「がんリスク = Wellfort が検査機関から手動取得 → admin バッチ」。
 
-  // 遺伝子検査 (ウェルテクト / 遺伝子検査のみ)
-  {
-    id: 'EX-FAM-CANCER1', section_id: 'examdetail', answer_kind: 'wheel', multi: true,
-    question: '【遺伝子検査】直系家族（父母）が診断されたがんがあれば教えてください。',
-    wheel_title: '直系家族（父母）のがん（複数選択可）',
-    wheel_options: FAMILY_CANCER,
-    when: (a) => examIs(a, T_WELLTECT, T_GENE),
-  },
-  {
-    id: 'EX-FAM-CANCER2', section_id: 'examdetail', answer_kind: 'wheel', multi: true,
-    question: '【遺伝子検査】祖父母・兄弟姉妹が診断されたがんがあれば教えてください。',
-    wheel_title: '祖父母・兄弟姉妹のがん（複数選択可）',
-    wheel_options: FAMILY_CANCER,
-    when: (a) => examIs(a, T_WELLTECT, T_GENE),
-  },
-  {
-    id: 'EX-FAM-DISEASE', section_id: 'examdetail', answer_kind: 'wheel', multi: true,
-    question: '【遺伝子検査】家族歴のある疾患を教えてください。',
-    wheel_title: '家族歴のある疾患（複数選択可）',
-    wheel_options: FAMILY_DISEASE,
-    when: (a) => examIs(a, T_WELLTECT, T_GENE),
-  },
-  {
-    id: 'EX-HAIR', section_id: 'examdetail', answer_kind: 'chip',
-    question: '【遺伝子検査】脱毛の症状があるか教えてください。',
-    chips: opt(['ある', 'ない']),
-    when: (a) => examIs(a, T_WELLTECT, T_GENE),
-  },
-  {
-    id: 'EX-FAM-HAIR', section_id: 'examdetail', answer_kind: 'chip',
-    question: '【遺伝子検査】直系家族（父母）の中で脱毛の症状がある人がいるか教えてください。',
-    chips: opt(['いる', 'いない']),
-    when: (a) => examIs(a, T_WELLTECT, T_GENE),
-  },
-  {
-    id: 'EX-NATION', section_id: 'examdetail', answer_kind: 'text',
-    question: '【遺伝子検査】あなたの国籍と人種を教えてください。',
-    example: '日本・アジア系 → 日本人・アジア系',
-    placeholder: '例：日本人・アジア系',
-    when: (a) => examIs(a, T_WELLTECT, T_GENE),
-  },
-  {
-    id: 'EX-BIRTH', section_id: 'examdetail', answer_kind: 'text',
-    question: '【遺伝子検査】あなたの生まれた場所を教えてください。',
-    example: '東京都 → 日本・東京都',
-    placeholder: '例：日本・東京都',
-    when: (a) => examIs(a, T_WELLTECT, T_GENE),
-  },
-  // ※ 現在の居住地 (旧 EX-RESIDENCE) は申込情報 (住所) から取得済のため問診で尋ねない。
-  {
-    id: 'EX-FATHER', section_id: 'examdetail', answer_kind: 'text',
-    question: '【遺伝子検査】あなたの父の人種と生まれた場所を教えてください。',
-    example: 'アジア系で東京都 → アジア系・東京都',
-    placeholder: '例：アジア系・東京都',
-    when: (a) => examIs(a, T_WELLTECT, T_GENE),
-  },
-  {
-    id: 'EX-MOTHER', section_id: 'examdetail', answer_kind: 'text',
-    question: '【遺伝子検査】あなたの母の人種と生まれた場所を教えてください。',
-    example: 'ヨーロッパ系でアメリカ ニューヨーク州 → ヨーロッパ系・アメリカ ニューヨーク州',
-    placeholder: '例：ヨーロッパ系・アメリカ ニューヨーク州',
-    when: (a) => examIs(a, T_WELLTECT, T_GENE),
-  },
-
-  // AI疾病予測 (ウェルテクト / AI疾病予測のみ)
-  {
-    id: 'EX-WEIGHT-CHG', section_id: 'examdetail', answer_kind: 'text',
-    question: '【AI疾病予測】直近1年の体重変化（〇kg）を教えてください。',
-    example: '5kg増えた → 5、3kg減った → -3',
-    placeholder: '例：5',
-    when: (a) => examIs(a, T_WELLTECT, T_AIPRED),
-  },
+  // 遺伝子検査 / AI疾病予測 の検査固有設問は、この AI 問診 (Elith 用・生活習慣問診) では
+  //   聴取しない。遺伝子検査に必要な家族歴・人種・出生地等の問診は、遺伝子検査の実施時に
+  //   別途行う。旧: EX-FAM-CANCER1/2 / EX-FAM-DISEASE / EX-HAIR / EX-FAM-HAIR / EX-NATION /
+  //   EX-BIRTH / EX-FATHER / EX-MOTHER / EX-WEIGHT-CHG を削除。
 
   // ───── 同意事項 ─────
   {
