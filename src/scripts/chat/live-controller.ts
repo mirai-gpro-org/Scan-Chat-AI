@@ -596,18 +596,31 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
     // AI 依頼: 復唱 + (セクション切替時のみ導線) + 次の質問本文を読み上げ
     // 選択肢は読み上げさせない (画面に出ているため重複になる)
-    const msg = sectionChanged
-      ? `ユーザーが「${rawAnswer}」と回答しました。次のセクション「${next.section_title}」に進みます。
+    //
+    // ★ 二重復唱の防止:
+    //   音声回答 (silent) では、ユーザーの発話に対し Live API モデルが既に自発応答して
+    //   復唱している。ここで再度「復唱」を依頼すると復唱が 2 回になるため、silent 時は
+    //   復唱(①)を外し「次の質問の読み上げ」だけ依頼する。タップ回答は発話が無く自発
+    //   応答も無いので従来どおり復唱込みで依頼する。
+    let msg: string;
+    if (opts.silent) {
+      msg = sectionChanged
+        ? `次のセクション「${next.section_title}」に進みます。「次は${next.section_title}についてお伺いしますね」と一言添えてから、次の質問を自然に読み上げてください: 「${next.question}」。復唱・相槌は不要です (お答えには既に応じています)。選択肢は読み上げないでください (画面に表示されています)。`
+        : `次の質問を自然に読み上げてください: 「${next.question}」。復唱・相槌は不要です (お答えには既に応じています)。選択肢は読み上げないでください (画面に表示されています)。`;
+    } else {
+      msg = sectionChanged
+        ? `ユーザーが「${rawAnswer}」と回答しました。次のセクション「${next.section_title}」に進みます。
 発話手順 (1〜3 文):
   ① 短く温かく復唱: 「『${rawAnswer}』ですね、ありがとうございます」
   ② 「次は${next.section_title}についてお伺いしますね」
   ③ 続けて次の質問を自然に読み上げ: 「${next.question}」
 選択肢は読み上げないでください (画面に表示されています)。`
-      : `ユーザーが「${rawAnswer}」と回答しました。
+        : `ユーザーが「${rawAnswer}」と回答しました。
 発話手順 (2 文):
   ① 短く温かく復唱: 「『${rawAnswer}』ですね、ありがとうございます」
   ② 続けて次の質問を自然に読み上げ: 「${next.question}」
 選択肢は読み上げないでください (画面に表示されています)。`;
+    }
     sendToModel(msg);
 
     // AI 音声の最初の chunk が再生開始した瞬間 (≒ 復唱開始) に次の Q を表示。
