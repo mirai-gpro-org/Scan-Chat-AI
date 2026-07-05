@@ -118,6 +118,23 @@ Vercel の関数には実行時間上限があるため、**1 リクエストで
 | 入力 | NAS/Drive の画像 | admin UI アップロード / 取込済み成果物 |
 | 対象 | 検診・がん・遺伝子 全部 (テスト) | がんリスク・遺伝子 (本番運用) |
 
+## 4.3 実装状況 (2026-07-05)
+
+スキャン系の一元化を実装 (型チェック `astro check` 0 errors)。
+
+| 追加/変更 | 役割 |
+|---|---|
+| `src/lib/scan-prompt.ts` (新) | `ANALYZE_SYSTEM` 等を分離し scan.ts と共用 (二重管理しない) |
+| `src/lib/elith-export.ts` (新) | **共有: 画像→スキャン→Elithエンベロープ→S3ファイル群**。キーはサーバ env のみ |
+| `src/pages/api/admin/elith-scan.ts` (新) | admin バッチ API (1画像=1リクエスト)。S3未設定時はドライラン |
+| `src/pages/admin/elith-batch.astro` (新) | admin 画面: 種別選択+client_id+画像複数選択→順次実行→結果/mapping.csv |
+| `src/pages/api/scan.ts` (変更) | プロンプトを scan-prompt.ts から import (挙動不変) |
+| `src/lib/s3.ts` (変更) | `S3PutFile.body` を `string | Uint8Array` に拡張 (画像バイナリ対応) |
+
+- 画面 URL: `/admin/elith-batch?u=<admin uid>` (既存 admin 認証 `gateByUid` 準拠)。
+- キーは Vercel の `GEMINI_API_KEY` / `AWS_*` を使用 (画面・operator にキーは出さない)。
+- 未実装: 実顧客 `diagnostic_user_id` 割当 UI の作り込み、`test_artifacts` 連携 (§4.1 / §6)。
+
 ## 5. 移行ステップ (案)
 
 1. **共有モジュール抽出**: `src/lib/elith-export.ts` に「scan→Elithエンベロープ→S3」を集約

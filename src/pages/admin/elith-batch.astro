@@ -1,0 +1,197 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { gateByUid, notFoundForNonAdmin } from '../../lib/admin-auth';
+
+export const prerender = false;
+
+const url = new URL(Astro.request.url);
+const u = url.searchParams.get('u');
+const { allowed, uid } = gateByUid(u);
+if (!allowed) {
+  return notFoundForNonAdmin();
+}
+const qs = `?u=${encodeURIComponent(uid!)}`;
+
+// Elith format_id (AIスキャン対象。問診はアプリ側なので除外)
+const formats = [
+  { value: 'CancerRiskAssessmentData', label: '🎗️ がんリスク検査 (尿)' },
+  { value: 'GeneticTestResultData', label: '🧬 遺伝子検査' },
+  { value: 'HealthCheckupData', label: '🏥 健診・人間ドック' },
+  { value: 'BloodTestData', label: '🩸 血液検査' },
+  { value: 'Other', label: '📄 その他' },
+];
+---
+
+<BaseLayout title="Elith バッチ生成 | 管理画面">
+  <header class="hero-gradient px-5 pt-5 pb-4">
+    <div class="flex items-center justify-between">
+      <a href={`/admin${qs}`} class="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400">‹ 管理画面</a>
+      <p class="text-xs font-medium uppercase tracking-wider text-red-600/80 dark:text-red-300/80">ADMIN</p>
+      <span class="w-10"></span>
+    </div>
+    <h1 class="mt-2 text-lg font-bold tracking-tight">🧪 Elith バッチ生成</h1>
+    <p class="mt-1 text-[11px] text-slate-600 dark:text-slate-300">
+      手動取得した検査結果画像を AIスキャン → Elith 形式 JSON + 元画像を S3 へ (1画像=1リクエスト)
+    </p>
+  </header>
+
+  <main class="flex flex-1 flex-col gap-4 px-5 pb-8 pt-4">
+    <section class="card">
+      <h2 class="mb-2 text-sm font-bold text-slate-800 dark:text-slate-100">① 検査種別 (format_id)</h2>
+      <select id="format" class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900">
+        {formats.map((f) => <option value={f.value}>{f.label}</option>)}
+      </select>
+    </section>
+
+    <section class="card">
+      <h2 class="mb-2 text-sm font-bold text-slate-800 dark:text-slate-100">② client_id の付け方</h2>
+      <div class="flex flex-col gap-2 text-sm">
+        <label class="flex items-center gap-2">
+          <input type="radio" name="cidmode" value="uuid" checked />
+          画像ごとに UUID を採番 (サンプル/実顧客未割当)
+        </label>
+        <label class="flex items-center gap-2">
+          <input type="radio" name="cidmode" value="fixed" />
+          固定 ID を使う:
+          <input id="cid-fixed" type="text" placeholder="例: diagnostic_user_id" class="flex-1 rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-900" />
+        </label>
+        <p class="text-[11px] text-slate-500">本番の実顧客は「固定ID」に diagnostic_user_id を入れる (PII非含有)。</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 class="mb-2 text-sm font-bold text-slate-800 dark:text-slate-100">③ 画像を選択</h2>
+      <input id="files" type="file" multiple accept="image/*,application/pdf"
+        class="w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-white" />
+      <p id="filecount" class="mt-1 text-[11px] text-slate-500"></p>
+    </section>
+
+    <button id="run" class="rounded-xl bg-red-600 px-4 py-3 text-sm font-bold text-white disabled:opacity-40" disabled>
+      実行 (S3へ書き出し)
+    </button>
+
+    <section id="progress" class="card hidden">
+      <div class="mb-2 flex items-center justify-between">
+        <h2 class="text-sm font-bold text-slate-800 dark:text-slate-100">実行結果</h2>
+        <button id="dlcsv" class="rounded-lg border border-slate-300 px-2 py-1 text-[11px] hidden dark:border-slate-700">mapping.csv</button>
+      </div>
+      <p id="summary" class="mb-2 text-xs text-slate-600 dark:text-slate-300"></p>
+      <div id="rows" class="flex flex-col gap-1 text-[11px]"></div>
+    </section>
+  </main>
+</BaseLayout>
+
+<script>
+  const $ = (id: string) => document.getElementById(id)!;
+  const filesInput = $('files') as HTMLInputElement;
+  const runBtn = $('run') as HTMLButtonElement;
+  const rowsEl = $('rows');
+  const progressEl = $('progress');
+  const summaryEl = $('summary');
+  const dlBtn = $('dlcsv') as HTMLButtonElement;
+
+  type Res = {
+    file: string; status: string; client_id?: string; format_id?: string;
+    test_date?: string; date_source?: string; rows?: number; json_key?: string; image_key?: string; note?: string;
+  };
+  const results: Res[] = [];
+
+  filesInput.addEventListener('change', () => {
+    const n = filesInput.files?.length ?? 0;
+    $('filecount').textContent = n ? `${n} 件選択中` : '';
+    runBtn.disabled = n === 0;
+  });
+
+  function readAsDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result));
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(file);
+    });
+  }
+
+  function cidMode(): { mode: string; fixed: string } {
+    const mode = (document.querySelector('input[name="cidmode"]:checked') as HTMLInputElement)?.value ?? 'uuid';
+    const fixed = ($('cid-fixed') as HTMLInputElement).value.trim();
+    return { mode, fixed };
+  }
+
+  function addRow(r: Res): HTMLElement {
+    const el = document.createElement('div');
+    el.className = 'rounded-lg border border-slate-200 px-2 py-1 dark:border-slate-800';
+    rowsEl.appendChild(el);
+    renderRow(el, r);
+    return el;
+  }
+  function renderRow(el: HTMLElement, r: Res) {
+    const icon = r.status === 'ok' ? '✅' : r.status === 'error' ? '❌' : r.status === 'preview' ? '🟡' : '⏳';
+    const detail = r.status === 'ok' || r.status === 'preview'
+      ? `${r.format_id} / ${r.test_date}(${r.date_source}) / rows=${r.rows} / ${r.json_key}`
+      : r.note ?? '';
+    el.innerHTML = `<span>${icon} <b>${r.file}</b></span><br><span class="text-slate-500">${detail}</span>`;
+  }
+
+  runBtn.addEventListener('click', async () => {
+    const files = Array.from(filesInput.files ?? []);
+    if (!files.length) return;
+    const formatId = ($('format') as HTMLSelectElement).value;
+    const { mode, fixed } = cidMode();
+    runBtn.disabled = true;
+    progressEl.classList.remove('hidden');
+    rowsEl.innerHTML = '';
+    results.length = 0;
+
+    let ok = 0, ng = 0;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const rec: Res = { file: file.name, status: 'pending' };
+      results.push(rec);
+      const el = addRow(rec);
+      try {
+        const dataUrl = await readAsDataUrl(file);
+        const payload: Record<string, string> = { image: dataUrl, formatId, sourceFileName: file.name };
+        if (mode === 'fixed' && fixed) payload.clientId = fixed;
+        const res = await fetch('/api/admin/elith-scan', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const j = await res.json();
+        if (j.ok) {
+          Object.assign(rec, { status: 'ok', client_id: j.client_id, format_id: j.format_id, test_date: j.test_date, date_source: j.date_source, rows: j.rows, json_key: j.json_key, image_key: j.image_key });
+          ok++;
+        } else if (j.configured === false) {
+          Object.assign(rec, { status: 'preview', client_id: j.client_id, format_id: j.format_id, test_date: j.test_date, date_source: j.date_source, rows: j.rows, json_key: j.json_key, image_key: j.image_key, note: 'S3未設定(プレビューのみ)' });
+          ok++;
+        } else {
+          Object.assign(rec, { status: 'error', note: j.error || j.detail || 'failed' });
+          ng++;
+        }
+      } catch (err) {
+        Object.assign(rec, { status: 'error', note: String(err) });
+        ng++;
+      }
+      renderRow(el, rec);
+      summaryEl.textContent = `処理中… ${i + 1}/${files.length} (成功 ${ok} / 失敗 ${ng})`;
+    }
+    summaryEl.textContent = `完了: 成功 ${ok} / 失敗 ${ng} / 合計 ${files.length}`;
+    dlBtn.classList.remove('hidden');
+    runBtn.disabled = false;
+  });
+
+  dlBtn.addEventListener('click', () => {
+    const header = 'file,status,client_id,format_id,test_date,date_source,rows,json_key,image_key,note';
+    const cell = (v: unknown) => {
+      const s = String(v ?? '');
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const csv = [header, ...results.map((r) => [r.file, r.status, r.client_id, r.format_id, r.test_date, r.date_source, r.rows, r.json_key, r.image_key, r.note].map(cell).join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'elith-batch-mapping.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+</script>
