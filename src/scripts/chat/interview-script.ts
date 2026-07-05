@@ -358,16 +358,14 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
     matrix_cols: FOOD_COLS,
   },
   {
-    id: 'F-CAFFEINE', section_id: 'diet', answer_kind: 'text',
-    question: 'カフェインの1日あたりの摂取量について教えてください。',
-    example: 'コーヒー約2杯／エナジードリンク1本／飲まない など',
-    placeholder: '例：コーヒー約2杯',
+    id: 'F-CAFFEINE', section_id: 'diet', answer_kind: 'chip',
+    question: 'カフェイン（コーヒー・お茶・エナジードリンク等）の1日あたりの摂取量を教えてください。',
+    chips: opt(['ほとんど摂らない', '1日1〜2杯', '1日3〜4杯', '1日5杯以上']),
   },
   {
-    id: 'F-RICE', section_id: 'diet', answer_kind: 'text',
+    id: 'F-RICE', section_id: 'diet', answer_kind: 'chip',
     question: '1回あたりのご飯（お米）の量を教えてください。',
-    example: '約150g／お茶碗に大盛り／食べない など',
-    placeholder: '例：150g',
+    chips: opt(['ほとんど食べない', '茶碗軽め（約100g）', '茶碗1杯（約150g）', '大盛り以上（約250g〜）']),
   },
   {
     id: 'F-VEG', section_id: 'diet', answer_kind: 'chip',
