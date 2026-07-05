@@ -294,9 +294,11 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
   {
     id: 'D-UNTIL-AGE', section_id: 'drinking', answer_kind: 'text', numeric: true,
     question: '何歳まで飲酒されていたか教えてください。',
-    example: '45歳 → 45（現在も飲む場合は現在の年齢）',
+    example: '45歳 → 45',
     placeholder: '例：45',
-    when: (a) => a['D-FREQ'] !== '元々まったく飲まない',
+    // 「何歳まで飲酒していたか」は過去にやめた人だけに聞く (喫煙の S-QUIT-AGE と同じ設計)。
+    // 現在の飲酒者には出さない (毎日飲む人に「何歳まで」は不自然)。
+    when: (a) => a['D-FREQ'] === '過去飲んでいたが、現在はまったく飲まない',
   },
   {
     id: 'D-YEARS', section_id: 'drinking', answer_kind: 'text', numeric: true,
