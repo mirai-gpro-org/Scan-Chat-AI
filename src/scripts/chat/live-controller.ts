@@ -252,6 +252,14 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   /** 回答受付〜次設問表示までの間は音声回答の二重取り込みを抑止する */
   let advancing = false;
   let muted = false;
+  /**
+   * 直近に AI 音声を再生した時刻 (epoch ms)。AI 発話中はマイク送信をゲートし、
+   * スピーカー→マイクの回り込み音を「ユーザー発話」として再取り込みしないようにする
+   * (半二重)。barge-in は NO_INTERRUPTION で無効のため、ゲートしても機能低下は無い。
+   */
+  let lastAiAudioAt = 0;
+  /** AI 発話終了後、この時間はマイク送信を止める (回り込みの残響対策) */
+  const AI_SPEAKING_GATE_MS = 800;
   /** 内部で取得済の顧客プロフィール (氏名・生年月日・性別は問診で尋ねず結果へ付与) */
   let userProfile: { name: string | null; dateOfBirth: string | null; sex: string | null } | null = null;
   /** 申込情報から供給する EXAM-TYPE (今回実施検査)。空なら問診で通常設問として尋ねる。 */
@@ -852,6 +860,10 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
     await audio.start((b64) => {
       if (!liveSession) return;
+      // 半二重: AI 発話中 (直近の再生から AI_SPEAKING_GATE_MS 以内) はマイク送信を止め、
+      //   スピーカー→マイクの回り込みを「ユーザー発話」として拾わないようにする。
+      //   これにより AI の質問読み上げが自己回り込みで割り込み切断される事象を防ぐ。
+      if (Date.now() - lastAiAudioAt < AI_SPEAKING_GATE_MS) return;
       liveSession.sendRealtimeInput({
         audio: { data: b64, mimeType: 'audio/pcm;rate=16000' },
       });
@@ -870,14 +882,15 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
   function handleServerMessage(msg: LiveServerMessage): void {
     // 1) PCM 音声 chunk → 再生（muted 中はスキップ）。
-    //    VAD / echo / barge-in は Live API サーバ側が処理するため、ここで mic を
-    //    gating しない（barge-in が壊れる）。
+    //    再生時刻を lastAiAudioAt に記録し、AI 発話中はマイク送信をゲートする(半二重)。
+    //    barge-in は NO_INTERRUPTION で無効化済のため、ゲートによる機能低下は無い。
     const parts = msg.serverContent?.modelTurn?.parts ?? [];
     for (const p of parts) {
       const mime = p.inlineData?.mimeType ?? '';
       const data = p.inlineData?.data;
       if (data && mime.startsWith('audio/pcm') && !muted) {
         audio.playPcm(data);
+        lastAiAudioAt = Date.now(); // AI 発話中はマイク送信をゲート (回り込み防止)
         // 最初の音声 chunk = AI 復唱開始 → pending な次の Q を表示
         if (audioFirstChunkResolvers.length > 0) {
           const cbs = audioFirstChunkResolvers.splice(0, audioFirstChunkResolvers.length);
