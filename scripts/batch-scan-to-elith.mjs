@@ -395,8 +395,34 @@ async function makeWriter(args) {
 }
 
 // ---------- メイン ----------
+// ---------- .env 自動読み込み (アプリと同じキーをそのまま使う) ----------
+// リポジトリ直下 / 実行ディレクトリの .env(.local) を読み、未設定の環境変数だけ補う。
+// (astro dev 用の .env に GEMINI_API_KEY / AWS_* があれば、手入力せずに使える)
+async function loadDotEnv() {
+  const files = [...new Set([
+    path.join(REPO_ROOT, '.env.local'), path.join(REPO_ROOT, '.env'),
+    path.join(process.cwd(), '.env.local'), path.join(process.cwd(), '.env'),
+  ])];
+  const loaded = [];
+  for (const f of files) {
+    let text;
+    try { text = await fs.readFile(f, 'utf-8'); } catch { continue; }
+    let n = 0;
+    for (const line of text.split(/\r?\n/)) {
+      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(line);
+      if (!m) continue;
+      let v = m[2].trim();
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+      if (process.env[m[1]] === undefined || process.env[m[1]] === '') { process.env[m[1]] = v; n++; }
+    }
+    if (n) loaded.push(`${f} (${n})`);
+  }
+  if (loaded.length) console.log('[batch] .env 読込:', loaded.join(', '));
+}
+
 async function main() {
   const args = parseArgs(process.argv);
+  await loadDotEnv();
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY が未設定です (画像OCRに必須)');
 

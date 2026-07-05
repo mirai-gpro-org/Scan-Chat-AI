@@ -71,10 +71,13 @@ export async function callGemini(
   if (!apiKey) {
     throw new GeminiError('GEMINI_API_KEY is not configured', 500, '');
   }
-  const url = `${ENDPOINT_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  // キーは URL クエリ(?key=)ではなく x-goog-api-key ヘッダで送る。
+  //  - 新旧キー(AIza / AQ.)ともネイティブエンドポイントで正常動作 (Google 公式方式)。
+  //  - URL/アクセスログにキーが残らない (漏洩リスク低減)。
+  const url = `${ENDPOINT_BASE}/${encodeURIComponent(model)}:generateContent`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
     body: JSON.stringify(request),
   });
 

@@ -22,7 +22,8 @@ export interface S3PutFile {
   /** バケット内 key */
   key: string;
   contentType: string;
-  body: string;
+  /** テキスト (JSON/MD) は string、画像等バイナリは Uint8Array */
+  body: string | Uint8Array;
   bytes: number;
 }
 
