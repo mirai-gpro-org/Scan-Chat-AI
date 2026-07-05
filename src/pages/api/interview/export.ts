@@ -1,26 +1,29 @@
 /**
- * AI 問診結果を Elith 連携用に S3 へ書き出すエンドポイント (暫定テスト用)。
+ * AI 問診結果を Elith 連携仕様 (LifestyleQuestionnaireData) で S3 へ書き出すエンドポイント。
+ *
+ * 出力仕様: docs/elith_s3_data_handoff_spec.md §7.3 / §3。
+ *   パス   : {prefix}user/{client_id}/date/{YYYY_MM_DD}/
+ *   ファイル: LifestyleQuestionnaireData_date_{YYYY_MM_DD}_user_{client_id}.json
+ *   PII    : 氏名/生年月日は載せず subject:{sex, age} のみ (生年月日→年齢に変換)。
  *
  * 入力 (POST JSON):
  *   {
  *     diagnosticId?: string,        // 端末発番の UUID。無ければサーバで生成
  *     diagnosticUserId?: string|null,
- *     userName?: string|null,       // 内部取得 (customer.family_name)
- *     dateOfBirth?: string|null,
+ *     clientId?: string|null,       // 未指定なら diagnosticUserId → diagnosticId
+ *     dateOfBirth?: string|null,    // 年齢算出にのみ使用 (保存しない)
  *     sex?: string|null,
  *     answers: Record<string, string|string[]|number>,
- *     completedAt?: number          // epoch ms (任意)
+ *     completedAt?: number          // epoch ms (任意, 問診完了日=test_date に使用)
  *   }
  *
  * 出力:
  *   - S3 設定あり: { ok:true, configured:true, bucket, folder, uploaded:[...], json }
  *   - S3 未設定 : { ok:false, configured:false, folder, files:[...], json }  ← ドライラン
- *
- * 命名/フォーマットは暫定 (interview-export-v0)。詳細は lib/interview-export.ts。
  */
 
 import type { APIRoute } from 'astro';
-import { buildInterviewExportBundle } from '../../../lib/interview-export';
+import { buildElithInterviewBundle } from '../../../lib/interview-export';
 import type { AnswerValue } from '../../../scripts/chat/interview-script';
 import { getS3Config, isS3Configured, putFiles } from '../../../lib/s3';
 
@@ -29,7 +32,7 @@ export const prerender = false;
 interface ExportBody {
   diagnosticId?: unknown;
   diagnosticUserId?: unknown;
-  userName?: unknown;
+  clientId?: unknown;
   dateOfBirth?: unknown;
   sex?: unknown;
   answers?: unknown;
@@ -73,12 +76,12 @@ export const POST: APIRoute = async ({ request }) => {
   const cfg = getS3Config();
   const prefix = cfg?.prefix ?? '';
 
-  const bundle = buildInterviewExportBundle(
+  const bundle = buildElithInterviewBundle(
     {
       diagnosticId,
       diagnosticUserId: str(body.diagnosticUserId),
-      userName: str(body.userName),
-      dateOfBirth: str(body.dateOfBirth),
+      clientId: str(body.clientId),
+      dateOfBirth: str(body.dateOfBirth), // 年齢算出のみ (保存しない)
       sex: str(body.sex),
       answers,
       completedAt,

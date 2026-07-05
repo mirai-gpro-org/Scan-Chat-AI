@@ -18,6 +18,7 @@ import {
   type AnswerValue,
 } from '../scripts/chat/interview-script';
 import { compactJstStamp } from './scan-export';
+import { ELITH_HANDOFF_SCHEMA_VERSION } from './elith-export';
 import type { S3PutFile } from './s3';
 
 export const INTERVIEW_EXPORT_SCHEMA_VERSION = 'interview-export-v0';
@@ -176,6 +177,119 @@ export function buildInterviewExportBundle(
     files: [
       mk(jsonName, 'application/json; charset=utf-8', jsonBody),
       mk(mdName, 'text/markdown; charset=utf-8', mdBody),
+    ],
+  };
+}
+
+// ── Elith 連携形式 (LifestyleQuestionnaireData) ────────────────────────────
+// docs/elith_s3_data_handoff_spec.md §7.3 / §3。
+// 現行 answers[] はそのまま。PII は氏名/生年月日を載せず subject:{sex, age} のみ。
+
+/** 生年月日(YYYY-MM-DD) と基準日から満年齢。算出不可なら null。 */
+function ageFromDob(dob: string | null | undefined, ref: Date): number | null {
+  if (!dob) return null;
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(dob.trim());
+  if (!m) return null;
+  const by = +m[1], bm = +m[2], bd = +m[3];
+  let age = ref.getUTCFullYear() - by;
+  const mo = ref.getUTCMonth() + 1 - bm;
+  if (mo < 0 || (mo === 0 && ref.getUTCDate() < bd)) age--;
+  return age >= 0 && age < 150 ? age : null;
+}
+
+/** JST の YYYY-MM-DD */
+function jstDateIso(d: Date): string {
+  const jst = new Date(d.getTime() + 9 * 3600 * 1000);
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${jst.getUTCFullYear()}-${p(jst.getUTCMonth() + 1)}-${p(jst.getUTCDate())}`;
+}
+
+/** PII を含まない Markdown (Q/A のみ。氏名・生年月日は出さない) */
+function elithInterviewMarkdown(answers: InterviewAnswerJson[]): string {
+  const out: string[] = ['# AI 問診結果'];
+  let cur: string | null = null;
+  for (const a of answers) {
+    if (a.section_title && a.section_title !== cur) {
+      cur = a.section_title;
+      out.push(`\n## ${cur}`);
+    }
+    out.push(`- **${a.question ?? a.id}**`);
+    out.push(`  - ${a.answer_label}`);
+  }
+  return out.join('\n') + '\n';
+}
+
+export interface ElithInterviewJson {
+  format_id: 'LifestyleQuestionnaireData';
+  schema_version: typeof ELITH_HANDOFF_SCHEMA_VERSION;
+  kind: 'interview';
+  client_id: string;
+  diagnostic_id: string;
+  test_date: string; // 問診完了日 (YYYY-MM-DD, JST)
+  exported_at: string;
+  subject: { sex: string | null; age: number | null }; // PII: 氏名/DOBは載せない
+  source: { origin: 'scan-chat-ai'; app: 'scan-chat-ai'; model: null; note: string; lab_name: null };
+  data: { answer_count: number; answers: InterviewAnswerJson[] };
+  raw_markdown: string;
+}
+
+export interface ElithInterviewBundle {
+  clientId: string;
+  folder: string;
+  jsonKey: string;
+  testDate: string;
+  json: ElithInterviewJson;
+  files: S3PutFile[];
+}
+
+/** 現行 answers を Elith 形式 (LifestyleQuestionnaireData) へ。client_id 未指定なら diagnosticUserId→diagnosticId。 */
+export function buildElithInterviewJson(
+  input: InterviewExportInput & { clientId?: string | null },
+): ElithInterviewJson {
+  const exportedAt = input.exportedAt ?? new Date();
+  const completed = input.completedAt ? new Date(input.completedAt) : exportedAt;
+  const answers = buildAnswers(input.answers);
+  const clientId = input.clientId?.trim() || input.diagnosticUserId || input.diagnosticId;
+  return {
+    format_id: 'LifestyleQuestionnaireData',
+    schema_version: ELITH_HANDOFF_SCHEMA_VERSION,
+    kind: 'interview',
+    client_id: clientId,
+    diagnostic_id: input.diagnosticId,
+    test_date: jstDateIso(completed),
+    exported_at: exportedAt.toISOString(),
+    subject: { sex: input.sex ?? null, age: ageFromDob(input.dateOfBirth, completed) },
+    source: { origin: 'scan-chat-ai', app: 'scan-chat-ai', model: null,
+      note: 'AI問診。命名/フォーマットは暫定。', lab_name: null },
+    data: { answer_count: answers.length, answers },
+    raw_markdown: elithInterviewMarkdown(answers),
+  };
+}
+
+/**
+ * Elith 仕様のファイル群を生成する。
+ *   {prefix}user/{client_id}/date/{YYYY_MM_DD}/LifestyleQuestionnaireData_date_{YYYY_MM_DD}_user_{client_id}.json
+ * @param prefix バケット内共通プレフィックス (例 "scan-accuracy-test/")。空可。
+ */
+export function buildElithInterviewBundle(
+  input: InterviewExportInput & { clientId?: string | null },
+  prefix = '',
+): ElithInterviewBundle {
+  const json = buildElithInterviewJson(input);
+  const dateFolder = json.test_date.replace(/-/g, '_');
+  const cleanPrefix = prefix ? prefix.replace(/^\/+/, '').replace(/\/*$/, '/') : '';
+  const folder = `${cleanPrefix}user/${json.client_id}/date/${dateFolder}/`;
+  const stem = `LifestyleQuestionnaireData_date_${dateFolder}_user_${json.client_id}`;
+  const jsonBody = JSON.stringify(json, null, 2);
+  const jsonKey = `${folder}${stem}.json`;
+  return {
+    clientId: json.client_id,
+    folder,
+    jsonKey,
+    testDate: json.test_date,
+    json,
+    files: [
+      { key: jsonKey, contentType: 'application/json; charset=utf-8', body: jsonBody, bytes: utf8Bytes(jsonBody) },
     ],
   };
 }
