@@ -17,13 +17,43 @@
 | `AWS_REGION` | `--upload`時○ | 例 `ap-northeast-1` |
 | `AWS_S3_BUCKET` | `--upload`時○ | 例 `wellfort-ai-input` |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `--upload`時○ | Elith バケットへの書込権限 (未指定なら IAM ロール等 SDK 既定チェーン) |
+| `GOOGLE_ACCESS_TOKEN` **または** `GOOGLE_SERVICE_ACCOUNT_KEY(_FILE)` | `--drive`時○ | Google Drive 直読み用 (`drive.readonly`) |
 
 Node は **v20 以上**。依存 (`@aws-sdk/client-s3`) は既存のものを使う (`npm install` 済み前提)。
+Drive 直読みは追加パッケージ不要 (Drive REST を直接呼ぶ)。
 
-## 2. 入力の準備
+## 2. 入力の指定 (2通り)
 
-Google Drive の画像を**ローカルにダウンロード**し、種別ごとのサブフォルダに置く。
-サブフォルダ名から `format_id` を自動判定する。
+サブフォルダ名から `format_id` を自動判定する。判定キーワード:
+がんリスク/尿→Cancer、遺伝子/genetic→Genetic、血液/blood→Blood、
+人間ドック/検診/健診/ドック→HealthCheckup、問診/生活習慣→Lifestyle、その他→Other。
+`--format <id>` で全画像を明示指定も可。
+
+### 2a. Google Drive 直読み (推奨・ローカルに保存しない)
+
+`--drive <フォルダID>` を指定すると、Drive のフォルダを**再帰的に読み、各画像をメモリ上で
+受けて処理**する。**ローカルディスクには画像を保存しない**ため、大容量・重複データでも
+ストレージを圧迫しない。
+
+- フォルダID: 共有URL `https://drive.google.com/drive/folders/<ここがID>` の末尾。
+  本件は `1N19u4NybUjgkkJF-fpe1xaPXG_s-Ozgh`。直下のサブフォルダ
+  (がんリスク検査 / 検診・人間ドック / 遺伝子検査データ) が format_id 判定に使われる。
+- 認証 (`drive.readonly`) はいずれか:
+  - **サービスアカウント (推奨)**: SAキーJSONを `GOOGLE_SERVICE_ACCOUNT_KEY_FILE=/path/key.json`
+    (または中身を `GOOGLE_SERVICE_ACCOUNT_KEY` に)。**対象Driveフォルダを、その SA の
+    メールアドレスに「閲覧者」で共有**しておく。
+  - **一時トークン**: `GOOGLE_ACCESS_TOKEN=<OAuthアクセストークン>` (1時間有効。少数テスト向け)。
+
+```bash
+# ドライラン (件数・形式の確認。生成物は ./batch-out に出す)
+GEMINI_API_KEY=xxxxx \
+GOOGLE_SERVICE_ACCOUNT_KEY_FILE=/path/sa.json \
+node scripts/batch-scan-to-elith.mjs --drive 1N19u4NybUjgkkJF-fpe1xaPXG_s-Ozgh --limit 3
+```
+
+### 2b. ローカルフォルダ
+
+`--input <dir>` で、事前にDLした画像を種別サブフォルダに置いて処理する。
 
 ```
 samples/
@@ -31,10 +61,6 @@ samples/
   検診・人間ドックサンプル/       → HealthCheckupData
   遺伝子検査データサンプル/        → GeneticTestResultData
 ```
-
-判定キーワード: がんリスク/尿→Cancer、遺伝子/genetic→Genetic、血液/blood→Blood、
-人間ドック/検診/健診/ドック→HealthCheckup、問診/生活習慣→Lifestyle、その他→Other。
-`--format <id>` で全画像を明示指定も可。
 
 ## 3. まずドライラン (S3 に書かない)
 
@@ -51,12 +77,26 @@ node scripts/batch-scan-to-elith.mjs --input ./samples
 
 ## 4. 本番アップロード
 
+Drive 直読み → S3 (ローカルに一切保存しない、推奨):
+
+```bash
+GEMINI_API_KEY=xxxxx \
+GOOGLE_SERVICE_ACCOUNT_KEY_FILE=/path/sa.json \
+AWS_REGION=ap-northeast-1 AWS_S3_BUCKET=wellfort-ai-input \
+AWS_ACCESS_KEY_ID=xxxx AWS_SECRET_ACCESS_KEY=xxxx \
+node scripts/batch-scan-to-elith.mjs --drive 1N19u4NybUjgkkJF-fpe1xaPXG_s-Ozgh --upload
+```
+
+ローカルフォルダから:
+
 ```bash
 GEMINI_API_KEY=xxxxx \
 AWS_REGION=ap-northeast-1 AWS_S3_BUCKET=wellfort-ai-input \
 AWS_ACCESS_KEY_ID=xxxx AWS_SECRET_ACCESS_KEY=xxxx \
 node scripts/batch-scan-to-elith.mjs --input ./samples --upload
 ```
+
+`--upload` 時は `batch-mapping.csv` も**ローカルに残さず S3** (`{prefix}user/_batch/`) に置く。
 
 出力 (Elith 仕様):
 
@@ -70,7 +110,8 @@ s3://{bucket}/{prefix}user/{client_id}/date/{YYYY_MM_DD}/
 
 | オプション | 既定 | 説明 |
 |---|---|---|
-| `--input <dir>` | (必須) | 入力ルート |
+| `--drive <folderId>` | — | Google Drive フォルダを直読み (ローカル保存なし)。`--input` と排他 |
+| `--input <dir>` | — | ローカル入力ルート。`--drive` と排他 (どちらか必須) |
 | `--upload` | off | S3 へアップロード (省略時ドライラン) |
 | `--out <dir>` | `./batch-out` | ドライラン出力先 |
 | `--prefix <s3prefix>` | 空 | バケット内共通プレフィックス (例 `prod/`) |

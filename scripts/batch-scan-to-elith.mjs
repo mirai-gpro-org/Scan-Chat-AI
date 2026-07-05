@@ -53,12 +53,13 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 
 // ---------- 引数 ----------
 function parseArgs(argv) {
-  const a = { input: null, upload: false, out: './batch-out', prefix: '',
+  const a = { input: null, drive: null, upload: false, out: './batch-out', prefix: '',
     clientId: 'uuid', format: null, today: null, concurrency: 2, limit: 0 };
   for (let i = 2; i < argv.length; i++) {
     const k = argv[i];
     const next = () => argv[++i];
     if (k === '--input') a.input = next();
+    else if (k === '--drive') a.drive = next();      // Google Drive フォルダID (ローカルに落とさず直接処理)
     else if (k === '--upload') a.upload = true;
     else if (k === '--out') a.out = next();
     else if (k === '--prefix') a.prefix = next();
@@ -70,14 +71,17 @@ function parseArgs(argv) {
     else if (k === '--help' || k === '-h') { printHelp(); process.exit(0); }
     else throw new Error(`Unknown option: ${k}`);
   }
-  if (!a.input) { printHelp(); throw new Error('--input <dir> は必須です'); }
+  if (!a.input && !a.drive) { printHelp(); throw new Error('--drive <folderId> か --input <dir> のどちらかが必須です'); }
+  if (a.input && a.drive) throw new Error('--input と --drive は同時指定できません');
   return a;
 }
 function printHelp() {
-  console.log('Usage: node scripts/batch-scan-to-elith.mjs --input <dir> [--upload] [--out <dir>]\n' +
-    '       [--prefix <s3prefix>] [--client-id uuid|fixed:<id>|filename] [--format <id>]\n' +
+  console.log('Usage: node scripts/batch-scan-to-elith.mjs (--drive <folderId> | --input <dir>) [--upload]\n' +
+    '       [--out <dir>] [--prefix <s3prefix>] [--client-id uuid|fixed:<id>|filename] [--format <id>]\n' +
     '       [--today YYYY-MM-DD] [--concurrency <n>] [--limit <n>]\n' +
-    '  env: GEMINI_API_KEY (必須) / AWS_REGION,AWS_S3_BUCKET,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY (--upload時)');
+    '  env(共通): GEMINI_API_KEY (必須)\n' +
+    '  env(--upload時): AWS_REGION, AWS_S3_BUCKET, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY\n' +
+    '  env(--drive時): GOOGLE_ACCESS_TOKEN もしくは GOOGLE_SERVICE_ACCOUNT_KEY(_FILE)  (drive.readonly)');
 }
 
 // ---------- format_id 推定 (フォルダ名 → format_id) ----------
@@ -192,7 +196,7 @@ function parseRegions(markdown) {
     if (/<!--\s*exam_date:/i.test(line)) continue; // 検査日コメントは領域に含めない
     if (line.startsWith('|')) {
       const cells = splitRow(line);
-      if (cells.every((c) => /^:?-{2,}:?$/.test(c.replace(/\s/g, '')) || c === '')) continue; // 区切り行
+      if (cells.every((c) => { const t = c.replace(/\s/g, ''); return t === '' || /^:?-+:?$/.test(t); })) continue; // 区切り行 (---, :--: 等)
       if (!cur.columns) { cur.columns = cells; cur.type = 'table'; }
       else cur.rows.push(cells);
       continue;
@@ -273,20 +277,94 @@ function makeClientId(mode, imgBase) {
   return crypto.randomUUID();
 }
 
-// ---------- 入力画像の列挙 ----------
-async function listImages(root) {
-  const out = [];
+// ---------- 入力の列挙 (ローカル or Google Drive) ----------
+// item: { name, relDir, ext, read: async () => Buffer }
+
+async function listLocal(root) {
+  const items = [];
   async function walk(dir) {
     const ents = await fs.readdir(dir, { withFileTypes: true });
     for (const e of ents) {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) await walk(p);
-      else if (mimeFor(path.extname(e.name))) out.push(p);
+      else if (mimeFor(path.extname(e.name))) {
+        const rel = path.relative(root, p);
+        items.push({ name: e.name, relDir: path.dirname(rel), ext: path.extname(e.name), read: () => fs.readFile(p) });
+      }
     }
   }
   await walk(root);
-  out.sort();
-  return out;
+  items.sort((a, b) => (a.relDir + '/' + a.name).localeCompare(b.relDir + '/' + b.name));
+  return items;
+}
+
+// --- Google Drive 直読み (ローカルに保存しない) ---
+function b64url(buf) { return Buffer.from(buf).toString('base64').replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_'); }
+
+async function getDriveToken() {
+  if (process.env.GOOGLE_ACCESS_TOKEN) return process.env.GOOGLE_ACCESS_TOKEN;
+  let key = null;
+  if (process.env.GOOGLE_SERVICE_ACCOUNT_KEY) key = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
+  else if (process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE) key = JSON.parse(await fs.readFile(process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE, 'utf-8'));
+  if (!key) throw new Error('Drive認証情報が必要です: GOOGLE_ACCESS_TOKEN か GOOGLE_SERVICE_ACCOUNT_KEY(_FILE) を設定してください');
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const claim = { iss: key.client_email, scope: 'https://www.googleapis.com/auth/drive.readonly',
+    aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 };
+  const unsigned = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(claim))}`;
+  const signer = crypto.createSign('RSA-SHA256'); signer.update(unsigned); signer.end();
+  const jwt = `${unsigned}.${b64url(signer.sign(key.private_key))}`;
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: jwt }),
+  });
+  const j = await res.json();
+  if (!res.ok) throw new Error('Driveトークン取得失敗: ' + JSON.stringify(j).slice(0, 300));
+  return j.access_token;
+}
+
+async function listDrive(folderId) {
+  const token = await getDriveToken();
+  const auth = { authorization: `Bearer ${token}` };
+  const items = [];
+  async function walk(id, relDir) {
+    let pageToken;
+    do {
+      const url = new URL('https://www.googleapis.com/drive/v3/files');
+      url.searchParams.set('q', `'${id}' in parents and trashed=false`);
+      url.searchParams.set('fields', 'nextPageToken,files(id,name,mimeType)');
+      url.searchParams.set('pageSize', '1000');
+      url.searchParams.set('supportsAllDrives', 'true');
+      url.searchParams.set('includeItemsFromAllDrives', 'true');
+      if (pageToken) url.searchParams.set('pageToken', pageToken);
+      const res = await fetch(url, { headers: auth });
+      const j = await res.json();
+      if (!res.ok) throw new Error('Drive一覧失敗: ' + JSON.stringify(j).slice(0, 300));
+      for (const f of j.files || []) {
+        if (f.mimeType === 'application/vnd.google-apps.folder') {
+          await walk(f.id, relDir ? `${relDir}/${f.name}` : f.name);
+        } else {
+          const ext = path.extname(f.name);
+          if (!mimeFor(ext)) continue;
+          const fileId = f.id, fileName = f.name;
+          items.push({ name: fileName, relDir: relDir || '.', ext, read: async () => {
+            const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`, { headers: auth });
+            if (!r.ok) throw new Error(`Driveダウンロード失敗 ${fileName}: ${r.status}`);
+            return Buffer.from(await r.arrayBuffer());
+          } });
+        }
+      }
+      pageToken = j.nextPageToken;
+    } while (pageToken);
+  }
+  await walk(folderId, '');
+  items.sort((a, b) => (a.relDir + '/' + a.name).localeCompare(b.relDir + '/' + b.name));
+  return items;
+}
+
+async function listItems(args) {
+  if (args.drive) return listDrive(args.drive);
+  return listLocal(path.resolve(args.input));
 }
 
 // ---------- 書き出し (S3 or ローカル) ----------
@@ -327,11 +405,11 @@ async function main() {
   const todayIso = args.today || jstTodayIso();
   const prefix = args.prefix ? args.prefix.replace(/^\/+/, '').replace(/\/*$/, '/') : '';
 
-  let images = await listImages(path.resolve(args.input));
+  let images = await listItems(args);
   if (args.limit) images = images.slice(0, args.limit);
-  if (!images.length) throw new Error(`画像が見つかりません: ${args.input}`);
+  if (!images.length) throw new Error(`画像が見つかりません: ${args.drive ? 'drive:' + args.drive : args.input}`);
 
-  console.log(`[batch] ${images.length} 枚 / 出力先=${writer.label} / prefix="${prefix}" / today=${todayIso} / client-id=${args.clientId}`);
+  console.log(`[batch] source=${args.drive ? 'drive' : 'local'} / ${images.length} 枚 / 出力先=${writer.label} / prefix="${prefix}" / today=${todayIso} / client-id=${args.clientId}`);
 
   const results = [];
   let idx = 0;
@@ -339,22 +417,22 @@ async function main() {
     while (true) {
       const i = idx++;
       if (i >= images.length) return;
-      const imgPath = images[i];
-      const rel = path.relative(path.resolve(args.input), imgPath);
-      const ext = path.extname(imgPath);
-      const base = path.basename(imgPath, ext);
-      const formatId = inferFormatId(path.dirname(rel), args.format);
+      const item = images[i];
+      const rel = (item.relDir && item.relDir !== '.' ? item.relDir + '/' : '') + item.name;
+      const ext = item.ext;
+      const base = item.name.slice(0, item.name.length - ext.length);
+      const formatId = inferFormatId(item.relDir || '', args.format);
       const clientId = makeClientId(args.clientId, base);
       const rec = { source: rel, format_id: formatId, client_id: clientId, test_date: '', date_source: '', json_key: '', image_key: '', status: '', note: '' };
       try {
-        const buf = await fs.readFile(imgPath);
+        const buf = await item.read();
         const mime = mimeFor(ext);
         const { markdown, finishReason } = await geminiScan(apiKey, prompt, mime, buf.toString('base64'));
         if (!markdown) throw new Error('Gemini 応答が空 (finishReason=' + finishReason + ')');
         const { date, source } = extractExamDate(markdown, todayIso);
         const dateFolder = date.replace(/-/g, '_'); // YYYY_MM_DD
         const diagnosticId = crypto.randomUUID();
-        const json = buildElithJson({ formatId, clientId, diagnosticId, sourceImage: path.basename(imgPath), testDate: date, dateSource: source, markdown, finishReason });
+        const json = buildElithJson({ formatId, clientId, diagnosticId, sourceImage: item.name, testDate: date, dateSource: source, markdown, finishReason });
         const folder = `${prefix}user/${clientId}/date/${dateFolder}/`;
         const stem = `${formatId}_date_${dateFolder}_user_${clientId}`;
         const jsonKey = `${folder}${stem}.json`;
@@ -374,15 +452,23 @@ async function main() {
 
   // マッピング CSV (画像 ↔ client_id / date / keys)
   const header = 'source,format_id,client_id,test_date,date_source,json_key,image_key,status,note';
-  const csv = [header, ...results.map((r) => [r.source, r.format_id, r.client_id, r.test_date, r.date_source, r.json_key, r.image_key, r.status, csvCell(r.note)].map(csvCell).join(','))].join('\n');
-  const mapOut = args.upload ? path.resolve('batch-mapping.csv') : path.join(path.resolve(args.out), 'batch-mapping.csv');
-  await fs.mkdir(path.dirname(mapOut), { recursive: true });
-  await fs.writeFile(mapOut, csv, 'utf-8');
+  const csv = [header, ...results.map((r) => [r.source, r.format_id, r.client_id, r.test_date, r.date_source, r.json_key, r.image_key, r.status, r.note].map(csvCell).join(','))].join('\n');
+  let mapLoc;
+  if (args.upload) {
+    // ローカルに残さず S3 へ (「ローカルに置かない」方針)
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', 'T');
+    const key = `${prefix}user/_batch/batch-mapping-${stamp}.csv`;
+    mapLoc = await writer.put(key, Buffer.from(csv, 'utf-8'), 'text/csv; charset=utf-8');
+  } else {
+    mapLoc = path.join(path.resolve(args.out), 'batch-mapping.csv');
+    await fs.mkdir(path.dirname(mapLoc), { recursive: true });
+    await fs.writeFile(mapLoc, csv, 'utf-8');
+  }
 
   const ok = results.filter((r) => r.status === 'ok').length;
   const ng = results.length - ok;
   console.log(`\n[batch] 完了: 成功 ${ok} / 失敗 ${ng} / 合計 ${results.length}`);
-  console.log(`[batch] マッピング: ${mapOut}`);
+  console.log(`[batch] マッピング: ${mapLoc}`);
   if (ng) process.exitCode = 1;
 }
 function csvCell(v) {
