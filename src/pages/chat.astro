@@ -85,6 +85,10 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
     >
       <!-- ━━━ START HERO（未接続時のみ表示） ━━━ -->
       <div id="start-hero" class="flex flex-col items-center gap-3 py-2">
+        <!-- 冒頭の免責事項 (医療アドバイス・診断ではない旨) -->
+        <p class="w-full rounded-lg bg-slate-50 px-3 py-2 text-center text-[11px] leading-relaxed text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+          このAI問診で提供される情報は、医療上のアドバイスや診断として利用されるものではありません。必要な場合は、必ず医療専門家にご相談ください。
+        </p>
         <p class="text-center text-xs text-slate-500">
           下のボタンで問診を開始します
         </p>

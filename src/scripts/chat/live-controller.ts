@@ -119,6 +119,17 @@ const SESSION_ID = 'default';
 // 問診票のセクションは interview-script.ts に集約済 (INTERVIEW_SECTIONS を使用)
 const SECTIONS = INTERVIEW_SECTIONS;
 
+/**
+ * 読み上げ用に、質問文 **末尾** の単位・形式ヒント括弧を落とす。
+ *   例: 「身長を教えてください。（cm）」→「身長を教えてください。」
+ *       「体重を教えてください。（kg・数字のみ）」→「体重を教えてください。」
+ * 画面表示 (applyQuestionToUI) は元の質問文をそのまま使う。中間の括弧は残す。
+ */
+function spokenQuestion(q: string): string {
+  const stripped = q.replace(/(?:\s*[（(][^（）()]*[）)])+\s*$/u, '').trim();
+  return stripped || q;
+}
+
 const SYSTEM_INSTRUCTION = `あなたはウェルフォートの健康問診を担当する AI 看護師アシスタントです。問診票本体 (質問順・選択肢・分岐) は画面のシステムが自動で出します。あなたは「画面に出ている質問を温かく読み上げる係」です。
 
 【絶対ルール】
@@ -126,10 +137,11 @@ A. 質問は自分で考えない・先回りしない。システムから「�
 B. ★ユーザーの音声回答が聞こえたときは、短い復唱を 1 文だけ返す。次の質問は自分から言わない（直後にシステムが次の質問を指示します）。「次の質問:」等の枠や文言も自分で作らない。
 C. 選択肢や入力例を長々と読み上げない (画面に表示されています)。必要なときだけ「画面で選ぶか、声でお答えください」と一言。
 D. ツール呼び出しは一切不要 (廃止済)。診断・処方は禁止。
+E. ★問診の「終了・完了」を自分から宣言しない。何問あるか・いつ終わるかはあなたには分かりません（分岐で変わります）。「これで終わりです」「すべての質問が終わりました」「お疲れさまでした」「ご協力ありがとうございました」等の終了・締めの言葉は、システムが明示的に『これで全問終了です』と指示したときだけ言う。それ以外では絶対に言わない。
 
 【発話パターン (2 種類。混ぜない)】
 1) ユーザーの音声回答が聞こえたとき:
-   → 「『◯◯』ですね、ありがとうございます」と短く復唱するだけ。質問は絶対に言わない。
+   → 「『◯◯』ですね、ありがとうございます」と短く復唱するだけ。質問も終了の挨拶も絶対に言わない (次はシステムが指示します)。
 2) システムから指示文 (「次の質問: 『xxx』」「次の質問を読み上げてください」等) が届いたとき:
    → その指示の手順どおりに発話する。セクション変更の案内があれば「次は◯◯についてお伺いしますね」と一言添えてから、質問文をそのまま自然に読み上げる。
    → 指示に「復唱・相槌は不要」とあれば復唱せず、質問文だけを読み上げる。
@@ -138,7 +150,7 @@ D. ツール呼び出しは一切不要 (廃止済)。診断・処方は禁止�
 最初の発話: 「こんにちは、ウェルフォートの AI 問診です。画面の質問に、タップでも音声でもお答えいただけます。」と前置きしてから、最初の質問文を読み上げる。
 
 【問診完了時】
-「お疲れさまでした、ご協力ありがとうございました」と一言お礼。
+システムから『これで全問終了です』と明示指示されたときだけ、「お疲れさまでした、ご協力ありがとうございました」と一言お礼。自分の判断で完了を宣言してはいけない。
 
 【緊急対応】
 胸痛 / 呼吸困難 / 意識消失 / 激しい頭痛 / 大量出血等を訴えたら、即座に「すぐに 119 番にお電話ください」と案内する。`;
@@ -241,6 +253,8 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   let muted = false;
   /** 内部で取得済の顧客プロフィール (氏名・生年月日・性別は問診で尋ねず結果へ付与) */
   let userProfile: { name: string | null; dateOfBirth: string | null; sex: string | null } | null = null;
+  /** 申込情報から供給する EXAM-TYPE (今回実施検査)。空なら問診で通常設問として尋ねる。 */
+  let seededExamTypes: string[] = [];
   const engine = new InterviewEngine();
   // 後方互換: 旧 fallback パス由来の参照を温存 (本実装では未使用)
   let presentQuestionCalledThisTurn = false;
@@ -606,20 +620,20 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     let msg: string;
     if (opts.silent) {
       msg = sectionChanged
-        ? `次のセクション「${next.section_title}」に進みます。「次は${next.section_title}についてお伺いしますね」と一言添えてから、次の質問を自然に読み上げてください: 「${next.question}」。復唱・相槌は不要です (お答えには既に応じています)。選択肢は読み上げないでください (画面に表示されています)。`
-        : `次の質問を自然に読み上げてください: 「${next.question}」。復唱・相槌は不要です (お答えには既に応じています)。選択肢は読み上げないでください (画面に表示されています)。`;
+        ? `次のセクション「${next.section_title}」に進みます。「次は${next.section_title}についてお伺いしますね」と一言添えてから、次の質問を自然に読み上げてください: 「${spokenQuestion(next.question)}」。復唱・相槌は不要です (お答えには既に応じています)。選択肢は読み上げないでください (画面に表示されています)。`
+        : `次の質問を自然に読み上げてください: 「${spokenQuestion(next.question)}」。復唱・相槌は不要です (お答えには既に応じています)。選択肢は読み上げないでください (画面に表示されています)。`;
     } else {
       msg = sectionChanged
         ? `ユーザーが「${rawAnswer}」と回答しました。次のセクション「${next.section_title}」に進みます。
 発話手順 (1〜3 文):
   ① 短く温かく復唱: 「『${rawAnswer}』ですね、ありがとうございます」
   ② 「次は${next.section_title}についてお伺いしますね」
-  ③ 続けて次の質問を自然に読み上げ: 「${next.question}」
+  ③ 続けて次の質問を自然に読み上げ: 「${spokenQuestion(next.question)}」
 選択肢は読み上げないでください (画面に表示されています)。`
         : `ユーザーが「${rawAnswer}」と回答しました。
 発話手順 (2 文):
   ① 短く温かく復唱: 「『${rawAnswer}』ですね、ありがとうございます」
-  ② 続けて次の質問を自然に読み上げ: 「${next.question}」
+  ② 続けて次の質問を自然に読み上げ: 「${spokenQuestion(next.question)}」
 選択肢は読み上げないでください (画面に表示されています)。`;
     }
     sendToModel(msg);
@@ -770,14 +784,17 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       const body = await res.text();
       throw new Error(`token mint ${res.status}: ${body}`);
     }
-    const { token, model, userContext, userProfile: fetchedProfile } = (await res.json()) as {
+    const { token, model, userContext, userProfile: fetchedProfile, examTypes } = (await res.json()) as {
       token: string;
       model: string;
       userContext?: string | null;
       userProfile?: { name: string | null; dateOfBirth: string | null; sex: string | null } | null;
+      examTypes?: string[] | null;
     };
     // 氏名・生年月日・性別は問診で尋ねない。内部取得値を結果へ付与するため保持する。
     userProfile = fetchedProfile ?? null;
+    // 今回実施検査 (EXAM-TYPE) も申込情報から供給し、問診では尋ねない (A案)。
+    seededExamTypes = Array.isArray(examTypes) ? examTypes.filter((x) => typeof x === 'string') : [];
 
     // NOTE: userContext 注入は AI ループの原因となったため一時 OFF。
     // 後で再有効化する場合は連結ロジックを再設計する。
@@ -807,7 +824,10 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
           setStatus('🎙 接続済 — 話せます / タップ可');
           setConnected(true);
           // engine 起動: 最初の Q を画面に即表示 (AI を待たない)
-          const firstQ = engine.start();
+          // EXAM-TYPE は申込情報から供給し設問を提示しない (空なら通常設問にフォールバック)。
+          const firstQ = engine.start(
+            seededExamTypes.length > 0 ? { 'EXAM-TYPE': seededExamTypes } : {},
+          );
           applyQuestionToUI(firstQ);
           // AI には「挨拶 + Q1-1 の読み上げ」だけを依頼
           setTimeout(() => {
@@ -816,7 +836,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
                 turns: [{ role: 'user', parts: [{ text:
                   `問診を始めます。次の 2 文を発話してください:
   ① 「こんにちは、ウェルフォートの AI 問診です。画面の質問に、タップでも音声でもお答えいただけます。」
-  ② 続けて画面に表示されている最初の質問を読み上げ: 「${firstQ.question}」
+  ② 続けて画面に表示されている最初の質問を読み上げ: 「${spokenQuestion(firstQ.question)}」
 選択肢や入力例は読み上げないでください (画面に表示されています)。挨拶と質問を 1 回だけ、絶対に繰り返さないでください。`
                 } ] }],
                 turnComplete: true,
