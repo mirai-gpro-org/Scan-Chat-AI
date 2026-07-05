@@ -22,6 +22,12 @@
 Node は **v20 以上**。依存 (`@aws-sdk/client-s3`) は既存のものを使う (`npm install` 済み前提)。
 Drive 直読みは追加パッケージ不要 (Drive REST を直接呼ぶ)。
 
+> **キーの手入力について**: バッチは起動時に**リポジトリ直下の `.env` / `.env.local` を自動読み込み**する
+> (未設定の環境変数だけ補完。既存の環境変数は上書きしない)。
+> つまり **アプリのローカル `.env` に `GEMINI_API_KEY` / `AWS_*` があれば、実行時に手入力は不要**。
+> 逆にキーが **Vercel 等クラウド側だけ** にある場合は、その機のローカルには無いので、`.env` に置くか
+> 実行時に環境変数で渡す必要がある (バッチはアプリとは別プロセスのため)。
+
 ## 2. 入力の指定 (2通り)
 
 サブフォルダ名から `format_id` を自動判定する。判定キーワード:
@@ -75,6 +81,10 @@ node scripts/batch-scan-to-elith.mjs --input "Z:\Temp\濱田さん共有" --limi
 Windows (PowerShell) の実行例 — 本番アップロード:
 
 ```powershell
+# アプリのローカル .env に GEMINI_API_KEY / AWS_* があれば、環境変数の設定は不要:
+node scripts/batch-scan-to-elith.mjs --input "Z:\Temp\濱田さん共有" --upload
+
+# .env が無い / クラウドだけにある場合は、実行時に渡す:
 $env:GEMINI_API_KEY="xxxxx"
 $env:AWS_REGION="ap-northeast-1"; $env:AWS_S3_BUCKET="wellfort-ai-input"
 $env:AWS_ACCESS_KEY_ID="xxxx"; $env:AWS_SECRET_ACCESS_KEY="xxxx"
