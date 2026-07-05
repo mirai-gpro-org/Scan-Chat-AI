@@ -119,6 +119,17 @@ const SESSION_ID = 'default';
 // 問診票のセクションは interview-script.ts に集約済 (INTERVIEW_SECTIONS を使用)
 const SECTIONS = INTERVIEW_SECTIONS;
 
+/**
+ * 読み上げ用に、質問文 **末尾** の単位・形式ヒント括弧を落とす。
+ *   例: 「身長を教えてください。（cm）」→「身長を教えてください。」
+ *       「体重を教えてください。（kg・数字のみ）」→「体重を教えてください。」
+ * 画面表示 (applyQuestionToUI) は元の質問文をそのまま使う。中間の括弧は残す。
+ */
+function spokenQuestion(q: string): string {
+  const stripped = q.replace(/(?:\s*[（(][^（）()]*[）)])+\s*$/u, '').trim();
+  return stripped || q;
+}
+
 const SYSTEM_INSTRUCTION = `あなたはウェルフォートの健康問診を担当する AI 看護師アシスタントです。問診票本体 (質問順・選択肢・分岐) は画面のシステムが自動で出します。あなたは「画面に出ている質問を温かく読み上げる係」です。
 
 【絶対ルール】
@@ -608,20 +619,20 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     let msg: string;
     if (opts.silent) {
       msg = sectionChanged
-        ? `次のセクション「${next.section_title}」に進みます。「次は${next.section_title}についてお伺いしますね」と一言添えてから、次の質問を自然に読み上げてください: 「${next.question}」。復唱・相槌は不要です (お答えには既に応じています)。選択肢は読み上げないでください (画面に表示されています)。`
-        : `次の質問を自然に読み上げてください: 「${next.question}」。復唱・相槌は不要です (お答えには既に応じています)。選択肢は読み上げないでください (画面に表示されています)。`;
+        ? `次のセクション「${next.section_title}」に進みます。「次は${next.section_title}についてお伺いしますね」と一言添えてから、次の質問を自然に読み上げてください: 「${spokenQuestion(next.question)}」。復唱・相槌は不要です (お答えには既に応じています)。選択肢は読み上げないでください (画面に表示されています)。`
+        : `次の質問を自然に読み上げてください: 「${spokenQuestion(next.question)}」。復唱・相槌は不要です (お答えには既に応じています)。選択肢は読み上げないでください (画面に表示されています)。`;
     } else {
       msg = sectionChanged
         ? `ユーザーが「${rawAnswer}」と回答しました。次のセクション「${next.section_title}」に進みます。
 発話手順 (1〜3 文):
   ① 短く温かく復唱: 「『${rawAnswer}』ですね、ありがとうございます」
   ② 「次は${next.section_title}についてお伺いしますね」
-  ③ 続けて次の質問を自然に読み上げ: 「${next.question}」
+  ③ 続けて次の質問を自然に読み上げ: 「${spokenQuestion(next.question)}」
 選択肢は読み上げないでください (画面に表示されています)。`
         : `ユーザーが「${rawAnswer}」と回答しました。
 発話手順 (2 文):
   ① 短く温かく復唱: 「『${rawAnswer}』ですね、ありがとうございます」
-  ② 続けて次の質問を自然に読み上げ: 「${next.question}」
+  ② 続けて次の質問を自然に読み上げ: 「${spokenQuestion(next.question)}」
 選択肢は読み上げないでください (画面に表示されています)。`;
     }
     sendToModel(msg);
@@ -824,7 +835,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
                 turns: [{ role: 'user', parts: [{ text:
                   `問診を始めます。次の 2 文を発話してください:
   ① 「こんにちは、ウェルフォートの AI 問診です。画面の質問に、タップでも音声でもお答えいただけます。」
-  ② 続けて画面に表示されている最初の質問を読み上げ: 「${firstQ.question}」
+  ② 続けて画面に表示されている最初の質問を読み上げ: 「${spokenQuestion(firstQ.question)}」
 選択肢や入力例は読み上げないでください (画面に表示されています)。挨拶と質問を 1 回だけ、絶対に繰り返さないでください。`
                 } ] }],
                 turnComplete: true,
