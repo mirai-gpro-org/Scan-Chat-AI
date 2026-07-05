@@ -27,6 +27,20 @@
 - したがって **ローカル端末での CLI 直実行は不可** (キーを読めない)。
   スキャン/エクスポート等の鍵が要る処理は **Vercel サーバ側 (API/admin バッチ)** で実行する。
 
+### アプリ構成 / 管理画面の所在 (重要・誤解しやすい)
+- **Scan-Chat-AI は単独アプリではなく、`www.wellfort.co.jp`(wellfort-site) 配下の診断アプリ**。
+  ユーザーは `www.wellfort.co.jp` マイページのリンクから Scan-Chat-AI に遷移する
+  (`docs/wellfort_mypage_button_spec.md`: 本番 `https://scan-chat-ai.vercel.app/`、将来 `app.wellfort.co.jp`)。
+- **管理者メニューも `www.wellfort.co.jp/admin`(wellfort-site) 側**。
+  - **admin UI は wellfort-site に置く**。**Scan-Chat-AI は API 提供側**
+    (`https://scan-chat-ai.vercel.app/api/admin/...`)。根拠: `docs/wellfort_admin_lab_upload_spec.md`
+    L5-6/§3「実装対象=Wellfort HP 管理画面 / Scan-Chat-AI=API提供側」。
+  - 連携認証は **Bearer API Key**。wellfort-site が `SCAN_CHAT_AI_BASE_URL` / `SCAN_CHAT_AI_API_KEY`
+    をサーバ env に持ち、**サーバ側から** Scan-Chat-AI API を呼ぶ (キーはブラウザに出さない・CORS不要)。
+    (同 §6-1)。Scan-Chat-AI 側 API は同じ Bearer キーで検証する。
+  - → 新しい admin 機能を作るときは **UI=wellfort-site / 処理=Scan-Chat-AI API** で分ける。
+    Scan-Chat-AI 側に admin 画面を作らない (キー・処理は Scan-Chat-AI、入口は wellfort-site)。
+
 ### インフラ / 実行モデル
 - **Vercel Serverless (iad1 / US East)**。Gemini API と地理的近接 (`system_architecture_overview.md` L143/L273)。
 - 関数タイムアウト ~60s。大型検査表はストリーミング/分割。

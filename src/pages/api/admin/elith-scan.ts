@@ -19,7 +19,9 @@
  *   - S3 設定あり: { ok:true, configured:true, uploaded:[{key,uri}], test_date, date_source, rows, json_key, image_key }
  *   - S3 未設定 : { ok:false, configured:false, ... , preview: json }  ← ドライラン
  *
- * TODO(認可): admin 権限チェックを追加する (lab-results と同様。設計 §4.1)。
+ * 認可: wellfort-site (www.wellfort.co.jp/admin) からサーバ間で呼ばれる。
+ *   `Authorization: Bearer <SCAN_CHAT_AI_API_KEY>` を検証 (wellfort_admin_lab_upload_spec §6-1)。
+ *   env `SCAN_CHAT_AI_API_KEY` が未設定の場合のみ (dev) 認証を省略する。
  */
 
 import type { APIRoute } from 'astro';
@@ -27,6 +29,21 @@ import { buildElithScanBundle, isElithFormatId, ELITH_FORMAT_IDS } from '../../.
 import { getS3Config, isS3Configured, putFiles } from '../../../lib/s3';
 
 export const prerender = false;
+
+function envKey(name: string): string | undefined {
+  const m = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.[name];
+  if (m != null && m !== '') return m;
+  const p = typeof process !== 'undefined' ? process.env?.[name] : undefined;
+  return p != null && p !== '' ? p : undefined;
+}
+/** Bearer 検証。expected 未設定(dev)なら true。 */
+function authorized(request: Request): boolean {
+  const expected = envKey('SCAN_CHAT_AI_API_KEY');
+  if (!expected) return true; // dev: キー未設定なら素通し
+  const h = request.headers.get('authorization') || '';
+  const m = /^Bearer\s+(.+)$/i.exec(h.trim());
+  return !!m && m[1] === expected;
+}
 
 interface Body {
   image?: unknown;
@@ -50,6 +67,9 @@ function randomUuid(): string {
 }
 
 export const POST: APIRoute = async ({ request }) => {
+  if (!authorized(request)) {
+    return json({ ok: false, error: 'unauthorized', detail: 'Invalid API key' }, 401);
+  }
   let body: Body;
   try {
     body = (await request.json()) as Body;
