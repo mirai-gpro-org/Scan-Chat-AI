@@ -43,6 +43,22 @@ const qs = `?u=${encodeURIComponent(uid!)}`;
       <span aria-hidden class="text-slate-400">›</span>
     </a>
 
+    <a
+      href={`/admin/elith-batch${qs}`}
+      class="card flex items-center gap-4 transition hover:-translate-y-0.5 hover:shadow-md"
+    >
+      <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-rose-500 to-red-500 text-white shadow-md text-xl">
+        🧪
+      </div>
+      <div class="flex-1">
+        <h2 class="text-base font-semibold">Elith バッチ生成</h2>
+        <p class="text-xs text-slate-600 dark:text-slate-300">
+          検査結果画像を AIスキャン → Elith 形式 JSON + 元画像を S3 へ (がんリスク・遺伝子 等)
+        </p>
+      </div>
+      <span aria-hidden class="text-slate-400">›</span>
+    </a>
+
     <div class="card text-center text-xs text-slate-500 dark:text-slate-400">
       <p>その他の管理機能は順次追加予定</p>
     </div>
