@@ -20,8 +20,9 @@
  *   - S3 未設定 : { ok:false, configured:false, ... , preview: json }  ← ドライラン
  *
  * 認可: wellfort-site (www.wellfort.co.jp/admin) からサーバ間で呼ばれる。
- *   `Authorization: Bearer <SCAN_CHAT_AI_API_KEY>` を検証 (wellfort_admin_lab_upload_spec §6-1)。
- *   env `SCAN_CHAT_AI_API_KEY` が未設定の場合のみ (dev) 認証を省略する。
+ *   `Authorization: Bearer <ADMIN_API_KEY>` を検証 (wellfort_admin_lab_upload_spec §6-1)。
+ *   wellfort-site 側は同値を `SCAN_CHAT_AI_API_KEY` として持つ。
+ *   env `ADMIN_API_KEY` が未設定の場合のみ (dev) 認証を省略する。
  */
 
 import type { APIRoute } from 'astro';
@@ -38,7 +39,7 @@ function envKey(name: string): string | undefined {
 }
 /** Bearer 検証。expected 未設定(dev)なら true。 */
 function authorized(request: Request): boolean {
-  const expected = envKey('SCAN_CHAT_AI_API_KEY');
+  const expected = envKey('ADMIN_API_KEY');
   if (!expected) return true; // dev: キー未設定なら素通し
   const h = request.headers.get('authorization') || '';
   const m = /^Bearer\s+(.+)$/i.exec(h.trim());

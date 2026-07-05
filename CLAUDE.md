@@ -35,9 +35,14 @@
   - **admin UI は wellfort-site に置く**。**Scan-Chat-AI は API 提供側**
     (`https://scan-chat-ai.vercel.app/api/admin/...`)。根拠: `docs/wellfort_admin_lab_upload_spec.md`
     L5-6/§3「実装対象=Wellfort HP 管理画面 / Scan-Chat-AI=API提供側」。
-  - 連携認証は **Bearer API Key**。wellfort-site が `SCAN_CHAT_AI_BASE_URL` / `SCAN_CHAT_AI_API_KEY`
-    をサーバ env に持ち、**サーバ側から** Scan-Chat-AI API を呼ぶ (キーはブラウザに出さない・CORS不要)。
-    (同 §6-1)。Scan-Chat-AI 側 API は同じ Bearer キーで検証する。
+  - **認証は 2 層**:
+    1. **入口(admin判定)**: wellfort-site 側で管理者かを確認する。方式は既存 `admin/users.astro`
+       (L543-551) と同じ = **ユーザー自身のアクセストークン + anon apikey で `admin_users` を照会**
+       (`is_active=true`)。**service_role は使わない**。
+    2. **上流(Scan-Chat-AI)**: **Bearer API Key** (`wellfort_admin_lab_upload_spec §6-1`)。
+       wellfort-site 側 env `SCAN_CHAT_AI_API_KEY` = Scan-Chat-AI 側 env `ADMIN_API_KEY` (同値)。
+       キーはブラウザに出さない・CORS不要。
+  - **§6-2 の「Scan-Chat-AI 側で ID Token→admin_users 照合」は Phase 2.0 (将来)。Phase 1.0 では実装しない。**
   - → 新しい admin 機能を作るときは **UI=wellfort-site / 処理=Scan-Chat-AI API** で分ける。
     Scan-Chat-AI 側に admin 画面を作らない (キー・処理は Scan-Chat-AI、入口は wellfort-site)。
 
