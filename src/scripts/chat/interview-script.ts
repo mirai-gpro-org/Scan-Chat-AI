@@ -486,21 +486,8 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
 
   // ───── 検査別の詳細 (EXAM-TYPE で出し分け) ─────
 
-  // 血液検査 (ウェルテクト / 血液検査のみ)
-  {
-    id: 'EX-WAIST', section_id: 'examdetail', answer_kind: 'text', numeric: true,
-    question: '【血液検査】腹囲を教えてください。（cm・数字のみ）',
-    example: '82cm → 82',
-    placeholder: '例：82',
-    when: (a) => examIs(a, T_WELLTECT, T_BLOOD),
-  },
-  {
-    id: 'EX-BP', section_id: 'examdetail', answer_kind: 'text',
-    question: '【血液検査】最高・最低血圧を教えてください。（数字のみ）',
-    example: '110/70mmHg → 110 70',
-    placeholder: '例：110 70',
-    when: (a) => examIs(a, T_WELLTECT, T_BLOOD),
-  },
+  // 血液検査: 結果 (腹囲/血圧 等) はデメカルから取得するため問診では聴取しない
+  //   (旧 EX-WAIST / EX-BP を削除。CLAUDE.md「血液=デメカル取得」)。
 
   // がんリスク検査 (ウェルテクト / がんリスク検査のみ)
   // ※ ユーザーID (旧 EX-USERID) は system 発番 (diagnostic_user_id) のため問診で尋ねない。
