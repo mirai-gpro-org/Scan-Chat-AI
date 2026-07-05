@@ -327,10 +327,9 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
     when: (a) => a['D-FREQ'] === '過去飲んでいたが、現在はまったく飲まない',
   },
   {
-    id: 'D-YEARS', section_id: 'drinking', answer_kind: 'text', numeric: true,
+    id: 'D-YEARS', section_id: 'drinking', answer_kind: 'chip',
     question: '飲酒している／していた年数を教えてください。',
-    example: '15年 → 15',
-    placeholder: '例：15',
+    chips: opt(['5年未満', '5〜10年', '10〜20年', '20〜30年', '30年以上']),
     when: (a) => a['D-FREQ'] !== '元々まったく飲まない',
   },
   {
