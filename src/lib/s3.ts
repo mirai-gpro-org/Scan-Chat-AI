@@ -15,7 +15,12 @@
  *   AWS_S3_ENDPOINT         S3 互換エンドポイント (MinIO 等。任意)
  */
 
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  ListObjectsV2Command,
+  GetObjectCommand,
+} from '@aws-sdk/client-s3';
 
 /** S3 へ PUT する 1 ファイル (scan-export / interview-export 共通) */
 export interface S3PutFile {
@@ -78,18 +83,57 @@ export interface UploadedObject {
   uri: string;
 }
 
-/** ファイル群をバケットへ PUT する。成功した key のリストを返す。 */
-export async function putFiles(files: S3PutFile[]): Promise<UploadedObject[]> {
-  const cfg = getS3Config();
-  if (!cfg) throw new Error('S3 is not configured (AWS_S3_BUCKET / AWS_REGION required)');
-
-  const client = new S3Client({
+function makeClient(cfg: S3Config): S3Client {
+  return new S3Client({
     region: cfg.region,
     ...(cfg.endpoint ? { endpoint: cfg.endpoint, forcePathStyle: true } : {}),
     ...(cfg.accessKeyId && cfg.secretAccessKey
       ? { credentials: { accessKeyId: cfg.accessKeyId, secretAccessKey: cfg.secretAccessKey } }
       : {}),
   });
+}
+
+export interface S3ObjectRef {
+  key: string;
+  size: number;
+}
+
+/** prefix 配下のオブジェクトを一覧する (ページング対応)。 */
+export async function listObjects(prefix: string): Promise<S3ObjectRef[]> {
+  const cfg = getS3Config();
+  if (!cfg) throw new Error('S3 is not configured (AWS_S3_BUCKET / AWS_REGION required)');
+  const client = makeClient(cfg);
+  const out: S3ObjectRef[] = [];
+  let token: string | undefined;
+  do {
+    const res = await client.send(
+      new ListObjectsV2Command({ Bucket: cfg.bucket, Prefix: prefix, ContinuationToken: token }),
+    );
+    for (const o of res.Contents ?? []) {
+      if (o.Key) out.push({ key: o.Key, size: o.Size ?? 0 });
+    }
+    token = res.IsTruncated ? res.NextContinuationToken : undefined;
+  } while (token);
+  return out;
+}
+
+/** 1 オブジェクトを UTF-8 テキストとして取得する。 */
+export async function getObjectText(key: string): Promise<string> {
+  const cfg = getS3Config();
+  if (!cfg) throw new Error('S3 is not configured (AWS_S3_BUCKET / AWS_REGION required)');
+  const client = makeClient(cfg);
+  const res = await client.send(new GetObjectCommand({ Bucket: cfg.bucket, Key: key }));
+  const body = res.Body as { transformToString?: (enc?: string) => Promise<string> } | undefined;
+  if (body?.transformToString) return body.transformToString('utf-8');
+  throw new Error('unexpected S3 body type (no transformToString)');
+}
+
+/** ファイル群をバケットへ PUT する。成功した key のリストを返す。 */
+export async function putFiles(files: S3PutFile[]): Promise<UploadedObject[]> {
+  const cfg = getS3Config();
+  if (!cfg) throw new Error('S3 is not configured (AWS_S3_BUCKET / AWS_REGION required)');
+
+  const client = makeClient(cfg);
 
   const uploaded: UploadedObject[] = [];
   for (const f of files) {
