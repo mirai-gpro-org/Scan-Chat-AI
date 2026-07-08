@@ -55,6 +55,7 @@ interface Body {
   count?: unknown;
   idPrefix?: unknown;
   manualMapping?: unknown;
+  bundleDate?: unknown;
 }
 
 export const POST: APIRoute = async ({ request }) => {
@@ -104,11 +105,18 @@ export const POST: APIRoute = async ({ request }) => {
         ? (body.manualMapping as Record<string, Partial<Record<string, string>>>)
         : undefined;
 
+    // 統一日付 (YYYY_MM_DD)。未指定なら lib 側で本日を採用。
+    const bundleDate = (() => {
+      const s = str(body.bundleDate);
+      return s && /^\d{4}_\d{2}_\d{2}$/.test(s) ? s : undefined;
+    })();
+
     const result = await assembleElithDeliverySet({
       sourcePrefix,
       deliveryPrefix,
       count,
       idPrefix: str(body.idPrefix) ?? 'elith-test',
+      bundleDate,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       manualMapping: manualMapping as any,
     });
@@ -140,8 +148,8 @@ export const POST: APIRoute = async ({ request }) => {
       ),
       users: result.users.map((u) => ({
         user_id: u.userId,
-        folder: `${result.deliveryPrefix}user/${u.userId}/`,
-        files: u.sources.map((s) => ({ format_id: s.formatId, key: s.newKey, source_key: s.sourceKey, date: s.date, data_items: s.dataItems })),
+        folder: `${result.deliveryPrefix}user/${u.userId}/date/${u.sources[0]?.deliveredDate ?? ''}/`,
+        files: u.sources.map((s) => ({ format_id: s.formatId, key: s.newKey, source_key: s.sourceKey, date: s.deliveredDate, source_date: s.sourceDate, data_items: s.dataItems })),
       })),
     });
   } catch (err) {

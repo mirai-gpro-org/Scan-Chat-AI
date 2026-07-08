@@ -130,7 +130,10 @@ export async function inventoryElithSource(sourcePrefix: string): Promise<Invent
 export interface AssembledUserSource {
   formatId: ElithFormatId;
   sourceKey: string;
-  date: string;
+  /** コピー元の取得日 (YYYY_MM_DD) */
+  sourceDate: string;
+  /** 納品フォルダ/ファイル名に使う統一日付 (YYYY_MM_DD) */
+  deliveredDate: string;
   newKey: string;
   /** コピー元 JSON の実データ件数 (0 = 空データ。-1 = パース不能)。 */
   dataItems: number;
@@ -155,6 +158,17 @@ export interface AssembleOptions {
   /** 手動指定: userId → { formatId: sourceKey }。指定時はこちらを優先。 */
   manualMapping?: Record<string, Partial<Record<ElithFormatId, string>>>;
   exportedAt?: Date;
+  /**
+   * 納品フォルダ/ファイル名に使う統一日付 (YYYY_MM_DD)。
+   * 仕様 §3.3「1回分の入力一式を 1 つの date フォルダに」に合わせ、
+   * 1 人分の 5 種を単一の date/ にまとめる。未指定なら組み立て日 (本日)。
+   */
+  bundleDate?: string;
+}
+
+/** 本日 (UTC) を YYYY_MM_DD で返す。 */
+function todayYmd(): string {
+  return new Date().toISOString().slice(0, 10).replace(/-/g, '_');
 }
 
 /** JSON テキストの client_id を new へ書き換える (パース失敗時は素の置換にフォールバック)。 */
@@ -177,17 +191,10 @@ function rewriteClientId(jsonText: string, newId: string, sourceKey: string): st
 export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<AssembleResult> {
   const deliveryPrefix = normPrefix(opts.deliveryPrefix);
   const idPrefix = opts.idPrefix || 'elith-test';
+  // 1 人分の 5 種を単一 date フォルダにまとめる (仕様 §3.3)。既定は本日。
+  const bundleDate =
+    opts.bundleDate && /^\d{4}_\d{2}_\d{2}$/.test(opts.bundleDate) ? opts.bundleDate : todayYmd();
   const inv = await inventoryElithSource(opts.sourcePrefix);
-
-  // ソース JSON を GET してキャッシュ (空データ判定と本コピーで再利用し二重取得を避ける)
-  const textCache = new Map<string, string>();
-  const fetchText = async (key: string): Promise<string> => {
-    const c = textCache.get(key);
-    if (c !== undefined) return c;
-    const t = await getObjectText(key);
-    textCache.set(key, t);
-    return t;
-  };
 
   // ソース JSON を GET してキャッシュ (空データ判定と本コピーで再利用し二重取得を避ける)
   const textCache = new Map<string, string>();
@@ -252,9 +259,10 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
       const text = await fetchText(item.key);
       const dataItems = countDataItems(text);
       const rewritten = rewriteClientId(text, p.userId, item.key);
-      const newKey = `${deliveryPrefix}user/${p.userId}/date/${item.date}/${f}_date_${item.date}_user_${p.userId}.json`;
+      // パス/ファイル名の日付は統一日付 (bundleDate)。JSON 内の test_date は原本のまま。
+      const newKey = `${deliveryPrefix}user/${p.userId}/date/${bundleDate}/${f}_date_${bundleDate}_user_${p.userId}.json`;
       files.push({ key: newKey, contentType: 'application/json; charset=utf-8', body: rewritten, bytes: utf8Bytes(rewritten) });
-      sources.push({ formatId: f, sourceKey: item.key, date: item.date, newKey, dataItems });
+      sources.push({ formatId: f, sourceKey: item.key, sourceDate: item.date, deliveredDate: bundleDate, newKey, dataItems });
     }
     // 納品フォルダには Elith 規約のファイル ({format_id}_..._user_....json) のみを置く。
     // 出典元トレーサビリティ (source_key) は API 応答の users[].sources で返すため、
