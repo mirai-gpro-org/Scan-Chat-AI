@@ -20,6 +20,7 @@ import {
   PutObjectCommand,
   ListObjectsV2Command,
   GetObjectCommand,
+  DeleteObjectsCommand,
 } from '@aws-sdk/client-s3';
 
 /** S3 へ PUT する 1 ファイル (scan-export / interview-export 共通) */
@@ -126,6 +127,29 @@ export async function getObjectText(key: string): Promise<string> {
   const body = res.Body as { transformToString?: (enc?: string) => Promise<string> } | undefined;
   if (body?.transformToString) return body.transformToString('utf-8');
   throw new Error('unexpected S3 body type (no transformToString)');
+}
+
+/** key 群を削除する。削除できた key 数を返す (1000 件ずつバッチ)。 */
+export async function deleteObjects(keys: string[]): Promise<number> {
+  const cfg = getS3Config();
+  if (!cfg) throw new Error('S3 is not configured (AWS_S3_BUCKET / AWS_REGION required)');
+  if (keys.length === 0) return 0;
+  const client = makeClient(cfg);
+  let deleted = 0;
+  for (let i = 0; i < keys.length; i += 1000) {
+    const chunk = keys.slice(i, i + 1000);
+    const res = await client.send(
+      new DeleteObjectsCommand({
+        Bucket: cfg.bucket,
+        Delete: { Objects: chunk.map((Key) => ({ Key })), Quiet: true },
+      }),
+    );
+    deleted += chunk.length - (res.Errors?.length ?? 0);
+    if (res.Errors && res.Errors.length > 0) {
+      throw new Error(`S3 delete errors: ${res.Errors.slice(0, 3).map((e) => `${e.Key}:${e.Code}`).join(', ')}`);
+    }
+  }
+  return deleted;
 }
 
 /** ファイル群をバケットへ PUT する。成功した key のリストを返す。 */
