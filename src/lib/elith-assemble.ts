@@ -178,7 +178,16 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
   const deliveryPrefix = normPrefix(opts.deliveryPrefix);
   const idPrefix = opts.idPrefix || 'elith-test';
   const inv = await inventoryElithSource(opts.sourcePrefix);
-  const exportedAt = (opts.exportedAt ?? new Date()).toISOString();
+
+  // ソース JSON を GET してキャッシュ (空データ判定と本コピーで再利用し二重取得を避ける)
+  const textCache = new Map<string, string>();
+  const fetchText = async (key: string): Promise<string> => {
+    const c = textCache.get(key);
+    if (c !== undefined) return c;
+    const t = await getObjectText(key);
+    textCache.set(key, t);
+    return t;
+  };
 
   // ソース JSON を GET してキャッシュ (空データ判定と本コピーで再利用し二重取得を避ける)
   const textCache = new Map<string, string>();
@@ -247,17 +256,9 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
       files.push({ key: newKey, contentType: 'application/json; charset=utf-8', body: rewritten, bytes: utf8Bytes(rewritten) });
       sources.push({ formatId: f, sourceKey: item.key, date: item.date, newKey, dataItems });
     }
-    // manifest
-    const manifest = {
-      user_id: p.userId,
-      assembled_at: exportedAt,
-      note: '合成テストデータ (実在の同一人物ではない)。Elith 検証・チューニング用。',
-      files: sources.map((s) => ({ format_id: s.formatId, key: s.newKey, source_key: s.sourceKey, date: s.date })),
-    };
-    const manifestBody = JSON.stringify(manifest, null, 2);
-    const manifestKey = `${deliveryPrefix}user/${p.userId}/manifest.json`;
-    files.push({ key: manifestKey, contentType: 'application/json; charset=utf-8', body: manifestBody, bytes: utf8Bytes(manifestBody) });
-
+    // 納品フォルダには Elith 規約のファイル ({format_id}_..._user_....json) のみを置く。
+    // 出典元トレーサビリティ (source_key) は API 応答の users[].sources で返すため、
+    // 規約外の manifest.json は S3 へ書き出さない (Elith「構成が違う」対策)。
     users.push({ userId: p.userId, sources, files });
   }
 
