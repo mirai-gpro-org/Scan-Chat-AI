@@ -652,67 +652,8 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     return raw;
   }
 
-  /**
-   * 音声 transcript を現在設問の回答として取り込む。
-   * 選択式は選択肢へマッチング、自由記述は transcript をそのまま採用する。
-   */
-  function maybeHandleVoiceAnswer(transcript: string): void {
-    if (advancing) return; // 受付処理中は無視 (二重取り込み防止)
-    const q = currentQ;
-    if (!q) return;
-    const ans = interpretVoiceAnswer(q, transcript);
-    if (ans == null) return;
-    if (Array.isArray(ans)) {
-      submitAnswer(ans.length ? ans.join('、') : 'なし', { silent: true });
-    } else {
-      submitAnswer(ans, { silent: true });
-    }
-  }
-
-  /** transcript を設問種別ごとに解釈。マッチしなければ null (タップ待ち) */
-  function interpretVoiceAnswer(q: QuestionDef, transcript: string): string | string[] | null {
-    const t = normalizeVoice(transcript);
-    if (!t) return null;
-
-    if (q.answer_kind === 'text') {
-      // 自由記述は発話をそのまま回答に採用 (元の transcript を保持)
-      return transcript.trim();
-    }
-
-    if (q.answer_kind === 'slider') {
-      const min = q.slider_min ?? 1;
-      const max = q.slider_max ?? 10;
-      const m = /(-?\d+)/.exec(transcript);
-      if (!m) return null;
-      const n = Math.max(min, Math.min(max, Number(m[1])));
-      return String(n);
-    }
-
-    if (q.answer_kind === 'matrix') {
-      return null; // マトリクスはタップ操作のみ
-    }
-
-    const options =
-      q.answer_kind === 'chip' ? (q.chips ?? [])
-      : q.answer_kind === 'multi' ? (q.multi_options ?? [])
-      : (q.wheel_options ?? []);
-    if (options.length === 0) return null;
-
-    const isMulti = q.answer_kind === 'multi' || (q.answer_kind === 'wheel' && q.multi);
-
-    const matched = options
-      .map((o) => ({ label: o.label, core: normalizeVoice(o.label) }))
-      .filter(({ core }) => core && (t.includes(core) || core.includes(t)));
-
-    if (matched.length === 0) return null;
-
-    if (isMulti) {
-      return matched.map((m) => m.label);
-    }
-    // 単一: 最も具体的 (核が長い) 候補を採用
-    matched.sort((a, b) => b.core.length - a.core.length);
-    return matched[0].label;
-  }
+  // (f99f47e 前へ回帰) 音声 transcript を回答として取り込む maybeHandleVoiceAnswer /
+  // interpretVoiceAnswer は撤去。音声のターン/発話は Live API/LLM に委ね、アプリは注入しない。
 
   function sendFallback(): void {
     const t = refs.fallbackInput.value.trim();
@@ -895,8 +836,10 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       userBuf = '';
       assistantBuf = '';
 
-      // 音声回答 → 選択肢へマッチングして engine に反映 (タップと等価)
-      if (finishedUser) maybeHandleVoiceAnswer(finishedUser);
+      // f99f47e 前の制御へ回帰: 音声回答をアプリが取り込んで注入する経路を撤去。
+      // 音声のターン/発話は Live API/LLM に完全に委ねる (二重話者=二重化を構造的に排除)。
+      // 問診の前進はタップ回答 (submitAnswer) が担う。詳細は docs/AI問診_仕様と設計原則.md。
+      void finishedUser;
 
       // ループ検出: 直近 10 秒以内に同じ発話を完了したら重複カウント
       const now = Date.now();
@@ -1285,19 +1228,6 @@ function escapeAttr(s: string): string {
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
-}
-
-/**
- * 音声マッチング用の正規化。
- * NFKC 正規化 → 括弧書き / 記号 / 空白を除去 → 小文字化。
- * 例: 「ほぼ毎日（週5日以上）」→「ほぼ毎日」
- */
-function normalizeVoice(s: string): string {
-  return s
-    .normalize('NFKC')
-    .replace(/[（(][^）)]*[）)]/g, '')
-    .replace(/[\s　・、。，．,.!！?？「」『』〜~ー\-/]/g, '')
-    .toLowerCase();
 }
 
 function describeErr(err: unknown): string {
