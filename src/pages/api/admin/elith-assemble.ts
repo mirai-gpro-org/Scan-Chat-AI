@@ -89,7 +89,10 @@ export const POST: APIRoute = async ({ request }) => {
         missing: inv.missing,
         max_complete_users: inv.maxCompleteUsers,
         samples: Object.fromEntries(
-          DELIVERY_FORMAT_IDS.map((f) => [f, inv.byFormat[f].slice(0, 3).map((c) => c.key)]),
+          DELIVERY_FORMAT_IDS.map((f) => [
+            f,
+            inv.byFormat[f].slice(0, 5).map((c) => ({ key: c.key, date: c.date, bytes: c.size ?? null })),
+          ]),
         ),
       });
     }
@@ -131,10 +134,14 @@ export const POST: APIRoute = async ({ request }) => {
       delivery_prefix: result.deliveryPrefix,
       counts: result.inventory.counts,
       put_count: uploaded.length,
+      // 空データを掴んだ納品ファイルを警告として返す (data_items=0)
+      empty_files: result.users.flatMap((u) =>
+        u.sources.filter((s) => s.dataItems <= 0).map((s) => ({ user_id: u.userId, format_id: s.formatId, source_key: s.sourceKey, data_items: s.dataItems })),
+      ),
       users: result.users.map((u) => ({
         user_id: u.userId,
         folder: `${result.deliveryPrefix}user/${u.userId}/`,
-        files: u.sources.map((s) => ({ format_id: s.formatId, key: s.newKey, source_key: s.sourceKey, date: s.date })),
+        files: u.sources.map((s) => ({ format_id: s.formatId, key: s.newKey, source_key: s.sourceKey, date: s.date, data_items: s.dataItems })),
       })),
     });
   } catch (err) {

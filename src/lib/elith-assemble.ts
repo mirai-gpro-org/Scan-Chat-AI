@@ -28,6 +28,7 @@ export interface CatalogItem {
   formatId: ElithFormatId;
   date: string; // YYYY_MM_DD (フォルダ表記)
   clientId: string;
+  size?: number; // S3 上のバイトサイズ (空データ判定の目安)
 }
 
 /** JSON キー `…/{format_id}_date_{YYYY_MM_DD}_user_{client_id}.json` を分解 */
@@ -38,6 +39,38 @@ export function parseElithKey(key: string): CatalogItem | null {
   const [, formatId, date, clientId] = m;
   if (!isElithFormatId(formatId)) return null;
   return { key, formatId, date, clientId };
+}
+
+/**
+ * Elith ハンドオフ JSON の「実データ件数」を数える (空データ判定用)。
+ * `data` 配下 (measurements / items / rows 等) の配列要素数を再帰的に合計する。
+ * `data` が無ければトップレベルを走査。パース不能は -1。
+ */
+export function countDataItems(jsonText: string): number {
+  let obj: unknown;
+  try {
+    obj = JSON.parse(jsonText);
+  } catch {
+    return -1;
+  }
+  const root =
+    obj && typeof obj === 'object' && 'data' in (obj as Record<string, unknown>)
+      ? (obj as Record<string, unknown>).data
+      : obj;
+  let n = 0;
+  const seen = new Set<unknown>();
+  const walk = (v: unknown): void => {
+    if (Array.isArray(v)) {
+      n += v.length;
+      for (const e of v) if (e && typeof e === 'object') walk(e);
+    } else if (v && typeof v === 'object') {
+      if (seen.has(v)) return;
+      seen.add(v);
+      for (const val of Object.values(v as Record<string, unknown>)) walk(val);
+    }
+  };
+  walk(root);
+  return n;
 }
 
 function normPrefix(p: string): string {
@@ -68,6 +101,7 @@ export async function inventoryElithSource(sourcePrefix: string): Promise<Invent
     const item = parseElithKey(o.key);
     if (!item) continue;
     if (!DELIVERY_FORMAT_IDS.includes(item.formatId)) continue;
+    item.size = o.size;
     byFormat[item.formatId].push(item);
   }
   // 安定した順序 (date→key) にソート
@@ -98,6 +132,8 @@ export interface AssembledUserSource {
   sourceKey: string;
   date: string;
   newKey: string;
+  /** コピー元 JSON の実データ件数 (0 = 空データ。-1 = パース不能)。 */
+  dataItems: number;
 }
 export interface AssembledUser {
   userId: string;
@@ -144,6 +180,16 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
   const inv = await inventoryElithSource(opts.sourcePrefix);
   const exportedAt = (opts.exportedAt ?? new Date()).toISOString();
 
+  // ソース JSON を GET してキャッシュ (空データ判定と本コピーで再利用し二重取得を避ける)
+  const textCache = new Map<string, string>();
+  const fetchText = async (key: string): Promise<string> => {
+    const c = textCache.get(key);
+    if (c !== undefined) return c;
+    const t = await getObjectText(key);
+    textCache.set(key, t);
+    return t;
+  };
+
   // userId → (formatId → source CatalogItem) の割当を決める
   const plan: { userId: string; picks: Partial<Record<ElithFormatId, CatalogItem>> }[] = [];
 
@@ -154,15 +200,35 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
         const key = m[f];
         if (!key) continue;
         const item = inv.byFormat[f].find((c) => c.key === key) ?? parseElithKey(key);
-        if (item) picks[f] = item;
+        if (item) picks[f] = item; // 手動指定は明示尊重 (空でもそのまま)
       }
       plan.push({ userId, picks });
     }
   } else {
+    // 自動: 種別ごとに新しい日付順で「実データが入っている」ものを優先して選ぶ。
+    // (旧仕様は最古を無条件採用 → 初期の空テストを掴んで空データ納品になっていた)
     const want = Math.max(0, Math.min(opts.count ?? inv.maxCompleteUsers, inv.maxCompleteUsers));
+    const cursor: Record<string, number> = {};
+    const orderedDesc: Record<string, CatalogItem[]> = {};
+    for (const f of DELIVERY_FORMAT_IDS) {
+      cursor[f] = 0;
+      orderedDesc[f] = [...inv.byFormat[f]].sort((a, b) =>
+        a.date === b.date ? b.key.localeCompare(a.key) : b.date.localeCompare(a.date),
+      );
+    }
     for (let i = 0; i < want; i++) {
       const picks: Partial<Record<ElithFormatId, CatalogItem>> = {};
-      for (const f of DELIVERY_FORMAT_IDS) picks[f] = inv.byFormat[f][i];
+      for (const f of DELIVERY_FORMAT_IDS) {
+        const list = orderedDesc[f];
+        let chosen: CatalogItem | undefined;
+        // カーソル位置から、実データ件数>0 の最初の候補を採用 (空はスキップ)
+        while (cursor[f] < list.length) {
+          const cand = list[cursor[f]++];
+          if (countDataItems(await fetchText(cand.key)) > 0) { chosen = cand; break; }
+        }
+        // 全て空 (または尽きた) なら、この人には先頭候補を割当 (空でも可視化のため出す)
+        picks[f] = chosen ?? list[i] ?? list[0];
+      }
       plan.push({ userId: `${idPrefix}-${String(i + 1).padStart(3, '0')}`, picks });
     }
   }
@@ -174,11 +240,12 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
     for (const f of DELIVERY_FORMAT_IDS) {
       const item = p.picks[f];
       if (!item) continue;
-      const text = await getObjectText(item.key);
+      const text = await fetchText(item.key);
+      const dataItems = countDataItems(text);
       const rewritten = rewriteClientId(text, p.userId, item.key);
       const newKey = `${deliveryPrefix}user/${p.userId}/date/${item.date}/${f}_date_${item.date}_user_${p.userId}.json`;
       files.push({ key: newKey, contentType: 'application/json; charset=utf-8', body: rewritten, bytes: utf8Bytes(rewritten) });
-      sources.push({ formatId: f, sourceKey: item.key, date: item.date, newKey });
+      sources.push({ formatId: f, sourceKey: item.key, date: item.date, newKey, dataItems });
     }
     // manifest
     const manifest = {
