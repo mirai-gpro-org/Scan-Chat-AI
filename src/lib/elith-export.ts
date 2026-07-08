@@ -192,6 +192,52 @@ async function scanImage(
   return { markdown: extractText(res), finishReason: res.candidates?.[0]?.finishReason ?? null };
 }
 
+// ── 1 画像スキャン → 解析結果 (S3 書き込みなし) ──────────────────
+// 複数画像を 1 検査へマージする用途 (人間ドック複数シート)。呼び出し側で連番画像を書き、
+// 全 part の measurements/regions/notes をマージして 1 つの JSON を書き出す。
+export interface ParsedScan {
+  markdown: string;
+  finishReason: string | null;
+  testDate: string;
+  dateSource: string;
+  measurements: ElithMeasurement[];
+  regions: ScanRegionJson[];
+  notes: string[];
+}
+
+export async function scanImageToParsed(input: {
+  imageBase64: string;
+  mimeType: string;
+  hint?: string | null;
+  /** 明示検査日 (YYYY-MM-DD)。未指定なら画像抽出→today */
+  examDate?: string | null;
+  today?: string;
+}): Promise<ParsedScan> {
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) throw new Error('GEMINI_API_KEY is not configured (server env)');
+  if (!isSupportedMime(input.mimeType)) throw new Error(`unsupported mime: ${input.mimeType}`);
+
+  const { markdown, finishReason } = await scanImage(apiKey, input.imageBase64, input.mimeType, input.hint);
+  if (!markdown.trim()) throw new Error(`empty scan result (finishReason=${finishReason})`);
+
+  const todayIso = input.today || jstTodayIso();
+  const provided = input.examDate && /^\d{4}-\d{2}-\d{2}$/.test(input.examDate) ? input.examDate : null;
+  const { date: testDate, source: dateSource } = provided
+    ? { date: provided, source: 'provided' }
+    : extractExamDate(markdown, todayIso);
+
+  const regions = parseScanRegions(markdown);
+  return {
+    markdown: stripExamComment(markdown),
+    finishReason,
+    testDate,
+    dateSource,
+    measurements: toMeasurements(regions),
+    regions,
+    notes: collectNotes(regions),
+  };
+}
+
 // ── バンドル生成 ────────────────────────────────────────────────
 export interface ElithScanInput {
   formatId: ElithFormatId;
