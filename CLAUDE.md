@@ -59,6 +59,9 @@
 - AI問診＝**5セクション（嗜好品・運動・食生活・睡眠・心身）**が仕様
   (`docs/20260331_AI参考問診票.png` / `docs/funding_application/要件定義書.md` F-3)。
   **同意設問・実施検査確認などは問診に含めない**（同意は登録/オンボーディングで取得）。
+- **詳細仕様・設計原則・アンチパターン・二重話者問題の因果は `docs/AI問診_仕様と設計原則.md` が正本。
+  AI問診コードに触れる前に必読。** 責務分界（フロー/選択肢/データ=プログラム, 音声のターン/発話=LLM任せ）、
+  silent 分岐・マイクゲート禁止、`f99f47e` が二重話者の起点である因果、案1(音声=LLM単独話者)への修正方針を記載。
 
 ### インフラ / 実行モデル
 - **Vercel Serverless (iad1 / US East)**。Gemini API と地理的近接 (`system_architecture_overview.md` L143/L273)。
@@ -92,6 +95,7 @@
 
 | ドキュメント | 内容 |
 |---|---|
+| `docs/AI問診_仕様と設計原則.md` | **AI問診の確定仕様・設計原則（責務分界/禁止事項/二重話者問題/修正方針）。コード変更前必読** |
 | `docs/operations/Gemini_APIキー作成手順書_Wellfort_v1.0.md` | Gemini キー発行・**Vercel 環境変数運用**・ローテーション |
 | `docs/system_architecture_overview.md` | 全体構成・**Vercel/タイムアウト**・データフロー |
 | `docs/elith_s3_data_handoff_spec.md` | **Elith S3 受け渡し仕様** (パス/命名/format_id/JSON) |
