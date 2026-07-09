@@ -8,8 +8,9 @@ import SituationalCards from '../components/dashboard/SituationalCards.astro';
 import KitProgressCard from '../components/dashboard/KitProgressCard.astro';
 import HealthInsightCard from '../components/dashboard/HealthInsightCard.astro';
 import MetricTrendChart from '../components/dashboard/MetricTrendChart.astro';
+import HealthAgeCard from '../components/dashboard/HealthAgeCard.astro';
 import TestHistoryList from '../components/dashboard/TestHistoryList.astro';
-import { loadDashboard, formatGreeting, getMetricTrend } from '../lib/dashboard-queries';
+import { loadDashboard, formatGreeting, getMetricTrend, getHealthAge } from '../lib/dashboard-queries';
 import { countUnreadImportant } from '../lib/notice-queries';
 import { isBridgeConfigured } from '../lib/supabase';
 import {
@@ -47,6 +48,11 @@ const data = !result || hasError ? null : (result as Exclude<typeof result, { er
 
 // 検査結果の取得元 uid（デモフォールバック時は真鍋/DEFAULT_USER）でトレンドも揃える
 const metricTrend = data ? await getMetricTrend(data.resultUid) : [];
+
+// 健康年齢 (選択ユーザー本人の diagnostic_user_id で取得。diagnosis_results が無くても表示)
+const healthAge = data ? await getHealthAge(data.diagnosticUserId) : null;
+// 健康年齢の時系列は既存のトレンドチャートに先頭で合流させる
+const trendSeries = healthAge?.trend ? [healthAge.trend, ...metricTrend] : metricTrend;
 
 // ヘッダーの「お知らせ」バッジ用 — 未読の重要なお知らせ件数
 const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;
@@ -155,6 +161,8 @@ const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Wellfort';
           </a>
         </section>
 
+        {healthAge?.latest && <HealthAgeCard latest={healthAge.latest} />}
+
         {metrics.length > 0 && (() => {
           // 各指標から「原本 PDF の該当ページ」へ deep link を作る:
           //   尿酸・中性脂肪・血糖値 → 血液検査 (test_type='blood') の latest artifact
@@ -188,7 +196,7 @@ const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Wellfort';
 
         {/* 非表示 (今日の気付き): <HealthInsightCard diagnosticUserId={data?.diagnosticUserId ?? ''} /> */}
 
-        <MetricTrendChart series={metricTrend} />
+        <MetricTrendChart series={trendSeries} />
 
         {/* 非表示 (シチュエーション別アドバイス): {situations.length > 0 && <SituationalCards cards={situations} />} */}
 
