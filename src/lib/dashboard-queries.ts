@@ -276,6 +276,65 @@ export async function getMetricTrend(
   }
 }
 
+export interface HealthAgeLatest {
+  testDate: string;
+  sourceKind: string;         // 'health_checkup' | 'blood'
+  chronologicalAge: number;
+  biologicalAge: number | null;
+  delta: number | null;
+  carried: string[];          // 据え置き/補完したマーカー (血液回など)
+  missing: string[];          // 欠落した必須マーカー
+}
+export interface HealthAgeSummary {
+  latest: HealthAgeLatest | null;
+  /** 健康年齢の時系列 (MetricTrendChart にそのまま渡せる) */
+  trend: MetricTrendSeries | null;
+}
+
+/**
+ * diagnosis.health_age_scores から健康年齢の最新値と時系列を取得。
+ * getMetricTrend と同じくスタンドアロン (diagnosis_results が無くても表示できる)。
+ */
+export async function getHealthAge(diagnosticUserId: string): Promise<HealthAgeSummary> {
+  const sb = getServerSupabase();
+  if (!sb) return { latest: null, trend: null };
+  try {
+    // 型未生成テーブルのため any 経由。
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (sb.schema('diagnosis') as any)
+      .from('health_age_scores')
+      .select('test_date, source_kind, chronological_age, biological_age, delta, inputs')
+      .eq('diagnostic_user_id', diagnosticUserId)
+      .order('test_date', { ascending: true })
+      .limit(24);
+    if (error || !data || data.length === 0) return { latest: null, trend: null };
+
+    const points: MetricTrendPoint[] = [];
+    for (const r of data) {
+      if (r.biological_age == null) continue;
+      const v = Number(r.biological_age);
+      points.push({ date: r.test_date as string, value: v, raw: `${v.toFixed(1)}歳` });
+    }
+    const last = data[data.length - 1];
+    const inputs = (last.inputs ?? {}) as Record<string, unknown>;
+    const arr = (k: string): string[] => (Array.isArray(inputs[k]) ? (inputs[k] as string[]) : []);
+    const latest: HealthAgeLatest = {
+      testDate: last.test_date as string,
+      sourceKind: (last.source_kind as string) ?? 'health_checkup',
+      chronologicalAge: Number(last.chronological_age),
+      biologicalAge: last.biological_age == null ? null : Number(last.biological_age),
+      delta: last.delta == null ? null : Number(last.delta),
+      carried: arr('carried_markers').length ? arr('carried_markers') : arr('carried'),
+      missing: arr('missing_required'),
+    };
+    const trend: MetricTrendSeries | null =
+      points.length > 0 ? { label: '健康年齢', unit: '歳', points } : null;
+    return { latest, trend };
+  } catch {
+    return { latest: null, trend: null };
+  }
+}
+
 /** ユーザー氏名を「真鍋様」形式で返す。なければ「お客様」。 */
 export function formatGreeting(data: DashboardData): string {
   if (data.appUser?.display_name_cache) return data.appUser.display_name_cache;
