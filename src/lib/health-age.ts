@@ -41,14 +41,21 @@ export interface HealthAgeResult {
   pheno_base: number | null;
   adjustments: { sbp: number; fev: number; bmi: number; sex: number; total: number } | null;
   used_markers: string[];        // 実測が入った必須マーカー
-  carried_markers: string[];     // 補完/据え置きされたマーカー (呼び出し側が設定)
+  carried_markers: string[];     // 据え置きされたマーカー (血液回の前回ドック値など。呼び出し側が設定)
+  imputed_markers: string[];     // 測定値が無く標準値で補完したマーカー (crp 等 → 参考値)
   missing_required: string[];    // 欠落している必須マーカー (age 除く)
 }
 
-/** 必須9項目 (age を除いた 8 マーカー)。すべて揃わないとフル計算不可。 */
+/**
+ * ハード必須マーカー (これらが欠けると算出不可)。
+ * CRP は標準的な人間ドックの血液パネルに含まれないことが多いため必須から外し、
+ * 測定値が無い場合は健常者中央値で補完する (参考値。imputed_markers で明示)。
+ */
 const REQUIRED: (keyof HealthAgeMarkers)[] = [
-  'albumin', 'creatinine', 'glucose', 'crp', 'lymph', 'mcv', 'alp', 'sbp',
+  'albumin', 'creatinine', 'glucose', 'lymph', 'mcv', 'alp', 'sbp',
 ];
+/** CRP 測定値が無いときの補完値 (健常者中央値 目安, mg/dL)。 */
+const CRP_DEFAULT_MGDL = 0.1;
 
 function num(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
@@ -62,6 +69,7 @@ export function computeHealthAge(m: HealthAgeMarkers, carriedMarkers: string[] =
   const age = num(m.age);
   const missing: string[] = [];
   for (const k of REQUIRED) if (num(m[k]) === null) missing.push(k);
+  const imputed: string[] = [];
 
   const base: HealthAgeResult = {
     ok: false,
@@ -74,6 +82,7 @@ export function computeHealthAge(m: HealthAgeMarkers, carriedMarkers: string[] =
     adjustments: null,
     used_markers: REQUIRED.filter((k) => num(m[k]) !== null && !carriedMarkers.includes(k)) as string[],
     carried_markers: carriedMarkers,
+    imputed_markers: imputed,
     missing_required: missing,
   };
   if (age === null || missing.length > 0) return base;
@@ -81,7 +90,9 @@ export function computeHealthAge(m: HealthAgeMarkers, carriedMarkers: string[] =
   const albumin = num(m.albumin)!;
   const creat = num(m.creatinine)!;
   const glucose = num(m.glucose)!;
-  const crp = num(m.crp)!;
+  // CRP は測定値が無ければ標準値で補完 (参考値扱い)。
+  let crp = num(m.crp);
+  if (crp === null) { crp = CRP_DEFAULT_MGDL; imputed.push('crp'); }
   const lymph = num(m.lymph)!;
   const mcv = num(m.mcv)!;
   const alp = num(m.alp)!;
@@ -160,11 +171,12 @@ export interface RawItem {
 
 /** マーカー → 名称同義語 (小文字化・記号除去して部分一致で判定)。 */
 const SYNONYMS: Record<Exclude<keyof HealthAgeMarkers, 'age' | 'sex'>, string[]> = {
-  albumin: ['albumin', 'アルブミン', 'alb'],
-  creatinine: ['creatinine', 'クレアチニン', 'cre', 'crea', 'cr'],
-  glucose: ['空腹時血糖', '血糖', 'グルコース', 'glucose', 'glu', 'fpg', 'bs'],
+  albumin: ['アルブミン', 'albumin', 'alb'],
+  // 'cr' は 'crp' に部分一致して誤爆するため入れない
+  creatinine: ['クレアチニン', 'creatinine', 'crea', 'cre'],
+  glucose: ['空腹時血糖', '血糖', 'グルコース', 'glucose', 'glu', 'fpg'],
   crp: ['高感度crp', 'hscrp', 'crp', 'c反応性蛋白'],
-  lymph: ['リンパ球比率', 'リンパ球', 'リンパ', 'lympho', 'lymph', 'ly%'],
+  lymph: ['リンパ球比率', 'リンパ球', 'リンパ', 'lympho', 'lymph'],
   mcv: ['平均赤血球容積', 'mcv'],
   alp: ['アルカリフォスファターゼ', 'アルカリホスファターゼ', 'alp'],
   sbp: ['収縮期血圧', '最高血圧', '大血圧', 'sbp', '血圧(上)', '血圧上'],
@@ -172,11 +184,20 @@ const SYNONYMS: Record<Exclude<keyof HealthAgeMarkers, 'age' | 'sex'>, string[]>
   wbc: ['白血球数', '白血球', 'wbc'],
   fev1fvc: ['fev1/fvc', 'fev1.0%', '1秒率', 'fev1fvc'],
 };
-const HEIGHT_SYN = ['身長', 'height', 'ht'];
-const WEIGHT_SYN = ['体重', 'weight', 'wt', 'bw'];
+const HEIGHT_SYN = ['身長', 'height'];
+const WEIGHT_SYN = ['体重', 'weight'];
+// MCV を赤血球+ヘマトクリットから算出する場合の同義語
+const RBC_SYN = ['赤血球数', '赤血球', 'rbc'];
+const HCT_SYN = ['ヘマトクリット', 'hct'];
 
+/** 全角英数字・記号を半角へ、全角スペースを半角へ (検査票は ＣＲＰ 等が全角のことがある)。 */
+function toHalfWidth(s: string): string {
+  return s
+    .replace(/[！-～]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+    .replace(/　/g, ' ');
+}
 function canon(s: string | null | undefined): string {
-  return (s ?? '').toLowerCase().replace(/[\s　（）()：:・,，]/g, '');
+  return toHalfWidth(s ?? '').toLowerCase().replace(/[\s（）()：:・,，]/g, '');
 }
 /** "8.1 L" / "104.1 H" / "1,234" → 先頭の数値。数値化不能は null。 */
 function parseNumeric(v: string | number | null | undefined): number | null {
@@ -221,6 +242,23 @@ export function normalizeMarkers(items: RawItem[]): Partial<HealthAgeMarkers> {
       if (w === null && matches(it, WEIGHT_SYN)) w = parseNumeric(it.value ?? null);
     }
     if (h && w && h > 100 && h < 230) out.bmi = Math.round((w / ((h / 100) ** 2)) * 10) / 10;
+  }
+  // MCV 補完 (欄が空でも 赤血球 + ヘマトクリット から算出可)。
+  // MCV(fL) = Ht(%) / RBC(10^6/µL) × 10。RBC は ×10^4 表記(例 482)と ×10^6 表記(例 4.82)が
+  // 混在するため magnitude で吸収し、算出値が生理的範囲のときだけ採用する。
+  if (out.mcv == null) {
+    let rbc: number | null = null, hct: number | null = null;
+    for (const it of items) {
+      if (rbc === null && matches(it, RBC_SYN)) rbc = parseNumeric(it.value ?? null);
+      if (hct === null && matches(it, HCT_SYN)) hct = parseNumeric(it.value ?? null);
+    }
+    if (rbc && hct) {
+      const rbcM = rbc > 50 ? rbc / 100 : rbc; // 482→4.82 / 4.82→4.82
+      if (rbcM > 2 && rbcM < 8) {
+        const mcv = Math.round((hct / rbcM) * 10 * 10) / 10;
+        if (mcv >= 60 && mcv <= 130) out.mcv = mcv;
+      }
+    }
   }
   return out;
 }

@@ -131,6 +131,7 @@ export const POST: APIRoute = async ({ request }) => {
     const inputs = {
       markers,
       used_markers: result.used_markers,
+      imputed_markers: result.imputed_markers,
       missing_required: result.missing_required,
       source_ref: sourceKey,
       adjustments: result.adjustments,
@@ -180,6 +181,7 @@ export const POST: APIRoute = async ({ request }) => {
       computable: result.ok,
       missing_required: result.missing_required,
       used_markers: result.used_markers,
+      imputed_markers: result.imputed_markers,
       normalized_markers: normalized,
       saved,
       save_error: saveError,

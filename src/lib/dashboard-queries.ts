@@ -282,7 +282,8 @@ export interface HealthAgeLatest {
   chronologicalAge: number;
   biologicalAge: number | null;
   delta: number | null;
-  carried: string[];          // 据え置き/補完したマーカー (血液回など)
+  carried: string[];          // 据え置きしたマーカー (血液回など)
+  imputed: string[];          // 標準値で補完したマーカー (crp 等 → 参考値)
   missing: string[];          // 欠落した必須マーカー
 }
 export interface HealthAgeSummary {
@@ -325,6 +326,7 @@ export async function getHealthAge(diagnosticUserId: string): Promise<HealthAgeS
       biologicalAge: last.biological_age == null ? null : Number(last.biological_age),
       delta: last.delta == null ? null : Number(last.delta),
       carried: arr('carried_markers').length ? arr('carried_markers') : arr('carried'),
+      imputed: arr('imputed_markers'),
       missing: arr('missing_required'),
     };
     const trend: MetricTrendSeries | null =
