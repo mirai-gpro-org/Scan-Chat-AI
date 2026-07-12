@@ -18,6 +18,7 @@ import { getS3Config, isS3Configured, listObjects, getObjectText } from '../../.
 import {
   computeHealthAge,
   normalizeMarkers,
+  requiredCoverage,
   HEALTH_AGE_MODEL_VERSION,
   type HealthAgeMarkers,
   type RawItem,
@@ -95,6 +96,44 @@ export const POST: APIRoute = async ({ request }) => {
       })
       .sort((a, b) => b.key.localeCompare(a.key));
     return json({ ok: true, mode: 'list', source_prefix: sourcePrefix, count: files.length, files });
+  }
+
+  // ── mode=check: 各人間ドックJSONの適合状況 (CRP以外の必須が揃っているか) ──
+  if (mode === 'check') {
+    let objs;
+    try {
+      objs = await listObjects(sourcePrefix);
+    } catch (err) {
+      return json({ ok: false, error: 'list failed', detail: String(err instanceof Error ? err.message : err) }, 502);
+    }
+    const jsons = objs
+      .filter((o) => o.key.endsWith('.json') && basename(o.key).startsWith('HealthCheckupData_'))
+      .sort((a, b) => b.key.localeCompare(a.key))
+      .slice(0, 40); // 時間制約: 先頭40件まで判定
+    const files = [];
+    for (const o of jsons) {
+      const m = /_date_(\d{4}_\d{2}_\d{2})_user_(.+)\.json$/.exec(basename(o.key));
+      let cov: { present: string[]; missing: string[]; computable: boolean } = { present: [], missing: [], computable: false };
+      let hasCrp = false;
+      try {
+        const obj = JSON.parse(await getObjectText(o.key)) as Record<string, unknown>;
+        const data = (obj.data ?? {}) as Record<string, unknown>;
+        const measurements: RawItem[] = Array.isArray(data.measurements) ? (data.measurements as RawItem[]) : [];
+        const norm = normalizeMarkers(measurements);
+        cov = requiredCoverage(norm);
+        hasCrp = norm.crp != null;
+      } catch { /* skip parse errors → computable:false */ }
+      files.push({
+        key: o.key,
+        test_date: m ? m[1].replace(/_/g, '-') : null,
+        client_id: m ? m[2] : null,
+        computable: cov.computable,
+        missing: cov.missing,
+        present_count: cov.present.length,
+        has_crp: hasCrp,
+      });
+    }
+    return json({ ok: true, mode: 'check', source_prefix: sourcePrefix, count: files.length, files, truncated: objs.length > 40 });
   }
 
   // ── mode=run: 計算 + 保存 ──
