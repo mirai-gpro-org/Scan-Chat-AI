@@ -180,6 +180,7 @@ export interface RawItem {
   name?: string | null;
   name_detail?: string | null;
   value?: string | number | null;
+  region?: string | null; // セクション名 (例 '血圧' '身体計測')。SBP 検出の文脈に使う
 }
 
 /** マーカー → 名称同義語 (小文字化・記号除去して部分一致で判定)。 */
@@ -192,9 +193,9 @@ const SYNONYMS: Record<Exclude<keyof HealthAgeMarkers, 'age' | 'sex'>, string[]>
   lymph: ['リンパ球比率', 'リンパ球', 'リンパ', 'lympho', 'lymph'],
   mcv: ['平均赤血球容積', 'mcv'],
   alp: ['アルカリフォスファターゼ', 'アルカリホスファターゼ', 'alp'],
-  // 「血圧(収縮期/拡張期) 127/82」形式も拾えるよう '収縮期' を含める (値は先頭数値=収縮期)。
-  // '最低血圧'/'拡張期' は '収縮期' を含まないため誤爆しない。
-  sbp: ['収縮期血圧', '収縮期', '最高血圧', '大血圧', 'sbp', '血圧上'],
+  // 「血圧(収縮期/拡張期) 127/82」「来院時 110/60」等も拾う。値は先頭数値=収縮期。
+  // '最低血圧'/'拡張期' は '収縮期' を含まないため誤爆しない。結合値は下の fallback でも拾う。
+  sbp: ['収縮期血圧', '収縮期', '最高血圧', '大血圧', '来院時', '診察室血圧', '家庭血圧', 'sbp', '血圧上'],
   bmi: ['bmi', '体格指数'],
   wbc: ['白血球数', '白血球', 'wbc'],
   fev1fvc: ['fev1/fvc', 'fev1.0%', '1秒率', 'fev1fvc'],
@@ -272,6 +273,20 @@ export function normalizeMarkers(items: RawItem[]): Partial<HealthAgeMarkers> {
       if (rbcM > 2 && rbcM < 8) {
         const mcv = Math.round((hct / rbcM) * 10 * 10) / 10;
         if (mcv >= 60 && mcv <= 130) out.mcv = mcv;
+      }
+    }
+  }
+  // SBP fallback: 「NNN / NN」(収縮期/拡張期) 形式の値を、血圧文脈の行から収縮期として拾う。
+  // 行ラベルが '来院時' 等で同義語に載らない書式を救済 (名称/詳細/セクション名に '血圧' 等)。
+  if (out.sbp == null) {
+    for (const it of items) {
+      const v = typeof it.value === 'string' ? it.value : '';
+      const m = v.match(/^\s*(\d{2,3})\s*[/／]\s*(\d{2,3})\s*$/);
+      if (!m) continue;
+      const ctx = canon(it.name) + canon(it.name_detail) + canon(it.region);
+      if (ctx.includes('血圧') || ctx.includes('来院時') || ctx.includes('診察室') || ctx.includes('脈波')) {
+        const sys = parseFloat(m[1]);
+        if (Number.isFinite(sys) && sys >= 60 && sys <= 260) { out.sbp = sys; break; }
       }
     }
   }
