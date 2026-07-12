@@ -62,6 +62,19 @@ function num(v: unknown): number | null {
 }
 
 /**
+ * 適合チェック: CRP を除く必須マーカー (REQUIRED) の充足状況を返す。
+ * CRP は補完前提のためここには含めない。`computable=true` なら算出可能 (CRPは補完)。
+ */
+export function requiredCoverage(
+  m: Partial<HealthAgeMarkers>,
+): { present: string[]; missing: string[]; computable: boolean } {
+  const present: string[] = [];
+  const missing: string[] = [];
+  for (const k of REQUIRED) (num(m[k]) !== null ? present : missing).push(k as string);
+  return { present, missing, computable: missing.length === 0 };
+}
+
+/**
  * 生物学的年齢を計算する。必須マーカーが欠ける場合は ok=false + missing_required を返す。
  * carriedMarkers は「据え置き/補完した」マーカー名 (時系列の透明性表示用)。
  */
