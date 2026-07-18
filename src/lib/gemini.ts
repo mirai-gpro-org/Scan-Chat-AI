@@ -3,12 +3,29 @@
  * クライアントには公開しない（API キーが必要なため必ずサーバから呼ぶ）。
  */
 
+/** env 読取 (import.meta.env → process.env の順。空文字は未設定扱い)。 */
+function env(name: string): string | undefined {
+  const m = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.[name];
+  if (m != null && m !== '') return m;
+  const p = typeof process !== 'undefined' ? process.env?.[name] : undefined;
+  return p != null && p !== '' ? p : undefined;
+}
+
+// スキャン/Live のモデルは env で差替え可能 (Vercel 環境変数)。デプロイ無しで即時切替・切戻し可。
+//  - スキャン既定は gemini-3.1-flash-lite。Tier1 未開通や不具合時は
+//    GEMINI_SCAN_MODEL=gemini-2.5-flash / gemini-3-flash 等へ即切替。
+//  - Live は REST 非対応の専用プレビュー。GEMINI_LIVE_MODEL で更新に追従。
 export const MODELS = {
   // REST generateContent (画像解析・テキスト応答)
-  scan: 'gemini-2.5-flash',
+  scan: env('GEMINI_SCAN_MODEL') || 'gemini-3.1-flash-lite',
   // Live API 専用 (WebSocket / audio-to-audio)。REST には渡さないこと
-  liveChat: 'gemini-3.1-flash-live-preview',
+  liveChat: env('GEMINI_LIVE_MODEL') || 'gemini-3.1-flash-live-preview',
 } as const;
+
+/** モデルが Gemini 3 系 (3.x) か。生成設定の互換差 (thinkingLevel / 温度既定) の分岐に使う。 */
+export function isGemini3Model(model: string): boolean {
+  return /^gemini-3(\.|-)/i.test(model);
+}
 
 const ENDPOINT_BASE =
   'https://generativelanguage.googleapis.com/v1beta/models';
@@ -32,8 +49,40 @@ export interface GeminiGenerationConfig {
   topK?: number;
   maxOutputTokens?: number;
   responseMimeType?: string;
-  /** Thinking 予算 (token)。0 で thinking 完全停止 (flash/lite のみ)。 */
-  thinkingConfig?: { thinkingBudget?: number };
+  /**
+   * Thinking 制御。
+   *  - Gemini 2.x: `thinkingBudget` (token 数。0 で thinking 停止)。
+   *  - Gemini 3.x: `thinkingLevel` ('low' | 'high')。thinkingBudget は非対応。
+   * 呼び出し側は 2.x 形式 (thinkingBudget) で書けば、callGemini がモデルに応じ自動変換する。
+   */
+  thinkingConfig?: { thinkingBudget?: number; thinkingLevel?: 'low' | 'high' };
+}
+
+/** thinkingBudget(token) を Gemini 3 の thinkingLevel へ写像。低予算→low / 大予算→high。 */
+function thinkingBudgetToLevel(budget?: number): 'low' | 'high' {
+  return budget != null && budget > 8192 ? 'high' : 'low';
+}
+
+/**
+ * 生成設定をモデルの流儀へ正規化する。
+ * Gemini 3.x の場合のみ:
+ *  - `temperature`/`topP`/`topK` を除去 (Gemini 3 はデフォルト推奨。明示すると精度低下し得る)。
+ *  - `thinkingBudget` → `thinkingLevel` へ変換 (3.x は budget 非対応)。
+ * Gemini 2.x はそのまま返す (呼び出し側の設定を尊重)。
+ */
+export function normalizeGenerationConfigForModel(
+  config: GeminiGenerationConfig | undefined,
+  model: string,
+): GeminiGenerationConfig | undefined {
+  if (!config || !isGemini3Model(model)) return config;
+  const { temperature, topP, topK, thinkingConfig, ...rest } = config;
+  const out: GeminiGenerationConfig = { ...rest };
+  if (thinkingConfig?.thinkingLevel) {
+    out.thinkingConfig = { thinkingLevel: thinkingConfig.thinkingLevel };
+  } else if (thinkingConfig && thinkingConfig.thinkingBudget != null) {
+    out.thinkingConfig = { thinkingLevel: thinkingBudgetToLevel(thinkingConfig.thinkingBudget) };
+  }
+  return out;
 }
 
 export interface GeminiRequest {
@@ -75,10 +124,15 @@ export async function callGemini(
   //  - 新旧キー(AIza / AQ.)ともネイティブエンドポイントで正常動作 (Google 公式方式)。
   //  - URL/アクセスログにキーが残らない (漏洩リスク低減)。
   const url = `${ENDPOINT_BASE}/${encodeURIComponent(model)}:generateContent`;
+  // 呼び出し側は 2.x 形式で設定を書ける。3.x へはここで自動変換 (thinkingLevel 化・温度既定化)。
+  const normalized: GeminiRequest = {
+    ...request,
+    generationConfig: normalizeGenerationConfigForModel(request.generationConfig, model),
+  };
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-    body: JSON.stringify(request),
+    body: JSON.stringify(normalized),
   });
 
   const text = await res.text();
