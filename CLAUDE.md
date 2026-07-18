@@ -24,6 +24,15 @@
     **旧 `AIza` は 2026-09 に失効** → それまでに Vercel の `GEMINI_API_KEY` を `AQ.` キーへ差し替える
     (運用のみ)。詳細: `docs/operations/Gemini_APIキー作成手順書_Wellfort_v1.0.md` §7.1。
   - Gemini 呼び出しは `src/lib/gemini.ts` に集約。キーは `x-goog-api-key` ヘッダ送信 (URL に載せない)。
+- **使用モデルは env で差替え可 (デプロイ不要・即時切替/切戻し)**。既定は `src/lib/gemini.ts` の `MODELS`。
+  - スキャン (画像解析・全 REST 呼び出し): 既定 **`gemini-3.1-flash-lite`**。`GEMINI_SCAN_MODEL` で上書き。
+    不具合/Tier1 未開通時は `GEMINI_SCAN_MODEL=gemini-2.5-flash` へ即切戻し (旧既定)。上げるなら `gemini-3-flash`。
+    - **前提**: 3.x 系は **Tier1 (課金有効化) + 当該キーでのモデルアクセス** が必要。未開通のまま 3.x を指すと
+      全スキャン (検診/がん/血液image/遺伝子) が失敗する → その場合は env で 2.5 に戻す。
+    - スキャン精度は **検診 numeric → 健康年齢 (CABA)** に直結。モデル切替時は代表ページで再検証すること。
+  - Live (AI問診): 既定 `gemini-3.1-flash-live-preview` (REST 非対応の専用プレビュー)。`GEMINI_LIVE_MODEL` で追従。
+  - **Gemini 3.x の生成設定差は `callGemini` が自動吸収**: 呼び出し側は 2.x 形式 (`thinkingBudget`・`temperature`) の
+    まま書けばよい。3.x 指定時のみ `temperature/topP/topK` を除去 (既定推奨) し `thinkingBudget→thinkingLevel` へ変換。
 - したがって **ローカル端末での CLI 直実行は不可** (キーを読めない)。
   スキャン/エクスポート等の鍵が要る処理は **Vercel サーバ側 (API/admin バッチ)** で実行する。
 
