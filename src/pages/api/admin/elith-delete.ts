@@ -1,9 +1,11 @@
 /**
  * admin: S3 の Elith 関連ファイルを削除する (2 段階: list → delete)。
  *
- * target:
- *   - 'health-checkup' : ソース配下の HealthCheckupData_* (JSON + 連番画像) を全削除。
- *                        (人間ドックのマージ仕様へ切替前の既存ファイル掃除用)
+ * target (検査種別ごとに個別削除。basename の format_id 接頭辞で対象を絞る):
+ *   - 'health-checkup' : HealthCheckupData_*      (JSON + 連番画像)
+ *   - 'genetic'        : GeneticTestResultData_*   (JSON)
+ *   - 'cancer'         : CancerRiskAssessmentData_* (JSON + 画像)
+ *   - 'blood'          : BloodTestData_*           (JSON)
  *   - 'delivery'       : 納品先 (バケット直下 user/ および旧 elith-delivery/) 配下を全削除。
  * mode:
  *   - 'list'   : 削除対象の key 一覧を返す (削除しない)。
@@ -42,12 +44,21 @@ interface Body {
   sourcePrefix?: unknown;
 }
 
+// 検査種別 target → basename の format_id 接頭辞 (JSON も画像も同じ接頭辞で始まる)。
+const TARGET_PREFIX: Record<string, string> = {
+  'health-checkup': 'HealthCheckupData_',
+  'genetic': 'GeneticTestResultData_',
+  'cancer': 'CancerRiskAssessmentData_',
+  'blood': 'BloodTestData_',
+};
+
 /** target に該当する削除対象 key を集める */
 async function collectKeys(target: string, sourcePrefix: string): Promise<string[]> {
-  if (target === 'health-checkup') {
+  const fp = TARGET_PREFIX[target];
+  if (fp) {
     const objs = await listObjects(sourcePrefix);
-    // basename が HealthCheckupData_ で始まるもの (JSON も連番画像も対象)
-    return objs.filter((o) => basename(o.key).startsWith('HealthCheckupData_')).map((o) => o.key);
+    // basename が format_id 接頭辞で始まるもの (JSON も連番画像も対象)
+    return objs.filter((o) => basename(o.key).startsWith(fp)).map((o) => o.key);
   }
   if (target === 'delivery') {
     // 納品先 = バケット直下 user/ と 旧 elith-delivery/
