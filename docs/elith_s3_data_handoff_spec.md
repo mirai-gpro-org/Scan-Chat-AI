@@ -216,10 +216,11 @@ Elith 指定の `format_id` 6 種と、Wellfort 側のデータソース・既�
   "data": {
     "measurements": [
       {
+        "category": "左側検査表",  // 区分/領域 (身体計測/血液/尿 等) | null
         "name": "AST",            // 検査項目 (略称)
         "name_detail": "AST(GOT)",// 正式名称 | null
-        "value": "26",            // 読み取り値 (文字列, 原本保持)
-        "value_num": 26,          // 数値化できる場合 | null
+        "value": "26",            // 読み取り値 (数値のみ。単位/判定マーカは含めない)
+        "value_num": 26,          // 数値化できる場合 | null (範囲値 "127/82"・定性値は null)
         "unit": "U/L",            // 単位 | null
         "ref_low": "13",          // 基準下限 | null
         "ref_high": "30",         // 基準上限 | null
@@ -235,18 +236,28 @@ Elith 指定の `format_id` 6 種と、Wellfort 側のデータソース・既�
 }
 ```
 
+- **キー統一 (ファイル間で揃える)**: `BloodTestData` / `CancerRiskAssessmentData` / `HealthCheckupData` は
+  **同じ `measurements[]` キー集合** (`category`/`name`/`name_detail`/`value`/`value_num`/`unit`/`ref_low`/`ref_high`/`flag`/`note`) を使う。
+  血液CSV由来で無いフィールド (unit/ref/flag) は `null`。
+- **`value` の方針 (Elith 要望対応)**: `value` は **数値のみ** を目標とし、単位は `unit`・判定は `flag` に分離する
+  (数値までの箇所と単位混在の乱れを解消)。構造化 (項目名/単位/判定の分離) は **AIスキャンの LLM が担う**。
+  プログラムは LLM 出力が汚れている場合だけ最小限そぎ落とす保険を持つ (数値は書き換えない)。血液CSVは決定論転記で原本を保持。
+- **不要データの非同梱 (Elith 要望対応)**: 版面座標 `bbox` や `regions[]`、監査専用列 (`No`/`推論値`) は
+  **納品 JSON に含めない**。`raw_markdown` からも `<!-- bbox: … -->` コメントを除去する。
 - **`CancerRiskAssessmentData`** (尿): 同一構造。`source.lab_name: "PREVENT"`, `source.origin: "wellfort_lab"`。
   リスクスコア/判定があれば `measurements[]` に項目として格納 (例 `name: "膀胱がんリスク"`, `value: "中"`)。
 - **`HealthCheckupData`** (人間ドック/健診): 同一構造。複数枚・複数区分 (身体計測/血液/尿/画像所見 等) は
-  `measurements[]` に `category` を加えて区別してもよい (要確認)。AIスキャン由来なら
-  `source.origin: "scan-chat-ai"`。
+  `measurements[]` の `category` で区別する。AIスキャン由来なら `source.origin: "scan-chat-ai"`。
 
-> AIスキャン由来データはこの正規化形に加え、`raw_markdown` に確定 Markdown 原本を必ず同梱し、
+> AIスキャン由来データはこの正規化形に加え、`raw_markdown` に確定 Markdown 原本 (bbox コメント除去済) を同梱し、
 > Elith 側が読み取り精度を突合できるようにする (現行 `scan-export-v0` の思想を踏襲)。
 
 ### 7.2 `GeneticTestResultData` (遺伝子検査)
 
-遺伝子検査 (Genoplan) は項目構造が独自のため、汎用の `items[]` + 原本で表現する (**詳細要確認**)。
+遺伝子検査は項目構造が独自のため、汎用の `items[]` + 原本で表現する。
+**`items[]` の各要素の構造化は LLM に全面委任**し、固定キーは課さない (§7.1 のキー統一対象外)。
+理由: 遺伝子レポートはページ/項目ごとに体系が異なり、固定スキーマだと取りこぼす。CLAUDE.md の確定ルール
+「構造化の判断は全て LLM に任せる」に従う。下記はあくまで LLM が出しうる一例。
 
 ```jsonc
 {

@@ -101,19 +101,75 @@ function stripExamComment(md: string): string {
 }
 
 // ── 計測値 (表領域 → measurements[]) ────────────────────────────
+// Elith 納品用の共通スキーマ (docs/elith_s3_data_handoff_spec.md §7.1)。
+// 検査値型 (HealthCheckup / Cancer / Blood) で同じキー名を使う。
+//   - 構造化 (項目名/単位/判定の分離) は LLM が担う (スキャンは表カラムに出力済み)。
+//   - value は「数値のみ」を目標にし、単位は unit / 判定は flag に分離する。
+//   - bbox 等の版面座標や監査専用列 (No/推論値) は納品 JSON に含めない。
 export interface ElithMeasurement {
-  region: string;
-  no: string | null;
+  /** 区分 (スキャンの領域見出し / 血液の項目区分 等)。§7.1 の任意 category。 */
+  category: string | null;
   name: string | null;
   name_detail: string | null;
+  /** 読み取り値 (数値のみを目標。単位/判定マーカは含めない) */
   value: string | null;
-  inferred: string | null;
+  /** 数値化できる場合のみ (できなければ null) */
+  value_num: number | null;
   unit: string | null;
   ref_low: string | null;
   ref_high: string | null;
+  /** "H"(高) | "L"(低) | "-"(基準内) | null */
   flag: string | null;
   note: string | null;
 }
+
+/** "26" / "1,234" / "8.1" → 数値。数値化不能 (範囲値 "127/82"・定性値 "陰性" 等) は null。 */
+export function toValueNum(v: string | null): number | null {
+  if (!v) return null;
+  const t = v.replace(/,/g, '').trim();
+  if (!/^[+-]?\d+(?:\.\d+)?$/.test(t)) return null; // 純粋な単一数値のみ (スラッシュ/文字混じりは null)
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * 後段の保険 (条件付き・LLM 出力が既にクリーンなら no-op)。
+ * value に判定マーカ/強調注記/単位カラムと同一の単位が「混入」した場合だけ最小限そぎ落とす。
+ * - 数値そのものは書き換えない (誤りは決して混ぜない)。範囲値 "127/82" 等は触らない。
+ * - LLM がきれいに分離できていれば何もしない (＝走らない)。
+ */
+export function tidyMeasurement(m: ElithMeasurement): ElithMeasurement {
+  if (m.value == null) return { ...m, value_num: m.value_num ?? null };
+  let v = m.value.trim();
+  let flag = m.flag;
+  // [強調] / 【要確認】等の括弧注記を value から除く (監査情報は note / raw_markdown 側に残る)
+  const noBracket = v.replace(/[[【][^\]】]*[\]】]/g, '').trim();
+  if (noBracket !== v) v = noBracket;
+  // 末尾の判定マーカ (H/L/HH/LL) を分離。数値+空白+マーカの形のときだけ。
+  const fm = /^([+-]?[\d.,]+)\s+(HH|LL|H|L)$/.exec(v);
+  if (fm) {
+    v = fm[1];
+    if (!flag || flag === '-' || flag === '') flag = fm[2];
+  }
+  // value 末尾に unit カラムと同じ単位が付いていれば除去 (単位はあくまで unit 側)
+  if (m.unit && m.unit.length > 0) {
+    const u = m.unit.trim();
+    if (v.length > u.length && v.slice(-u.length) === u) {
+      const cut = v.slice(0, v.length - u.length).trim();
+      if (/^[+-]?[\d.,]+$/.test(cut)) v = cut;
+    }
+  }
+  return { ...m, value: v || null, value_num: toValueNum(v), flag: flag || null };
+}
+
+/** raw_markdown から版面座標コメント (<!-- bbox: ... -->) を除去する (納品には不要)。 */
+export function stripBboxComments(md: string): string {
+  return md
+    .split('\n')
+    .filter((l) => !/^\s*<!--\s*bbox:[^>]*-->\s*$/i.test(l))
+    .join('\n');
+}
+
 function pickCol(cols: string[], names: string[]): number {
   for (const n of names) {
     const i = cols.indexOf(n);
@@ -127,11 +183,9 @@ function toMeasurements(regions: ScanRegionJson[]): ElithMeasurement[] {
     if (r.type !== 'table' || !r.columns || !r.rows) continue;
     const c = r.columns;
     const idx = {
-      no: pickCol(c, ['No', 'no']),
       name: pickCol(c, ['検査項目']),
       detail: pickCol(c, ['検査項目詳細']),
       value: pickCol(c, ['読み取った値', '結果', '値']),
-      inferred: pickCol(c, ['推論値']),
       unit: pickCol(c, ['単位', '単位名称']),
       low: pickCol(c, ['下限値']),
       high: pickCol(c, ['上限値']),
@@ -142,19 +196,21 @@ function toMeasurements(regions: ScanRegionJson[]): ElithMeasurement[] {
       const g = (i: number): string => (i >= 0 && i < row.cells.length ? row.cells[i] : '') || '';
       const name = g(idx.name);
       if (!name && !g(idx.value)) continue;
-      out.push({
-        region: r.label,
-        no: g(idx.no) || null,
-        name: name || null,
-        name_detail: g(idx.detail) || null,
-        value: g(idx.value) || null,
-        inferred: g(idx.inferred) || null,
-        unit: g(idx.unit) || null,
-        ref_low: g(idx.low) || null,
-        ref_high: g(idx.high) || null,
-        flag: g(idx.flag) || null,
-        note: g(idx.note) || null,
-      });
+      // 監査専用列 (No / 推論値) は納品に含めない。bbox は regions 由来なので measurements には元々無い。
+      out.push(
+        tidyMeasurement({
+          category: r.label || null,
+          name: name || null,
+          name_detail: g(idx.detail) || null,
+          value: g(idx.value) || null,
+          value_num: null,
+          unit: g(idx.unit) || null,
+          ref_low: g(idx.low) || null,
+          ref_high: g(idx.high) || null,
+          flag: g(idx.flag) || null,
+          note: g(idx.note) || null,
+        }),
+      );
     }
   }
   return out;
@@ -228,7 +284,8 @@ export async function scanImageToParsed(input: {
 
   const regions = parseScanRegions(markdown);
   return {
-    markdown: stripExamComment(markdown),
+    // 納品用 raw_markdown は版面座標 (bbox) を含めない。regions(bbox付) は内部 (レビュー) 用に別途返す。
+    markdown: stripBboxComments(stripExamComment(markdown)),
     finishReason,
     testDate,
     dateSource,
@@ -324,12 +381,12 @@ export async function buildElithScanBundle(input: ElithScanInput): Promise<Elith
       lab_name: null,
       finish_reason: finishReason,
     },
+    // 納品 data は共通 measurements[] + notes のみ。版面座標 (regions/bbox) は含めない (§7.1)。
     data: {
       measurements: toMeasurements(regions),
       notes: collectNotes(regions),
-      regions,
     },
-    raw_markdown: stripExamComment(markdown),
+    raw_markdown: stripBboxComments(stripExamComment(markdown)),
   };
 
   const prefix = input.prefix ? input.prefix.replace(/^\/+/, '').replace(/\/*$/, '/') : '';
