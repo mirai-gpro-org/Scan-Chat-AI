@@ -11,7 +11,7 @@
  *   - Shift_JIS で受領するため TextDecoder('shift-jis') でデコード。
  */
 
-import { ELITH_HANDOFF_SCHEMA_VERSION } from './elith-export';
+import { ELITH_HANDOFF_SCHEMA_VERSION, toValueNum, type ElithMeasurement } from './elith-export';
 import type { S3PutFile } from './s3';
 
 // ── デコード ────────────────────────────────────────────────────
@@ -83,11 +83,8 @@ function normSex(v: string | undefined | null): string | null {
 }
 
 // ── 型 ──────────────────────────────────────────────────────────
-export interface BloodItem {
-  name: string;
-  category: string | null;
-  value: string | null;
-}
+// 検査値型は共通 measurements[] (ElithMeasurement) にキーを揃える (§7.1 / ファイル間キー統一)。
+// 血液CSVは決定論パース: 値は原本を忠実に転記し value を書き換えない (value_num のみ数値化)。
 export interface BloodTestDataJson {
   format_id: 'BloodTestData';
   schema_version: typeof ELITH_HANDOFF_SCHEMA_VERSION;
@@ -108,7 +105,7 @@ export interface BloodTestDataJson {
     error_code: string | null;
     error_detail: string | null;
   };
-  data: { item_count: number; items: BloodItem[] };
+  data: { measurements: ElithMeasurement[] };
 }
 
 export interface BloodCsvRowResult {
@@ -195,7 +192,7 @@ export function buildBloodCsvBundles(input: BuildBloodCsvInput): BloodCsvParseRe
     // 結果項目数が欠損/不正でも、以降を 3 列ずつ末尾まで読み切る (汎用・堅牢)。
     const declared = Number(get(idx.itemCount) ?? '');
     const startCol = idx.itemCount >= 0 ? idx.itemCount + 1 : -1;
-    const items: BloodItem[] = [];
+    const items: ElithMeasurement[] = [];
     if (startCol >= 0) {
       const maxTriples = Math.floor((row.length - startCol) / 3);
       const n = Number.isFinite(declared) && declared > 0 ? Math.min(declared, maxTriples) : maxTriples;
@@ -203,10 +200,19 @@ export function buildBloodCsvBundles(input: BuildBloodCsvInput): BloodCsvParseRe
         const base = startCol + k * 3;
         const name = row[base]?.trim() || '';
         if (!name) continue;
+        const value = row[base + 2]?.trim() || null;
+        // CSV は単位/基準値カラムを持たないため unit/ref/flag は null。value は原本のまま (value_num のみ算出)。
         items.push({
-          name,
           category: row[base + 1]?.trim() || null,
-          value: row[base + 2]?.trim() ?? null,
+          name,
+          name_detail: null,
+          value,
+          value_num: toValueNum(value),
+          unit: null,
+          ref_low: null,
+          ref_high: null,
+          flag: null,
+          note: null,
         });
       }
     }
@@ -233,7 +239,7 @@ export function buildBloodCsvBundles(input: BuildBloodCsvInput): BloodCsvParseRe
         error_code: get(idx.errCode),
         error_detail: get(idx.errDetail),
       },
-      data: { item_count: items.length, items },
+      data: { measurements: items },
     };
 
     const folder = `${prefix}user/${clientId}/date/${dateFolder}/`;

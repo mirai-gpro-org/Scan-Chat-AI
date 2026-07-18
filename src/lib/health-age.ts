@@ -180,7 +180,8 @@ export interface RawItem {
   name?: string | null;
   name_detail?: string | null;
   value?: string | number | null;
-  region?: string | null; // セクション名 (例 '血圧' '身体計測')。SBP 検出の文脈に使う
+  category?: string | null; // 区分/セクション名 (例 '血圧' '身体計測')。SBP 検出の文脈に使う (§7.1)
+  region?: string | null; // 旧フィールド名。過去 JSON 互換のため読み込みは両対応
 }
 
 /** マーカー → 名称同義語 (小文字化・記号除去して部分一致で判定)。 */
@@ -283,7 +284,7 @@ export function normalizeMarkers(items: RawItem[]): Partial<HealthAgeMarkers> {
       const v = typeof it.value === 'string' ? it.value : '';
       const m = v.match(/^\s*(\d{2,3})\s*[/／]\s*(\d{2,3})\s*$/);
       if (!m) continue;
-      const ctx = canon(it.name) + canon(it.name_detail) + canon(it.region);
+      const ctx = canon(it.name) + canon(it.name_detail) + canon(it.category) + canon(it.region);
       if (ctx.includes('血圧') || ctx.includes('来院時') || ctx.includes('診察室') || ctx.includes('脈波')) {
         const sys = parseFloat(m[1]);
         if (Number.isFinite(sys) && sys >= 60 && sys <= 260) { out.sbp = sys; break; }

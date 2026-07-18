@@ -146,12 +146,10 @@ export const POST: APIRoute = async ({ request }) => {
     if (parts.length === 0) return json({ ok: false, error: 'parts is required for finalize' }, 400);
 
     const measurements: unknown[] = [];
-    const regions: unknown[] = [];
     const notes: string[] = [];
     const markdowns: string[] = [];
     for (const p of parts) {
       if (Array.isArray(p.measurements)) measurements.push(...p.measurements);
-      if (Array.isArray(p.regions)) regions.push(...p.regions);
       if (Array.isArray(p.notes)) notes.push(...(p.notes as string[]));
       if (typeof p.raw_markdown === 'string' && p.raw_markdown.trim()) markdowns.push(p.raw_markdown);
     }
@@ -178,7 +176,8 @@ export const POST: APIRoute = async ({ request }) => {
         note: 'admin バッチ (AIスキャン・複数画像を1検査へマージ)。書式は暫定。',
         lab_name: null,
       },
-      data: { measurements, notes, regions },
+      // 納品 data は共通 measurements[] + notes のみ (版面座標 regions/bbox は含めない・§7.1)。
+      data: { measurements, notes },
       raw_markdown: markdowns.join('\n\n---\n\n'),
     };
     const jsonBody = JSON.stringify(jsonObj, null, 2);
