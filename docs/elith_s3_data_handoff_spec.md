@@ -216,8 +216,7 @@ Elith 指定の `format_id` 6 種と、Wellfort 側のデータソース・既�
   "data": {
     "measurements": [
       {
-        // category は血液CSVの項目区分(生化学/血液学 等)にのみ付与。スキャン由来(検診/がん)は付けない
-        // (スキャンの region 見出しは版面レイアウトで医学的分類でないため。キー自体を出さない)。
+        // category(区分)は検査値型では出さない(Elith 要望)。スキャンの region 見出しも血液CSVの項目区分も非搭載。
         "name": "AST",            // 検査項目 (略称)
         "name_detail": "AST(GOT)",// 正式名称 | null
         "value": "26",            // 読み取り値 (数値のみ。単位/判定マーカは含めない)
@@ -238,18 +237,20 @@ Elith 指定の `format_id` 6 種と、Wellfort 側のデータソース・既�
 ```
 
 - **キー統一 (ファイル間で揃える)**: `BloodTestData` / `CancerRiskAssessmentData` / `HealthCheckupData` は
-  **同じ `measurements[]` キー集合** (`category`/`name`/`name_detail`/`value`/`value_num`/`unit`/`ref_low`/`ref_high`/`flag`/`note`) を使う。
-  血液CSV由来で無いフィールド (unit/ref/flag) は `null`。
+  **同じ `measurements[]` キー集合** (`name`/`name_detail`/`value`/`value_num`/`unit`/`ref_low`/`ref_high`/`flag`/`note`) を使う。
+  血液CSV由来で無いフィールド (unit/ref/flag) は `null`。**`category`(区分) は検査値型では出さない**(Elith 要望)。
 - **`value` の方針 (Elith 要望対応)**: `value` は **数値のみ** を目標とし、単位は `unit`・判定は `flag` に分離する
   (数値までの箇所と単位混在の乱れを解消)。構造化 (項目名/単位/判定の分離) は **AIスキャンの LLM が担う**。
   プログラムは LLM 出力が汚れている場合だけ最小限そぎ落とす保険を持つ (数値は書き換えない)。血液CSVは決定論転記で原本を保持。
 - **不要データの非同梱 (Elith 要望対応)**: 版面座標 `bbox` や `regions[]`、監査専用列 (`No`/`推論値`)、
-  および**スキャンの region 見出し (旧 `region` / 現 `category`)** は **納品 JSON に含めない** (キー自体を出さない)。
-  `raw_markdown` からも `<!-- bbox: … -->` コメントを除去する。`category` は血液CSVの項目区分のみ付与。
+  および**区分/見出し (`region` / `category`)** は **納品 JSON に含めない** (キー自体を出さない。スキャンの版面見出しも血液の項目区分も対象)。
+  `raw_markdown` からも `<!-- bbox: … -->` コメントを除去する。
 - **`CancerRiskAssessmentData`** (尿): 同一構造。`source.lab_name: "PREVENT"`, `source.origin: "wellfort_lab"`。
   リスクスコア/判定があれば `measurements[]` に項目として格納 (例 `name: "膀胱がんリスク"`, `value: "中"`)。
-- **`HealthCheckupData`** (人間ドック/健診): 同一構造。複数枚・複数区分 (身体計測/血液/尿/画像所見 等) は
-  `measurements[]` の `category` で区別する。AIスキャン由来なら `source.origin: "scan-chat-ai"`。
+- **`HealthCheckupData`** (人間ドック/健診): 同一構造。AIスキャン由来なら `source.origin: "scan-chat-ai"`。
+- **`BloodTestData`** (デメカル新様式 2026-07〜): 決定論パース。`項目名N` ヘッダの標準名を `name`・データ行の略号を `name_detail`。
+  `項目区分` の値がブロック番号 (1=検査値/2=問診/3=判定コード)。**区分3 は納品しない**。区分2 は `検査値N` ヘッダの
+  凡例 (`1：ハイ`/`2：イイエ` 等) でコード値をラベルへ解決。`項目区分`(category) は JSON に出さない。PII 列は元CSVから削除済 → `subject` は原則 null。
 
 > AIスキャン由来データはこの正規化形に加え、`raw_markdown` に確定 Markdown 原本 (bbox コメント除去済) を同梱し、
 > Elith 側が読み取り精度を突合できるようにする (現行 `scan-export-v0` の思想を踏襲)。
