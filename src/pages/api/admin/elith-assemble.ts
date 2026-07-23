@@ -89,6 +89,13 @@ export const POST: APIRoute = async ({ request }) => {
       const sourceKeys = new Set<string>();
       for (const f of DELIVERY_FORMAT_IDS) for (const c of inv.byFormat[f]) sourceKeys.add(c.key);
       const haMatchedRefs = Object.keys(haByRef).filter((ref) => sourceKeys.has(ref));
+      // 血液の時系列: client_id 単位で日付数を数え、複数日付(≥2)=時系列を持つ client を集計。
+      const bloodDatesByClient = new Map<string, number>();
+      for (const c of inv.byFormat.BloodTestData) {
+        const cid = c.clientId ?? '';
+        bloodDatesByClient.set(cid, (bloodDatesByClient.get(cid) ?? 0) + 1);
+      }
+      const bloodTimeseriesClients = [...bloodDatesByClient.values()].filter((n) => n >= 2).length;
       return json({
         ok: true,
         mode,
@@ -98,6 +105,7 @@ export const POST: APIRoute = async ({ request }) => {
         missing: inv.missing,
         max_complete_users: inv.maxCompleteUsers,
         health_age: { scores_total: Object.keys(haByRef).length, matched_sources: haMatchedRefs.length },
+        blood_timeseries: { clients: bloodTimeseriesClients, total_clients: bloodDatesByClient.size },
         samples: {
           ...Object.fromEntries(
             DELIVERY_FORMAT_IDS.map((f) => [

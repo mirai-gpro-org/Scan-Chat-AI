@@ -190,6 +190,21 @@ function randomUuid(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
 }
 
+/** 血液を client_id 単位にグループ化 (各リストは採血日 desc)。複数日付 = 時系列。 */
+function groupBloodByClient(items: CatalogItem[]): Map<string, CatalogItem[]> {
+  const m = new Map<string, CatalogItem[]>();
+  for (const it of items) {
+    const cid = it.clientId ?? '(unknown)';
+    const arr = m.get(cid);
+    if (arr) arr.push(it);
+    else m.set(cid, [it]);
+  }
+  for (const arr of m.values()) {
+    arr.sort((a, b) => (a.date === b.date ? b.key.localeCompare(a.key) : b.date.localeCompare(a.date)));
+  }
+  return m;
+}
+
 /** 健康年齢の納品ファイル (エンベロープは他の検査ファイルに準拠)。 */
 function buildHealthAgeJson(userId: string, bundleDate: string, rec: HealthAgeRecord, sourceRef: string): string {
   const testDate = rec.test_date && /^\d{4}-\d{2}-\d{2}$/.test(rec.test_date) ? rec.test_date : bundleDate.replace(/_/g, '-');
@@ -297,8 +312,11 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
     return t;
   };
 
-  // userId → (formatId → source CatalogItem) の割当を決める
-  const plan: { userId: string; picks: Partial<Record<ElithFormatId, CatalogItem>> }[] = [];
+  // 血液を client_id 単位にグループ化 (複数日付 = 時系列)。時系列は丸ごと納品する。
+  const bloodByClient = groupBloodByClient(inv.byFormat.BloodTestData);
+
+  // userId → (formatId → source CatalogItem) と 血液時系列(bloodSeries) の割当を決める
+  const plan: { userId: string; picks: Partial<Record<ElithFormatId, CatalogItem>>; bloodSeries: CatalogItem[] }[] = [];
 
   if (opts.manualMapping && Object.keys(opts.manualMapping).length > 0) {
     for (const [userId, m] of Object.entries(opts.manualMapping)) {
@@ -309,7 +327,11 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
         const item = inv.byFormat[f].find((c) => c.key === key) ?? parseElithKey(key);
         if (item) picks[f] = item; // 手動指定は明示尊重 (空でもそのまま)
       }
-      plan.push({ userId, picks });
+      // 血液は指定キーの client の時系列を丸ごと納品する。
+      const bi = picks.BloodTestData;
+      const bloodSeries = bi ? (bi.clientId ? bloodByClient.get(bi.clientId) ?? [bi] : [bi]) : [];
+      if (bloodSeries.length) picks.BloodTestData = bloodSeries[0];
+      plan.push({ userId, picks, bloodSeries });
     }
   } else {
     // 自動: 種別ごとに新しい日付順で「実データが入っている」ものを優先して選ぶ。
@@ -318,14 +340,29 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
     const cursor: Record<string, number> = {};
     const orderedDesc: Record<string, CatalogItem[]> = {};
     for (const f of DELIVERY_FORMAT_IDS) {
+      if (f === 'BloodTestData') continue; // 血液は client 単位で別途割当
       cursor[f] = 0;
       orderedDesc[f] = [...inv.byFormat[f]].sort((a, b) =>
         a.date === b.date ? b.key.localeCompare(a.key) : b.date.localeCompare(a.date),
       );
     }
+    // 血液クライアントを「時系列(≥2日付)優先 → 代表(最新)が非空 → 最新日付 desc」で並べる。
+    const bloodGroups: { clientId: string; list: CatalogItem[]; nonEmpty: boolean }[] = [];
+    for (const [clientId, list] of bloodByClient.entries()) {
+      const nonEmpty = countDataItems(await fetchText(list[0].key)) > 0;
+      bloodGroups.push({ clientId, list, nonEmpty });
+    }
+    bloodGroups.sort((a, b) => {
+      const ats = a.list.length >= 2 ? 1 : 0, bts = b.list.length >= 2 ? 1 : 0;
+      if (ats !== bts) return bts - ats;
+      if (a.nonEmpty !== b.nonEmpty) return (b.nonEmpty ? 1 : 0) - (a.nonEmpty ? 1 : 0);
+      return (b.list[0]?.date ?? '').localeCompare(a.list[0]?.date ?? '');
+    });
+
     for (let i = 0; i < want; i++) {
       const picks: Partial<Record<ElithFormatId, CatalogItem>> = {};
       for (const f of DELIVERY_FORMAT_IDS) {
+        if (f === 'BloodTestData') continue;
         const list = orderedDesc[f];
         let chosen: CatalogItem | undefined;
         // カーソル位置から、実データ件数>0 の最初の候補を採用 (空はスキップ)
@@ -336,7 +373,11 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
         // 全て空 (または尽きた) なら、この人には先頭候補を割当 (空でも可視化のため出す)
         picks[f] = chosen ?? list[i] ?? list[0];
       }
-      plan.push({ userId: `${idPrefix}-${String(i + 1).padStart(3, '0')}`, picks });
+      // 血液: 時系列優先で client を割当 (人数分に足りなければ巡回)。時系列を丸ごと納品。
+      const bg = bloodGroups.length ? bloodGroups[i % bloodGroups.length] : undefined;
+      const bloodSeries = bg ? bg.list : [];
+      if (bg) picks.BloodTestData = bg.list[0];
+      plan.push({ userId: `${idPrefix}-${String(i + 1).padStart(3, '0')}`, picks, bloodSeries });
     }
   }
 
@@ -345,6 +386,7 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
     const sources: AssembledUserSource[] = [];
     const files: S3PutFile[] = [];
     for (const f of DELIVERY_FORMAT_IDS) {
+      if (f === 'BloodTestData') continue; // 血液は時系列を別途 (各採血日フォルダ) で出す
       const item = p.picks[f];
       if (!item) continue;
       const text = await fetchText(item.key);
@@ -354,6 +396,17 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
       const newKey = `${deliveryPrefix}user/${p.userId}/date/${bundleDate}/${f}_date_${bundleDate}_user_${p.userId}.json`;
       files.push({ key: newKey, contentType: 'application/json; charset=utf-8', body: rewritten, bytes: utf8Bytes(rewritten) });
       sources.push({ formatId: f, sourceKey: item.key, sourceDate: item.date, deliveredDate: bundleDate, newKey, dataItems });
+    }
+
+    // 血液: 時系列を丸ごと。各ファイルは元の採血日(date)フォルダに置く (ファイル名衝突回避・時系列保持)。
+    for (const item of p.bloodSeries) {
+      const text = await fetchText(item.key);
+      const dataItems = countDataItems(text);
+      const rewritten = rewriteClientId(text, p.userId, item.key);
+      const bd = /^\d{4}_\d{2}_\d{2}$/.test(item.date) ? item.date : bundleDate;
+      const newKey = `${deliveryPrefix}user/${p.userId}/date/${bd}/BloodTestData_date_${bd}_user_${p.userId}.json`;
+      files.push({ key: newKey, contentType: 'application/json; charset=utf-8', body: rewritten, bytes: utf8Bytes(rewritten) });
+      sources.push({ formatId: 'BloodTestData', sourceKey: item.key, sourceDate: item.date, deliveredDate: bd, newKey, dataItems });
     }
 
     // 健康年齢: 採用元(人間ドック優先→血液)の source_ref に対応する算出済みスコアがあれば納品に追加。
