@@ -27,7 +27,9 @@ import {
   inventoryElithSource,
   assembleElithDeliverySet,
   DELIVERY_FORMAT_IDS,
+  type HealthAgeRecord,
 } from '../../../lib/elith-assemble';
+import { getServerSupabase } from '../../../lib/supabase';
 
 export const prerender = false;
 
@@ -111,12 +113,17 @@ export const POST: APIRoute = async ({ request }) => {
       return s && /^\d{4}_\d{2}_\d{2}$/.test(s) ? s : undefined;
     })();
 
+    // 健康年齢: 算出済みスコア (health_age_scores) を source_ref(元S3キー)で引けるよう Map 化。
+    // 採用元に対応するスコアがあれば assemble が HealthAgeData を納品に追加する。
+    const healthAgeByRef = await fetchHealthAgeByRef();
+
     const result = await assembleElithDeliverySet({
       sourcePrefix,
       deliveryPrefix,
       count,
       idPrefix: str(body.idPrefix) ?? 'elith-test',
       bundleDate,
+      healthAgeByRef,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       manualMapping: manualMapping as any,
     });
@@ -156,6 +163,39 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ ok: false, error: 'assemble failed', detail: String(err instanceof Error ? err.message : err) }, 502);
   }
 };
+
+/** health_age_scores を source_ref → 最新スコア の Map にする (assemble の突合用)。 */
+async function fetchHealthAgeByRef(): Promise<Record<string, HealthAgeRecord>> {
+  const out: Record<string, HealthAgeRecord> = {};
+  const sb = getServerSupabase();
+  if (!sb) return out;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tbl = (sb.schema('diagnosis') as any).from('health_age_scores');
+    const { data, error } = await tbl
+      .select('source_ref, biological_age, chronological_age, test_date, computed_at, delta, model_version')
+      .not('source_ref', 'is', null)
+      .order('computed_at', { ascending: false });
+    if (error || !Array.isArray(data)) return out;
+    // computed_at 降順なので、source_ref 毎に最初(最新)だけ採用
+    for (const r of data as Array<Record<string, unknown>>) {
+      const ref = typeof r.source_ref === 'string' ? r.source_ref : null;
+      if (!ref || out[ref]) continue;
+      const numOrNull = (v: unknown): number | null => (typeof v === 'number' ? v : v == null ? null : Number(v));
+      out[ref] = {
+        biological_age: numOrNull(r.biological_age),
+        chronological_age: numOrNull(r.chronological_age),
+        test_date: typeof r.test_date === 'string' ? r.test_date : null,
+        computed_at: typeof r.computed_at === 'string' ? r.computed_at : null,
+        delta: numOrNull(r.delta),
+        model_version: typeof r.model_version === 'string' ? r.model_version : null,
+      };
+    }
+  } catch {
+    /* テーブル未生成/未設定時は健康年齢を載せないだけ (assemble は継続) */
+  }
+  return out;
+}
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {

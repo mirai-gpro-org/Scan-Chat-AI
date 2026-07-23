@@ -332,6 +332,37 @@ Elith 指定の `format_id` 6 種と、Wellfort 側のデータソース・既�
 }
 ```
 
+### 7.3.1 `HealthAgeData` (健康年齢・CABA) — 納品時に生成
+
+健康年齢は元データ(人間ドック/血液)から算出済みのスコア(`diagnosis.health_age_scores`)を持つ。
+PII 除去済みの納品データからは age を再計算できないため、**納品セット アセンブリ時に**算出済みスコアを
+`source_ref`(元S3キー)で突合し、`HealthAgeData_date_{YYYY_MM_DD}_user_{client_id}.json` として生成する。
+命名・エンベロープは他の検査ファイルに準拠。
+
+```jsonc
+{
+  "format_id": "HealthAgeData",
+  "schema_version": "elith-handoff-v0.1",
+  "kind": "health_age",
+  "client_id": "elith-test-003",
+  "diagnostic_id": "…",
+  "test_date": "2026-03-10",          // 元データ取得日
+  "exported_at": "…",
+  "subject": { "sex": null, "age": 52 },  // age=実年齢 (他ファイル準拠)
+  "source": { "origin": "scan-chat-ai", "app": "scan-chat-ai", "model": "CABA-v4d", "note": "健康年齢(CABA)", "lab_name": null },
+  "data": {
+    "health_age": 48.3,    // 健康年齢 (生物学的年齢)
+    "actual_age": 52,      // 実年齢
+    "computed_date": "2026-03-15", // 算出計算日付
+    "delta": -3.7,         // health_age - actual_age
+    "model_version": "CABA-v4d"
+  },
+  "assembled_from": "…HealthCheckupData_…json"
+}
+```
+
+> 算出済みスコアが無いユーザー(未計算)は HealthAgeData を出さない。先に admin の健康年齢算出を実行しておく。
+
 ### 7.4 `Other` (その他)
 
 専用 format が無いデータ (AI疾病予測・Elith 以外の結果 等)。`data` は自由構造 + 原本同梱。
