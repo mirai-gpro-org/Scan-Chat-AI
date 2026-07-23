@@ -126,6 +126,11 @@ export interface ElithMeasurement {
   /** "H"(高) | "L"(低) | "-"(基準内) | null */
   flag: string | null;
   note: string | null;
+  /**
+   * 値の判定/説明 (任意)。血液CSVの「判)」判定コード (F2/A3 等) を対応する検査値へ付与する。
+   * 検査機関由来の生コード (デコードしない)。該当が無ければ付与しない (キーを出さない)。
+   */
+  assessment?: string | null;
 }
 
 /** "26" / "1,234" / "8.1" → 数値。数値化不能 (範囲値 "127/82"・定性値 "陰性" 等) は null。 */
