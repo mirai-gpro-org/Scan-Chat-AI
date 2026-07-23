@@ -216,7 +216,8 @@ Elith 指定の `format_id` 6 種と、Wellfort 側のデータソース・既�
   "data": {
     "measurements": [
       {
-        "category": "左側検査表",  // 区分/領域 (身体計測/血液/尿 等) | null
+        // category は血液CSVの項目区分(生化学/血液学 等)にのみ付与。スキャン由来(検診/がん)は付けない
+        // (スキャンの region 見出しは版面レイアウトで医学的分類でないため。キー自体を出さない)。
         "name": "AST",            // 検査項目 (略称)
         "name_detail": "AST(GOT)",// 正式名称 | null
         "value": "26",            // 読み取り値 (数値のみ。単位/判定マーカは含めない)
@@ -242,8 +243,9 @@ Elith 指定の `format_id` 6 種と、Wellfort 側のデータソース・既�
 - **`value` の方針 (Elith 要望対応)**: `value` は **数値のみ** を目標とし、単位は `unit`・判定は `flag` に分離する
   (数値までの箇所と単位混在の乱れを解消)。構造化 (項目名/単位/判定の分離) は **AIスキャンの LLM が担う**。
   プログラムは LLM 出力が汚れている場合だけ最小限そぎ落とす保険を持つ (数値は書き換えない)。血液CSVは決定論転記で原本を保持。
-- **不要データの非同梱 (Elith 要望対応)**: 版面座標 `bbox` や `regions[]`、監査専用列 (`No`/`推論値`) は
-  **納品 JSON に含めない**。`raw_markdown` からも `<!-- bbox: … -->` コメントを除去する。
+- **不要データの非同梱 (Elith 要望対応)**: 版面座標 `bbox` や `regions[]`、監査専用列 (`No`/`推論値`)、
+  および**スキャンの region 見出し (旧 `region` / 現 `category`)** は **納品 JSON に含めない** (キー自体を出さない)。
+  `raw_markdown` からも `<!-- bbox: … -->` コメントを除去する。`category` は血液CSVの項目区分のみ付与。
 - **`CancerRiskAssessmentData`** (尿): 同一構造。`source.lab_name: "PREVENT"`, `source.origin: "wellfort_lab"`。
   リスクスコア/判定があれば `measurements[]` に項目として格納 (例 `name: "膀胱がんリスク"`, `value: "中"`)。
 - **`HealthCheckupData`** (人間ドック/健診): 同一構造。複数枚・複数区分 (身体計測/血液/尿/画像所見 等) は

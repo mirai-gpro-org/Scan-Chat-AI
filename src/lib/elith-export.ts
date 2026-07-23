@@ -107,8 +107,13 @@ function stripExamComment(md: string): string {
 //   - value は「数値のみ」を目標にし、単位は unit / 判定は flag に分離する。
 //   - bbox 等の版面座標や監査専用列 (No/推論値) は納品 JSON に含めない。
 export interface ElithMeasurement {
-  /** 区分 (スキャンの領域見出し / 血液の項目区分 等)。§7.1 の任意 category。 */
-  category: string | null;
+  /**
+   * 区分 (任意)。血液CSVの「項目区分」(生化学/血液学 等の医学的分類) にのみ付与する。
+   * スキャン由来 (検診/がん) は付与しない: スキャンの category は版面レイアウトの見出し
+   * ("左側検査表"/"今回の検査の判定結果" 等) で医学的分類ではなく、Elith 側で region 相当の
+   * 不要データになるため納品しない (キー自体を出さない)。
+   */
+  category?: string | null;
   name: string | null;
   name_detail: string | null;
   /** 読み取り値 (数値のみを目標。単位/判定マーカは含めない) */
@@ -196,10 +201,10 @@ function toMeasurements(regions: ScanRegionJson[]): ElithMeasurement[] {
       const g = (i: number): string => (i >= 0 && i < row.cells.length ? row.cells[i] : '') || '';
       const name = g(idx.name);
       if (!name && !g(idx.value)) continue;
-      // 監査専用列 (No / 推論値) は納品に含めない。bbox は regions 由来なので measurements には元々無い。
+      // 監査専用列 (No / 推論値) と category (版面レイアウト見出し=region 相当) は納品に含めない。
+      // bbox は regions 由来なので measurements には元々無い。
       out.push(
         tidyMeasurement({
-          category: r.label || null,
           name: name || null,
           name_detail: g(idx.detail) || null,
           value: g(idx.value) || null,
