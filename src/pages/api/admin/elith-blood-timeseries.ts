@@ -89,6 +89,7 @@ function jitter(valueStr: string, valueNum: number, seedStr: string, amplitude: 
 }
 
 interface Body {
+  mode?: unknown;
   sourceKey?: unknown;
   clientId?: unknown;
   intervalMonths?: unknown;
@@ -96,6 +97,27 @@ interface Body {
   amplitude?: unknown;
   dryRun?: unknown;
   sourcePrefix?: unknown;
+}
+
+/** BloodTestData_* から client_id 候補を集める (最新採血日・件数付き)。UI のプルダウン用。 */
+async function listBloodClients(sourcePrefix: string): Promise<Array<{ client_id: string; latest_date: string | null; count: number }>> {
+  const objs = await listObjects(sourcePrefix);
+  const map = new Map<string, { latest_date: string | null; count: number }>();
+  for (const o of objs) {
+    if (!o.key.endsWith('.json')) continue;
+    const bn = basename(o.key);
+    const m = /^BloodTestData_date_(\d{4}_\d{2}_\d{2})_user_(.+)\.json$/.exec(bn);
+    if (!m) continue;
+    const date = m[1].replace(/_/g, '-');
+    const cid = m[2];
+    const cur = map.get(cid) ?? { latest_date: null, count: 0 };
+    cur.count += 1;
+    if (!cur.latest_date || date > cur.latest_date) cur.latest_date = date;
+    map.set(cid, cur);
+  }
+  return [...map.entries()]
+    .map(([client_id, v]) => ({ client_id, latest_date: v.latest_date, count: v.count }))
+    .sort((a, b) => (b.latest_date ?? '').localeCompare(a.latest_date ?? '') || a.client_id.localeCompare(b.client_id));
 }
 
 /** 種となる BloodTestData JSON の key を決める (sourceKey 優先 / clientId で最新)。 */
@@ -119,6 +141,7 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ ok: false, error: 'Invalid JSON body' }, 400);
   }
 
+  const mode = str(body.mode) ?? 'generate';
   const intervalMonths = Math.max(1, Math.round(num(body.intervalMonths, 4)));
   const count = Math.max(1, Math.min(12, Math.round(num(body.count, 3))));
   const amplitude = Math.min(0.5, Math.max(0, num(body.amplitude, 0.05)));
@@ -129,6 +152,16 @@ export const POST: APIRoute = async ({ request }) => {
 
   if (!isS3Configured() || !cfg) {
     return json({ ok: false, error: 's3_not_configured', detail: 'AWS_REGION 未設定' }, 400);
+  }
+
+  // ── mode=list: client_id 候補を返す (UI プルダウン用) ──
+  if (mode === 'list') {
+    try {
+      const clients = await listBloodClients(sourcePrefix);
+      return json({ ok: true, mode: 'list', source_prefix: sourcePrefix, count: clients.length, clients });
+    } catch (err) {
+      return json({ ok: false, error: 'list failed', detail: String(err instanceof Error ? err.message : err) }, 502);
+    }
   }
 
   let srcKey: string | null;
