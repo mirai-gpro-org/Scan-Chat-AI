@@ -11,7 +11,7 @@
  * キー(AWS_*)は Vercel 環境変数のみ (CLAUDE.md) → 必ずサーバ側で実行。
  */
 
-import { isElithFormatId, type ElithFormatId } from './elith-export';
+import { isElithFormatId, ELITH_HANDOFF_SCHEMA_VERSION, type ElithFormatId } from './elith-export';
 import { listObjects, getObjectText, type S3PutFile } from './s3';
 
 /** 納品対象の 5 種別 (順序は納品時の見せ方に使用) */
@@ -127,8 +127,18 @@ export async function inventoryElithSource(sourcePrefix: string): Promise<Invent
 }
 
 // ── アセンブリ ──────────────────────────────────────────────────
+/** 健康年齢 (CABA) の算出済みスコア。health_age_scores を source_ref で突合して納品に載せる。 */
+export interface HealthAgeRecord {
+  biological_age: number | null;   // 健康年齢
+  chronological_age: number | null; // 実年齢
+  test_date: string | null;        // 元データ取得日
+  computed_at: string | null;      // 算出日時
+  delta: number | null;            // biological - chronological
+  model_version: string | null;
+}
+
 export interface AssembledUserSource {
-  formatId: ElithFormatId;
+  formatId: string; // ElithFormatId または 'HealthAgeData' (生成)
   sourceKey: string;
   /** コピー元の取得日 (YYYY_MM_DD) */
   sourceDate: string;
@@ -164,11 +174,52 @@ export interface AssembleOptions {
    * 1 人分の 5 種を単一の date/ にまとめる。未指定なら組み立て日 (本日)。
    */
   bundleDate?: string;
+  /**
+   * 健康年齢スコア: source_ref(元S3キー) → 算出済みスコア。
+   * 採用元(人間ドック優先→血液)に対応するスコアがあれば HealthAgeData を納品に追加する。
+   * age は PII 除去済み元データから再計算できないため、算出済み(health_age_scores)を突合して載せる。
+   */
+  healthAgeByRef?: Record<string, HealthAgeRecord>;
 }
 
 /** 本日 (UTC) を YYYY_MM_DD で返す。 */
 function todayYmd(): string {
   return new Date().toISOString().slice(0, 10).replace(/-/g, '_');
+}
+function randomUuid(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+}
+
+/** 健康年齢の納品ファイル (エンベロープは他の検査ファイルに準拠)。 */
+function buildHealthAgeJson(userId: string, bundleDate: string, rec: HealthAgeRecord, sourceRef: string): string {
+  const testDate = rec.test_date && /^\d{4}-\d{2}-\d{2}$/.test(rec.test_date) ? rec.test_date : bundleDate.replace(/_/g, '-');
+  const computedDate = rec.computed_at ? rec.computed_at.slice(0, 10) : null;
+  const obj = {
+    format_id: 'HealthAgeData',
+    schema_version: ELITH_HANDOFF_SCHEMA_VERSION,
+    kind: 'health_age',
+    client_id: userId,
+    diagnostic_id: randomUuid(),
+    test_date: testDate,
+    exported_at: new Date().toISOString(),
+    subject: { sex: null, age: rec.chronological_age }, // 実年齢は subject.age にも保持 (他ファイル準拠)
+    source: {
+      origin: 'scan-chat-ai',
+      app: 'scan-chat-ai',
+      model: rec.model_version ?? 'CABA-v4d',
+      note: '健康年齢 (CABA)。実年齢との差 delta を含む。',
+      lab_name: null,
+    },
+    data: {
+      health_age: rec.biological_age, // 健康年齢
+      actual_age: rec.chronological_age, // 実年齢
+      computed_date: computedDate, // 算出計算日付
+      delta: rec.delta,
+      model_version: rec.model_version ?? 'CABA-v4d',
+    },
+    assembled_from: sourceRef,
+  };
+  return JSON.stringify(obj, null, 2);
 }
 
 // category(区分/region見出し) を納品しない format。検診/がん(版面見出し)・血液(項目区分)とも Elith 要望で除去。
@@ -303,6 +354,26 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
       const newKey = `${deliveryPrefix}user/${p.userId}/date/${bundleDate}/${f}_date_${bundleDate}_user_${p.userId}.json`;
       files.push({ key: newKey, contentType: 'application/json; charset=utf-8', body: rewritten, bytes: utf8Bytes(rewritten) });
       sources.push({ formatId: f, sourceKey: item.key, sourceDate: item.date, deliveredDate: bundleDate, newKey, dataItems });
+    }
+
+    // 健康年齢: 採用元(人間ドック優先→血液)の source_ref に対応する算出済みスコアがあれば納品に追加。
+    if (opts.healthAgeByRef) {
+      const refCandidates = [p.picks.HealthCheckupData?.key, p.picks.BloodTestData?.key].filter((k): k is string => !!k);
+      let rec: HealthAgeRecord | undefined;
+      let matchedRef: string | undefined;
+      for (const k of refCandidates) {
+        if (opts.healthAgeByRef[k]) { rec = opts.healthAgeByRef[k]; matchedRef = k; break; }
+      }
+      if (rec && matchedRef) {
+        const stem = `HealthAgeData_date_${bundleDate}_user_${p.userId}`;
+        const key = `${deliveryPrefix}user/${p.userId}/date/${bundleDate}/${stem}.json`;
+        const bodyStr = buildHealthAgeJson(p.userId, bundleDate, rec, matchedRef);
+        files.push({ key, contentType: 'application/json; charset=utf-8', body: bodyStr, bytes: utf8Bytes(bodyStr) });
+        sources.push({
+          formatId: 'HealthAgeData', sourceKey: matchedRef, sourceDate: rec.test_date ?? bundleDate,
+          deliveredDate: bundleDate, newKey: key, dataItems: rec.biological_age != null ? 1 : 0,
+        });
+      }
     }
     // 納品フォルダには Elith 規約のファイル ({format_id}_..._user_....json) のみを置く。
     // 出典元トレーサビリティ (source_key) は API 応答の users[].sources で返すため、
