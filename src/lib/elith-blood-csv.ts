@@ -85,6 +85,27 @@ function headerLegend(cell: string | undefined): Record<string, string> {
   return map;
 }
 
+/** 照合用の正規化 (半角化・小文字・空白/記号除去)。 */
+function norm(s: string): string {
+  return toHalfWidth(s).toLowerCase().replace(/[\s　・（）()]/g, '');
+}
+/** 区分3「判)…」の名称から、対応する区分1値へ紐づける照合キー候補を作る。 */
+function assessmentKeys(judgeName: string): string[] {
+  // "判)" / "総)" 接頭辞を除去 (半角/全角の閉じ括弧に対応)
+  let s = judgeName.replace(/^\s*[判総][)）]\s*/, '').trim();
+  const keys: string[] = [];
+  const full = s.replace(/^\d+/, '').trim(); // 数字コード(017等)を除いた全体 (例 "HbA1c(NGSP)")
+  if (full) keys.push(norm(full));
+  const paren = /[（(]([^）)]+)[）)]\s*$/.exec(s); // 末尾の略号 (TP)/(HDL-C) 等
+  if (paren) {
+    keys.push(norm(paren[1]));
+    s = s.slice(0, paren.index).trim();
+  }
+  s = s.replace(/^\d+/, '').trim(); // 先頭のコード数字 (017 等) を除去
+  if (s) keys.push(norm(s));
+  return [...new Set(keys.filter(Boolean))];
+}
+
 // ── 日付/年齢 ───────────────────────────────────────────────────
 /** YYYYMMDD (または YYYY-MM-DD 等) → YYYY-MM-DD。不正なら null。 */
 function normDate(v: string | undefined | null): string | null {
@@ -228,10 +249,33 @@ export function buildBloodCsvBundles(input: BuildBloodCsvInput): BloodCsvParseRe
     if (startCol >= 0) {
       const maxTriples = Math.floor((row.length - startCol) / 3);
       const n = Number.isFinite(declared) && declared > 0 ? Math.min(declared, maxTriples) : maxTriples;
+
+      // pass 1: 区分3 の「判)」判定コードを {照合キー → コード} に集める (説明情報の付与用)。
+      // 「総)」(メタボ等の全体判定) は対象外 (別途)。
+      const assessMap: Record<string, string> = {};
+      for (let k = 0; k < n; k++) {
+        const base = startCol + k * 3;
+        if ((row[base + 1] ?? '').trim() !== '3') continue;
+        const nm = (row[base] ?? '').trim();
+        const code = (row[base + 2] ?? '').trim();
+        if (!code || !/^\s*判[)）]/.test(nm)) continue;
+        for (const key of assessmentKeys(nm)) if (!(key in assessMap)) assessMap[key] = code;
+      }
+      const lookupAssessment = (name: string | null, detail: string | null): string | null => {
+        for (const cand of [detail, name]) {
+          if (cand) {
+            const hit = assessMap[norm(cand)];
+            if (hit) return hit;
+          }
+        }
+        return null;
+      };
+
+      // pass 2: measurements 構築。区分3 は出さない。区分1 には対応する判定コードを assessment として付与。
       for (let k = 0; k < n; k++) {
         const base = startCol + k * 3;
         const block = (row[base + 1] ?? '').trim(); // 項目区分の値 = ブロック番号 (1/2/3)
-        if (block === '3') continue; // 区分3 (判定・総合コード) は納品しない
+        if (block === '3') continue; // 区分3 (判定・総合コード) は単独項目としては納品しない
         const rowName = (row[base] ?? '').trim();
         const rawVal = (row[base + 2] ?? '').trim();
         if (!rowName && !rawVal) continue;
@@ -243,8 +287,10 @@ export function buildBloodCsvBundles(input: BuildBloodCsvInput): BloodCsvParseRe
         const std = headerStdName(header[base]);
         const name = std || rowName || null;
         const name_detail = std && rowName && rowName !== std ? rowName : null;
+        // 区分1 (検査値) には判定コード (F2/A3 等) を assessment として紐づける (該当あれば)。
+        const assessment = block === '1' ? lookupAssessment(name, name_detail) : null;
         // 項目区分(category)は JSON に出さない (要件4)。CSV は単位/基準値カラムを持たないため unit/ref/flag は null。
-        items.push({
+        const meas: ElithMeasurement = {
           name,
           name_detail,
           value,
@@ -254,7 +300,9 @@ export function buildBloodCsvBundles(input: BuildBloodCsvInput): BloodCsvParseRe
           ref_high: null,
           flag: null,
           note: null,
-        });
+        };
+        if (assessment) meas.assessment = assessment;
+        items.push(meas);
       }
     }
 
