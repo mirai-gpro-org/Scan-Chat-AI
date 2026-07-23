@@ -84,19 +84,29 @@ export const POST: APIRoute = async ({ request }) => {
   try {
     if (mode === 'inventory') {
       const inv = await inventoryElithSource(sourcePrefix);
+      // 健康年齢: 算出済みスコア(source_ref)が既存の元ファイルに一致する数 = 納品で HealthAgeData が付く見込み数。
+      const haByRef = await fetchHealthAgeByRef();
+      const sourceKeys = new Set<string>();
+      for (const f of DELIVERY_FORMAT_IDS) for (const c of inv.byFormat[f]) sourceKeys.add(c.key);
+      const haMatchedRefs = Object.keys(haByRef).filter((ref) => sourceKeys.has(ref));
       return json({
         ok: true,
         mode,
         source_prefix: inv.sourcePrefix,
-        counts: inv.counts,
+        // HealthAgeData はアセンブリ時に生成 (元ファイルは無い)。在庫にも見込み数を出す。
+        counts: { ...inv.counts, HealthAgeData: haMatchedRefs.length },
         missing: inv.missing,
         max_complete_users: inv.maxCompleteUsers,
-        samples: Object.fromEntries(
-          DELIVERY_FORMAT_IDS.map((f) => [
-            f,
-            inv.byFormat[f].slice(0, 5).map((c) => ({ key: c.key, date: c.date, bytes: c.size ?? null })),
-          ]),
-        ),
+        health_age: { scores_total: Object.keys(haByRef).length, matched_sources: haMatchedRefs.length },
+        samples: {
+          ...Object.fromEntries(
+            DELIVERY_FORMAT_IDS.map((f) => [
+              f,
+              inv.byFormat[f].slice(0, 5).map((c) => ({ key: c.key, date: c.date, bytes: c.size ?? null })),
+            ]),
+          ),
+          HealthAgeData: haMatchedRefs.slice(0, 5).map((ref) => ({ key: ref, date: null, bytes: null })),
+        },
       });
     }
 
