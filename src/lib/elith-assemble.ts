@@ -171,13 +171,52 @@ function todayYmd(): string {
   return new Date().toISOString().slice(0, 10).replace(/-/g, '_');
 }
 
-/** JSON テキストの client_id を new へ書き換える (パース失敗時は素の置換にフォールバック)。 */
+// スキャン由来 (region 見出し=category は納品しない)。血液CSVの category(項目区分)は保持。
+const SCAN_DERIVED_FORMATS = new Set(['HealthCheckupData', 'CancerRiskAssessmentData']);
+
+/**
+ * 納品物のサニタイズ (Elith 要望)。元データが旧形式でも納品物からは版面情報を除く。
+ *  - `data.regions`(bboxの器) を削除。
+ *  - measurements/items の各要素から `region`/`bbox` を削除 (スキャン由来は `category` も)。
+ *  - `raw_markdown` から `<!-- bbox: … -->` コメントを除去。
+ * ※ 値(value/value_num)は書き換えない。旧元データの値の乱れは元ファイルの再生成で対応する。
+ */
+function sanitizeDelivery(obj: Record<string, unknown>): void {
+  const fmt = typeof obj.format_id === 'string' ? obj.format_id : '';
+  const data = obj.data;
+  if (data && typeof data === 'object') {
+    const d = data as Record<string, unknown>;
+    delete d.regions;
+    for (const arrKey of ['measurements', 'items']) {
+      const arr = d[arrKey];
+      if (Array.isArray(arr)) {
+        for (const el of arr) {
+          if (el && typeof el === 'object') {
+            const e = el as Record<string, unknown>;
+            delete e.region;
+            delete e.bbox;
+            if (SCAN_DERIVED_FORMATS.has(fmt)) delete e.category;
+          }
+        }
+      }
+    }
+  }
+  if (typeof obj.raw_markdown === 'string') {
+    obj.raw_markdown = obj.raw_markdown
+      .split('\n')
+      .filter((l) => !/^\s*<!--\s*bbox:[^>]*-->\s*$/i.test(l))
+      .join('\n');
+  }
+}
+
+/** JSON テキストの client_id を new へ書き換え + 納品用サニタイズ (パース失敗時は素の置換にフォールバック)。 */
 function rewriteClientId(jsonText: string, newId: string, sourceKey: string): string {
   try {
     const obj = JSON.parse(jsonText) as Record<string, unknown>;
     obj.client_id = newId;
     // トレーサビリティ: 元 key を控える (PII では無い)
     obj.assembled_from = sourceKey;
+    sanitizeDelivery(obj); // 旧形式の元データでも納品物から bbox/region を除去
     return JSON.stringify(obj, null, 2);
   } catch {
     return jsonText;

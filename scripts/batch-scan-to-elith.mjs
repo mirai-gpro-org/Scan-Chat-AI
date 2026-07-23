@@ -215,7 +215,32 @@ function splitRow(line) {
   return s.split('|').map((c) => c.trim());
 }
 
-// テーブル領域 → measurements[] (列名でマッピング)
+// value を数値化 (純粋な単一数値のみ。範囲値 "127/82"・定性値は null)。src/lib/elith-export.ts と同一。
+function toValueNum(v) {
+  if (!v) return null;
+  const t = String(v).replace(/,/g, '').trim();
+  if (!/^[+-]?\d+(?:\.\d+)?$/.test(t)) return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+// 後段の保険 (LLM 出力が既にクリーンなら no-op)。value に残った判定マーカ/強調注記/単位を最小限そぎ落とす。
+function tidyValue(value, unit, flag) {
+  if (value == null) return { value: null, value_num: null, flag: flag || null };
+  let v = String(value).trim();
+  let f = flag;
+  const nb = v.replace(/[[【][^\]】]*[\]】]/g, '').trim();
+  if (nb !== v) v = nb;
+  const fm = /^([+-]?[\d.,]+)\s+(HH|LL|H|L)$/.exec(v);
+  if (fm) { v = fm[1]; if (!f || f === '-' || f === '') f = fm[2]; }
+  if (unit && unit.length > 0 && v.length > unit.length && v.slice(-unit.length) === unit) {
+    const cut = v.slice(0, v.length - unit.length).trim();
+    if (/^[+-]?[\d.,]+$/.test(cut)) v = cut;
+  }
+  return { value: v || null, value_num: toValueNum(v), flag: f || null };
+}
+
+// テーブル領域 → measurements[] (列名でマッピング)。Elith 納品用の共通キー (§7.1)。
+// bbox/監査専用列(No/推論値)/region 見出しは納品しない。value は数値のみを目標、value_num を付与。
 function toMeasurements(regions) {
   const out = [];
   const pick = (cols, names) => { for (const n of names) { const i = cols.indexOf(n); if (i >= 0) return i; } return -1; };
@@ -223,8 +248,8 @@ function toMeasurements(regions) {
     if (r.type !== 'table' || !r.columns) continue;
     const c = r.columns;
     const idx = {
-      no: pick(c, ['No', 'no']), name: pick(c, ['検査項目']), detail: pick(c, ['検査項目詳細']),
-      value: pick(c, ['読み取った値', '結果', '値']), inferred: pick(c, ['推論値']),
+      name: pick(c, ['検査項目']), detail: pick(c, ['検査項目詳細']),
+      value: pick(c, ['読み取った値', '結果', '値']),
       unit: pick(c, ['単位', '単位名称']), low: pick(c, ['下限値']), high: pick(c, ['上限値']),
       flag: pick(c, ['判定']), note: pick(c, ['備考']),
     };
@@ -232,10 +257,11 @@ function toMeasurements(regions) {
       const g = (i) => (i >= 0 && i < row.length ? row[i] : '') || '';
       const name = g(idx.name);
       if (!name && !g(idx.value)) continue;
+      const t = tidyValue(g(idx.value) || null, g(idx.unit) || null, g(idx.flag) || null);
       out.push({
-        region: r.label, no: g(idx.no) || null, name, name_detail: g(idx.detail) || null,
-        value: g(idx.value) || null, inferred: g(idx.inferred) || null, unit: g(idx.unit) || null,
-        ref_low: g(idx.low) || null, ref_high: g(idx.high) || null, flag: g(idx.flag) || null,
+        name, name_detail: g(idx.detail) || null,
+        value: t.value, value_num: t.value_num, unit: g(idx.unit) || null,
+        ref_low: g(idx.low) || null, ref_high: g(idx.high) || null, flag: t.flag,
         note: g(idx.note) || null,
       });
     }
@@ -264,11 +290,16 @@ function buildElithJson({ formatId, clientId, diagnosticId, sourceImage, testDat
     subject: { sex: null, age: null }, // サンプルのため PII なし
     source: { origin: 'scan-chat-ai', app: 'scan-chat-ai', model: GEMINI_MODEL,
       note: 'サンプル一括生成 (AIスキャン)。命名/フォーマットは暫定。', lab_name: null, finish_reason: finishReason },
-    data: { measurements: toMeasurements(regions), notes: collectNotes(regions), regions },
-    raw_markdown: stripExamComment(markdown),
+    // 納品 data は共通 measurements[] + notes のみ (版面座標 regions/bbox は含めない・§7.1)。
+    data: { measurements: toMeasurements(regions), notes: collectNotes(regions) },
+    raw_markdown: stripBboxComments(stripExamComment(markdown)),
   };
 }
 function stripExamComment(md) { return md.replace(/^\s*<!--\s*exam_date:[^>]*-->\s*\n?/i, ''); }
+// raw_markdown から版面座標コメント (<!-- bbox: ... -->) を除去する (納品には不要)。
+function stripBboxComments(md) {
+  return md.split('\n').filter((l) => !/^\s*<!--\s*bbox:[^>]*-->\s*$/i.test(l)).join('\n');
+}
 
 // ---------- client_id 採番 ----------
 function makeClientId(mode, imgBase) {
