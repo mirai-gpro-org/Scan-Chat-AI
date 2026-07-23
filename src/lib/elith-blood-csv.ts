@@ -6,9 +6,18 @@
  *     → 検査項目が増減・改称してもコード修正不要 (項目名をハードコードしない汎用転記)。
  *   - LLM は使わない。構造化データは決定論パースで値を完全転記する (検査値は誤り厳禁)。
  *   - PII 厳守 (CLAUDE.md): 氏名・かな・住所・電話・メール・生年月日は **Elith JSON に載せない**。
- *     subject は性別 + 年齢 (生年月日から算出) のみ。原本 CSV は PII を含むため S3 へ置かない。
+ *     subject は性別 + 年齢のみ。新様式は CSV から PII 列 (性別/生年月日/氏名/住所) が削除されたため
+ *     subject は原則 null (sex/age は顧客DB側で紐付け)。原本 CSV は S3 へ置かない。
  *   - client_id は呼び出し側が採番 (テストは自動採番)。日付は `採血日`。
  *   - Shift_JIS で受領するため TextDecoder('shift-jis') でデコード。
+ *
+ * 新様式 (2026-07〜) の仕様:
+ *   - ヘッダの `項目名N` セルに標準名を埋め込み (例 "項目名1\n総タンパク")。データ行は略号 (TP 等)。
+ *     → name=標準名 / name_detail=略号 (標準名が無い項目・問診はデータ行の値を name)。
+ *   - `項目区分N` の値がブロック番号: 1=検査値 / 2=問診結果 / 3=判定・総合コード。
+ *     区分3 は納品しない。項目区分そのものは JSON に出さない (category を設定しない)。
+ *   - 区分2 は `検査値N` ヘッダに凡例 (例 "1：ハイ" "2：イイエ") があり、コード値をラベルへ解決する。
+ *   - 引用フィールド内に改行を含む (項目名/凡例) ため CSV パーサは文字レベルで処理する。
  */
 
 import { ELITH_HANDOFF_SCHEMA_VERSION, toValueNum, type ElithMeasurement } from './elith-export';
@@ -24,33 +33,56 @@ export function decodeBloodCsv(bytes: Uint8Array): string {
   }
 }
 
-// ── CSV パース (ダブルクォート対応・埋め込み改行は非対応=本データに無い) ──
-function splitCsvLine(line: string): string[] {
-  const out: string[] = [];
+// ── CSV パース (ダブルクォート対応・引用フィールド内の改行/カンマも扱う文字レベル版) ──
+// 新様式は項目名/凡例セルに改行を含むため、行分割ベースでは壊れる → 文字単位で走査する。
+function parseCsv(text: string): string[][] {
+  const t = text.replace(/\r\n?/g, '\n');
+  const rows: string[][] = [];
+  let row: string[] = [];
   let cur = '';
   let inQ = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
     if (inQ) {
       if (ch === '"') {
-        if (line[i + 1] === '"') { cur += '"'; i++; } else { inQ = false; }
+        if (t[i + 1] === '"') { cur += '"'; i++; } else inQ = false;
       } else cur += ch;
     } else if (ch === '"') {
       inQ = true;
     } else if (ch === ',') {
-      out.push(cur); cur = '';
+      row.push(cur.trim()); cur = '';
+    } else if (ch === '\n') {
+      row.push(cur.trim()); rows.push(row); row = []; cur = '';
     } else cur += ch;
   }
-  out.push(cur);
-  return out.map((s) => s.trim());
+  if (cur !== '' || row.length) { row.push(cur.trim()); rows.push(row); }
+  return rows.filter((r) => r.some((c) => c !== ''));
 }
 
-function parseCsv(text: string): string[][] {
-  return text
-    .replace(/\r\n?/g, '\n')
-    .split('\n')
-    .filter((l) => l.length > 0)
-    .map(splitCsvLine);
+/** 全角英数字・記号を半角へ (検査値コードの照合用)。 */
+function toHalfWidth(s: string): string {
+  return s.replace(/[！-～]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0)).replace(/　/g, ' ');
+}
+/** ヘッダの項目名セル ("項目名1\n総タンパク" 等) から標準名を取り出す。無ければ ''。 */
+function headerStdName(cell: string | undefined): string {
+  if (!cell) return '';
+  const skip = (l: string): boolean =>
+    l === '' || /^項目名\d+$/.test(l) || l === 'ここから問診結果' || l === '質問' || l === '回答' ||
+    /^[0-9０-９]+\s*[：:]/.test(l);
+  for (const line of cell.split('\n').map((s) => s.trim())) {
+    if (!skip(line)) return line;
+  }
+  return '';
+}
+/** ヘッダの検査値セル ("検査値23\n1：ハイ\n2：イイエ" 等) からコード→ラベル凡例を作る。 */
+function headerLegend(cell: string | undefined): Record<string, string> {
+  const map: Record<string, string> = {};
+  if (!cell) return map;
+  for (const line of cell.split('\n')) {
+    const m = /^\s*([0-9０-９]+)\s*[：:]\s*(.+?)\s*$/.exec(line);
+    if (m) map[toHalfWidth(m[1]).trim()] = m[2].trim();
+  }
+  return map;
 }
 
 // ── 日付/年齢 ───────────────────────────────────────────────────
@@ -198,14 +230,23 @@ export function buildBloodCsvBundles(input: BuildBloodCsvInput): BloodCsvParseRe
       const n = Number.isFinite(declared) && declared > 0 ? Math.min(declared, maxTriples) : maxTriples;
       for (let k = 0; k < n; k++) {
         const base = startCol + k * 3;
-        const name = row[base]?.trim() || '';
-        if (!name) continue;
-        const value = row[base + 2]?.trim() || null;
-        // CSV は単位/基準値カラムを持たないため unit/ref/flag は null。value は原本のまま (value_num のみ算出)。
+        const block = (row[base + 1] ?? '').trim(); // 項目区分の値 = ブロック番号 (1/2/3)
+        if (block === '3') continue; // 区分3 (判定・総合コード) は納品しない
+        const rowName = (row[base] ?? '').trim();
+        const rawVal = (row[base + 2] ?? '').trim();
+        if (!rowName && !rawVal) continue;
+        // 検査値ヘッダの凡例でコード値をラベルへ (区分2 問診: 1→ハイ 2→イイエ / 0→イイエ 1→ハイ 等)。
+        // 凡例が無い列 (区分1 等) はコードにヒットしないので原本の値がそのまま残る。
+        const legend = headerLegend(header[base + 2]);
+        const value = (rawVal && legend[toHalfWidth(rawVal).trim()]) || rawVal || null;
+        // 項目名: ヘッダ標準名を name、データ行の略号/質問文を name_detail。標準名が無ければ行の値を name。
+        const std = headerStdName(header[base]);
+        const name = std || rowName || null;
+        const name_detail = std && rowName && rowName !== std ? rowName : null;
+        // 項目区分(category)は JSON に出さない (要件4)。CSV は単位/基準値カラムを持たないため unit/ref/flag は null。
         items.push({
-          category: row[base + 1]?.trim() || null,
           name,
-          name_detail: null,
+          name_detail,
           value,
           value_num: toValueNum(value),
           unit: null,

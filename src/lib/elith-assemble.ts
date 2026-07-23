@@ -171,8 +171,9 @@ function todayYmd(): string {
   return new Date().toISOString().slice(0, 10).replace(/-/g, '_');
 }
 
-// スキャン由来 (region 見出し=category は納品しない)。血液CSVの category(項目区分)は保持。
-const SCAN_DERIVED_FORMATS = new Set(['HealthCheckupData', 'CancerRiskAssessmentData']);
+// category(区分/region見出し) を納品しない format。検診/がん(版面見出し)・血液(項目区分)とも Elith 要望で除去。
+// 遺伝子は items のキー構成を LLM 全面委任のため対象外 (意味のある category を消さない)。
+const CATEGORY_STRIP_FORMATS = new Set(['HealthCheckupData', 'CancerRiskAssessmentData', 'BloodTestData']);
 
 /**
  * 納品物のサニタイズ (Elith 要望)。元データが旧形式でも納品物からは版面情報を除く。
@@ -195,7 +196,7 @@ function sanitizeDelivery(obj: Record<string, unknown>): void {
             const e = el as Record<string, unknown>;
             delete e.region;
             delete e.bbox;
-            if (SCAN_DERIVED_FORMATS.has(fmt)) delete e.category;
+            if (CATEGORY_STRIP_FORMATS.has(fmt)) delete e.category;
           }
         }
       }
