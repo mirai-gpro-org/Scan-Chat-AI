@@ -110,6 +110,11 @@ export const POST: APIRoute = async ({ request }) => {
     item_count: r.itemCount,
     json_key: r.files[0]?.key ?? null,
   }));
+  // 取り込んだ最新の検査日 (デメカル状態 last_to の前進に使う)。
+  const maxTestDate = rowSummary.reduce<string | null>(
+    (mx, r) => (r.test_date && /^\d{4}-\d{2}-\d{2}$/.test(r.test_date) && (!mx || r.test_date > mx) ? r.test_date : mx),
+    null,
+  );
 
   if (!isS3Configured() || !cfg) {
     return json({
@@ -118,6 +123,7 @@ export const POST: APIRoute = async ({ request }) => {
       reason: 's3_not_configured',
       count: parsed.rows.length,
       header_found: parsed.headerFound,
+      max_test_date: maxTestDate,
       rows: rowSummary,
       preview: parsed.rows.slice(0, 2).map((r) => r.json),
     });
@@ -134,6 +140,7 @@ export const POST: APIRoute = async ({ request }) => {
       bucket: cfg.bucket,
       count: parsed.rows.length,
       header_found: parsed.headerFound,
+      max_test_date: maxTestDate,
       uploaded: rowSummary.map((r) => ({ ...r, uri: r.json_key ? uriByKey.get(r.json_key) ?? null : null })),
     });
   } catch (err) {
