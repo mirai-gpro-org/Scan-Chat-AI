@@ -20,6 +20,16 @@
 - **実装前に検査会社 (株式会社Leisure / Demecal) へ「自動アクセスの可否」を必ず確認**する (§6)。許諾なしに着手しない。
 - 本アプローチ (ブラウザ/HTTP 自動化) 以外に、**公式データ連携 (API/SFTP/バッチ配信)** の選択肢がある (§7)。可能なら公式連携が最善。
 
+### 運用確定 (2026-07 合意) ★
+- §6 の**自動アクセスは承認済**。
+- 実行環境は **専用デスクトップPC (Pマーク対応・個人用でない)**。デメカル証明書は**このPCのOS/ブラウザ証明書ストアに導入済**。
+- 担当者は **admin を Google 認証** (Supabase Google OAuth) でログインして操作。
+- 本命方式は **案2: Power Automate Desktop**（実ブラウザがOSストア証明書を使う）。Playwright(案A) は `.p12` を扱える場合の代替。
+- **鍵は Vercel に一元管理・PCに置かない**を維持: PCは「DLのみ」、変換/S3/状態は Vercel(既存API)。
+- **attended(担当者クリック)を先行**、無人(週次)は後段。認可は attended=Google短命トークン / unattended=取り込み専用キー `x-intake-key`(`LAB_INTAKE_API_KEY`)。
+- 実装済: サーバ側(`elith-blood-csv` に `max_test_date`、状態API `demecal-state`、intake-key)・admin取り込みUI。
+- **詳細な運用/実装設計は `demecal_rpa_operation_design.md` を参照**。
+
 ---
 
 ## 1. 背景・目的
