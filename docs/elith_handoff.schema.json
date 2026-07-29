@@ -19,10 +19,9 @@
     "exported_at": { "type": "string", "description": "S3書き出し時刻(UTC, ISO8601)。" },
     "subject": { "$ref": "#/$defs/subject" },
     "source": { "$ref": "#/$defs/source" },
-    "data": { "type": "object", "description": "format固有（下記 allOf で制約）。" },
-    "raw_markdown": { "type": ["string", "null"], "description": "確定Markdown原本（あれば・突合用）。bboxコメントは除去済。" },
-    "assembled_from": { "type": "string", "description": "納品セット組立時の出典元S3キー（トレーサビリティ・PII非該当）。" }
+    "data": { "type": "object", "description": "format固有（下記 allOf で制約）。" }
   },
+  "_note_removed_fields": "raw_markdown と assembled_from は Elith 要望(2026-07)で納品物から除去。監査/トレース情報は Wellfort 側(元ソースS3 + assemble の sources[] マニフェスト)に保持する。",
   "allOf": [
     {
       "if": { "required": ["format_id"], "properties": { "format_id": { "enum": ["BloodTestData", "CancerRiskAssessmentData", "HealthCheckupData"] } } },

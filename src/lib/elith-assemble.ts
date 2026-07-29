@@ -232,8 +232,9 @@ function buildHealthAgeJson(userId: string, bundleDate: string, rec: HealthAgeRe
       delta: rec.delta,
       model_version: rec.model_version ?? 'CABA-v4d',
     },
-    assembled_from: sourceRef,
+    // Elith 要望(2026-07): 納品物に監査メタ(assembled_from)を載せない。トレースは sources[] に保持。
   };
+  void sourceRef;
   return JSON.stringify(obj, null, 2);
 }
 
@@ -268,12 +269,10 @@ function sanitizeDelivery(obj: Record<string, unknown>): void {
       }
     }
   }
-  if (typeof obj.raw_markdown === 'string') {
-    obj.raw_markdown = obj.raw_markdown
-      .split('\n')
-      .filter((l) => !/^\s*<!--\s*bbox:[^>]*-->\s*$/i.test(l))
-      .join('\n');
-  }
+  // Elith 要望(2026-07): 納品物から raw_markdown と監査メタ(assembled_from) を除去。
+  //   Elith は未使用。監査/トレース情報は我々側(元ソースS3 + assemble の sources[] マニフェスト)に残す。
+  delete obj.raw_markdown;
+  delete obj.assembled_from;
 }
 
 /** JSON テキストの client_id を new へ書き換え + 納品用サニタイズ (パース失敗時は素の置換にフォールバック)。 */
@@ -281,9 +280,10 @@ function rewriteClientId(jsonText: string, newId: string, sourceKey: string): st
   try {
     const obj = JSON.parse(jsonText) as Record<string, unknown>;
     obj.client_id = newId;
-    // トレーサビリティ: 元 key を控える (PII では無い)
-    obj.assembled_from = sourceKey;
-    sanitizeDelivery(obj); // 旧形式の元データでも納品物から bbox/region を除去
+    // Elith 要望(2026-07): 納品物に監査メタ(assembled_from)を載せない。
+    // トレース(元 sourceKey → 納品 newKey)は assemble の戻り値 sources[] に保持する。
+    void sourceKey;
+    sanitizeDelivery(obj); // 納品物から raw_markdown/assembled_from/bbox/region を除去
     return JSON.stringify(obj, null, 2);
   } catch {
     return jsonText;

@@ -21,6 +21,7 @@
  */
 
 import { ELITH_HANDOFF_SCHEMA_VERSION, toValueNum, type ElithMeasurement } from './elith-export';
+import { applyBloodReference } from './blood-reference-master';
 import type { S3PutFile } from './s3';
 
 // ── デコード ────────────────────────────────────────────────────
@@ -240,6 +241,8 @@ export function buildBloodCsvBundles(input: BuildBloodCsvInput): BloodCsvParseRe
     const testDate = drawn ?? approved ?? new Date().toISOString().slice(0, 10);
     const dateSource: BloodTestDataJson['date_source'] = drawn ? 'drawn_date' : approved ? 'approved_date' : 'today';
     const birthIso = normDate(get(idx.birth));
+    // この行(被験者)の性別。基準値の男女別選択 と subject.sex に使う。
+    const rowSex = normSex(get(idx.sex));
 
     // 検査項目: 結果項目数の直後から (項目名, 項目区分, 検査値) を itemCount 組 読む。
     // 結果項目数が欠損/不正でも、以降を 3 列ずつ末尾まで読み切る (汎用・堅牢)。
@@ -289,7 +292,7 @@ export function buildBloodCsvBundles(input: BuildBloodCsvInput): BloodCsvParseRe
         const name_detail = std && rowName && rowName !== std ? rowName : null;
         // 区分1 (検査値) には判定コード (F2/A3 等) を assessment として紐づける (該当あれば)。
         const assessment = block === '1' ? lookupAssessment(name, name_detail) : null;
-        // 項目区分(category)は JSON に出さない (要件4)。CSV は単位/基準値カラムを持たないため unit/ref/flag は null。
+        // 項目区分(category)は JSON に出さない (要件4)。CSV は単位/基準値カラムを持たないため初期値は null。
         const meas: ElithMeasurement = {
           name,
           name_detail,
@@ -302,6 +305,9 @@ export function buildBloodCsvBundles(input: BuildBloodCsvInput): BloodCsvParseRe
           note: null,
         };
         if (assessment) meas.assessment = assessment;
+        // Elith 要望(2026-07): 基準値/単位マスタ(BLOOD_REFERENCE)があれば unit/ref を付与し flag(H/L)を算出。
+        // マスタ未登録の項目は null のまま（挙動不変）。医療値はデメカル一次資料で登録する。
+        applyBloodReference(meas, rowSex);
         items.push(meas);
       }
     }
@@ -318,7 +324,7 @@ export function buildBloodCsvBundles(input: BuildBloodCsvInput): BloodCsvParseRe
       test_date: testDate,
       date_source: dateSource,
       exported_at: exportedAt,
-      subject: { sex: normSex(get(idx.sex)), age: ageAt(birthIso, testDate) },
+      subject: { sex: rowSex, age: ageAt(birthIso, testDate) },
       source: {
         origin: 'scan-chat-ai',
         app: 'scan-chat-ai',
