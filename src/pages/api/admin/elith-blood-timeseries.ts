@@ -1,12 +1,16 @@
 /**
- * admin: 血液検査 (BloodTestData) の時系列テスト用「疑似データ」を生成する。
+ * admin: 検査データの時系列テスト用「疑似データ」を生成する（血液に加え がん/検診/AI疾病予測 に一般化）。
  *
- * Elith が血液を時系列 (最多プランで4カ月毎) でも受け取りたいとの要望に対し、
- * 現在の 1 検査を種にして過去スナップショット (既定 -4/-8/-12カ月) を生成する。
+ * 既存の血液生成方式を踏襲: 現在の1検査を「種」にして過去スナップショットを決定論生成する。
  *   - 同一 client_id・別 date フォルダに書き出す (Elith は §3.3 の時系列として読む)。
- *   - 数値項目 (value_num) のみ ±amplitude(既定5%) の独立ジッタ。問診/非数値は維持。
- *   - seed 固定 (client_id+項目名+月数) のため毎回同じ疑似データ (テスト再現可能)。
- *   - `synthetic: true` を付与し識別・後で一括削除できるようにする (既存の血液削除で消える)。
+ *   - 対象 format:
+ *       measurement系 (BloodTestData / CancerRiskAssessmentData / HealthCheckupData)
+ *         → data.measurements[].value_num のみ ±amplitude(既定5%) の独立ジッタ。問診/非数値は維持。
+ *       Other (AI疾病予測 ai_prediction) → data.payload 内の数値を再帰的に ±amplitude ジッタ。文字列等は維持。
+ *   - 年次パターンは intervalMonths=12 / count=2 (種=当年 + 過去2年 = 計3回) を指定して生成する。
+ *     (既定は血液の従来値 intervalMonths=4 / count=3 のまま＝後方互換)
+ *   - seed 固定 (client_id+パス+月数) のため毎回同じ疑似データ (テスト再現可能)。値はゼロから捏造せず種を摂動。
+ *   - `synthetic: true` を付与し識別・後で一括削除できるようにする。
  * キー(AWS_*)はサーバ環境変数のみ。認可: Bearer ADMIN_API_KEY (env 未設定 dev のみ省略)。
  */
 
@@ -14,6 +18,10 @@ import type { APIRoute } from 'astro';
 import { getS3Config, isS3Configured, listObjects, getObjectText, putFiles } from '../../../lib/s3';
 
 export const prerender = false;
+
+// 生成対象 format。measurement系は measurements[] をジッタ、Other は payload をジッタ。
+const MEAS_FORMATS = new Set(['BloodTestData', 'CancerRiskAssessmentData', 'HealthCheckupData']);
+const ALLOWED_FORMATS = new Set([...MEAS_FORMATS, 'Other']);
 
 function envKey(name: string): string | undefined {
   const m = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.[name];
@@ -87,9 +95,31 @@ function jitter(valueStr: string, valueNum: number, seedStr: string, amplitude: 
   const value = decimals > 0 ? nn.toFixed(decimals) : String(Math.round(nn));
   return { value, value_num: Number(value) };
 }
+/** 数値 n を ±amplitude で決定論ジッタ。整数は整数・小数は元桁を維持。 */
+function jitterNumber(n: number, seedStr: string, amplitude: number): number {
+  const rng = mulberry32(hashSeed(seedStr));
+  const factor = 1 + (rng() * 2 - 1) * amplitude;
+  const decimals = Number.isInteger(n) ? 0 : (String(n).split('.')[1] || '').length;
+  const nn = n * factor;
+  return decimals > 0 ? Number(nn.toFixed(decimals)) : Math.round(nn);
+}
+/** 任意構造(payload)を再帰的に走査し、数値のみ ±amplitude ジッタ (文字列/真偽/null は維持)。 */
+function jitterDeep(v: unknown, seedBase: string, amplitude: number, ctr: { n: number }): unknown {
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    return jitterNumber(v, `${seedBase}|${ctr.n++}`, amplitude);
+  }
+  if (Array.isArray(v)) return v.map((el) => jitterDeep(el, seedBase, amplitude, ctr));
+  if (v && typeof v === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) out[k] = jitterDeep(val, seedBase, amplitude, ctr);
+    return out;
+  }
+  return v;
+}
 
 interface Body {
   mode?: unknown;
+  format?: unknown;
   sourceKey?: unknown;
   clientId?: unknown;
   intervalMonths?: unknown;
@@ -99,14 +129,14 @@ interface Body {
   sourcePrefix?: unknown;
 }
 
-/** BloodTestData_* から client_id 候補を集める (最新採血日・件数付き)。UI のプルダウン用。 */
-async function listBloodClients(sourcePrefix: string): Promise<Array<{ client_id: string; latest_date: string | null; count: number }>> {
+/** {format}_* から client_id 候補を集める (最新検査日・件数付き)。UI のプルダウン用。 */
+async function listFormatClients(sourcePrefix: string, format: string): Promise<Array<{ client_id: string; latest_date: string | null; count: number }>> {
   const objs = await listObjects(sourcePrefix);
   const map = new Map<string, { latest_date: string | null; count: number }>();
+  const re = new RegExp(`^${format}_date_(\\d{4}_\\d{2}_\\d{2})_user_(.+)\\.json$`);
   for (const o of objs) {
     if (!o.key.endsWith('.json')) continue;
-    const bn = basename(o.key);
-    const m = /^BloodTestData_date_(\d{4}_\d{2}_\d{2})_user_(.+)\.json$/.exec(bn);
+    const m = re.exec(basename(o.key));
     if (!m) continue;
     const date = m[1].replace(/_/g, '-');
     const cid = m[2];
@@ -120,13 +150,13 @@ async function listBloodClients(sourcePrefix: string): Promise<Array<{ client_id
     .sort((a, b) => (b.latest_date ?? '').localeCompare(a.latest_date ?? '') || a.client_id.localeCompare(b.client_id));
 }
 
-/** 種となる BloodTestData JSON の key を決める (sourceKey 優先 / clientId で最新)。 */
-async function resolveSourceKey(sourceKey: string | null, clientId: string | null, sourcePrefix: string): Promise<string | null> {
+/** 種となる {format} JSON の key を決める (sourceKey 優先 / clientId で最新)。 */
+async function resolveSourceKey(sourceKey: string | null, clientId: string | null, sourcePrefix: string, format: string): Promise<string | null> {
   if (sourceKey) return sourceKey;
   if (!clientId) return null;
   const objs = await listObjects(sourcePrefix);
   const mine = objs
-    .filter((o) => o.key.endsWith('.json') && basename(o.key).startsWith('BloodTestData_') && o.key.includes(`user_${clientId}`))
+    .filter((o) => o.key.endsWith('.json') && basename(o.key).startsWith(`${format}_`) && o.key.includes(`user_${clientId}`))
     .sort((a, b) => b.key.localeCompare(a.key)); // date は key に含まれるため降順=最新
   return mine[0]?.key ?? null;
 }
@@ -142,6 +172,10 @@ export const POST: APIRoute = async ({ request }) => {
   }
 
   const mode = str(body.mode) ?? 'generate';
+  const format = str(body.format) ?? 'BloodTestData'; // 後方互換: 未指定は血液
+  if (!ALLOWED_FORMATS.has(format)) {
+    return json({ ok: false, error: 'unsupported_format', detail: `format は ${[...ALLOWED_FORMATS].join(' / ')} のいずれか` }, 400);
+  }
   const intervalMonths = Math.max(1, Math.round(num(body.intervalMonths, 4)));
   const count = Math.max(1, Math.min(12, Math.round(num(body.count, 3))));
   const amplitude = Math.min(0.5, Math.max(0, num(body.amplitude, 0.05)));
@@ -157,8 +191,8 @@ export const POST: APIRoute = async ({ request }) => {
   // ── mode=list: client_id 候補を返す (UI プルダウン用) ──
   if (mode === 'list') {
     try {
-      const clients = await listBloodClients(sourcePrefix);
-      return json({ ok: true, mode: 'list', source_prefix: sourcePrefix, count: clients.length, clients });
+      const clients = await listFormatClients(sourcePrefix, format);
+      return json({ ok: true, mode: 'list', format, source_prefix: sourcePrefix, count: clients.length, clients });
     } catch (err) {
       return json({ ok: false, error: 'list failed', detail: String(err instanceof Error ? err.message : err) }, 502);
     }
@@ -166,11 +200,11 @@ export const POST: APIRoute = async ({ request }) => {
 
   let srcKey: string | null;
   try {
-    srcKey = await resolveSourceKey(str(body.sourceKey), str(body.clientId), sourcePrefix);
+    srcKey = await resolveSourceKey(str(body.sourceKey), str(body.clientId), sourcePrefix, format);
   } catch (err) {
     return json({ ok: false, error: 'list failed', detail: String(err instanceof Error ? err.message : err) }, 502);
   }
-  if (!srcKey) return json({ ok: false, error: 'source_not_found', detail: 'sourceKey か clientId(該当BloodTestData) が必要です' }, 400);
+  if (!srcKey) return json({ ok: false, error: 'source_not_found', detail: `sourceKey か clientId(該当${format}) が必要です` }, 400);
 
   let src: Record<string, unknown>;
   try {
@@ -178,16 +212,17 @@ export const POST: APIRoute = async ({ request }) => {
   } catch (err) {
     return json({ ok: false, error: 'source read/parse failed', detail: String(err instanceof Error ? err.message : err) }, 502);
   }
-  if (src.format_id !== 'BloodTestData') {
-    return json({ ok: false, error: 'source_not_blood', detail: `format_id=${String(src.format_id)}` }, 400);
+  if (src.format_id !== format) {
+    return json({ ok: false, error: 'source_format_mismatch', detail: `種の format_id=${String(src.format_id)} (要求=${format})` }, 400);
   }
   const clientId = str(src.client_id);
   const baseDate = str(src.test_date);
   if (!clientId || !baseDate || !/^\d{4}-\d{2}-\d{2}$/.test(baseDate)) {
     return json({ ok: false, error: 'source_invalid', detail: 'client_id / test_date が不正' }, 400);
   }
-  const measurements = Array.isArray((src.data as { measurements?: unknown[] } | undefined)?.measurements)
-    ? ((src.data as { measurements: Array<Record<string, unknown>> }).measurements)
+  const srcData = src.data && typeof src.data === 'object' ? (src.data as Record<string, unknown>) : {};
+  const measurements = Array.isArray((srcData as { measurements?: unknown[] }).measurements)
+    ? ((srcData as { measurements: Array<Record<string, unknown>> }).measurements)
     : [];
 
   const cleanPrefix = sourcePrefix ? sourcePrefix.replace(/^\/+/, '').replace(/\/*$/, '/') : '';
@@ -200,17 +235,31 @@ export const POST: APIRoute = async ({ request }) => {
     const dateFolder = testDate.replace(/-/g, '_');
 
     let jittered = 0;
-    const newMeas = measurements.map((m) => {
-      const valueNum = m.value_num;
-      const valueStr = typeof m.value === 'string' ? m.value : m.value == null ? null : String(m.value);
-      if (typeof valueNum === 'number' && Number.isFinite(valueNum) && valueStr != null) {
-        const seed = `${clientId}|${String(m.name ?? '')}|${monthsBack}`;
-        const j = jitter(valueStr, valueNum, seed, amplitude);
-        jittered++;
-        return { ...m, value: j.value, value_num: j.value_num };
-      }
-      return { ...m }; // 問診(ハイ/イイエ)・非数値は維持
-    });
+    let dataOut: Record<string, unknown>;
+    let itemCount: number;
+    if (MEAS_FORMATS.has(format)) {
+      // measurement系: measurements[].value_num のみジッタ。問診/非数値は維持。
+      const newMeas = measurements.map((m) => {
+        const valueNum = m.value_num;
+        const valueStr = typeof m.value === 'string' ? m.value : m.value == null ? null : String(m.value);
+        if (typeof valueNum === 'number' && Number.isFinite(valueNum) && valueStr != null) {
+          const seed = `${clientId}|${String(m.name ?? '')}|${monthsBack}`;
+          const j = jitter(valueStr, valueNum, seed, amplitude);
+          jittered++;
+          return { ...m, value: j.value, value_num: j.value_num };
+        }
+        return { ...m };
+      });
+      dataOut = { ...srcData, measurements: newMeas };
+      itemCount = newMeas.length;
+    } else {
+      // Other (ai_prediction 等): data.payload 内の数値を再帰ジッタ。文字列/真偽/null は維持。
+      const ctr = { n: 0 };
+      const payloadOut = jitterDeep((srcData as { payload?: unknown }).payload, `${clientId}|payload|${monthsBack}`, amplitude, ctr);
+      jittered = ctr.n;
+      dataOut = { ...srcData, payload: payloadOut };
+      itemCount = jittered;
+    }
 
     const obj = {
       ...src,
@@ -224,23 +273,23 @@ export const POST: APIRoute = async ({ request }) => {
         note: `疑似時系列テストデータ (${monthsBack}カ月前・±${Math.round(amplitude * 100)}%ジッタ)。種=${basename(srcKey)}`,
       },
       synthetic_from: srcKey,
-      data: { ...(src.data as Record<string, unknown>), measurements: newMeas },
+      data: dataOut,
     };
-    const stem = `BloodTestData_date_${dateFolder}_user_${clientId}`;
+    const stem = `${format}_date_${dateFolder}_user_${clientId}`;
     const key = `${cleanPrefix}user/${clientId}/date/${dateFolder}/${stem}.json`;
     const bodyStr = JSON.stringify(obj, null, 2);
     putList.push({ key, contentType: 'application/json; charset=utf-8', body: bodyStr, bytes: utf8Bytes(bodyStr) });
-    generated.push({ test_date: testDate, key, item_count: newMeas.length, jittered, uri: null });
+    generated.push({ test_date: testDate, key, item_count: itemCount, jittered, uri: null });
   }
 
   if (dryRun) {
-    return json({ ok: true, dry_run: true, source_key: srcKey, client_id: clientId, base_date: baseDate, count, interval_months: intervalMonths, amplitude, generated });
+    return json({ ok: true, dry_run: true, format, source_key: srcKey, client_id: clientId, base_date: baseDate, count, interval_months: intervalMonths, amplitude, generated });
   }
   try {
     const uploaded = await putFiles(putList);
     const byKey = new Map(uploaded.map((u) => [u.key, u.uri]));
     for (const g of generated) g.uri = byKey.get(g.key) ?? null;
-    return json({ ok: true, dry_run: false, bucket: cfg.bucket, source_key: srcKey, client_id: clientId, base_date: baseDate, count, interval_months: intervalMonths, amplitude, generated });
+    return json({ ok: true, dry_run: false, format, bucket: cfg.bucket, source_key: srcKey, client_id: clientId, base_date: baseDate, count, interval_months: intervalMonths, amplitude, generated });
   } catch (err) {
     return json({ ok: false, error: 'S3 upload failed', detail: String(err instanceof Error ? err.message : err) }, 502);
   }
