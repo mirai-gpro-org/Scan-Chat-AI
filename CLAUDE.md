@@ -46,8 +46,9 @@
     (運用のみ)。詳細: `docs/operations/Gemini_APIキー作成手順書_Wellfort_v1.0.md` §7.1。
   - Gemini 呼び出しは `src/lib/gemini.ts` に集約。キーは `x-goog-api-key` ヘッダ送信 (URL に載せない)。
 - **使用モデルは env で差替え可 (コード変更不要・env反映は再デプロイ要)**。既定は `src/lib/gemini.ts` の `MODELS`。
-  - スキャン (画像解析・全 REST 呼び出し): 既定 **`gemini-3.5-flash`** (GA・正式ID)。`GEMINI_SCAN_MODEL` で上書き。
-    不具合/Tier1 未開通/コスト時は `GEMINI_SCAN_MODEL=gemini-3.1-flash-lite` (軽量) か `gemini-2.5-flash` (旧既定) へ即切戻し。
+  - スキャン (画像解析・全 REST 呼び出し): 既定 **`gemini-3.1-flash-lite`** (軽量・安定)。`GEMINI_SCAN_MODEL` で上書き。
+    精度を上げるなら `gemini-3.5-flash` (GA) だが、**混雑時に 503(model overloaded) が出やすくバッチ全滅の実績あり (2026-07)**
+    ため常用の既定は 3.1-flash-lite に据え置き。Tier1 未開通/不具合時は `gemini-2.5-flash` (旧既定) へ。
     ※ 正式ID は Gemini API 公式 (ai.google.dev/gemini-api/docs/models/gemini-3.5-flash) で確認: Stable=`gemini-3.5-flash` /
       Preview=`gemini-3-flash-preview`。**末尾-preview無しの `gemini-3-flash` は Gemini API に存在しない** (設定すると全スキャン失敗)。
     - **前提**: 3.x 系は **Tier1 (課金有効化) + 当該キーでのモデルアクセス** が必要。未開通のまま 3.x を指すと
