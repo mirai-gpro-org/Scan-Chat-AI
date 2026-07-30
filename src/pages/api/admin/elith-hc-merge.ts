@@ -17,6 +17,7 @@ import {
   extFromMime,
   ELITH_HANDOFF_SCHEMA_VERSION,
   sanitizeMeasurementsForDelivery,
+  isElithFormatId,
   type ParsedScan,
 } from '../../../lib/elith-export';
 import { MODELS } from '../../../lib/gemini';
@@ -52,11 +53,11 @@ function randomUuid(): string {
 function utf8Bytes(s: string): number {
   return typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(s).length : Buffer.byteLength(s, 'utf-8');
 }
-function folderOf(prefix: string, clientId: string, testDate: string): { folder: string; dateFolder: string; stem: string } {
+function folderOf(prefix: string, clientId: string, testDate: string, formatId: string): { folder: string; dateFolder: string; stem: string } {
   const dateFolder = testDate.replace(/-/g, '_');
   const cleanPrefix = prefix ? prefix.replace(/^\/+/, '').replace(/\/*$/, '/') : '';
   const folder = `${cleanPrefix}user/${clientId}/date/${dateFolder}/`;
-  return { folder, dateFolder, stem: `HealthCheckupData_date_${dateFolder}_user_${clientId}` };
+  return { folder, dateFolder, stem: `${formatId}_date_${dateFolder}_user_${clientId}` };
 }
 
 interface Body {
@@ -70,6 +71,8 @@ interface Body {
   testDate?: unknown;
   parts?: unknown;
   sourceFiles?: unknown;
+  /** マージ対象の Elith format_id (既定 HealthCheckupData)。検診に限らず血液/がん等の複数シート統合に共通。 */
+  formatId?: unknown;
 }
 
 export const POST: APIRoute = async ({ request }) => {
@@ -86,6 +89,10 @@ export const POST: APIRoute = async ({ request }) => {
   const action = str(body.action) ?? 'part';
   const clientId = str(body.clientId);
   if (!clientId) return json({ ok: false, error: 'clientId is required' }, 400);
+
+  // マージ対象 format。既定は HealthCheckupData (後方互換)。血液/がん等の複数シート統合も同経路で扱う。
+  const formatIdInput = str(body.formatId);
+  const formatId = formatIdInput && isElithFormatId(formatIdInput) ? formatIdInput : 'HealthCheckupData';
 
   const cfg = getS3Config();
   const prefix = cfg?.prefix ?? '';
@@ -105,7 +112,7 @@ export const POST: APIRoute = async ({ request }) => {
       return json({ ok: false, error: 'scan failed', detail: String(err instanceof Error ? err.message : err) }, 502);
     }
 
-    const { folder, stem } = folderOf(prefix, clientId, scan.testDate);
+    const { folder, stem } = folderOf(prefix, clientId, scan.testDate, formatId);
     const imageKey = `${folder}${stem}_${String(seq).padStart(2, '0')}${extFromMime(mimeType)}`;
 
     let uploadedKey: string | null = null;
@@ -160,10 +167,10 @@ export const POST: APIRoute = async ({ request }) => {
     const measurements = sanitizeMeasurementsForDelivery(rawMeasurements).kept;
     const sourceFiles = Array.isArray(body.sourceFiles) ? (body.sourceFiles as unknown[]).filter((x): x is string => typeof x === 'string') : [];
 
-    const { folder, stem } = folderOf(prefix, clientId, testDate);
+    const { folder, stem } = folderOf(prefix, clientId, testDate, formatId);
     const json_key = `${folder}${stem}.json`;
     const jsonObj = {
-      format_id: 'HealthCheckupData',
+      format_id: formatId,
       schema_version: ELITH_HANDOFF_SCHEMA_VERSION,
       kind: 'scan_merged',
       client_id: clientId,
@@ -195,7 +202,7 @@ export const POST: APIRoute = async ({ request }) => {
       const uploaded = await putFiles([{ key: json_key, contentType: 'application/json; charset=utf-8', body: jsonBody, bytes: utf8Bytes(jsonBody) }]);
       return json({
         ok: true, action: 'finalize', configured: true, bucket: cfg.bucket,
-        client_id: clientId, format_id: 'HealthCheckupData', test_date: testDate,
+        client_id: clientId, format_id: formatId, test_date: testDate,
         part_count: parts.length, rows: measurements.length, json_key, necessity,
         uri: uploaded[0]?.uri ?? null,
       });
