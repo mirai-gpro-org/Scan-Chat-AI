@@ -304,12 +304,10 @@ function toMeasurements(regions: ScanRegionJson[]): ElithMeasurement[] {
   for (const r of regions) {
     if (r.type !== 'table' || !r.columns || !r.rows) continue;
     const c = r.columns;
-    // 値は「今回値」列のみ採用。前回値/前々回値 はスペーサー(グリッド維持)なので pick せず破棄。
-    // 旧スキーマ(読み取った値/結果/値)も後方互換で拾う。
     const idx = {
       name: pickCol(c, ['検査項目']),
       detail: pickCol(c, ['検査項目詳細']),
-      value: pickCol(c, ['今回値', '読み取った値', '結果', '値']),
+      value: pickCol(c, ['読み取った値', '結果', '値']),
       unit: pickCol(c, ['単位', '単位名称']),
       low: pickCol(c, ['下限値']),
       high: pickCol(c, ['上限値']),
@@ -320,7 +318,7 @@ function toMeasurements(regions: ScanRegionJson[]): ElithMeasurement[] {
       const g = (i: number): string => (i >= 0 && i < row.cells.length ? row.cells[i] : '') || '';
       const name = g(idx.name);
       if (!name && !g(idx.value)) continue;
-      // 前回値/前々回値(スペーサー)・category(版面見出し=region 相当) は納品に含めない。
+      // 監査専用列 (No / 推論値) と category (版面レイアウト見出し=region 相当) は納品に含めない。
       // bbox は regions 由来なので measurements には元々無い。
       out.push(
         tidyMeasurement({
