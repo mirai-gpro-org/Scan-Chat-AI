@@ -13,7 +13,8 @@ function env(name: string): string | undefined {
 
 // スキャン/Live のモデルは env で差替え可能 (Vercel 環境変数)。デプロイ無しで即時切替・切戻し可。
 //  - スキャン既定は gemini-3.1-flash-lite。Tier1 未開通や不具合時は
-//    GEMINI_SCAN_MODEL=gemini-2.5-flash / gemini-3-flash 等へ即切替。
+//    GEMINI_SCAN_MODEL=gemini-2.5-flash / gemini-3.5-flash (GA・正式ID) 等へ即切替。
+//    ※ 末尾-preview無しの gemini-3-flash は Gemini API に無い (公式: Stable=gemini-3.5-flash / Preview=gemini-3-flash-preview)。
 //  - Live は REST 非対応の専用プレビュー。GEMINI_LIVE_MODEL で更新に追従。
 export const MODELS = {
   // REST generateContent (画像解析・テキスト応答)

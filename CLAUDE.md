@@ -47,7 +47,9 @@
   - Gemini 呼び出しは `src/lib/gemini.ts` に集約。キーは `x-goog-api-key` ヘッダ送信 (URL に載せない)。
 - **使用モデルは env で差替え可 (デプロイ不要・即時切替/切戻し)**。既定は `src/lib/gemini.ts` の `MODELS`。
   - スキャン (画像解析・全 REST 呼び出し): 既定 **`gemini-3.1-flash-lite`**。`GEMINI_SCAN_MODEL` で上書き。
-    不具合/Tier1 未開通時は `GEMINI_SCAN_MODEL=gemini-2.5-flash` へ即切戻し (旧既定)。上げるなら `gemini-3-flash`。
+    不具合/Tier1 未開通時は `GEMINI_SCAN_MODEL=gemini-2.5-flash` へ即切戻し (旧既定)。上げるなら `gemini-3.5-flash` (GA)。
+    ※ 正式ID は Gemini API 公式 (ai.google.dev/gemini-api/docs/models/gemini-3.5-flash) で確認: Stable=`gemini-3.5-flash` /
+      Preview=`gemini-3-flash-preview`。**末尾-preview無しの `gemini-3-flash` は Gemini API に存在しない** (設定すると全スキャン失敗)。
     - **前提**: 3.x 系は **Tier1 (課金有効化) + 当該キーでのモデルアクセス** が必要。未開通のまま 3.x を指すと
       全スキャン (検診/がん/血液image/遺伝子) が失敗する → その場合は env で 2.5 に戻す。
     - スキャン精度は **検診 numeric → 健康年齢 (CABA)** に直結。モデル切替時は代表ページで再検証すること。
