@@ -199,12 +199,14 @@ export function normDeliveryStr(v: unknown): string | null {
   const s = v.trim();
   return s === '' || s === '-' ? null : s;
 }
-/** 表示値クリーン化: 矢印(↑↓)等の記号・空白を除去。"-"/"" は null。 */
+/** 表示値クリーン化: 矢印(↑↓)等の記号・空白を除去。"-"/""/"/"(斜線=値なし) は null。 */
 export function cleanDeliveryValue(v: unknown): string | null {
   const raw = typeof v === 'string' ? v : v == null ? null : String(v);
   if (raw == null) return null;
   const s = raw.replace(/[↑↓⤴⤵➡→←]/g, '').trim();
-  return s === '' || s === '-' ? null : s;
+  // 単独の斜線(半角/全角)は検査票で「該当なし/値なし」を意味する → 空扱い。
+  // ("127/82" 等の複合値は s==='/' に一致しないので影響しない。)
+  return s === '' || s === '-' || s === '/' || s === '／' ? null : s;
 }
 /**
  * 納品用 lean measurement を作る。
