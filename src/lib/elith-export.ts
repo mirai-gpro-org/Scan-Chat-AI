@@ -299,6 +299,21 @@ function pickCol(cols: string[], names: string[]): number {
   }
   return -1;
 }
+/** 詳細が汎用語(実際の分析項目名でない)のとき true → セクション名(検査項目)を採用する。 */
+const GENERIC_DETAIL = new Set(['所見', '像', 'コメント', '結果', '判定', '']);
+/**
+ * 納品 name の決定: 「検査項目詳細(分析項目名)」を優先し、詳細が汎用語/空ならセクション名。
+ * 詳細が左右など位置語のみなら「セクション+位置」で結合(左右重複の防止)。
+ *   例: 痛風/尿酸→尿酸, 肝炎/HBs抗原→HBs抗原, 白血球/尿中白血球→尿中白血球,
+ *       胸部X線/所見→胸部X線, 眼圧/右→眼圧右
+ */
+export function pickDeliveryName(section: string, detail: string): string | null {
+  const s = (section || '').trim();
+  const d = (detail || '').trim();
+  if (!d || d === '-' || GENERIC_DETAIL.has(d) || /撮影区分|所見/.test(d)) return s || null;
+  if (/^(右|左|両)$/.test(d)) return s ? `${s}${d}` : d;
+  return d;
+}
 function toMeasurements(regions: ScanRegionJson[]): ElithMeasurement[] {
   const out: ElithMeasurement[] = [];
   for (const r of regions) {
@@ -316,14 +331,14 @@ function toMeasurements(regions: ScanRegionJson[]): ElithMeasurement[] {
     };
     for (const row of r.rows) {
       const g = (i: number): string => (i >= 0 && i < row.cells.length ? row.cells[i] : '') || '';
-      const name = g(idx.name);
-      if (!name && !g(idx.value)) continue;
-      // 監査専用列 (No / 推論値) と category (版面レイアウト見出し=region 相当) は納品に含めない。
-      // bbox は regions 由来なので measurements には元々無い。
+      const section = g(idx.name);   // 検査項目 (見出し/分類のことがある)
+      const detail = g(idx.detail);  // 検査項目詳細 (実際の分析項目名のことが多い)
+      if (!section && !detail && !g(idx.value)) continue;
+      // 納品 name は分析項目名を優先 (痛風→尿酸 等)。詳細は監査用に name_detail に残す。
       out.push(
         tidyMeasurement({
-          name: name || null,
-          name_detail: g(idx.detail) || null,
+          name: pickDeliveryName(section, detail),
+          name_detail: detail || null,
           value: g(idx.value) || null,
           value_num: null,
           unit: g(idx.unit) || null,
