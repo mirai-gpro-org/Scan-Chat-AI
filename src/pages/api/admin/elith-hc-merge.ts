@@ -20,6 +20,7 @@ import {
 } from '../../../lib/elith-export';
 import { MODELS } from '../../../lib/gemini';
 import { getS3Config, isS3Configured, putFiles, type S3PutFile } from '../../../lib/s3';
+import { checkNecessity } from '../../../lib/elith-necessity-check';
 
 export const prerender = false;
 
@@ -181,16 +182,17 @@ export const POST: APIRoute = async ({ request }) => {
       raw_markdown: markdowns.join('\n\n---\n\n'),
     };
     const jsonBody = JSON.stringify(jsonObj, null, 2);
+    const necessity = checkNecessity(jsonObj); // 不要項目チェック(必要要素検証)
 
     if (!isS3Configured() || !cfg) {
-      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, preview: jsonObj });
+      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, necessity, preview: jsonObj });
     }
     try {
       const uploaded = await putFiles([{ key: json_key, contentType: 'application/json; charset=utf-8', body: jsonBody, bytes: utf8Bytes(jsonBody) }]);
       return json({
         ok: true, action: 'finalize', configured: true, bucket: cfg.bucket,
         client_id: clientId, format_id: 'HealthCheckupData', test_date: testDate,
-        part_count: parts.length, rows: measurements.length, json_key,
+        part_count: parts.length, rows: measurements.length, json_key, necessity,
         uri: uploaded[0]?.uri ?? null,
       });
     } catch (err) {
