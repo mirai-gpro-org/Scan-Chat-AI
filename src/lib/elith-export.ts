@@ -180,6 +180,116 @@ export function stripBboxComments(md: string): string {
     .join('\n');
 }
 
+// ── 納品用 lean 正規化 (Elith 要望 2026-07・全書き出し経路共通) ──────────────
+// 「元データはリッチで監査可能 → 決定論プログラムで lean 納品」。scan / hc-merge / batch /
+// assemble のどの経路でも同じ関数を通し、納品 measurements を統一する (二重管理しない)。
+
+/** 除外した測定値の記録 (納品物には含めない・監査用)。 */
+export interface MeasurementAnomaly {
+  name: string | null;
+  value: string | null;
+  value_num: number | null;
+  unit: string | null;
+  reason: string;
+}
+
+/** "-"/"" は null。それ以外は trim。 */
+export function normDeliveryStr(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  return s === '' || s === '-' ? null : s;
+}
+/** 表示値クリーン化: 矢印(↑↓)等の記号・空白を除去。"-"/"" は null。 */
+export function cleanDeliveryValue(v: unknown): string | null {
+  const raw = typeof v === 'string' ? v : v == null ? null : String(v);
+  if (raw == null) return null;
+  const s = raw.replace(/[↑↓⤴⤵➡→←]/g, '').trim();
+  return s === '' || s === '-' ? null : s;
+}
+/**
+ * 納品用 lean measurement を作る。
+ * 残す: name / value(クリーン) / value_num / unit / ref_low / ref_high / flag。
+ * 除去: region / no / inferred / name_detail / note / category / bbox / assessment。
+ * flag 未確定時は値の ↑/↓ を H/L として拾う (基準外の取りこぼし防止)。
+ */
+export function leanMeasurement(el: Record<string, unknown>): Record<string, unknown> {
+  const base = typeof el.inferred === 'string' ? el.inferred : el.value;
+  const rawStr = typeof base === 'string' ? base : base == null ? '' : String(base);
+  const value = cleanDeliveryValue(base);
+  const value_num =
+    typeof el.value_num === 'number' && Number.isFinite(el.value_num) ? el.value_num : toValueNum(value);
+  const flagRaw = typeof el.flag === 'string' ? el.flag.trim() : '';
+  let flag = flagRaw === 'H' || flagRaw === 'L' ? flagRaw : null;
+  if (!flag) {
+    if (/[↑⤴]/.test(rawStr)) flag = 'H';
+    else if (/[↓⤵]/.test(rawStr)) flag = 'L';
+  }
+  return {
+    name: typeof el.name === 'string' ? el.name : null,
+    value,
+    value_num,
+    unit: normDeliveryStr(el.unit),
+    ref_low: normDeliveryStr(el.ref_low),
+    ref_high: normDeliveryStr(el.ref_high),
+    flag,
+  };
+}
+/**
+ * 総合判定(A/B/C…)欄か (「項目別判定」欄はランク文字のみで測定値でない → 納品しない)。
+ * 条件: value が単独ランク文字(A〜E) かつ 数値/単位/基準値なし。
+ * 例外: 血液型(ABO/Rh)等 name に「型」を含む定性結果は残す ("A"/"B" が正当なため)。
+ */
+export function isJudgementSummaryRow(m: Record<string, unknown>): boolean {
+  const v = typeof m.value === 'string' ? m.value.trim() : '';
+  const name = typeof m.name === 'string' ? m.name : '';
+  if (/型|ABO|Rh|血液型/.test(name)) return false;
+  return /^[A-EＡ-Ｅ]$/.test(v) && m.value_num == null && m.unit == null && m.ref_low == null && m.ref_high == null;
+}
+/**
+ * 妥当性ガード (誤配信防止): 明らかに壊れた測定値の除外理由。null=正常。
+ *  - 単位が純数値 = 列ズレ疑い (例: HDL 行で unit="40")。
+ *  - 割合(%)が 0–100 の範囲外 = 物理的にあり得ない (例: 体脂肪率 105%)。
+ */
+export function measurementAnomalyReason(m: Record<string, unknown>): string | null {
+  const unit = typeof m.unit === 'string' ? m.unit.trim() : '';
+  const vn = typeof m.value_num === 'number' && Number.isFinite(m.value_num) ? m.value_num : null;
+  if (unit && /^\d+(\.\d+)?$/.test(unit)) return 'unit_is_numeric（列ズレ疑い）';
+  if (unit === '%' && vn != null && (vn < 0 || vn > 100)) return 'percent_out_of_range（0–100外）';
+  return null;
+}
+/**
+ * measurements[] を納品形へ正規化 (全書き出し経路共通)。
+ *  1) lean 化 (↑↓→flag・value_num 数値化)   2) 未測定(値なし)除外
+ *  3) 総合判定(A/B/C)欄 除外              4) 妥当性ガードで壊れた値を除外 (anomalies)
+ */
+export function sanitizeMeasurementsForDelivery(list: unknown): {
+  kept: Record<string, unknown>[];
+  anomalies: MeasurementAnomaly[];
+} {
+  const kept: Record<string, unknown>[] = [];
+  const anomalies: MeasurementAnomaly[] = [];
+  if (!Array.isArray(list)) return { kept, anomalies };
+  for (const el of list as Array<Record<string, unknown>>) {
+    if (!el || typeof el !== 'object') continue;
+    const m = leanMeasurement(el);
+    if (m.value == null && m.value_num == null) continue; // 未測定(値なし)は納品しない
+    if (isJudgementSummaryRow(m)) continue; // 総合判定(A/B/C)欄は測定値でない
+    const reason = measurementAnomalyReason(m);
+    if (reason) {
+      anomalies.push({
+        name: (m.name as string | null) ?? null,
+        value: (m.value as string | null) ?? null,
+        value_num: (m.value_num as number | null) ?? null,
+        unit: (m.unit as string | null) ?? null,
+        reason,
+      });
+      continue; // 壊れた値は納品しない
+    }
+    kept.push(m);
+  }
+  return { kept, anomalies };
+}
+
 function pickCol(cols: string[], names: string[]): number {
   for (const n of names) {
     const i = cols.indexOf(n);
@@ -392,8 +502,9 @@ export async function buildElithScanBundle(input: ElithScanInput): Promise<Elith
       finish_reason: finishReason,
     },
     // 納品 data は共通 measurements[] + notes のみ。版面座標 (regions/bbox) は含めない (§7.1)。
+    // 書き出し時点で lean 正規化 (↑↓→flag/value_num・空行/総合判定欄 除外・妥当性ガード)。
     data: {
-      measurements: toMeasurements(regions),
+      measurements: sanitizeMeasurementsForDelivery(toMeasurements(regions)).kept,
       notes: collectNotes(regions),
     },
     raw_markdown: stripBboxComments(stripExamComment(markdown)),

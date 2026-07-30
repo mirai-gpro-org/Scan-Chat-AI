@@ -107,6 +107,19 @@
   - `client_id` = `diagnostic_user_id` (PII 非含有)。必要データが揃った時点で一括書き出し。
 - S3 既定: バケット `wellfort-ai-input` / prefix は用途による (`src/lib/s3.ts`)。
 
+### スキャン読取の共通ルール (検査票 → JSON)
+- **時系列列は「今回」のみ採用**: 検査票に「今回/前回/前々回」や受診日付きの複数回分が
+  並ぶ場合、**"今回"(最新回) の値だけを採用し、前回・前々回以前は捨てる**。今回が空欄なら
+  その項目の今回値は空 (前回値を繰り上げない)。**検診・人間ドックに限らず血液・がん・遺伝子等
+  全検査票で共通**。実装: `src/lib/scan-prompt.ts`【時系列列の扱い】。
+- **納品整形は決定論プログラムに集約**: `src/lib/elith-export.ts` の
+  `sanitizeMeasurementsForDelivery()` が唯一の正規化本体 (lean化 / ↑↓→flag・value_num数値化 /
+  空白(未実施)行 除外 / 総合判定(A/B/C)欄 除外[血液型ABO/Rhは例外] / 妥当性ガード)。
+  **scan(`buildElithScanBundle`) と hc-merge finalize の書き出し時点**、および assemble
+  (`sanitizeDelivery`) の全経路で同関数を通す (二重管理しない)。LLM に判定・整形はさせない。
+  - 理由: 方式Aバッチ/assemble未実行の経路では**生スキャン出力がそのまま Elith 納品**になり得るため、
+    整形は「書き出し時点」に置く (assemble任せにしない)。監査は raw_markdown + 元画像(S3) に保持。
+
 ### 検査種別ごとの本番処理 (役割分担)
 根拠: `docs/elith_batch_centralization_design.md`
 - 検診・人間ドック (`HealthCheckupData`) … **ユーザーがアプリでAIスキャン**

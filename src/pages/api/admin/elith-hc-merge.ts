@@ -16,6 +16,7 @@ import {
   scanImageToParsed,
   extFromMime,
   ELITH_HANDOFF_SCHEMA_VERSION,
+  sanitizeMeasurementsForDelivery,
   type ParsedScan,
 } from '../../../lib/elith-export';
 import { MODELS } from '../../../lib/gemini';
@@ -146,14 +147,17 @@ export const POST: APIRoute = async ({ request }) => {
     const parts = Array.isArray(body.parts) ? (body.parts as Array<Record<string, unknown>>) : [];
     if (parts.length === 0) return json({ ok: false, error: 'parts is required for finalize' }, 400);
 
-    const measurements: unknown[] = [];
+    const rawMeasurements: unknown[] = [];
     const notes: string[] = [];
     const markdowns: string[] = [];
     for (const p of parts) {
-      if (Array.isArray(p.measurements)) measurements.push(...p.measurements);
+      if (Array.isArray(p.measurements)) rawMeasurements.push(...p.measurements);
       if (Array.isArray(p.notes)) notes.push(...(p.notes as string[]));
       if (typeof p.raw_markdown === 'string' && p.raw_markdown.trim()) markdowns.push(p.raw_markdown);
     }
+    // 書き出し時点で lean 正規化 (↑↓→flag/value_num・空行/総合判定欄 除外・妥当性ガード)。
+    // 監査は raw_markdown + 元画像(S3) に保持。全マージ分をまとめて 1 回で正規化する。
+    const measurements = sanitizeMeasurementsForDelivery(rawMeasurements).kept;
     const sourceFiles = Array.isArray(body.sourceFiles) ? (body.sourceFiles as unknown[]).filter((x): x is string => typeof x === 'string') : [];
 
     const { folder, stem } = folderOf(prefix, clientId, testDate);
