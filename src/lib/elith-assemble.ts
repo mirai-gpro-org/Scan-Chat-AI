@@ -284,11 +284,17 @@ function cleanDeliveryValue(v: unknown): string | null {
  */
 function leanMeasurement(el: Record<string, unknown>): Record<string, unknown> {
   const base = typeof el.inferred === 'string' ? el.inferred : el.value;
+  const rawStr = typeof base === 'string' ? base : base == null ? '' : String(base);
   const value = cleanDeliveryValue(base);
   const value_num =
     typeof el.value_num === 'number' && Number.isFinite(el.value_num) ? el.value_num : toValueNum(value);
   const flagRaw = typeof el.flag === 'string' ? el.flag.trim() : '';
-  const flag = flagRaw === 'H' || flagRaw === 'L' ? flagRaw : null;
+  let flag = flagRaw === 'H' || flagRaw === 'L' ? flagRaw : null;
+  // flag 未確定時、値に付いた基準外マーカ(↑/↓)を H/L として拾う (基準外の取りこぼし防止)。
+  if (!flag) {
+    if (/[↑⤴]/.test(rawStr)) flag = 'H';
+    else if (/[↓⤵]/.test(rawStr)) flag = 'L';
+  }
   return {
     name: typeof el.name === 'string' ? el.name : null,
     value,
@@ -298,6 +304,18 @@ function leanMeasurement(el: Record<string, unknown>): Record<string, unknown> {
     ref_high: normDeliveryStr(el.ref_high),
     flag,
   };
+}
+
+/**
+ * 総合判定(A/B/C…)欄か。検査票の「項目別判定」欄はランク文字のみで測定値ではないため納品しない。
+ * 条件: value が単独ランク文字(A〜E) かつ 数値なし・単位なし・基準値なし。
+ * 例外: 血液型(ABO/Rh)など name に「型」を含む定性結果は残す(値 "A"/"B" が正当なため)。
+ */
+function isJudgementSummaryRow(m: Record<string, unknown>): boolean {
+  const v = typeof m.value === 'string' ? m.value.trim() : '';
+  const name = typeof m.name === 'string' ? m.name : '';
+  if (/型|ABO|Rh|血液型/.test(name)) return false;
+  return /^[A-EＡ-Ｅ]$/.test(v) && m.value_num == null && m.unit == null && m.ref_low == null && m.ref_high == null;
 }
 
 /**
@@ -330,6 +348,7 @@ function sanitizeDelivery(obj: Record<string, unknown>): MeasurementAnomaly[] {
         if (!el || typeof el !== 'object') continue;
         const m = leanMeasurement(el);
         if (m.value == null && m.value_num == null) continue; // 未測定(値なし)は納品しない
+        if (isJudgementSummaryRow(m)) continue; // 総合判定(A/B/C)欄は測定値でない → 納品しない
         const reason = measurementAnomalyReason(m);
         if (reason) {
           anomalies.push({
