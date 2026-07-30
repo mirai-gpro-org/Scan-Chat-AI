@@ -141,6 +141,14 @@ export interface HealthAgeRecord {
   model_version: string | null;
 }
 
+/** 妥当性ガードで納品から除外した項目 (誤配信防止・監査用。納品物には含めない)。 */
+export interface MeasurementAnomaly {
+  name: string | null;
+  value: string | null;
+  value_num: number | null;
+  unit: string | null;
+  reason: string;
+}
 export interface AssembledUserSource {
   formatId: string; // ElithFormatId または 'HealthAgeData' (生成)
   sourceKey: string;
@@ -151,6 +159,8 @@ export interface AssembledUserSource {
   newKey: string;
   /** コピー元 JSON の実データ件数 (0 = 空データ。-1 = パース不能)。 */
   dataItems: number;
+  /** 妥当性ガードで除外した項目 (あれば)。納品物には出さず結果でのみ可視化。 */
+  anomalies?: MeasurementAnomaly[];
 }
 export interface AssembledUser {
   userId: string;
@@ -290,18 +300,50 @@ function leanMeasurement(el: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
-function sanitizeDelivery(obj: Record<string, unknown>): void {
+/**
+ * 妥当性ガード（Phase 3・誤配信防止）: 明らかに壊れた測定値の除外理由を返す。null=正常。
+ *  - 単位が純数値 = 列ズレ疑い（例: HDL行で unit="40"）。
+ *  - 割合(%)が 0–100 の範囲外 = 物理的にあり得ない（例: 体脂肪率 105%）。
+ */
+function measurementAnomalyReason(m: Record<string, unknown>): string | null {
+  const unit = typeof m.unit === 'string' ? m.unit.trim() : '';
+  const vn = typeof m.value_num === 'number' && Number.isFinite(m.value_num) ? m.value_num : null;
+  if (unit && /^\d+(\.\d+)?$/.test(unit)) return 'unit_is_numeric（列ズレ疑い）';
+  if (unit === '%' && vn != null && (vn < 0 || vn > 100)) return 'percent_out_of_range（0–100外）';
+  return null;
+}
+
+/**
+ * 納品用サニタイズ + 妥当性ガード。除外した測定値(anomalies)を返す（納品物には含めない）。
+ */
+function sanitizeDelivery(obj: Record<string, unknown>): MeasurementAnomaly[] {
   const fmt = typeof obj.format_id === 'string' ? obj.format_id : '';
+  const anomalies: MeasurementAnomaly[] = [];
   const data = obj.data;
   if (data && typeof data === 'object') {
     const d = data as Record<string, unknown>;
     delete d.regions;
-    // measurement系: lean 化 (不要フィールド除去・値クリーン) + 未測定(値なし)項目を除外。
+    // measurement系: lean 化 → 未測定除外 → 妥当性ガードで壊れた値を除外。
     if (Array.isArray(d.measurements)) {
-      d.measurements = (d.measurements as Array<Record<string, unknown>>)
-        .filter((el) => el && typeof el === 'object')
-        .map((el) => leanMeasurement(el as Record<string, unknown>))
-        .filter((m) => m.value != null || m.value_num != null);
+      const kept: Record<string, unknown>[] = [];
+      for (const el of d.measurements as Array<Record<string, unknown>>) {
+        if (!el || typeof el !== 'object') continue;
+        const m = leanMeasurement(el);
+        if (m.value == null && m.value_num == null) continue; // 未測定(値なし)は納品しない
+        const reason = measurementAnomalyReason(m);
+        if (reason) {
+          anomalies.push({
+            name: (m.name as string | null) ?? null,
+            value: (m.value as string | null) ?? null,
+            value_num: (m.value_num as number | null) ?? null,
+            unit: (m.unit as string | null) ?? null,
+            reason,
+          });
+          continue; // 誤配信防止: 壊れた値は納品しない
+        }
+        kept.push(m);
+      }
+      d.measurements = kept;
     }
     // 遺伝子等 items: 版面情報のみ除去 (lean はしない=構造が別)。
     if (Array.isArray(d.items)) {
@@ -319,20 +361,21 @@ function sanitizeDelivery(obj: Record<string, unknown>): void {
   //   Elith は未使用。監査/トレース情報は我々側(元ソースS3 + assemble の sources[] マニフェスト)に残す。
   delete obj.raw_markdown;
   delete obj.assembled_from;
+  return anomalies;
 }
 
 /** JSON テキストの client_id を new へ書き換え + 納品用サニタイズ (パース失敗時は素の置換にフォールバック)。 */
-function rewriteClientId(jsonText: string, newId: string, sourceKey: string): string {
+function rewriteClientId(jsonText: string, newId: string, sourceKey: string): { text: string; anomalies: MeasurementAnomaly[] } {
   try {
     const obj = JSON.parse(jsonText) as Record<string, unknown>;
     obj.client_id = newId;
     // Elith 要望(2026-07): 納品物に監査メタ(assembled_from)を載せない。
     // トレース(元 sourceKey → 納品 newKey)は assemble の戻り値 sources[] に保持する。
     void sourceKey;
-    sanitizeDelivery(obj); // 納品物から raw_markdown/assembled_from/bbox/region を除去
-    return JSON.stringify(obj, null, 2);
+    const anomalies = sanitizeDelivery(obj); // lean化/監査メタ除去 + 妥当性ガード
+    return { text: JSON.stringify(obj, null, 2), anomalies };
   } catch {
-    return jsonText;
+    return { text: jsonText, anomalies: [] };
   }
 }
 
@@ -454,20 +497,20 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
         for (const s of series) {
           const text = await fetchText(s.key);
           const dataItems = countDataItems(text);
-          const rewritten = rewriteClientId(text, p.userId, s.key);
+          const { text: rewritten, anomalies } = rewriteClientId(text, p.userId, s.key);
           const bd = /^\d{4}_\d{2}_\d{2}$/.test(s.date) ? s.date : bundleDate;
           const newKey = `${deliveryPrefix}user/${p.userId}/date/${bd}/${f}_date_${bd}_user_${p.userId}.json`;
           files.push({ key: newKey, contentType: 'application/json; charset=utf-8', body: rewritten, bytes: utf8Bytes(rewritten) });
-          sources.push({ formatId: f, sourceKey: s.key, sourceDate: s.date, deliveredDate: bd, newKey, dataItems });
+          sources.push({ formatId: f, sourceKey: s.key, sourceDate: s.date, deliveredDate: bd, newKey, dataItems, ...(anomalies.length ? { anomalies } : {}) });
         }
       } else {
         // 単発 format (遺伝子/問診): 最新1件を統一日付へ。JSON 内の test_date は原本のまま。
         const text = await fetchText(item.key);
         const dataItems = countDataItems(text);
-        const rewritten = rewriteClientId(text, p.userId, item.key);
+        const { text: rewritten, anomalies } = rewriteClientId(text, p.userId, item.key);
         const newKey = `${deliveryPrefix}user/${p.userId}/date/${bundleDate}/${f}_date_${bundleDate}_user_${p.userId}.json`;
         files.push({ key: newKey, contentType: 'application/json; charset=utf-8', body: rewritten, bytes: utf8Bytes(rewritten) });
-        sources.push({ formatId: f, sourceKey: item.key, sourceDate: item.date, deliveredDate: bundleDate, newKey, dataItems });
+        sources.push({ formatId: f, sourceKey: item.key, sourceDate: item.date, deliveredDate: bundleDate, newKey, dataItems, ...(anomalies.length ? { anomalies } : {}) });
       }
     }
 
