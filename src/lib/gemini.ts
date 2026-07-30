@@ -52,6 +52,12 @@ export interface GeminiGenerationConfig {
   maxOutputTokens?: number;
   responseMimeType?: string;
   /**
+   * 構造化出力スキーマ (responseMimeType:'application/json' と併用)。
+   * OpenAPI サブセット (type/properties/items/enum/nullable)。3.x でもそのまま透過する
+   * (normalizeGenerationConfigForModel は temperature/topP/topK のみ除去し、これは ...rest で保持)。
+   */
+  responseSchema?: unknown;
+  /**
    * Thinking 制御。
    *  - Gemini 2.x: `thinkingBudget` (token 数。0 で thinking 停止)。
    *  - Gemini 3.x: `thinkingLevel` ('low' | 'high')。thinkingBudget は非対応。

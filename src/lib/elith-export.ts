@@ -12,12 +12,15 @@
  * サーバ専用 (GEMINI_API_KEY を読むため、クライアントから呼ばない)。
  */
 
-import { callGemini, MODELS, extractText } from './gemini';
+import { callGemini, MODELS, extractText, stripJsonCodeFence } from './gemini';
 import {
   ANALYZE_SYSTEM,
   SCAN_GENERATION_CONFIG,
   buildScanUserText,
   EXAM_DATE_INSTRUCTION,
+  ANALYZE_SYSTEM_JSON,
+  SCAN_JSON_GENERATION_CONFIG,
+  buildScanUserTextJson,
 } from './scan-prompt';
 import { parseScanRegions, type ScanRegionJson } from './scan-export';
 import type { S3PutFile } from './s3';
@@ -50,6 +53,14 @@ export function getGeminiApiKey(): string | undefined {
 }
 export function isGeminiConfigured(): boolean {
   return !!getGeminiApiKey();
+}
+/**
+ * スキャン出力形式。'json' で responseSchema 構造化出力、既定 'markdown' で従来の GFM 表経路。
+ * env `SCAN_OUTPUT_FORMAT=json` で切替 (Vercel・再デプロイ要)。未検証のうちは既定 markdown のまま
+ * にしておき、代表ページで 🎯 ゴールデン照合の回帰ゼロを確認してから json へ寄せる (Phase 2)。
+ */
+export function scanOutputFormat(): 'json' | 'markdown' {
+  return env('SCAN_OUTPUT_FORMAT') === 'json' ? 'json' : 'markdown';
 }
 
 // ── MIME / 拡張子 ───────────────────────────────────────────────
@@ -259,8 +270,29 @@ export function measurementAnomalyReason(m: Record<string, unknown>): string | n
   if (unit === '%' && vn != null && (vn < 0 || vn > 100)) return 'percent_out_of_range（0–100外）';
   return null;
 }
+// 定性結果の列取り違えサルベージ (Phase 0・決定論・名称スコープ限定)。
+//   免疫便潜血反応 は run により結果 "(-)" が基準列(ref_high)へ吸われ value 空→納品脱落する
+//   (2026-07 実測・非決定)。value 空のときだけ、括弧付き定性記号 (-)/(+)/(±) や 陰性/陽性 を
+//   ref_high/ref_low/note から value へ移送する。**便潜血系のみ**に限定 (他項目の「基準=(-)」を
+//   結果として拾わないため。血清PR/TP抗体等の未実施行を誤って埋めない)。
+const FECAL_OCCULT_NAME = /便潜血/;
+const QUAL_RESULT_TOKEN = /^[(（]\s*[-+±]\s*[)）]$|^(陰性|陽性)$/;
+export function salvageQualitativeResult(el: Record<string, unknown>): Record<string, unknown> {
+  const name = typeof el.name === 'string' ? el.name : '';
+  if (!FECAL_OCCULT_NAME.test(name)) return el;
+  const base = typeof el.inferred === 'string' ? el.inferred : el.value;
+  if (cleanDeliveryValue(base) != null) return el; // 既に value がある
+  for (const key of ['ref_high', 'ref_low', 'note'] as const) {
+    const c = typeof el[key] === 'string' ? (el[key] as string).trim() : '';
+    if (QUAL_RESULT_TOKEN.test(c)) {
+      return { ...el, value: c, [key]: null };
+    }
+  }
+  return el;
+}
 /**
  * measurements[] を納品形へ正規化 (全書き出し経路共通)。
+ *  0) 定性結果の列取り違えサルベージ (便潜血系のみ)
  *  1) lean 化 (↑↓→flag・value_num 数値化)   2) 未測定(値なし)除外
  *  3) 総合判定(A/B/C)欄 除外              4) 妥当性ガードで壊れた値を除外 (anomalies)
  */
@@ -271,8 +303,9 @@ export function sanitizeMeasurementsForDelivery(list: unknown): {
   const kept: Record<string, unknown>[] = [];
   const anomalies: MeasurementAnomaly[] = [];
   if (!Array.isArray(list)) return { kept, anomalies };
-  for (const el of list as Array<Record<string, unknown>>) {
-    if (!el || typeof el !== 'object') continue;
+  for (const el0 of list as Array<Record<string, unknown>>) {
+    if (!el0 || typeof el0 !== 'object') continue;
+    const el = salvageQualitativeResult(el0);
     const m = leanMeasurement(el);
     if (m.value == null && m.value_num == null) continue; // 未測定(値なし)は納品しない
     if (isJudgementSummaryRow(m)) continue; // 総合判定(A/B/C)欄は測定値でない
@@ -385,6 +418,135 @@ async function scanImage(
   return { markdown: extractText(res), finishReason: res.candidates?.[0]?.finishReason ?? null };
 }
 
+// ── Gemini スキャン (1 画像・構造化 JSON / responseSchema) ───────────
+// Phase 2: Markdown 表を経由せず responseSchema で直接 rows を返させる (列帰属の構造固定)。
+const SCAN_TABLE_COLUMNS = [
+  'No', '検査項目', '検査項目詳細', '読み取った値', '推論値', '単位', '下限値', '上限値', '判定', '備考',
+] as const;
+
+interface ScanJsonRow {
+  item?: string; detail?: string; value?: string; inferred?: string;
+  unit?: string; ref_low?: string; ref_high?: string; flag?: string; note?: string;
+  anchor_confidence?: string;
+}
+interface ScanJsonRegion { title?: string; type?: string; rows?: ScanJsonRow[]; notes?: string[]; }
+interface ScanJsonResult { exam_date?: string | null; regions?: ScanJsonRegion[]; }
+
+/** 構造化 JSON の regions を、Markdown 経路と同一の ScanRegionJson[] へ写像 (toMeasurements 共用のため)。 */
+function jsonToRegions(parsed: ScanJsonResult): ScanRegionJson[] {
+  const out: ScanRegionJson[] = [];
+  const regions = Array.isArray(parsed.regions) ? parsed.regions : [];
+  regions.forEach((rg, index) => {
+    const label = typeof rg.title === 'string' ? rg.title : `領域${index + 1}`;
+    if (rg.type === 'notes') {
+      const notes = Array.isArray(rg.notes) ? rg.notes.filter((n) => typeof n === 'string' && n.trim()) : [];
+      out.push({ index, label, bbox: null, type: 'notes', notes });
+      return;
+    }
+    // table (既定): 10 列に整列した cells/by_column を作る。空欄は "-" (Markdown 経路と同一挙動)。
+    const rows = (Array.isArray(rg.rows) ? rg.rows : []).map((r) => {
+      const s = (v: unknown): string => (typeof v === 'string' && v.trim() ? v.trim() : '-');
+      const cells = [
+        '-', s(r.item), s(r.detail), s(r.value), s(r.inferred), s(r.unit), s(r.ref_low), s(r.ref_high), s(r.flag), s(r.note),
+      ];
+      const by_column: Record<string, string> = {};
+      SCAN_TABLE_COLUMNS.forEach((c, i) => { by_column[c] = cells[i]; });
+      return { by_column, cells };
+    });
+    out.push({ index, label, bbox: null, type: 'table', columns: [...SCAN_TABLE_COLUMNS], rows });
+  });
+  return out;
+}
+
+async function scanImageJson(
+  apiKey: string,
+  imageBase64: string,
+  mimeType: string,
+  hint?: string | null,
+): Promise<{ parsed: ScanJsonResult; raw: string; finishReason: string | null }> {
+  const res = await callGemini(
+    apiKey,
+    {
+      systemInstruction: { parts: [{ text: ANALYZE_SYSTEM_JSON }] },
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { inline_data: { mime_type: mimeType, data: imageBase64 } },
+            { text: buildScanUserTextJson(hint) },
+          ],
+        },
+      ],
+      generationConfig: { ...SCAN_JSON_GENERATION_CONFIG },
+    },
+    MODELS.scan,
+  );
+  const finishReason = res.candidates?.[0]?.finishReason ?? null;
+  const raw = stripJsonCodeFence(extractText(res));
+  if (!raw.trim()) throw new Error(`empty scan result (finishReason=${finishReason})`);
+  let parsed: ScanJsonResult;
+  try {
+    parsed = JSON.parse(raw) as ScanJsonResult;
+  } catch {
+    throw new Error(`scan returned non-JSON (finishReason=${finishReason}): ${raw.slice(0, 200)}`);
+  }
+  return { parsed, raw, finishReason };
+}
+
+/** exam_date フィールドの正規化 (YYYY-MM-DD のみ採用)。 */
+function normalizeSchemaExamDate(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const m = /(\d{4})[-/年.](\d{1,2})[-/月.](\d{1,2})/.exec(v.trim());
+  return m ? isoDate(m[1], m[2], m[3]) : null;
+}
+
+/**
+ * スキャン取得の統一入口。env で Markdown / JSON を切替え、両経路とも
+ * 「監査用 raw・regions・measurements・notes・(schema由来)検査日」を同じ形で返す。
+ * これにより scanImageToParsed / buildElithScanBundle は取得形式を意識せず共用できる。
+ */
+interface ScanArtifacts {
+  rawFull: string;       // 検査日抽出用 (Markdown はコメント込み全文 / JSON は生JSON)
+  cleanedRaw: string;    // 納品 raw_markdown 用 (bbox/exam コメント除去済)
+  finishReason: string | null;
+  regions: ScanRegionJson[];
+  measurements: ElithMeasurement[];
+  notes: string[];
+  examDateFromScan: string | null; // JSON の exam_date (Markdown 経路は null → 本文抽出に委ねる)
+}
+async function scanArtifacts(
+  apiKey: string,
+  imageBase64: string,
+  mimeType: string,
+  hint?: string | null,
+): Promise<ScanArtifacts> {
+  if (scanOutputFormat() === 'json') {
+    const { parsed, raw, finishReason } = await scanImageJson(apiKey, imageBase64, mimeType, hint);
+    const regions = jsonToRegions(parsed);
+    return {
+      rawFull: raw,
+      cleanedRaw: raw,
+      finishReason,
+      regions,
+      measurements: toMeasurements(regions),
+      notes: collectNotes(regions),
+      examDateFromScan: normalizeSchemaExamDate(parsed.exam_date),
+    };
+  }
+  const { markdown, finishReason } = await scanImage(apiKey, imageBase64, mimeType, hint);
+  if (!markdown.trim()) throw new Error(`empty scan result (finishReason=${finishReason})`);
+  const regions = parseScanRegions(markdown);
+  return {
+    rawFull: markdown,
+    cleanedRaw: stripBboxComments(stripExamComment(markdown)),
+    finishReason,
+    regions,
+    measurements: toMeasurements(regions),
+    notes: collectNotes(regions),
+    examDateFromScan: null,
+  };
+}
+
 // ── 1 画像スキャン → 解析結果 (S3 書き込みなし) ──────────────────
 // 複数画像を 1 検査へマージする用途 (人間ドック複数シート)。呼び出し側で連番画像を書き、
 // 全 part の measurements/regions/notes をマージして 1 つの JSON を書き出す。
@@ -410,25 +572,25 @@ export async function scanImageToParsed(input: {
   if (!apiKey) throw new Error('GEMINI_API_KEY is not configured (server env)');
   if (!isSupportedMime(input.mimeType)) throw new Error(`unsupported mime: ${input.mimeType}`);
 
-  const { markdown, finishReason } = await scanImage(apiKey, input.imageBase64, input.mimeType, input.hint);
-  if (!markdown.trim()) throw new Error(`empty scan result (finishReason=${finishReason})`);
+  const a = await scanArtifacts(apiKey, input.imageBase64, input.mimeType, input.hint);
 
   const todayIso = input.today || jstTodayIso();
   const provided = input.examDate && /^\d{4}-\d{2}-\d{2}$/.test(input.examDate) ? input.examDate : null;
   const { date: testDate, source: dateSource } = provided
     ? { date: provided, source: 'provided' }
-    : extractExamDate(markdown, todayIso);
+    : a.examDateFromScan
+      ? { date: a.examDateFromScan, source: 'exam_date' }
+      : extractExamDate(a.rawFull, todayIso);
 
-  const regions = parseScanRegions(markdown);
   return {
     // 納品用 raw_markdown は版面座標 (bbox) を含めない。regions(bbox付) は内部 (レビュー) 用に別途返す。
-    markdown: stripBboxComments(stripExamComment(markdown)),
-    finishReason,
+    markdown: a.cleanedRaw,
+    finishReason: a.finishReason,
     testDate,
     dateSource,
-    measurements: toMeasurements(regions),
-    regions,
-    notes: collectNotes(regions),
+    measurements: a.measurements,
+    regions: a.regions,
+    notes: a.notes,
   };
 }
 
@@ -480,8 +642,8 @@ export async function buildElithScanBundle(input: ElithScanInput): Promise<Elith
   if (!apiKey) throw new Error('GEMINI_API_KEY is not configured (server env)');
   if (!isSupportedMime(input.mimeType)) throw new Error(`unsupported mime: ${input.mimeType}`);
 
-  const { markdown, finishReason } = await scanImage(apiKey, input.imageBase64, input.mimeType, input.hint);
-  if (!markdown.trim()) throw new Error(`empty scan result (finishReason=${finishReason})`);
+  const a = await scanArtifacts(apiKey, input.imageBase64, input.mimeType, input.hint);
+  const finishReason = a.finishReason;
 
   const todayIso = input.today || jstTodayIso();
   let testDate: string;
@@ -490,14 +652,16 @@ export async function buildElithScanBundle(input: ElithScanInput): Promise<Elith
   if (provided) {
     testDate = provided;
     dateSource = 'provided';
+  } else if (a.examDateFromScan) {
+    testDate = a.examDateFromScan;
+    dateSource = 'exam_date';
   } else {
-    const ex = extractExamDate(markdown, todayIso);
+    const ex = extractExamDate(a.rawFull, todayIso);
     testDate = ex.date;
     dateSource = ex.source;
   }
   const dateFolder = testDate.replace(/-/g, '_');
 
-  const regions = parseScanRegions(markdown);
   const diagnosticId = input.diagnosticId || randomUuid();
   const json = {
     format_id: input.formatId,
@@ -521,10 +685,10 @@ export async function buildElithScanBundle(input: ElithScanInput): Promise<Elith
     // 納品 data は共通 measurements[] + notes のみ。版面座標 (regions/bbox) は含めない (§7.1)。
     // 書き出し時点で lean 正規化 (↑↓→flag/value_num・空行/総合判定欄 除外・妥当性ガード)。
     data: {
-      measurements: sanitizeMeasurementsForDelivery(toMeasurements(regions)).kept,
-      notes: collectNotes(regions),
+      measurements: sanitizeMeasurementsForDelivery(a.measurements).kept,
+      notes: a.notes,
     },
-    raw_markdown: stripBboxComments(stripExamComment(markdown)),
+    raw_markdown: a.cleanedRaw,
   };
 
   const prefix = input.prefix ? input.prefix.replace(/^\/+/, '').replace(/\/*$/, '/') : '';
@@ -551,7 +715,7 @@ export async function buildElithScanBundle(input: ElithScanInput): Promise<Elith
     jsonKey,
     imageKey,
     json,
-    markdown,
+    markdown: a.cleanedRaw,
     finishReason,
     files,
   };
