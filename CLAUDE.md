@@ -55,6 +55,12 @@
       全スキャン (検診/がん/血液image/遺伝子) が失敗する → その場合は env で 2.5 に戻す。
     - スキャン精度は **検診 numeric → 健康年齢 (CABA)** に直結。モデル切替時は代表ページで再検証すること。
   - Live (AI問診): 既定 `gemini-3.1-flash-live-preview` (REST 非対応の専用プレビュー)。`GEMINI_LIVE_MODEL` で追従。
+  - **スキャン出力形式 `SCAN_OUTPUT_FORMAT` (既定 `markdown`)**: `json` で **responseSchema 構造化出力** 経路に切替
+    (Phase 2)。Markdown 表は列帰属が自由すぎ定性記号 `(-)` が run 毎に基準列へ吸われる (Semantic Tie) ため、
+    value/ref_high をフィールドで固定して列ズレを構造的に断つ狙い。Gemini/ChatGPT 両者の一致見解 (2026-07)。
+    **未検証のうちは既定 `markdown` のまま**。代表ページで 🎯ゴールデン照合の回帰ゼロを確認してから `json` へ寄せる。
+    プロンプト/スキーマは `src/lib/scan-prompt.ts` の `ANALYZE_SYSTEM_JSON` / `SCAN_RESPONSE_SCHEMA`。読取ルール
+    (今回のみ・推論値隔離・総合判定除外・疎ページ) は Markdown 版と同一。両経路とも `toMeasurements` 以降を共用。
   - **Gemini 3.x の生成設定差は `callGemini` が自動吸収**: 呼び出し側は 2.x 形式 (`thinkingBudget`・`temperature`) の
     まま書けばよい。3.x 指定時のみ `temperature/topP/topK` を除去 (既定推奨) し `thinkingBudget→thinkingLevel` へ変換。
 - したがって **ローカル端末での CLI 直実行は不可** (キーを読めない)。
@@ -122,6 +128,10 @@
   (`sanitizeDelivery`) の全経路で同関数を通す (二重管理しない)。LLM に判定・整形はさせない。
   - 理由: 方式Aバッチ/assemble未実行の経路では**生スキャン出力がそのまま Elith 納品**になり得るため、
     整形は「書き出し時点」に置く (assemble任せにしない)。監査は raw_markdown + 元画像(S3) に保持。
+  - **定性結果の列サルベージ (Phase 0)**: `salvageQualitativeResult()` が `sanitizeMeasurementsForDelivery` 冒頭で、
+    **免疫便潜血系のみ** value 空時に括弧付き定性記号 `(-)`/`(+)` を ref_high/ref_low/note から value へ移送する
+    (便潜血の結果 `(-)` が基準列へ吸われ脱落する非決定バグの保険)。他項目は「基準=(-)」を結果と誤読しないよう
+    **名称スコープ限定** (血清PR/TP抗体等の未実施行を埋めない)。恒久対処は `SCAN_OUTPUT_FORMAT=json` (Phase 2)。
 
 ### 検査種別ごとの本番処理 (役割分担)
 根拠: `docs/elith_batch_centralization_design.md`

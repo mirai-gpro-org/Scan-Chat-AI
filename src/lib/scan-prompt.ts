@@ -252,6 +252,149 @@ export const SCAN_GENERATION_CONFIG = {
   thinkingConfig: { thinkingBudget: 2048 },
 } as const;
 
+// ════════════════════════════════════════════════════════════════════
+// 構造化出力 (responseSchema / JSON mode) — Phase 2
+// ────────────────────────────────────────────────────────────────────
+// 背景: Markdown 表は「列帰属が自由すぎ」、定性記号 (-) が run 毎に隣接列 (上限値=基準) へ
+//   吸い込まれる (Semantic Tie)。responseSchema で value/ref_high を別フィールドに固定すると
+//   列ズレが構造的に激減する (Gemini/ChatGPT 両者の一致見解 2026-07)。
+// 方針: Markdown 経路は温存し、env SCAN_OUTPUT_FORMAT=json のときだけ本経路を使う (既定 markdown)。
+//   読取ルール (今回のみ・推論値隔離・定性=結果列・総合判定除外・疎ページ) は Markdown 版と同一。
+// ════════════════════════════════════════════════════════════════════
+
+/**
+ * スキャン構造化出力スキーマ (Gemini responseSchema)。
+ * Markdown の 10 列と 1:1 対応する行オブジェクトを、領域 (regions) ごとに配列で返させる。
+ * → 後段は Markdown 経路と同じ ScanRegionJson へ写像し、toMeasurements 以降を完全共用する。
+ */
+export const SCAN_RESPONSE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    exam_date: {
+      type: 'STRING',
+      nullable: true,
+      description: '検査日/採取日/受診日/報告日 (YYYY-MM-DD)。読み取れなければ null。',
+    },
+    regions: {
+      type: 'ARRAY',
+      description: '紙面を物理レイアウト (左右/上下/印字vs手書き) で分けた領域 (最大4)。',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          title: { type: 'STRING', description: '領域見出し (例: 左側検査表 / 右側手書きメモ)。' },
+          type: { type: 'STRING', enum: ['table', 'notes'], description: '印字表=table / 手書きメモ=notes。' },
+          rows: {
+            type: 'ARRAY',
+            description: 'type=table のときの各データ行 (紙面1行=1要素)。',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                item: { type: 'STRING', description: '検査項目 (見出し/分類のことがある)。' },
+                detail: { type: 'STRING', description: '検査項目詳細 (実際の分析項目名)。無ければ "-"。' },
+                value: {
+                  type: 'STRING',
+                  description:
+                    '「今回」列の読み取った値 (紙面の文字通り)。定性の結果 (陰性(-)/陽性(+)/0 等) もここに入れる。未実施 (今回欄が空) は "-"。',
+                },
+                inferred: { type: 'STRING', description: '医学知識による推論値 (OCRと分離)。整合すれば value と同じ。' },
+                unit: { type: 'STRING', description: '単位のみ (数値を入れない)。無ければ "-"。' },
+                ref_low: { type: 'STRING', description: '基準値の下限のみ。結果記号を入れない。無ければ "-"。' },
+                ref_high: { type: 'STRING', description: '基準値の上限のみ (陰性基準 (-) 等の“基準表記”はここ。結果ではない)。無ければ "-"。' },
+                flag: { type: 'STRING', description: '判定 H/L/-。基準外なら H か L、範囲内は "-"。' },
+                note: { type: 'STRING', description: '監査メモ。該当あれば "【要確認】理由"、無ければ "-"。' },
+                anchor_confidence: {
+                  type: 'STRING',
+                  enum: ['high', 'medium', 'low'],
+                  description: 'この行のセル所属 (どの列の値か) の自信度。迷えば low/medium。',
+                },
+              },
+              required: ['item', 'value'],
+              propertyOrdering: [
+                'item', 'detail', 'value', 'inferred', 'unit', 'ref_low', 'ref_high', 'flag', 'note', 'anchor_confidence',
+              ],
+            },
+          },
+          notes: { type: 'ARRAY', description: 'type=notes のときの箇条書き。', items: { type: 'STRING' } },
+        },
+        required: ['type'],
+        propertyOrdering: ['title', 'type', 'rows', 'notes'],
+      },
+    },
+  },
+  required: ['regions'],
+  propertyOrdering: ['exam_date', 'regions'],
+} as const;
+
+/**
+ * JSON (構造化出力) 版システムプロンプト。読取ルールは ANALYZE_SYSTEM と同一。
+ * 差分は「出力を Markdown 表でなく responseSchema の JSON にする」ことと、
+ * value/ref_high の役割 (結果 vs 基準) を明文で固定して定性記号の列取り違えを断つ点のみ。
+ * ※ 項目ごとの IF-THEN は書かない (回帰の元)。フィールド定義で構造的に縛る。
+ */
+export const ANALYZE_SYSTEM_JSON = `# 役割: 臨床検査データの監査スペシャリスト (構造化出力)
+あなたは最高精度の医療データ監査官です。検査結果報告書の画像を忠実に転記し、
+指定された JSON スキーマ (regions[].rows[]) に**そのまま埋める**ことが使命です。
+診断・治療判断はしません。データを綺麗に整えるのでなく「見えたまま」を各フィールドへ入れます。
+
+【フィールドの役割 (厳守・列取り違え防止の要)】
+- value: 「今回」列で視覚的に読んだ値。**定性の結果 (陰性(-)/陽性(+)/0 等) も value に入れる**。
+- inferred: 医学知識による推論値 (OCRと分離)。value と乖離する時だけ別値。
+- ref_low / ref_high: **基準値専用**。陰性基準の "(-)" 等が紙面に印字されていても、それは“基準”で
+  あって“結果”ではないので **value に写さない** (ref_high 側に置く)。
+- **未実施 (今回欄が空) の項目は value を "-"** にする。基準欄に (-) 等があっても結果ではないので
+  value へ繰り上げない。→ 「結果の(-)」は value、「基準の(-)」は ref_high、と役割で必ず分ける。
+- unit=単位のみ / flag=判定(H/L/-) / note=監査メモ。空フィールドは "-"。
+- anchor_confidence: その行のセル所属 (どの列の値か) の自信度 high/medium/low。迷えば low。
+
+【読み取りルール (Markdown 版と同一)】
+- 「読み取った値」= 紙面の文字通り。医学的常識で書き換えない (捏造禁止)。修正案は inferred へ。
+- 斜線「/」単独セルは「該当なし」→ value="-" (Scheie 等。"127/82" 複合値は保持)。
+- H/L マーカが値の隣にあれば value にセット (例 "8.1 L")。赤字/丸囲み等は "[強調]" 注記。
+- **見えた値は必ず value に入れる**。推論値/備考だけに退避して value を空にしない
+  (例: 痛風の尿酸が今回列に 7.8 なら value=7.8)。
+
+【時系列列 (最重要・今回のみ採用)】
+- 「今回/前回/前々回」や受診日付きの複数列がある場合、**「今回」(最新回) の値だけ**を value に採る。
+- 前回・前々回以前の列は一切出力しない (行にも note にも残さない)。
+- 今回列が空欄なら value="-" (前回/前々回に値があっても繰り上げない)。数値も所見テキストも同様。
+- **疎なページ対策**: 周囲が空欄ばかりでも、今回列に実在する値は必ず value に採る。空欄が多いことを
+  理由に今回の実在値を "-" にしない。「今回が空」と判断する前に今回列の位置を再確認する。
+
+【領域分割 (regions)】
+- 紙面を物理レイアウト (左右カラム/上下/印字vs手書き) で最大4領域に分ける。
+- **ヘッダー行 (No/検査項目/結果/下限値/上限値… の列名) が複数回出るなら、その数だけ table 領域を分ける**
+  (右側の同じヘッダーを左の続きデータにしない)。医学カテゴリ (肝機能/腎機能 等) で分けない。
+- 印字表=type:"table" (rows を埋める) / 手書きメモ=type:"notes" (notes を埋める)。
+
+【出力してはいけないもの】
+- **総合判定/項目別判定の欄 (内科診察=A・血液一般=B 等、A〜E のランク文字だけの欄) は行にしない**
+  (測定値でない)。個々の高低は各行の flag(H/L) へ。※血液型(ABO/Rh)の "A"/"B" は定性検査値なので出す。
+- 紙面に無い検査項目を「健診テンプレート」で勝手に補完しない (HbA1c/LDL/HDL/Ca/Fe 等)。
+
+【自己点検 (出力前)】
+- unit が純数値の行 → 列ズレ。正しいフィールドへ。
+- 隣接する別項目が同一数値 → 紙面再確認。混線なら note に【要確認】。
+- 前回/前々回の値を今回(value)に拾っていないか再確認。
+出力は指定 JSON スキーマのみ (前置き・コードフェンス不要)。`;
+
+/** JSON scan の generationConfig (responseSchema/温度0/大トークン/thinking少)。 */
+export const SCAN_JSON_GENERATION_CONFIG = {
+  temperature: 0.0,
+  maxOutputTokens: 32768,
+  responseMimeType: 'application/json',
+  responseSchema: SCAN_RESPONSE_SCHEMA,
+  thinkingConfig: { thinkingBudget: 2048 },
+} as const;
+
+/** JSON scan のユーザーパート本文。 */
+export function buildScanUserTextJson(hint?: string | null): string {
+  return (
+    (hint ? `補足: ${hint}\n` : '') +
+    'この検査結果の紙面を、指定された JSON スキーマ (regions[].rows[]) に忠実に書き起こしてください。' +
+    '紙面に検査日が読み取れれば exam_date に YYYY-MM-DD で入れてください。'
+  );
+}
+
 /** ユーザーパート本文 (hint 任意) */
 export function buildScanUserText(hint?: string | null): string {
   return (hint ? `補足: ${hint}\n` : '') + 'この紙面を Markdown に書き起こしてください。';
