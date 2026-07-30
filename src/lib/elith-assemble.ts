@@ -11,7 +11,13 @@
  * キー(AWS_*)は Vercel 環境変数のみ (CLAUDE.md) → 必ずサーバ側で実行。
  */
 
-import { isElithFormatId, ELITH_HANDOFF_SCHEMA_VERSION, toValueNum, type ElithFormatId } from './elith-export';
+import {
+  isElithFormatId,
+  ELITH_HANDOFF_SCHEMA_VERSION,
+  sanitizeMeasurementsForDelivery,
+  type ElithFormatId,
+  type MeasurementAnomaly,
+} from './elith-export';
 import { listObjects, getObjectText, type S3PutFile } from './s3';
 
 /** 納品対象の 5 種別 (順序は納品時の見せ方に使用) */
@@ -141,14 +147,8 @@ export interface HealthAgeRecord {
   model_version: string | null;
 }
 
-/** 妥当性ガードで納品から除外した項目 (誤配信防止・監査用。納品物には含めない)。 */
-export interface MeasurementAnomaly {
-  name: string | null;
-  value: string | null;
-  value_num: number | null;
-  unit: string | null;
-  reason: string;
-}
+/** 妥当性ガードで納品から除外した項目の型は elith-export に集約 (後方互換で再エクスポート)。 */
+export type { MeasurementAnomaly } from './elith-export';
 export interface AssembledUserSource {
   formatId: string; // ElithFormatId または 'HealthAgeData' (生成)
   sourceKey: string;
@@ -263,76 +263,9 @@ const CATEGORY_STRIP_FORMATS = new Set(['HealthCheckupData', 'CancerRiskAssessme
  *  - `raw_markdown` から `<!-- bbox: … -->` コメントを除去。
  * ※ 値(value/value_num)は書き換えない。旧元データの値の乱れは元ファイルの再生成で対応する。
  */
-/** "-"/"" を null に正規化。文字列以外は null。 */
-function normDeliveryStr(v: unknown): string | null {
-  if (typeof v !== 'string') return null;
-  const s = v.trim();
-  return s === '' || s === '-' ? null : s;
-}
-/** 表示値のクリーン化: 矢印(↑↓)等の記号・空白を除去。"-"/"" は null。 */
-function cleanDeliveryValue(v: unknown): string | null {
-  const raw = typeof v === 'string' ? v : v == null ? null : String(v);
-  if (raw == null) return null;
-  const s = raw.replace(/[↑↓⤴⤵➡→←]/g, '').trim();
-  return s === '' || s === '-' ? null : s;
-}
-/**
- * 納品用の lean measurement を作る（Elith 要望 2026-07）。
- * 残す: name / value(クリーン) / value_num / unit / ref_low / ref_high / flag。
- * 除去: region / no / inferred(重複) / name_detail / note / category / bbox / assessment。
- * value は inferred(あれば) を優先し記号除去。value_num は既存 or 数値化。
- */
-function leanMeasurement(el: Record<string, unknown>): Record<string, unknown> {
-  const base = typeof el.inferred === 'string' ? el.inferred : el.value;
-  const rawStr = typeof base === 'string' ? base : base == null ? '' : String(base);
-  const value = cleanDeliveryValue(base);
-  const value_num =
-    typeof el.value_num === 'number' && Number.isFinite(el.value_num) ? el.value_num : toValueNum(value);
-  const flagRaw = typeof el.flag === 'string' ? el.flag.trim() : '';
-  let flag = flagRaw === 'H' || flagRaw === 'L' ? flagRaw : null;
-  // flag 未確定時、値に付いた基準外マーカ(↑/↓)を H/L として拾う (基準外の取りこぼし防止)。
-  if (!flag) {
-    if (/[↑⤴]/.test(rawStr)) flag = 'H';
-    else if (/[↓⤵]/.test(rawStr)) flag = 'L';
-  }
-  return {
-    name: typeof el.name === 'string' ? el.name : null,
-    value,
-    value_num,
-    unit: normDeliveryStr(el.unit),
-    ref_low: normDeliveryStr(el.ref_low),
-    ref_high: normDeliveryStr(el.ref_high),
-    flag,
-  };
-}
-
-/**
- * 総合判定(A/B/C…)欄か。検査票の「項目別判定」欄はランク文字のみで測定値ではないため納品しない。
- * 条件: value が単独ランク文字(A〜E) かつ 数値なし・単位なし・基準値なし。
- * 例外: 血液型(ABO/Rh)など name に「型」を含む定性結果は残す(値 "A"/"B" が正当なため)。
- */
-function isJudgementSummaryRow(m: Record<string, unknown>): boolean {
-  const v = typeof m.value === 'string' ? m.value.trim() : '';
-  const name = typeof m.name === 'string' ? m.name : '';
-  if (/型|ABO|Rh|血液型/.test(name)) return false;
-  return /^[A-EＡ-Ｅ]$/.test(v) && m.value_num == null && m.unit == null && m.ref_low == null && m.ref_high == null;
-}
-
-/**
- * 妥当性ガード（Phase 3・誤配信防止）: 明らかに壊れた測定値の除外理由を返す。null=正常。
- *  - 単位が純数値 = 列ズレ疑い（例: HDL行で unit="40"）。
- *  - 割合(%)が 0–100 の範囲外 = 物理的にあり得ない（例: 体脂肪率 105%）。
- */
-function measurementAnomalyReason(m: Record<string, unknown>): string | null {
-  const unit = typeof m.unit === 'string' ? m.unit.trim() : '';
-  const vn = typeof m.value_num === 'number' && Number.isFinite(m.value_num) ? m.value_num : null;
-  if (unit && /^\d+(\.\d+)?$/.test(unit)) return 'unit_is_numeric（列ズレ疑い）';
-  if (unit === '%' && vn != null && (vn < 0 || vn > 100)) return 'percent_out_of_range（0–100外）';
-  return null;
-}
-
 /**
  * 納品用サニタイズ + 妥当性ガード。除外した測定値(anomalies)を返す（納品物には含めない）。
+ * 正規化本体は elith-export.sanitizeMeasurementsForDelivery に集約 (全書き出し経路共通)。
  */
 function sanitizeDelivery(obj: Record<string, unknown>): MeasurementAnomaly[] {
   const fmt = typeof obj.format_id === 'string' ? obj.format_id : '';
@@ -341,27 +274,10 @@ function sanitizeDelivery(obj: Record<string, unknown>): MeasurementAnomaly[] {
   if (data && typeof data === 'object') {
     const d = data as Record<string, unknown>;
     delete d.regions;
-    // measurement系: lean 化 → 未測定除外 → 妥当性ガードで壊れた値を除外。
+    // measurement系: lean 化 → 未測定除外 → 総合判定欄除外 → 妥当性ガードで壊れた値を除外。
     if (Array.isArray(d.measurements)) {
-      const kept: Record<string, unknown>[] = [];
-      for (const el of d.measurements as Array<Record<string, unknown>>) {
-        if (!el || typeof el !== 'object') continue;
-        const m = leanMeasurement(el);
-        if (m.value == null && m.value_num == null) continue; // 未測定(値なし)は納品しない
-        if (isJudgementSummaryRow(m)) continue; // 総合判定(A/B/C)欄は測定値でない → 納品しない
-        const reason = measurementAnomalyReason(m);
-        if (reason) {
-          anomalies.push({
-            name: (m.name as string | null) ?? null,
-            value: (m.value as string | null) ?? null,
-            value_num: (m.value_num as number | null) ?? null,
-            unit: (m.unit as string | null) ?? null,
-            reason,
-          });
-          continue; // 誤配信防止: 壊れた値は納品しない
-        }
-        kept.push(m);
-      }
+      const { kept, anomalies: anos } = sanitizeMeasurementsForDelivery(d.measurements);
+      anomalies.push(...anos);
       d.measurements = kept;
     }
     // 遺伝子等 items: 版面情報のみ除去 (lean はしない=構造が別)。
