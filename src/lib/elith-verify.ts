@@ -14,7 +14,7 @@
 // キー(GEMINI_API_KEY)はサーバ環境変数のみ。必ずサーバ(API/admin)から呼ぶ (CLAUDE.md)。
 
 import { callGemini, MODELS, extractText, stripJsonCodeFence } from './gemini';
-import { getGeminiApiKey, isSupportedMime } from './elith-export';
+import { getGeminiApiKey, isSupportedMime, sanitizeMeasurementsForDelivery } from './elith-export';
 
 /** 1 件の食い違い。種別ごとに意味が違うので任意フィールドで表現する。 */
 export interface VerifyDiscrepancy {
@@ -56,9 +56,11 @@ export interface VerifyReport {
 export function renderMeasurementsForGrader(json: unknown): { text: string; count: number } {
   const obj = (json && typeof json === 'object' ? json : {}) as Record<string, unknown>;
   const data = (obj.data && typeof obj.data === 'object' ? obj.data : {}) as Record<string, unknown>;
-  const ms: Record<string, unknown>[] = Array.isArray(data.measurements)
-    ? (data.measurements as Record<string, unknown>[]).filter((m) => m && typeof m === 'object')
-    : [];
+  // 照合は「納品後(sanitize後)」の measurements で行う。生のマーカ(↑↓)・空行・総合判定(A/B/C)は
+  // 納品時に除去されるため、それらを含む生データで採点すると誤読/重複の過検出になる。
+  const ms: Record<string, unknown>[] = sanitizeMeasurementsForDelivery(
+    Array.isArray(data.measurements) ? data.measurements : [],
+  ).kept;
   const lines = ms.map((m, i) => {
     const name = typeof m.name === 'string' ? m.name : '';
     const value = m.value == null ? '' : String(m.value);
