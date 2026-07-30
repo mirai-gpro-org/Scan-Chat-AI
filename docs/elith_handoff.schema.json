@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wellfort.co.jp/schemas/elith-handoff-v0.1.json",
+  "title": "Wellfort → Elith S3 Handoff (elith-handoff-v0.1)",
+  "description": "Wellfort から Elith へ受け渡す全 format 共通の確定スキーマ。format_id により data 直下の構造が切り替わる（allOf + if/then）。版面座標(bbox)/見出し(region)/区分(category, 検査値型)/PII(氏名・住所・生年月日)は納品物に含めない。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format_id", "schema_version", "client_id", "test_date", "exported_at", "subject", "source", "data"],
+  "properties": {
+    "format_id": {
+      "description": "データ種別（固定7種）。",
+      "enum": ["HealthCheckupData", "BloodTestData", "GeneticTestResultData", "CancerRiskAssessmentData", "LifestyleQuestionnaireData", "HealthAgeData", "Other"]
+    },
+    "schema_version": { "const": "elith-handoff-v0.1" },
+    "kind": { "type": "string", "description": "中身の種別ヒント（例 interview / health_age / ai_prediction）。任意。" },
+    "client_id": { "type": "string", "description": "= diagnostic_user_id（PII非含有の仮名）。納品セットでは合成ID(elith-test-XXX)。" },
+    "diagnostic_id": { "type": ["string", "null"], "description": "セッションID（突合用・任意）。" },
+    "test_date": { "type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "検査/問診の実施日(JST)。不明なら null。※フォルダ名の日付とは別（フォルダ日付=納品日、本項=原本の実施日）。" },
+    "exported_at": { "type": "string", "description": "S3書き出し時刻(UTC, ISO8601)。" },
+    "subject": { "$ref": "#/$defs/subject" },
+    "source": { "$ref": "#/$defs/source" },
+    "data": { "type": "object", "description": "format固有（下記 allOf で制約）。" }
+  },
+  "_note_removed_fields": "raw_markdown と assembled_from は Elith 要望(2026-07)で納品物から除去。監査/トレース情報は Wellfort 側(元ソースS3 + assemble の sources[] マニフェスト)に保持する。",
+  "allOf": [
+    {
+      "if": { "required": ["format_id"], "properties": { "format_id": { "enum": ["BloodTestData", "CancerRiskAssessmentData", "HealthCheckupData"] } } },
+      "then": { "properties": { "data": { "$ref": "#/$defs/measurementData" } } }
+    },
+    {
+      "if": { "required": ["format_id"], "properties": { "format_id": { "const": "GeneticTestResultData" } } },
+      "then": { "properties": { "data": { "$ref": "#/$defs/geneticData" } } }
+    },
+    {
+      "if": { "required": ["format_id"], "properties": { "format_id": { "const": "LifestyleQuestionnaireData" } } },
+      "then": { "properties": { "data": { "$ref": "#/$defs/lifestyleData" } } }
+    },
+    {
+      "if": { "required": ["format_id"], "properties": { "format_id": { "const": "HealthAgeData" } } },
+      "then": { "properties": { "data": { "$ref": "#/$defs/healthAgeData" } } }
+    },
+    {
+      "if": { "required": ["format_id"], "properties": { "format_id": { "const": "Other" } } },
+      "then": { "properties": { "data": { "$ref": "#/$defs/otherData" } } }
+    }
+  ],
+  "$defs": {
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sex", "age"],
+      "properties": {
+        "sex": { "enum": ["male", "female", "other", null] },
+        "age": { "type": ["integer", "null"], "minimum": 0, "maximum": 149, "description": "検査時点の満年齢。PII除去のため生年月日は載せない。" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin"],
+      "properties": {
+        "origin": { "enum": ["wellfort_lab", "scan-chat-ai"] },
+        "lab_name": { "type": ["string", "null"], "description": "検査機関名（検査機関由来のとき）。" },
+        "app": { "type": ["string", "null"] },
+        "model": { "type": ["string", "null"], "description": "OCR/生成/算出モデル名。" },
+        "note": { "type": ["string", "null"] }
+      }
+    },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "検査値1項目（Elith要望2026-07で lean 化）。区分(category)/版面(region,bbox,no)/監査(note)/重複(inferred)/name_detail/assessment は含めない。未測定(値なし)項目は納品しない。",
+      "required": ["name", "value"],
+      "properties": {
+        "name": { "type": "string", "description": "検査項目（略称）。血液CSVは『項目名N』ヘッダの標準名。" },
+        "value": { "type": ["string", "null"], "description": "クリーン化した値（矢印↑等の記号は除去）。数値は value_num、定性値(\"(-)\"等)は文字列。" },
+        "value_num": { "type": ["number", "null"], "description": "数値化できる場合のみ。範囲値/定性値は null。" },
+        "unit": { "type": ["string", "null"] },
+        "ref_low": { "type": ["string", "null"], "description": "基準下限（無ければ null）。" },
+        "ref_high": { "type": ["string", "null"], "description": "基準上限（無ければ null）。" },
+        "flag": { "enum": ["H", "L", null], "description": "H=高 / L=低 / 基準内・不明は null。" }
+      }
+    },
+    "measurementData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["measurements"],
+      "properties": {
+        "measurements": { "type": "array", "items": { "$ref": "#/$defs/measurement" } },
+        "notes": { "type": "array", "items": { "type": "string" }, "description": "手書きメモ・自由記述（scanのnotes領域）。任意。" }
+      }
+    },
+    "geneticItem": {
+      "type": "object",
+      "description": "遺伝子検査の1項目。構造化はLLMに全面委任のため固定キーは課さない（additionalProperties許容）。下記は代表キー。",
+      "additionalProperties": true,
+      "properties": {
+        "category": { "type": ["string", "null"], "description": "区分（遺伝子のみ意味を持つため保持）。" },
+        "name": { "type": ["string", "null"] },
+        "result": { "type": ["string", "null"], "description": "判定/結果。" },
+        "score": { "type": ["number", "string", "null"] },
+        "gene": { "type": ["string", "null"] },
+        "comment": { "type": ["string", "null"] }
+      }
+    },
+    "geneticData": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["items"],
+      "properties": {
+        "items": { "type": "array", "items": { "$ref": "#/$defs/geneticItem" } }
+      }
+    },
+    "lifestyleAnswer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "answer", "answer_label"],
+      "properties": {
+        "id": { "type": "string" },
+        "section_id": { "type": ["string", "null"] },
+        "section_title": { "type": ["string", "null"] },
+        "question": { "type": ["string", "null"] },
+        "answer_kind": { "type": ["string", "null"], "description": "text / choice / wheel など回答種別。" },
+        "answer": {
+          "description": "生の回答値。",
+          "anyOf": [
+            { "type": "string" },
+            { "type": "number" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
+        },
+        "answer_label": { "type": "string", "description": "表示用ラベル。" }
+      }
+    },
+    "lifestyleData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["answer_count", "answers"],
+      "properties": {
+        "answer_count": { "type": "integer", "minimum": 0 },
+        "answers": { "type": "array", "items": { "$ref": "#/$defs/lifestyleAnswer" } }
+      }
+    },
+    "healthAgeData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["health_age", "actual_age", "computed_date", "delta", "model_version"],
+      "properties": {
+        "health_age": { "type": ["number", "null"], "description": "健康年齢（生物学的年齢）。" },
+        "actual_age": { "type": ["integer", "null"], "description": "実年齢。" },
+        "computed_date": { "type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "算出計算日付。" },
+        "delta": { "type": ["number", "null"], "description": "health_age - actual_age。" },
+        "model_version": { "type": ["string", "null"] }
+      }
+    },
+    "otherData": {
+      "type": "object",
+      "description": "専用formatが無いデータ（AI疾病予測など）。自由構造＋原本同梱。",
+      "additionalProperties": true,
+      "properties": {
+        "kind": { "type": "string", "description": "中身の種別ヒント。" },
+        "payload": { "type": "object" }
+      }
+    }
+  }
+}

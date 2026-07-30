@@ -11,17 +11,20 @@
  * キー(AWS_*)は Vercel 環境変数のみ (CLAUDE.md) → 必ずサーバ側で実行。
  */
 
-import { isElithFormatId, ELITH_HANDOFF_SCHEMA_VERSION, type ElithFormatId } from './elith-export';
+import { isElithFormatId, ELITH_HANDOFF_SCHEMA_VERSION, toValueNum, type ElithFormatId } from './elith-export';
 import { listObjects, getObjectText, type S3PutFile } from './s3';
 
 /** 納品対象の 5 種別 (順序は納品時の見せ方に使用) */
-export const DELIVERY_FORMAT_IDS: ElithFormatId[] = [
+// 完全性(この回に揃うべき)判定に使う必須 format。Other(AI疾病予測)は任意なので含めない。
+export const GATING_FORMAT_IDS: ElithFormatId[] = [
   'HealthCheckupData',
   'BloodTestData',
   'GeneticTestResultData',
   'CancerRiskAssessmentData',
   'LifestyleQuestionnaireData',
 ];
+// 納品対象 format。GATING に加え Other(AI疾病予測) も納品する（完全性はゲートしない）。
+export const DELIVERY_FORMAT_IDS: ElithFormatId[] = [...GATING_FORMAT_IDS, 'Other'];
 
 export interface CatalogItem {
   key: string;
@@ -111,9 +114,10 @@ export async function inventoryElithSource(sourcePrefix: string): Promise<Invent
   const counts: Record<string, number> = {};
   const missing: ElithFormatId[] = [];
   let maxComplete = Infinity;
-  for (const f of DELIVERY_FORMAT_IDS) {
+  for (const f of DELIVERY_FORMAT_IDS) counts[f] = byFormat[f].length; // 情報用 (Other 含む)
+  // 完全性(欠落/最大人数)は必須 format のみで判定。Other(任意)は 0 件でもゲートしない。
+  for (const f of GATING_FORMAT_IDS) {
     const n = byFormat[f].length;
-    counts[f] = n;
     if (n === 0) missing.push(f);
     maxComplete = Math.min(maxComplete, n);
   }
@@ -137,6 +141,14 @@ export interface HealthAgeRecord {
   model_version: string | null;
 }
 
+/** 妥当性ガードで納品から除外した項目 (誤配信防止・監査用。納品物には含めない)。 */
+export interface MeasurementAnomaly {
+  name: string | null;
+  value: string | null;
+  value_num: number | null;
+  unit: string | null;
+  reason: string;
+}
 export interface AssembledUserSource {
   formatId: string; // ElithFormatId または 'HealthAgeData' (生成)
   sourceKey: string;
@@ -147,6 +159,8 @@ export interface AssembledUserSource {
   newKey: string;
   /** コピー元 JSON の実データ件数 (0 = 空データ。-1 = パース不能)。 */
   dataItems: number;
+  /** 妥当性ガードで除外した項目 (あれば)。納品物には出さず結果でのみ可視化。 */
+  anomalies?: MeasurementAnomaly[];
 }
 export interface AssembledUser {
   userId: string;
@@ -190,8 +204,8 @@ function randomUuid(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
 }
 
-/** 血液を client_id 単位にグループ化 (各リストは採血日 desc)。複数日付 = 時系列。 */
-function groupBloodByClient(items: CatalogItem[]): Map<string, CatalogItem[]> {
+/** 検査を client_id 単位にグループ化 (各リストは検査日 desc)。複数日付 = 時系列。 */
+function groupByClient(items: CatalogItem[]): Map<string, CatalogItem[]> {
   const m = new Map<string, CatalogItem[]>();
   for (const it of items) {
     const cid = it.clientId ?? '(unknown)';
@@ -232,8 +246,9 @@ function buildHealthAgeJson(userId: string, bundleDate: string, rec: HealthAgeRe
       delta: rec.delta,
       model_version: rec.model_version ?? 'CABA-v4d',
     },
-    assembled_from: sourceRef,
+    // Elith 要望(2026-07): 納品物に監査メタ(assembled_from)を載せない。トレースは sources[] に保持。
   };
+  void sourceRef;
   return JSON.stringify(obj, null, 2);
 }
 
@@ -248,45 +263,119 @@ const CATEGORY_STRIP_FORMATS = new Set(['HealthCheckupData', 'CancerRiskAssessme
  *  - `raw_markdown` から `<!-- bbox: … -->` コメントを除去。
  * ※ 値(value/value_num)は書き換えない。旧元データの値の乱れは元ファイルの再生成で対応する。
  */
-function sanitizeDelivery(obj: Record<string, unknown>): void {
+/** "-"/"" を null に正規化。文字列以外は null。 */
+function normDeliveryStr(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  return s === '' || s === '-' ? null : s;
+}
+/** 表示値のクリーン化: 矢印(↑↓)等の記号・空白を除去。"-"/"" は null。 */
+function cleanDeliveryValue(v: unknown): string | null {
+  const raw = typeof v === 'string' ? v : v == null ? null : String(v);
+  if (raw == null) return null;
+  const s = raw.replace(/[↑↓⤴⤵➡→←]/g, '').trim();
+  return s === '' || s === '-' ? null : s;
+}
+/**
+ * 納品用の lean measurement を作る（Elith 要望 2026-07）。
+ * 残す: name / value(クリーン) / value_num / unit / ref_low / ref_high / flag。
+ * 除去: region / no / inferred(重複) / name_detail / note / category / bbox / assessment。
+ * value は inferred(あれば) を優先し記号除去。value_num は既存 or 数値化。
+ */
+function leanMeasurement(el: Record<string, unknown>): Record<string, unknown> {
+  const base = typeof el.inferred === 'string' ? el.inferred : el.value;
+  const value = cleanDeliveryValue(base);
+  const value_num =
+    typeof el.value_num === 'number' && Number.isFinite(el.value_num) ? el.value_num : toValueNum(value);
+  const flagRaw = typeof el.flag === 'string' ? el.flag.trim() : '';
+  const flag = flagRaw === 'H' || flagRaw === 'L' ? flagRaw : null;
+  return {
+    name: typeof el.name === 'string' ? el.name : null,
+    value,
+    value_num,
+    unit: normDeliveryStr(el.unit),
+    ref_low: normDeliveryStr(el.ref_low),
+    ref_high: normDeliveryStr(el.ref_high),
+    flag,
+  };
+}
+
+/**
+ * 妥当性ガード（Phase 3・誤配信防止）: 明らかに壊れた測定値の除外理由を返す。null=正常。
+ *  - 単位が純数値 = 列ズレ疑い（例: HDL行で unit="40"）。
+ *  - 割合(%)が 0–100 の範囲外 = 物理的にあり得ない（例: 体脂肪率 105%）。
+ */
+function measurementAnomalyReason(m: Record<string, unknown>): string | null {
+  const unit = typeof m.unit === 'string' ? m.unit.trim() : '';
+  const vn = typeof m.value_num === 'number' && Number.isFinite(m.value_num) ? m.value_num : null;
+  if (unit && /^\d+(\.\d+)?$/.test(unit)) return 'unit_is_numeric（列ズレ疑い）';
+  if (unit === '%' && vn != null && (vn < 0 || vn > 100)) return 'percent_out_of_range（0–100外）';
+  return null;
+}
+
+/**
+ * 納品用サニタイズ + 妥当性ガード。除外した測定値(anomalies)を返す（納品物には含めない）。
+ */
+function sanitizeDelivery(obj: Record<string, unknown>): MeasurementAnomaly[] {
   const fmt = typeof obj.format_id === 'string' ? obj.format_id : '';
+  const anomalies: MeasurementAnomaly[] = [];
   const data = obj.data;
   if (data && typeof data === 'object') {
     const d = data as Record<string, unknown>;
     delete d.regions;
-    for (const arrKey of ['measurements', 'items']) {
-      const arr = d[arrKey];
-      if (Array.isArray(arr)) {
-        for (const el of arr) {
-          if (el && typeof el === 'object') {
-            const e = el as Record<string, unknown>;
-            delete e.region;
-            delete e.bbox;
-            if (CATEGORY_STRIP_FORMATS.has(fmt)) delete e.category;
-          }
+    // measurement系: lean 化 → 未測定除外 → 妥当性ガードで壊れた値を除外。
+    if (Array.isArray(d.measurements)) {
+      const kept: Record<string, unknown>[] = [];
+      for (const el of d.measurements as Array<Record<string, unknown>>) {
+        if (!el || typeof el !== 'object') continue;
+        const m = leanMeasurement(el);
+        if (m.value == null && m.value_num == null) continue; // 未測定(値なし)は納品しない
+        const reason = measurementAnomalyReason(m);
+        if (reason) {
+          anomalies.push({
+            name: (m.name as string | null) ?? null,
+            value: (m.value as string | null) ?? null,
+            value_num: (m.value_num as number | null) ?? null,
+            unit: (m.unit as string | null) ?? null,
+            reason,
+          });
+          continue; // 誤配信防止: 壊れた値は納品しない
+        }
+        kept.push(m);
+      }
+      d.measurements = kept;
+    }
+    // 遺伝子等 items: 版面情報のみ除去 (lean はしない=構造が別)。
+    if (Array.isArray(d.items)) {
+      for (const el of d.items) {
+        if (el && typeof el === 'object') {
+          const e = el as Record<string, unknown>;
+          delete e.region;
+          delete e.bbox;
+          if (CATEGORY_STRIP_FORMATS.has(fmt)) delete e.category;
         }
       }
     }
   }
-  if (typeof obj.raw_markdown === 'string') {
-    obj.raw_markdown = obj.raw_markdown
-      .split('\n')
-      .filter((l) => !/^\s*<!--\s*bbox:[^>]*-->\s*$/i.test(l))
-      .join('\n');
-  }
+  // Elith 要望(2026-07): 納品物から raw_markdown と監査メタ(assembled_from) を除去。
+  //   Elith は未使用。監査/トレース情報は我々側(元ソースS3 + assemble の sources[] マニフェスト)に残す。
+  delete obj.raw_markdown;
+  delete obj.assembled_from;
+  return anomalies;
 }
 
 /** JSON テキストの client_id を new へ書き換え + 納品用サニタイズ (パース失敗時は素の置換にフォールバック)。 */
-function rewriteClientId(jsonText: string, newId: string, sourceKey: string): string {
+function rewriteClientId(jsonText: string, newId: string, sourceKey: string): { text: string; anomalies: MeasurementAnomaly[] } {
   try {
     const obj = JSON.parse(jsonText) as Record<string, unknown>;
     obj.client_id = newId;
-    // トレーサビリティ: 元 key を控える (PII では無い)
-    obj.assembled_from = sourceKey;
-    sanitizeDelivery(obj); // 旧形式の元データでも納品物から bbox/region を除去
-    return JSON.stringify(obj, null, 2);
+    // Elith 要望(2026-07): 納品物に監査メタ(assembled_from)を載せない。
+    // トレース(元 sourceKey → 納品 newKey)は assemble の戻り値 sources[] に保持する。
+    void sourceKey;
+    const anomalies = sanitizeDelivery(obj); // lean化/監査メタ除去 + 妥当性ガード
+    return { text: JSON.stringify(obj, null, 2), anomalies };
   } catch {
-    return jsonText;
+    return { text: jsonText, anomalies: [] };
   }
 }
 
@@ -313,7 +402,11 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
   };
 
   // 血液を client_id 単位にグループ化 (複数日付 = 時系列)。時系列は丸ごと納品する。
-  const bloodByClient = groupBloodByClient(inv.byFormat.BloodTestData);
+  const bloodByClient = groupByClient(inv.byFormat.BloodTestData);
+  // §3.3 時系列納品: 血液に加え がん/検診/AI疾病予測(Other) も client 単位で全 date を束ねて丸ごと納品する。
+  const SERIES_FORMATS: ElithFormatId[] = ['BloodTestData', 'CancerRiskAssessmentData', 'HealthCheckupData', 'Other'];
+  const seriesByFormat = new Map<ElithFormatId, Map<string, CatalogItem[]>>();
+  for (const f of SERIES_FORMATS) seriesByFormat.set(f, groupByClient(inv.byFormat[f] ?? []));
 
   // userId → (formatId → source CatalogItem) と 血液時系列(bloodSeries) の割当を決める
   const plan: { userId: string; picks: Partial<Record<ElithFormatId, CatalogItem>>; bloodSeries: CatalogItem[] }[] = [];
@@ -337,47 +430,55 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
     // 自動: 種別ごとに新しい日付順で「実データが入っている」ものを優先して選ぶ。
     // (旧仕様は最古を無条件採用 → 初期の空テストを掴んで空データ納品になっていた)
     const want = Math.max(0, Math.min(opts.count ?? inv.maxCompleteUsers, inv.maxCompleteUsers));
+    // 単発 format (遺伝子/問診): 日付 desc のカーソルで「実データ入り」を優先採用。
     const cursor: Record<string, number> = {};
     const orderedDesc: Record<string, CatalogItem[]> = {};
     for (const f of DELIVERY_FORMAT_IDS) {
-      if (f === 'BloodTestData') continue; // 血液は client 単位で別途割当
+      if (seriesByFormat.has(f)) continue; // 時系列 format は client 単位で別途割当
       cursor[f] = 0;
-      orderedDesc[f] = [...inv.byFormat[f]].sort((a, b) =>
+      orderedDesc[f] = [...(inv.byFormat[f] ?? [])].sort((a, b) =>
         a.date === b.date ? b.key.localeCompare(a.key) : b.date.localeCompare(a.date),
       );
     }
-    // 血液クライアントを「時系列(≥2日付)優先 → 代表(最新)が非空 → 最新日付 desc」で並べる。
-    const bloodGroups: { clientId: string; list: CatalogItem[]; nonEmpty: boolean }[] = [];
-    for (const [clientId, list] of bloodByClient.entries()) {
-      const nonEmpty = countDataItems(await fetchText(list[0].key)) > 0;
-      bloodGroups.push({ clientId, list, nonEmpty });
+    // 時系列 format (血液/がん/検診/AI疾病予測): client 単位グループを
+    // 「時系列(≥2日付)優先 → 代表(最新)が非空 → 最新日付 desc」で並べる。
+    const groupsByFormat = new Map<ElithFormatId, { clientId: string; list: CatalogItem[] }[]>();
+    for (const f of SERIES_FORMATS) {
+      const groups: { clientId: string; list: CatalogItem[]; nonEmpty: boolean }[] = [];
+      for (const [clientId, list] of (seriesByFormat.get(f) ?? new Map<string, CatalogItem[]>()).entries()) {
+        const nonEmpty = countDataItems(await fetchText(list[0].key)) > 0;
+        groups.push({ clientId, list, nonEmpty });
+      }
+      groups.sort((a, b) => {
+        const ats = a.list.length >= 2 ? 1 : 0, bts = b.list.length >= 2 ? 1 : 0;
+        if (ats !== bts) return bts - ats;
+        if (a.nonEmpty !== b.nonEmpty) return (b.nonEmpty ? 1 : 0) - (a.nonEmpty ? 1 : 0);
+        return (b.list[0]?.date ?? '').localeCompare(a.list[0]?.date ?? '');
+      });
+      groupsByFormat.set(f, groups.map((g) => ({ clientId: g.clientId, list: g.list })));
     }
-    bloodGroups.sort((a, b) => {
-      const ats = a.list.length >= 2 ? 1 : 0, bts = b.list.length >= 2 ? 1 : 0;
-      if (ats !== bts) return bts - ats;
-      if (a.nonEmpty !== b.nonEmpty) return (b.nonEmpty ? 1 : 0) - (a.nonEmpty ? 1 : 0);
-      return (b.list[0]?.date ?? '').localeCompare(a.list[0]?.date ?? '');
-    });
 
     for (let i = 0; i < want; i++) {
       const picks: Partial<Record<ElithFormatId, CatalogItem>> = {};
+      // 単発 format
       for (const f of DELIVERY_FORMAT_IDS) {
-        if (f === 'BloodTestData') continue;
+        if (seriesByFormat.has(f)) continue;
         const list = orderedDesc[f];
         let chosen: CatalogItem | undefined;
-        // カーソル位置から、実データ件数>0 の最初の候補を採用 (空はスキップ)
         while (cursor[f] < list.length) {
           const cand = list[cursor[f]++];
           if (countDataItems(await fetchText(cand.key)) > 0) { chosen = cand; break; }
         }
-        // 全て空 (または尽きた) なら、この人には先頭候補を割当 (空でも可視化のため出す)
         picks[f] = chosen ?? list[i] ?? list[0];
       }
-      // 血液: 時系列優先で client を割当 (人数分に足りなければ巡回)。時系列を丸ごと納品。
-      const bg = bloodGroups.length ? bloodGroups[i % bloodGroups.length] : undefined;
-      const bloodSeries = bg ? bg.list : [];
-      if (bg) picks.BloodTestData = bg.list[0];
-      plan.push({ userId: `${idPrefix}-${String(i + 1).padStart(3, '0')}`, picks, bloodSeries });
+      // 時系列 format: client 単位で割当 (人数分に足りなければ巡回)。picks[f]=代表(最新)、
+      // 実際の納品は delivery で seriesByFormat から全 date を丸ごと出す。
+      for (const f of SERIES_FORMATS) {
+        const groups = groupsByFormat.get(f) ?? [];
+        const g = groups.length ? groups[i % groups.length] : undefined;
+        if (g) picks[f] = g.list[0];
+      }
+      plan.push({ userId: `${idPrefix}-${String(i + 1).padStart(3, '0')}`, picks, bloodSeries: [] });
     }
   }
 
@@ -386,27 +487,31 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
     const sources: AssembledUserSource[] = [];
     const files: S3PutFile[] = [];
     for (const f of DELIVERY_FORMAT_IDS) {
-      if (f === 'BloodTestData') continue; // 血液は時系列を別途 (各採血日フォルダ) で出す
       const item = p.picks[f];
       if (!item) continue;
-      const text = await fetchText(item.key);
-      const dataItems = countDataItems(text);
-      const rewritten = rewriteClientId(text, p.userId, item.key);
-      // パス/ファイル名の日付は統一日付 (bundleDate)。JSON 内の test_date は原本のまま。
-      const newKey = `${deliveryPrefix}user/${p.userId}/date/${bundleDate}/${f}_date_${bundleDate}_user_${p.userId}.json`;
-      files.push({ key: newKey, contentType: 'application/json; charset=utf-8', body: rewritten, bytes: utf8Bytes(rewritten) });
-      sources.push({ formatId: f, sourceKey: item.key, sourceDate: item.date, deliveredDate: bundleDate, newKey, dataItems });
-    }
-
-    // 血液: 時系列を丸ごと。各ファイルは元の採血日(date)フォルダに置く (ファイル名衝突回避・時系列保持)。
-    for (const item of p.bloodSeries) {
-      const text = await fetchText(item.key);
-      const dataItems = countDataItems(text);
-      const rewritten = rewriteClientId(text, p.userId, item.key);
-      const bd = /^\d{4}_\d{2}_\d{2}$/.test(item.date) ? item.date : bundleDate;
-      const newKey = `${deliveryPrefix}user/${p.userId}/date/${bd}/BloodTestData_date_${bd}_user_${p.userId}.json`;
-      files.push({ key: newKey, contentType: 'application/json; charset=utf-8', body: rewritten, bytes: utf8Bytes(rewritten) });
-      sources.push({ formatId: 'BloodTestData', sourceKey: item.key, sourceDate: item.date, deliveredDate: bd, newKey, dataItems });
+      const seriesMap = seriesByFormat.get(f);
+      if (seriesMap) {
+        // 時系列 format (血液/がん/検診/AI疾病予測): この client の当該 format 全 date を
+        // 各 date フォルダへ丸ごと納品 (時系列保持・ファイル名衝突回避)。
+        const series = seriesMap.get(item.clientId ?? '(unknown)') ?? [item];
+        for (const s of series) {
+          const text = await fetchText(s.key);
+          const dataItems = countDataItems(text);
+          const { text: rewritten, anomalies } = rewriteClientId(text, p.userId, s.key);
+          const bd = /^\d{4}_\d{2}_\d{2}$/.test(s.date) ? s.date : bundleDate;
+          const newKey = `${deliveryPrefix}user/${p.userId}/date/${bd}/${f}_date_${bd}_user_${p.userId}.json`;
+          files.push({ key: newKey, contentType: 'application/json; charset=utf-8', body: rewritten, bytes: utf8Bytes(rewritten) });
+          sources.push({ formatId: f, sourceKey: s.key, sourceDate: s.date, deliveredDate: bd, newKey, dataItems, ...(anomalies.length ? { anomalies } : {}) });
+        }
+      } else {
+        // 単発 format (遺伝子/問診): 最新1件を統一日付へ。JSON 内の test_date は原本のまま。
+        const text = await fetchText(item.key);
+        const dataItems = countDataItems(text);
+        const { text: rewritten, anomalies } = rewriteClientId(text, p.userId, item.key);
+        const newKey = `${deliveryPrefix}user/${p.userId}/date/${bundleDate}/${f}_date_${bundleDate}_user_${p.userId}.json`;
+        files.push({ key: newKey, contentType: 'application/json; charset=utf-8', body: rewritten, bytes: utf8Bytes(rewritten) });
+        sources.push({ formatId: f, sourceKey: item.key, sourceDate: item.date, deliveredDate: bundleDate, newKey, dataItems, ...(anomalies.length ? { anomalies } : {}) });
+      }
     }
 
     // 健康年齢: 採用元(人間ドック優先→血液)の source_ref に対応する算出済みスコアがあれば納品に追加。

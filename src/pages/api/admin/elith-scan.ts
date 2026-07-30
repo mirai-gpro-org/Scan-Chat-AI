@@ -28,6 +28,7 @@
 import type { APIRoute } from 'astro';
 import { buildElithScanBundle, isElithFormatId, ELITH_FORMAT_IDS } from '../../../lib/elith-export';
 import { getS3Config, isS3Configured, putFiles } from '../../../lib/s3';
+import { checkNecessity } from '../../../lib/elith-necessity-check';
 
 export const prerender = false;
 
@@ -53,6 +54,12 @@ interface Body {
   clientId?: unknown;
   examDate?: unknown;
   sourceFileName?: unknown;
+  /** true: 生成＋不要項目チェックのみ行い S3書出ししない（チェックフェーズ）。 */
+  checkOnly?: unknown;
+  /** 必要項目マスタ(検査項目名の allowlist)。指定時のみ項目層(マスタ外/不足)を判定。 */
+  requiredItems?: unknown;
+  /** 不足(deficient)でも強制書出しする管理者オーバーライド。 */
+  override?: unknown;
 }
 
 function str(v: unknown): string | null {
@@ -111,6 +118,43 @@ export const POST: APIRoute = async ({ request }) => {
     ? (bundle.json as { data: { measurements: unknown[] } }).data.measurements.length
     : 0;
 
+  // 不要項目チェック（必要要素検証）。要望: S3書出し前に不要項目が無いか検証する。
+  const requiredItems = Array.isArray(body.requiredItems)
+    ? (body.requiredItems as unknown[]).filter((x): x is string => typeof x === 'string')
+    : null;
+  const necessity = checkNecessity(bundle.json, { requiredItemsMaster: requiredItems });
+
+  // checkOnly: 生成＋チェックのみ返す（S3へは書き出さない＝チェックフェーズ）。
+  if (body.checkOnly === true) {
+    return json({
+      ok: true,
+      check_only: true,
+      client_id: clientId,
+      format_id: formatId,
+      test_date: bundle.testDate,
+      date_source: bundle.dateSource,
+      rows,
+      json_key: bundle.jsonKey,
+      image_key: bundle.imageKey,
+      necessity,
+      preview: bundle.json,
+    });
+  }
+
+  // 不足(必要項目マスタにあるのに欠落)は分析に影響するため、既定で書出しブロック。
+  // override:true で管理者が強制書出し可（理由は呼び出し側で記録）。
+  if (necessity.result === 'deficient' && body.override !== true) {
+    return json({
+      ok: false,
+      blocked: 'deficient',
+      detail: '必要項目が不足しています。再スキャン/確認のうえ override:true で強制可。',
+      client_id: clientId,
+      format_id: formatId,
+      necessity,
+      preview: bundle.json,
+    }, 409);
+  }
+
   if (!isS3Configured() || !cfg) {
     return json({
       ok: false,
@@ -123,6 +167,7 @@ export const POST: APIRoute = async ({ request }) => {
       rows,
       json_key: bundle.jsonKey,
       image_key: bundle.imageKey,
+      necessity,
       preview: bundle.json,
     });
   }
@@ -140,6 +185,7 @@ export const POST: APIRoute = async ({ request }) => {
       rows,
       json_key: bundle.jsonKey,
       image_key: bundle.imageKey,
+      necessity,
       uploaded: uploaded.map((u) => ({ key: u.key, uri: u.uri })),
     });
   } catch (err) {
