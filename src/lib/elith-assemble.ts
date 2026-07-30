@@ -11,7 +11,7 @@
  * キー(AWS_*)は Vercel 環境変数のみ (CLAUDE.md) → 必ずサーバ側で実行。
  */
 
-import { isElithFormatId, ELITH_HANDOFF_SCHEMA_VERSION, type ElithFormatId } from './elith-export';
+import { isElithFormatId, ELITH_HANDOFF_SCHEMA_VERSION, toValueNum, type ElithFormatId } from './elith-export';
 import { listObjects, getObjectText, type S3PutFile } from './s3';
 
 /** 納品対象の 5 種別 (順序は納品時の見せ方に使用) */
@@ -253,22 +253,64 @@ const CATEGORY_STRIP_FORMATS = new Set(['HealthCheckupData', 'CancerRiskAssessme
  *  - `raw_markdown` から `<!-- bbox: … -->` コメントを除去。
  * ※ 値(value/value_num)は書き換えない。旧元データの値の乱れは元ファイルの再生成で対応する。
  */
+/** "-"/"" を null に正規化。文字列以外は null。 */
+function normDeliveryStr(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  return s === '' || s === '-' ? null : s;
+}
+/** 表示値のクリーン化: 矢印(↑↓)等の記号・空白を除去。"-"/"" は null。 */
+function cleanDeliveryValue(v: unknown): string | null {
+  const raw = typeof v === 'string' ? v : v == null ? null : String(v);
+  if (raw == null) return null;
+  const s = raw.replace(/[↑↓⤴⤵➡→←]/g, '').trim();
+  return s === '' || s === '-' ? null : s;
+}
+/**
+ * 納品用の lean measurement を作る（Elith 要望 2026-07）。
+ * 残す: name / value(クリーン) / value_num / unit / ref_low / ref_high / flag。
+ * 除去: region / no / inferred(重複) / name_detail / note / category / bbox / assessment。
+ * value は inferred(あれば) を優先し記号除去。value_num は既存 or 数値化。
+ */
+function leanMeasurement(el: Record<string, unknown>): Record<string, unknown> {
+  const base = typeof el.inferred === 'string' ? el.inferred : el.value;
+  const value = cleanDeliveryValue(base);
+  const value_num =
+    typeof el.value_num === 'number' && Number.isFinite(el.value_num) ? el.value_num : toValueNum(value);
+  const flagRaw = typeof el.flag === 'string' ? el.flag.trim() : '';
+  const flag = flagRaw === 'H' || flagRaw === 'L' ? flagRaw : null;
+  return {
+    name: typeof el.name === 'string' ? el.name : null,
+    value,
+    value_num,
+    unit: normDeliveryStr(el.unit),
+    ref_low: normDeliveryStr(el.ref_low),
+    ref_high: normDeliveryStr(el.ref_high),
+    flag,
+  };
+}
+
 function sanitizeDelivery(obj: Record<string, unknown>): void {
   const fmt = typeof obj.format_id === 'string' ? obj.format_id : '';
   const data = obj.data;
   if (data && typeof data === 'object') {
     const d = data as Record<string, unknown>;
     delete d.regions;
-    for (const arrKey of ['measurements', 'items']) {
-      const arr = d[arrKey];
-      if (Array.isArray(arr)) {
-        for (const el of arr) {
-          if (el && typeof el === 'object') {
-            const e = el as Record<string, unknown>;
-            delete e.region;
-            delete e.bbox;
-            if (CATEGORY_STRIP_FORMATS.has(fmt)) delete e.category;
-          }
+    // measurement系: lean 化 (不要フィールド除去・値クリーン) + 未測定(値なし)項目を除外。
+    if (Array.isArray(d.measurements)) {
+      d.measurements = (d.measurements as Array<Record<string, unknown>>)
+        .filter((el) => el && typeof el === 'object')
+        .map((el) => leanMeasurement(el as Record<string, unknown>))
+        .filter((m) => m.value != null || m.value_num != null);
+    }
+    // 遺伝子等 items: 版面情報のみ除去 (lean はしない=構造が別)。
+    if (Array.isArray(d.items)) {
+      for (const el of d.items) {
+        if (el && typeof el === 'object') {
+          const e = el as Record<string, unknown>;
+          delete e.region;
+          delete e.bbox;
+          if (CATEGORY_STRIP_FORMATS.has(fmt)) delete e.category;
         }
       }
     }

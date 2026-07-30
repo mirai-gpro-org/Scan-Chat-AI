@@ -69,19 +69,16 @@
     "measurement": {
       "type": "object",
       "additionalProperties": false,
-      "description": "検査値1項目。version固定キー集合。version区分(category)/版面(region,bbox)は含めない。",
+      "description": "検査値1項目（Elith要望2026-07で lean 化）。区分(category)/版面(region,bbox,no)/監査(note)/重複(inferred)/name_detail/assessment は含めない。未測定(値なし)項目は納品しない。",
       "required": ["name", "value"],
       "properties": {
         "name": { "type": "string", "description": "検査項目（略称）。血液CSVは『項目名N』ヘッダの標準名。" },
-        "name_detail": { "type": ["string", "null"], "description": "正式名称／略号（血液CSVはデータ行の略号）。" },
-        "value": { "type": ["string", "null"], "description": "読み取り値。数値のみを目標（単位はunit・判定はflagへ分離）。範囲値/定性値は文字列。" },
-        "value_num": { "type": ["number", "null"], "description": "数値化できる場合のみ。範囲値(\"127/82\")や定性値は null。" },
+        "value": { "type": ["string", "null"], "description": "クリーン化した値（矢印↑等の記号は除去）。数値は value_num、定性値(\"(-)\"等)は文字列。" },
+        "value_num": { "type": ["number", "null"], "description": "数値化できる場合のみ。範囲値/定性値は null。" },
         "unit": { "type": ["string", "null"] },
-        "ref_low": { "type": ["string", "null"], "description": "基準下限。" },
-        "ref_high": { "type": ["string", "null"], "description": "基準上限。" },
-        "flag": { "enum": ["H", "L", "-", "", null], "description": "H=高 / L=低 / -=基準内 / null。" },
-        "note": { "type": ["string", "null"] },
-        "assessment": { "type": ["string", "null"], "description": "血液CSV: 対応する判定コード(F1等)。無ければ省略/null。" }
+        "ref_low": { "type": ["string", "null"], "description": "基準下限（無ければ null）。" },
+        "ref_high": { "type": ["string", "null"], "description": "基準上限（無ければ null）。" },
+        "flag": { "enum": ["H", "L", null], "description": "H=高 / L=低 / 基準内・不明は null。" }
       }
     },
     "measurementData": {
