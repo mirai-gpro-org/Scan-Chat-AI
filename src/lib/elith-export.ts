@@ -552,15 +552,29 @@ const BOUNDARY_RECHECK_ITEMS: { name: string; label: string; hint: RegExp; allow
 /** VQA 再読の監査記録 (可視化用・Elith 納品には含めない)。 */
 export interface VqaAuditEntry {
   name: string;
-  reason: 'missing_detection' | 'unexpected_token';
+  reason: 'missing_detection' | 'unexpected_token' | 'timeline_leak';
   before: string | null; // 主パスの今回値 (再読前)
-  vqa: string | null;     // VQA が返した生の回答
-  action: 'filled' | 'overwritten' | 'left_unresolved' | 'vqa_error';
+  vqa: string | null;     // VQA が返した生の回答 (leak は today/past を要約)
+  action: 'filled' | 'overwritten' | 'dropped' | 'left_unresolved' | 'vqa_error';
 }
 
+// Phase 2: 時系列軸リーク (過去列値→今回混入=False-Value) を後段で削除する対象。
+//   「今回=空が正になりやすい」項目。値があっても VQA でダブルチェックし、③3条件を全満たす時だけドロップ。
+//   names = 納品名の揺れ (pickDeliveryName 由来) を吸収する候補。
+const TIMELINE_LEAK_ITEMS: { names: string[]; label: string; hint: RegExp }[] = [
+  { names: ['眼圧右'], label: '眼圧 右', hint: /眼圧/ },
+  { names: ['眼圧左'], label: '眼圧 左', hint: /眼圧/ },
+  { names: ['その他右', '眼底その他右'], label: '眼底 その他 右（視神経陥凹等の所見欄）', hint: /眼底/ },
+  { names: ['その他左', '眼底その他左'], label: '眼底 その他 左（視神経陥凹等の所見欄）', hint: /眼底/ },
+  { names: ['RPR', 'PR'], label: '血清 RPR（梅毒定性）', hint: /RPR|梅毒|血清|ＰＲ/ },
+  { names: ['TP抗体'], label: '血清 TP抗体', hint: /TP|梅毒|血清/ },
+];
+
 /**
- * 一次パスで空/誤読だった境界定性項目だけを、その画像へ VQA 再読して補正する (Phase 1)。
- * env SCAN_BOUNDARY_RECHECK=on のときだけ呼ばれる。numeric には一切触れない。監査を audit で返す。
+ * 境界項目を VQA 再読して補正する。env SCAN_BOUNDARY_RECHECK=on のときだけ呼ばれる。監査を audit で返す。
+ *  - Phase 1 (fill/overwrite): 定性の今回空を充填 / 許可集合外の誤読 (例 "1") を上書き。既存の妥当値・numeric は不変。
+ *  - Phase 2 (leak drop): 今回=空が正の項目 (眼圧/眼底その他/血清) の過去列読みを、
+ *    ③ (VQA今回空 & 過去列に値 & 現value==過去列値) 全満たしの時だけ削除。誤削除=Missing を構造的に防ぐ。
  */
 async function boundaryRecheck(
   apiKey: string,
@@ -569,23 +583,32 @@ async function boundaryRecheck(
   rawFull: string,
   measurements: ElithMeasurement[],
 ): Promise<{ measurements: ElithMeasurement[]; audit: VqaAuditEntry[] }> {
-  // 再読候補 (定性 HIGH のみ・numeric はリストに無いので対象外): 画像に該当セクションがあり、かつ
-  //  (missing) 今回値が空、または (unexpected_token) 値はあるが定性許可集合外 (例 免疫便潜血="1")。
   const currentVal = (name: string): string | null => {
     const m = measurements.find((mm) => normNameKey(mm.name || '') === normNameKey(name));
     return m ? cleanDeliveryValue(m.value) : null;
   };
-  const candReason = (name: string): 'missing_detection' | 'unexpected_token' =>
-    currentVal(name) == null ? 'missing_detection' : 'unexpected_token';
-  const candidates = BOUNDARY_RECHECK_ITEMS.filter((it) => {
-    if (!it.hint.test(rawFull)) return false;
-    const cur = currentVal(it.name);
-    return cur == null || !it.allow.test(cur);
-  });
-  if (candidates.length === 0) return { measurements, audit: [] };
+  const currentValAny = (names: string[]): string | null => {
+    for (const n of names) { const v = currentVal(n); if (v != null) return v; }
+    return null;
+  };
+  const sameLoose = (a: string, b: string): boolean => a.replace(/\s/g, '') === b.replace(/\s/g, '');
+  // Phase 1: 定性の補完/誤読上書き候補 (今回が空 or 定性許可集合外 例 免疫便潜血="1")。
+  const fillCands = BOUNDARY_RECHECK_ITEMS
+    .filter((it) => { if (!it.hint.test(rawFull)) return false; const c = currentVal(it.name); return c == null || !it.allow.test(c); })
+    .map((it) => ({ kind: 'fill' as const, label: it.label, names: [it.name], allow: it.allow }));
+  // Phase 2: 時系列軸リーク候補 (今回=空が正の項目に値がある=過去列読みの疑い)。値ありのみ対象。
+  const leakCands = TIMELINE_LEAK_ITEMS
+    .filter((it) => it.hint.test(rawFull) && currentValAny(it.names) != null)
+    .map((it) => ({ kind: 'leak' as const, label: it.label, names: it.names }));
+  const allCands: Array<
+    | { kind: 'fill'; label: string; names: string[]; allow: RegExp }
+    | { kind: 'leak'; label: string; names: string[] }
+  > = [...fillCands, ...leakCands];
+  if (allCands.length === 0) return { measurements, audit: [] };
 
   const audit: VqaAuditEntry[] = [];
-  let items: Array<{ name?: string; value?: string; present?: boolean }> = [];
+  type VqaItem = { name?: string; value?: string; past_seen?: string; present?: boolean };
+  let items: VqaItem[] = [];
   try {
     const res = await callGemini(
       apiKey,
@@ -596,7 +619,7 @@ async function boundaryRecheck(
             role: 'user',
             parts: [
               { inline_data: { mime_type: mimeType, data: imageBase64 } },
-              { text: buildBoundaryRecheckUser(candidates.map((c) => c.label)) },
+              { text: buildBoundaryRecheckUser(allCands.map((c) => c.label)) },
             ],
           },
         ],
@@ -604,59 +627,76 @@ async function boundaryRecheck(
       },
       MODELS.scan,
     );
-    const parsed = JSON.parse(stripJsonCodeFence(extractText(res))) as { items?: typeof items };
+    const parsed = JSON.parse(stripJsonCodeFence(extractText(res))) as { items?: VqaItem[] };
     if (Array.isArray(parsed.items)) items = parsed.items;
   } catch {
-    // 再読失敗はギャップ埋めなしで続行 (一次結果を壊さない)。監査に vqa_error を残す。
-    for (const c of candidates) audit.push({ name: c.name, reason: candReason(c.name), before: currentVal(c.name), vqa: null, action: 'vqa_error' });
+    // 再読失敗は補正なしで続行 (一次結果を壊さない)。監査に vqa_error を残す。
+    for (const c of allCands) {
+      const before = currentValAny(c.names);
+      const reason: VqaAuditEntry['reason'] = c.kind === 'leak' ? 'timeline_leak' : before == null ? 'missing_detection' : 'unexpected_token';
+      audit.push({ name: c.names[0], reason, before, vqa: null, action: 'vqa_error' });
+    }
     return { measurements, audit };
   }
 
-  // VQA 回答を候補へ対応付け (ラベル/正規化名/包含)。
-  const vqaByName = new Map<string, string>();
+  // VQA 回答を候補ラベルへ対応付け (ラベル/正規化名/包含)。
+  const vqaByLabel = new Map<string, VqaItem>();
   for (const it of items) {
     const cand =
-      candidates.find((c) => c.label === it.name) ||
-      candidates.find((c) => normNameKey(c.name) === normNameKey(it.name || '')) ||
-      candidates.find((c) => (it.name || '').includes(c.name));
-    if (!cand) continue;
-    vqaByName.set(cand.name, it.present === false ? '' : typeof it.value === 'string' ? it.value.trim() : '');
+      allCands.find((c) => c.label === it.name) ||
+      allCands.find((c) => c.names.some((n) => normNameKey(n) === normNameKey(it.name || ''))) ||
+      allCands.find((c) => c.names.some((n) => (it.name || '').includes(n)));
+    if (cand) vqaByLabel.set(cand.label, it);
   }
 
   const out = measurements.slice();
-  for (const cand of candidates) {
-    const reason = candReason(cand.name);
-    const before = currentVal(cand.name);
-    const rawv = vqaByName.get(cand.name) ?? '';
-    // fail-safe: 空/"?"(判定不能)/許可集合外 の VQA 回答は採用しない。
-    const val = rawv === '' || rawv.includes('?') ? null : cleanDeliveryValue(rawv);
-    if (val == null || !cand.allow.test(val)) {
-      audit.push({ name: cand.name, reason, before, vqa: rawv || null, action: 'left_unresolved' });
+  const idxOfAny = (names: string[]): number =>
+    out.findIndex((m) => names.some((n) => normNameKey(m.name || '') === normNameKey(n)));
+
+  for (const cand of allCands) {
+    const vqa = vqaByLabel.get(cand.label);
+    const before = currentValAny(cand.names);
+
+    if (cand.kind === 'fill') {
+      const reason: VqaAuditEntry['reason'] = before == null ? 'missing_detection' : 'unexpected_token';
+      const rawv = !vqa || vqa.present === false ? '' : typeof vqa.value === 'string' ? vqa.value.trim() : '';
+      // fail-safe: 空/"?"(判定不能)/許可集合外 の VQA 回答は採用しない。
+      const val = rawv === '' || rawv.includes('?') ? null : cleanDeliveryValue(rawv);
+      if (val == null || !cand.allow.test(val)) { audit.push({ name: cand.names[0], reason, before, vqa: rawv || null, action: 'left_unresolved' }); continue; }
+      const idx = idxOfAny(cand.names);
+      if (idx < 0) {
+        out.push(tidyMeasurement({ name: cand.names[0], name_detail: null, value: val, value_num: null, unit: null, ref_low: null, ref_high: null, flag: null, note: 'vqa:missing_detection' }));
+        audit.push({ name: cand.names[0], reason, before, vqa: val, action: 'filled' });
+        continue;
+      }
+      const cur = cleanDeliveryValue(out[idx].value);
+      if (cur == null) {
+        // missing_detection: 空欄を VQA の妥当トークンで補完 (numeric には来ない=定性HIGHのみ)。
+        out[idx] = tidyMeasurement({ ...(out[idx] as ElithMeasurement), value: val, value_num: null, note: 'vqa:missing_detection' });
+        audit.push({ name: cand.names[0], reason, before, vqa: val, action: 'filled' });
+      } else if (!cand.allow.test(cur)) {
+        // unexpected_token: 許可集合外の誤読 (例 "1") を上書き。**既に妥当な値・numeric は不変**。
+        out[idx] = tidyMeasurement({ ...(out[idx] as ElithMeasurement), value: val, value_num: null, note: 'vqa:unexpected_token' });
+        audit.push({ name: cand.names[0], reason, before, vqa: val, action: 'overwritten' });
+      } else {
+        audit.push({ name: cand.names[0], reason, before, vqa: val, action: 'left_unresolved' }); // 既に妥当 → 触らない
+      }
       continue;
     }
-    const idx = out.findIndex((m) => normNameKey(m.name || '') === normNameKey(cand.name));
-    if (idx < 0) {
-      out.push(
-        tidyMeasurement({
-          name: cand.name, name_detail: null, value: val, value_num: null,
-          unit: null, ref_low: null, ref_high: null, flag: null, note: 'vqa:missing_detection',
-        }),
-      );
-      audit.push({ name: cand.name, reason, before, vqa: val, action: 'filled' });
-      continue;
-    }
-    const cur = cleanDeliveryValue(out[idx].value);
-    if (cur == null) {
-      // missing_detection: 空欄を VQA の妥当トークンで補完 (numeric には来ない=定性HIGHのみ)。
-      out[idx] = tidyMeasurement({ ...(out[idx] as ElithMeasurement), value: val, value_num: null, note: 'vqa:missing_detection' });
-      audit.push({ name: cand.name, reason, before, vqa: val, action: 'filled' });
-    } else if (!cand.allow.test(cur)) {
-      // unexpected_token: 許可集合外の誤読 (例 "1") を上書き。**既に妥当な値・numeric は不変**。
-      out[idx] = tidyMeasurement({ ...(out[idx] as ElithMeasurement), value: val, value_num: null, note: 'vqa:unexpected_token' });
-      audit.push({ name: cand.name, reason, before, vqa: val, action: 'overwritten' });
+
+    // kind === 'leak' : ③ガード (VQA今回空 & 過去列に値 & 現value==過去列値) を全満たしの時だけ削除 (値→空)。
+    const idx = idxOfAny(cand.names);
+    const cur = idx >= 0 ? cleanDeliveryValue(out[idx].value) : null;
+    const todayRaw = vqa && vqa.present !== false && typeof vqa.value === 'string' ? vqa.value.trim() : '';
+    const vqaTodayEmpty = vqa != null && vqa.present !== false && !todayRaw.includes('?') && cleanDeliveryValue(todayRaw) == null; // VQAが今回空と明言
+    const vqaPast = vqa && typeof vqa.past_seen === 'string' ? cleanDeliveryValue(vqa.past_seen) : null;
+    const summary = vqa ? `today=${vqa.value ?? '-'} / past=${vqa.past_seen ?? '-'}` : null;
+    if (idx >= 0 && cur != null && vqaTodayEmpty && vqaPast != null && sameLoose(cur, vqaPast)) {
+      // ③全満たし → 過去列読みの False-Value と断定して削除。**誤削除防止のため value==過去値の一致を必須**。
+      out[idx] = { ...(out[idx] as ElithMeasurement), value: null, value_num: null, note: 'vqa:timeline_leak_dropped' };
+      audit.push({ name: cand.names[0], reason: 'timeline_leak', before, vqa: summary, action: 'dropped' });
     } else {
-      // 既に妥当 → 触らない。
-      audit.push({ name: cand.name, reason, before, vqa: val, action: 'left_unresolved' });
+      audit.push({ name: cand.names[0], reason: 'timeline_leak', before, vqa: summary, action: 'left_unresolved' });
     }
   }
   return { measurements: out, audit };

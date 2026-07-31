@@ -177,10 +177,12 @@
       **可視化**: `boundaryRecheck` が `VqaAuditEntry[]`(name/reason/before/vqa/action=filled|overwritten|left_unresolved|vqa_error)
       を返し、`scanImageToParsed`→hc-merge の per-part 応答 `vqa_audit`→admin(`elith-batch.astro`)で
       「VQA再読 充填/上書き/未解決/エラー」を表示 (Elith 納品 data には含めない)。「VQAが発火したか/残差か」を🎯とは別に判別可能。
-    - **Phase 2 (未実装)**: `timeline_leak` の**削除(値→空)**。眼圧・眼底その他・血清等の「今回=空が正」で過去列値が
-      混入した False-Value を、**③3条件 (VQAが今回空 & 過去列に値 & 現value==過去列値) を全て満たす時だけ**後段で
-      ドロップ (本番は過去列を持たないので VQA に過去列値も報告させ突合)。誤削除=Missing を構造的に防ぐ。
-      眼圧/血清が"実施済"の第2検体ゴールデンで「実施済を落とさない」を確認してから有効化する想定。
+    - **Phase 2 (実装済・🎯検証待ち)**: `timeline_leak` の**削除(値→空)**。眼圧・眼底その他・血清(RPR/TP)等
+      「今回=空が正」の項目 (`TIMELINE_LEAK_ITEMS`) を値ありでも VQA でダブルチェックし、VQA に `past_seen`
+      (過去列に見えた値) を報告させ、**③3条件 (VQAが今回空 & past_seen に値 & 現value==past_seen) を全て満たす時だけ**
+      後段で削除 (`sameLoose` 一致必須)。本番は過去列を持たないので VQA の past_seen と突合する。誤削除=Missing を
+      構造的に防ぐ。残リスク=今回値==過去値が偶然一致する検体で実施済を誤削除し得る → **眼圧/血清が"実施済"の
+      第2検体ゴールデン**で「実施済を落とさない」を確認してから本番常用する。監査 action に `dropped` を追加。
     - 主パスへの O/X 列追加・時系列規則強化は numeric 回帰で不採用(実証済)。クロップ前処理は画像ライブラリ不在
       (追加依存なし方針)のため保留 (VQA単機能化=実質 attention 仮想クロップで当面足りる)。
 
