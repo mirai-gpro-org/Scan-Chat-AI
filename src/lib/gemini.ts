@@ -147,10 +147,14 @@ export async function callGemini(
   };
   // 503(model overloaded)/429/500 を待って再試行 (サーバ側=キーのある Vercel でのみ意味を持つ)。
   //   3.5-flash 等の上位モデルは混雑時に 503 で「バッチ全滅」する実績があるため、ここで吸収する。
-  //   既定は控えめ (3回×4s=最大12s待機・関数タイムアウト内)。検証時は env で強められる:
-  //   GEMINI_MAX_RETRIES / GEMINI_RETRY_BASE_MS (例: 5 / 5000 = Gemini 提案の 5回×5s)。固定バックオフ。
-  const maxRetries = intEnv('GEMINI_MAX_RETRIES', 3);
-  const backoffMs = intEnv('GEMINI_RETRY_BASE_MS', 4000);
+  //   **指数バックオフ + ジッター** (base*2^n を cap で頭打ち + 0〜1s ゆらぎ)。コミュニティ実証で
+  //   即時/固定より 2〜3 回で通る確率が高い方式。0秒/同期リトライは 429/IPバン悪化のため厳禁。
+  //   既定 base=1s → 1,2,4,8s (4回=最大~15s・関数タイムアウト内)。検証時は env で強化可:
+  //   GEMINI_MAX_RETRIES / GEMINI_RETRY_BASE_MS / GEMINI_RETRY_CAP_MS。
+  const maxRetries = intEnv('GEMINI_MAX_RETRIES', 4);
+  const baseMs = intEnv('GEMINI_RETRY_BASE_MS', 1000);
+  const capMs = intEnv('GEMINI_RETRY_CAP_MS', 16000);
+  const backoffFor = (a: number): number => Math.min(capMs, baseMs * 2 ** a) + Math.floor(Math.random() * 1000);
   let lastStatus = 0;
   let lastText = '';
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -165,7 +169,7 @@ export async function callGemini(
       // ネットワーク断も一時障害として再試行。
       lastStatus = 0;
       lastText = String(e);
-      if (attempt < maxRetries) { await sleep(backoffMs + Math.floor(Math.random() * 1000)); continue; }
+      if (attempt < maxRetries) { await sleep(backoffFor(attempt)); continue; }
       throw new GeminiError(`Gemini fetch failed: ${lastText}`, 0, '');
     }
     const text = await res.text();
@@ -173,9 +177,9 @@ export async function callGemini(
       if (GEMINI_RETRY_STATUSES.has(res.status) && attempt < maxRetries) {
         lastStatus = res.status;
         lastText = text;
-        // 固定バックオフ + ジッター(0〜1s)。0秒/同期リトライは Google のレートリミッタに
-        // 悪質判定され 429/IPバンに悪化するため、待機とゆらぎを必ず入れる (Gemini 助言)。
-        await sleep(backoffMs + Math.floor(Math.random() * 1000));
+        // 指数バックオフ + ジッター。0秒/同期リトライは Google のレートリミッタに
+        // 悪質判定され 429/IPバンに悪化するため、倍々の待機とゆらぎを必ず入れる。
+        await sleep(backoffFor(attempt));
         continue;
       }
       throw new GeminiError(`Gemini request failed: ${res.status}`, res.status, text);
