@@ -61,3 +61,17 @@
 - **Missing Value Rate**: 今回値があるのに JSON で欠落（身体計測・尿酸 が sentinel）。
 - **Column-Shift(Wrong-Column) Rate**: JSON今回値 == 前回/前々回の正解値（眼底・血圧マーカ が sentinel）。
 - **False-Value Rate**: 今回=空なのに JSON に値（眼底その他 が sentinel。最重要）。
+- **定性一致率 (Qualitative Match)**: 定性 sentinel (`q:1`=尿糖/蛋白/潜血/K-W右左/免疫便潜血1・2日目) だけの
+  今回値一致率。numeric(常に安定)と混ぜず定性のみを見る。`goldenCheck` が `qCorrect/qExpected` で算出。
+- **Semantic-Tie(残) Rate**: 定性の今回値が空 かつ 同名の基準列(上限値/ref)に定性トークン `(-)` がある残差
+  (=結果(-)が基準へ吸われた未救済分)。`goldenCheck` の `tie[]`。salvage/VQA の効きを直接測る。
+
+## サルベージ/VQA の検証観点 (Semantic-Tie マトリクス・2026-07 収束)
+定性の `salvageQualitativeResult` 一般化 / VQA 再読を変更したら、以下4象限で **False-Value=0** を必ず確認する:
+| 画像の状態 | 期待する納品値 | 検知すべき重大エラー |
+|---|---|---|
+| ① 実施済(正常): 基準(-)/結果(-) | value=`(-)` | Missing |
+| ② 実施済(陽性): 基準(-)/結果(+) | value=`(+)` | Missing / Wrong |
+| ③ **未実施の罠**: 基準(-)/結果空欄 (例 RPR/TP抗体・4ページ目) | **空欄(納品除外)** | **False-Value(最重要)** |
+| ④ 未実施(完全空): 基準空/結果空 | 空欄(納品除外) | False-Value |
+※ 特に③(RPR/TP抗体=基準(-)・今回空)で False-Value=0 を保てるかが安全性の証明。allow-list の deny で血清を除外済。

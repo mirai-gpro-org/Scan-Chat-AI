@@ -70,7 +70,9 @@
     絶対に上書きしない=numeric不変・空返しは埋めない=捏造しない)。モード非依存。🎯回帰ゼロ確認後に常用する想定。
 - **確定運用 (2026-07・🎯検証済)**: 本番スキャンは **`SCAN_OUTPUT_FORMAT` 未設定(=markdown) + `SCAN_BOUNDARY_RECHECK=on`**。
   🎯決定論ゴールデンで numeric 全一致・False-Value 0・Shift/Wrong 0 を確認。名称ゆれ(血圧最高/最低・白血球数↔白血球)は
-  `pickDeliveryName` 正規化と照合器 alt で吸収。定性(-)の列取り違えは `salvageQualitativeResult`(便潜血)で救済。
+  `pickDeliveryName` 正規化と照合器 alt で吸収。定性(-)の列取り違えは `salvageQualitativeResult`
+  (便潜血→尿定性へ allow-list 一般化・🎯検証待ち)で救済。照合器(`elith-batch.astro goldenCheck`)に
+  **定性一致率 (numericと分離) と Semantic-Tie(残) 指標**を追加済 (定性の今回値が空で基準列に(-)がある残差を可視化)。
   - **残差 = 免疫便潜血の稀な純粋検出漏れ**: モデルが (-) を value にも ref にも読まない run では、salvage も再読(temp0)も
     埋められない。**ここで (-) を補完すると捏造になるため、空のままにする(捏造ゼロ)** のが確定挙動。多くの run では
     base/salvage/再読のいずれかで捕捉される。さらに追う場合の未実装オプション: 温度変動の多段再読 / 検便領域の
@@ -143,9 +145,19 @@
   - 理由: 方式Aバッチ/assemble未実行の経路では**生スキャン出力がそのまま Elith 納品**になり得るため、
     整形は「書き出し時点」に置く (assemble任せにしない)。監査は raw_markdown + 元画像(S3) に保持。
   - **定性結果の列サルベージ (Phase 0)**: `salvageQualitativeResult()` が `sanitizeMeasurementsForDelivery` 冒頭で、
-    **免疫便潜血系のみ** value 空時に括弧付き定性記号 `(-)`/`(+)` を ref_high/ref_low/note から value へ移送する
-    (便潜血の結果 `(-)` が基準列へ吸われ脱落する非決定バグの保険)。他項目は「基準=(-)」を結果と誤読しないよう
-    **名称スコープ限定** (血清PR/TP抗体等の未実施行を埋めない)。恒久対処は `SCAN_OUTPUT_FORMAT=json` (Phase 2)。
+    value 空時に括弧付き定性記号 `(-)`/`(+)`/`(±)`/陰性/陽性 を ref_high/ref_low/note から value へ移送する
+    (結果 `(-)` が基準列(上限値)へ吸われ脱落する非決定バグ=Semantic Tie の保険)。
+    **名称 allow-list に限定** (「基準=(-)」を結果と誤読して埋める False-Value を避ける):
+    許可=`/便潜血|^(?:尿蛋白|尿潜血|尿糖|蛋白|潜血)$/`、除外(deny)=血清 RPR/TP抗体/HBs/HCV・尿沈渣 細菌/円柱/結晶・
+    総蛋白/血糖 等 (「基準=(-)だが今回空=未実施」が正当な行を埋めない)。
+    **2026-07: 便潜血限定→尿定性まで一般化 (Gemini/ChatGPT/実装の3者収束・🎯検証待ち)**。
+    残リスク=検体未採取で尿ディップ全欄が空の run は基準(-)を誤救済し得る → 恒久対処は下記 VQA 再読。
+    (旧恒久策の `SCAN_OUTPUT_FORMAT=json` は補助欄暴走=False-Value で不採用済み。)
+  - **定性の恒久対処 = 第2パス VQA (収束方針・未実装)**: 主パス(10列Markdown)は不変のまま、`SCAN_BOUNDARY_RECHECK`
+    経路を「値抽出」から**局所VQA**へ格上げする。プロンプトで「基準に(-)があるのは既知。**結果セル**に印字が
+    あるか」を宣言(グラウンディング)し、`結果=(-)/(+)/完全空欄` の3択のみ返させ、**後段は (-)/(+) の完全一致時だけ
+    採用・空欄/迷いはドロップ**(捏造ゼロ)。主パスへの O/X 列追加は numeric 回帰リスクで不採用(3者合意)。
+    クロップ前処理は画像ライブラリ不在(追加依存なし方針)のため保留 (payoff を見て判断)。
 
 ### 検査種別ごとの本番処理 (役割分担)
 根拠: `docs/elith_batch_centralization_design.md`
