@@ -61,6 +61,13 @@
     **未検証のうちは既定 `markdown` のまま**。代表ページで 🎯ゴールデン照合の回帰ゼロを確認してから `json` へ寄せる。
     プロンプト/スキーマは `src/lib/scan-prompt.ts` の `ANALYZE_SYSTEM_JSON` / `SCAN_RESPONSE_SCHEMA`。読取ルール
     (今回のみ・推論値隔離・総合判定除外・疎ページ) は Markdown 版と同一。両経路とも `toMeasurements` 以降を共用。
+    - **検証結果 (2026-07・🎯決定論比較)**: json は列は安定するが**補助欄が暴走**する (未実施項目の value に基準値を
+      流し込む捏造=False-Value 8件・重複12・rows120 の実測)。値一致率は markdown と同点。**json は不安定で
+      ゴール①(余剰/誤り排除)に不利** → **既定 `markdown` で確定運用**。json 経路はコード温存 (将来の補助欄抑制改良用)。
+  - **境界定性の2パス再読 `SCAN_BOUNDARY_RECHECK` (既定 off・`on` で有効)**: numeric は安定だが定性/境界
+    (尿蛋白/尿潜血/尿糖/免疫便潜血/K-W) が run 毎に入れ替わりで空返しされる (検出の揺れ=非決定)。一次パスで
+    空だった該当項目**だけ**を、その画像へ軽量シングルタスクで再読しギャップ埋めする (`boundaryRecheck`・既存値は
+    絶対に上書きしない=numeric不変・空返しは埋めない=捏造しない)。モード非依存。🎯回帰ゼロ確認後に常用する想定。
   - **Gemini 3.x の生成設定差は `callGemini` が自動吸収**: 呼び出し側は 2.x 形式 (`thinkingBudget`・`temperature`) の
     まま書けばよい。3.x 指定時のみ `temperature/topP/topK` を除去 (既定推奨) し `thinkingBudget→thinkingLevel` へ変換。
 - したがって **ローカル端末での CLI 直実行は不可** (キーを読めない)。

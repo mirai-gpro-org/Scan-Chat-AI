@@ -400,6 +400,62 @@ export function buildScanUserText(hint?: string | null): string {
   return (hint ? `補足: ${hint}\n` : '') + 'この紙面を Markdown に書き起こしてください。';
 }
 
+// ════════════════════════════════════════════════════════════════════
+// 境界定性項目の2パス再読 (Phase 1) — env SCAN_BOUNDARY_RECHECK=on で有効
+// ────────────────────────────────────────────────────────────────────
+// 背景: numeric は安定だが、定性/境界 (尿蛋白/尿潜血/尿糖/免疫便潜血/K-W) が run 毎に
+//   入れ替わりで空返しされる (検出の揺れ・非決定)。列でも捏造でもないため一次プロンプトでは
+//   詰められない。→ 一次パスで空だった該当項目**だけ**を、その画像に対し軽量シングルタスクで
+//   再読し、空欄をギャップ埋めする (既存値は絶対に上書きしない)。両アドバイザーの推奨手。
+
+/** 境界再読の構造化出力スキーマ (指定項目の今回値のみ)。 */
+export const BOUNDARY_RECHECK_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    items: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          name: { type: 'STRING', description: '依頼した項目名 (そのまま返す)。' },
+          value: { type: 'STRING', description: '「今回」列の結果のみ。定性は (-)/(+)/0 等そのまま。無ければ "-"。' },
+          present: { type: 'BOOLEAN', description: 'この画像にその項目行が存在したか。' },
+        },
+        required: ['name', 'value'],
+        propertyOrdering: ['name', 'value', 'present'],
+      },
+    },
+  },
+  required: ['items'],
+} as const;
+
+/** 境界再読のシステムプロンプト (単機能・転記のみ)。 */
+export const BOUNDARY_RECHECK_SYSTEM = `あなたは検査結果票の画像から、指定された項目の「今回」の結果**だけ**を読み取る転記係です。
+- **「今回」(最新回) 列の値のみ**。前回・前々回・受診日付きの過去列は無視する。
+- 定性の結果 (陰性(-)/陽性(+)/0 等) はそのまま value に入れる。基準表記の (-) は結果ではないので採らない。
+- その項目の**今回結果が空欄なら value="-"** (基準欄に (-) 等があっても繰り上げない)。
+- 画像にその項目行が無ければ present=false, value="-"。
+- 医学的補正・推論はしない。見えた文字のみ。指定 JSON スキーマのみ出力 (前置き不要)。`;
+
+/** 境界再読のユーザーパート (探す項目ラベルを列挙)。 */
+export function buildBoundaryRecheckUser(labels: string[]): string {
+  return (
+    'この画像から、次の各項目の「今回」の結果だけを読み取ってください。\n' +
+    labels.map((l) => `- ${l}`).join('\n') +
+    '\n各項目について {name, value, present} を items に入れて返してください。' +
+    'name は上記の項目名をそのまま使ってください。'
+  );
+}
+
+/** 境界再読の generationConfig。 */
+export const BOUNDARY_RECHECK_GENERATION_CONFIG = {
+  temperature: 0.0,
+  maxOutputTokens: 2048,
+  responseMimeType: 'application/json',
+  responseSchema: BOUNDARY_RECHECK_SCHEMA,
+  thinkingConfig: { thinkingBudget: 512 },
+} as const;
+
 /** バッチ用: 検査日を先頭コメントで出させる追加指示 */
 export const EXAM_DATE_INSTRUCTION =
   '\nまた、紙面に検査日・採取日・受診日・報告日が読み取れる場合は、出力の先頭行に ' +
