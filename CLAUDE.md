@@ -68,6 +68,13 @@
     (尿蛋白/尿潜血/尿糖/免疫便潜血/K-W) が run 毎に入れ替わりで空返しされる (検出の揺れ=非決定)。一次パスで
     空だった該当項目**だけ**を、その画像へ軽量シングルタスクで再読しギャップ埋めする (`boundaryRecheck`・既存値は
     絶対に上書きしない=numeric不変・空返しは埋めない=捏造しない)。モード非依存。🎯回帰ゼロ確認後に常用する想定。
+- **確定運用 (2026-07・🎯検証済)**: 本番スキャンは **`SCAN_OUTPUT_FORMAT` 未設定(=markdown) + `SCAN_BOUNDARY_RECHECK=on`**。
+  🎯決定論ゴールデンで numeric 全一致・False-Value 0・Shift/Wrong 0 を確認。名称ゆれ(血圧最高/最低・白血球数↔白血球)は
+  `pickDeliveryName` 正規化と照合器 alt で吸収。定性(-)の列取り違えは `salvageQualitativeResult`(便潜血)で救済。
+  - **残差 = 免疫便潜血の稀な純粋検出漏れ**: モデルが (-) を value にも ref にも読まない run では、salvage も再読(temp0)も
+    埋められない。**ここで (-) を補完すると捏造になるため、空のままにする(捏造ゼロ)** のが確定挙動。多くの run では
+    base/salvage/再読のいずれかで捕捉される。さらに追う場合の未実装オプション: 温度変動の多段再読 / 検便領域の
+    クロップ拡大前処理 (コストと payoff を見て判断)。
   - **Gemini 3.x の生成設定差は `callGemini` が自動吸収**: 呼び出し側は 2.x 形式 (`thinkingBudget`・`temperature`) の
     まま書けばよい。3.x 指定時のみ `temperature/topP/topK` を除去 (既定推奨) し `thinkingBudget→thinkingLevel` へ変換。
 - したがって **ローカル端末での CLI 直実行は不可** (キーを読めない)。
