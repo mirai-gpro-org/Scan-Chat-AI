@@ -21,6 +21,9 @@ import {
   ANALYZE_SYSTEM_JSON,
   SCAN_JSON_GENERATION_CONFIG,
   buildScanUserTextJson,
+  BOUNDARY_RECHECK_SYSTEM,
+  BOUNDARY_RECHECK_GENERATION_CONFIG,
+  buildBoundaryRecheckUser,
 } from './scan-prompt';
 import { parseScanRegions, type ScanRegionJson } from './scan-export';
 import type { S3PutFile } from './s3';
@@ -61,6 +64,14 @@ export function isGeminiConfigured(): boolean {
  */
 export function scanOutputFormat(): 'json' | 'markdown' {
   return env('SCAN_OUTPUT_FORMAT') === 'json' ? 'json' : 'markdown';
+}
+/**
+ * 境界定性項目の2パス再読 (Phase 1) を有効にするか。env `SCAN_BOUNDARY_RECHECK=on` で有効 (既定 off)。
+ * 一次パスで空だった境界項目 (尿蛋白/尿潜血/尿糖/免疫便潜血/K-W) だけを、その画像へ軽量再読し
+ * ギャップ埋めする (既存値は上書きしない)。numeric は触らない。🎯 回帰ゼロ確認後に常用する想定。
+ */
+export function boundaryRecheckEnabled(): boolean {
+  return env('SCAN_BOUNDARY_RECHECK') === 'on';
 }
 
 // ── MIME / 拡張子 ───────────────────────────────────────────────
@@ -502,6 +513,99 @@ function normalizeSchemaExamDate(v: unknown): string | null {
   return m ? isoDate(m[1], m[2], m[3]) : null;
 }
 
+// ── 境界定性項目の2パス再読 (Phase 1) ──────────────────────────────
+/** 照合キー正規化 (astro 側 gName と同一方針: 空白除去 + 末尾 数/量/値 除去)。 */
+function normNameKey(s: string): string {
+  return String(s || '').replace(/[\s　]/g, '').replace(/(数|量|値)$/, '');
+}
+/** 再読対象の境界項目 (name=納品名/ゴールデン名, label=再読プロンプト表記, hint=その画像にありそうか)。 */
+const BOUNDARY_RECHECK_ITEMS: { name: string; label: string; hint: RegExp }[] = [
+  { name: '免疫便潜血反応 1日目', label: '免疫便潜血反応（検便）1日目', hint: /便潜血|検便/ },
+  { name: '免疫便潜血反応 2日目', label: '免疫便潜血反応（検便）2日目', hint: /便潜血|検便/ },
+  { name: '尿糖', label: '尿糖（尿定性）', hint: /尿糖/ },
+  { name: '蛋白', label: '尿蛋白（尿定性の蛋白。血液の総蛋白ではない）', hint: /蛋白/ },
+  { name: '潜血', label: '尿潜血（尿定性の潜血）', hint: /潜血/ },
+  { name: 'K-W分類右', label: 'K-W分類 右（眼底）', hint: /眼底|K.?W/i },
+  { name: 'K-W分類左', label: 'K-W分類 左（眼底）', hint: /眼底|K.?W/i },
+];
+
+/**
+ * 一次パスで空だった境界項目だけを、その画像へ軽量再読しギャップ埋めする (既存値は上書きしない)。
+ * env SCAN_BOUNDARY_RECHECK=on のときだけ呼ばれる。numeric には一切触れない。
+ */
+async function boundaryRecheck(
+  apiKey: string,
+  imageBase64: string,
+  mimeType: string,
+  rawFull: string,
+  measurements: ElithMeasurement[],
+): Promise<ElithMeasurement[]> {
+  // 満たされているか (同名で非空値が既にあるか)。無く、かつ画像に該当セクションがありそうなら再読候補。
+  const satisfied = (name: string): boolean =>
+    measurements.some((m) => normNameKey(m.name || '') === normNameKey(name) && cleanDeliveryValue(m.value) != null);
+  const candidates = BOUNDARY_RECHECK_ITEMS.filter((it) => !satisfied(it.name) && it.hint.test(rawFull));
+  if (candidates.length === 0) return measurements;
+
+  let items: Array<{ name?: string; value?: string; present?: boolean }> = [];
+  try {
+    const res = await callGemini(
+      apiKey,
+      {
+        systemInstruction: { parts: [{ text: BOUNDARY_RECHECK_SYSTEM }] },
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { inline_data: { mime_type: mimeType, data: imageBase64 } },
+              { text: buildBoundaryRecheckUser(candidates.map((c) => c.label)) },
+            ],
+          },
+        ],
+        generationConfig: { ...BOUNDARY_RECHECK_GENERATION_CONFIG },
+      },
+      MODELS.scan,
+    );
+    const parsed = JSON.parse(stripJsonCodeFence(extractText(res))) as { items?: typeof items };
+    if (Array.isArray(parsed.items)) items = parsed.items;
+  } catch {
+    return measurements; // 再読失敗はギャップ埋めなしで続行 (一次結果を壊さない)
+  }
+
+  const out = measurements.slice();
+  for (const it of items) {
+    if (it.present === false) continue;
+    const val = cleanDeliveryValue(typeof it.value === 'string' ? it.value : null);
+    if (val == null) continue; // 空返し (今回未実施) は埋めない
+    // 返り name をラベル/正規化名で候補へ対応付け。
+    const cand =
+      candidates.find((c) => c.label === it.name) ||
+      candidates.find((c) => normNameKey(c.name) === normNameKey(it.name || '')) ||
+      candidates.find((c) => (it.name || '').includes(c.name));
+    if (!cand) continue;
+    const idx = out.findIndex((m) => normNameKey(m.name || '') === normNameKey(cand.name));
+    if (idx >= 0) {
+      if (cleanDeliveryValue(out[idx].value) == null) {
+        out[idx] = tidyMeasurement({ ...(out[idx] as ElithMeasurement), value: val, value_num: null });
+      }
+    } else {
+      out.push(
+        tidyMeasurement({
+          name: cand.name,
+          name_detail: null,
+          value: val,
+          value_num: null,
+          unit: null,
+          ref_low: null,
+          ref_high: null,
+          flag: null,
+          note: 'boundary-recheck',
+        }),
+      );
+    }
+  }
+  return out;
+}
+
 /**
  * スキャン取得の統一入口。env で Markdown / JSON を切替え、両経路とも
  * 「監査用 raw・regions・measurements・notes・(schema由来)検査日」を同じ形で返す。
@@ -522,10 +626,11 @@ async function scanArtifacts(
   mimeType: string,
   hint?: string | null,
 ): Promise<ScanArtifacts> {
+  let art: ScanArtifacts;
   if (scanOutputFormat() === 'json') {
     const { parsed, raw, finishReason } = await scanImageJson(apiKey, imageBase64, mimeType, hint);
     const regions = jsonToRegions(parsed);
-    return {
+    art = {
       rawFull: raw,
       cleanedRaw: raw,
       finishReason,
@@ -534,19 +639,25 @@ async function scanArtifacts(
       notes: collectNotes(regions),
       examDateFromScan: normalizeSchemaExamDate(parsed.exam_date),
     };
+  } else {
+    const { markdown, finishReason } = await scanImage(apiKey, imageBase64, mimeType, hint);
+    if (!markdown.trim()) throw new Error(`empty scan result (finishReason=${finishReason})`);
+    const regions = parseScanRegions(markdown);
+    art = {
+      rawFull: markdown,
+      cleanedRaw: stripBboxComments(stripExamComment(markdown)),
+      finishReason,
+      regions,
+      measurements: toMeasurements(regions),
+      notes: collectNotes(regions),
+      examDateFromScan: null,
+    };
   }
-  const { markdown, finishReason } = await scanImage(apiKey, imageBase64, mimeType, hint);
-  if (!markdown.trim()) throw new Error(`empty scan result (finishReason=${finishReason})`);
-  const regions = parseScanRegions(markdown);
-  return {
-    rawFull: markdown,
-    cleanedRaw: stripBboxComments(stripExamComment(markdown)),
-    finishReason,
-    regions,
-    measurements: toMeasurements(regions),
-    notes: collectNotes(regions),
-    examDateFromScan: null,
-  };
+  // Phase 1: 境界定性項目のギャップ埋め (env で有効時のみ・空欄だけ・numeric不変)。
+  if (boundaryRecheckEnabled()) {
+    art = { ...art, measurements: await boundaryRecheck(apiKey, imageBase64, mimeType, art.rawFull, art.measurements) };
+  }
+  return art;
 }
 
 // ── 1 画像スキャン → 解析結果 (S3 書き込みなし) ──────────────────
