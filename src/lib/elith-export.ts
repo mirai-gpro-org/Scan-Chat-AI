@@ -357,6 +357,14 @@ const GENERIC_DETAIL = new Set(['所見', '像', 'コメント', '結果', '判�
 export function pickDeliveryName(section: string, detail: string): string | null {
   const s = (section || '').trim();
   const d = (detail || '').trim();
+  // 血圧の最高/最低は section/detail の当て方が run 毎に揺れる
+  // (血圧|最高 / 最高血圧|最高 / 血圧|最大血圧 の実測)。納品名を 最高血圧/最低血圧 へ正規化し、
+  // 列ゆれによる取りこぼしを断つ (納品名の一貫性=ゴール①にも寄与)。
+  const sd = s + d;
+  if (/血圧|収縮期|拡張期/.test(sd)) {
+    if (/最高|最大|収縮期/.test(sd)) return '最高血圧';
+    if (/最低|最小|拡張期/.test(sd)) return '最低血圧';
+  }
   if (!d || d === '-' || GENERIC_DETAIL.has(d) || /撮影区分|所見/.test(d)) return s || null;
   if (/^(右|左|両)$/.test(d)) return s ? `${s}${d}` : d;
   return d;
