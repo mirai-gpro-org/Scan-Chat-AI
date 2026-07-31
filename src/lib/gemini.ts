@@ -120,6 +120,14 @@ export class GeminiError extends Error {
   }
 }
 
+/** 一時的とみなしてバックオフ再試行するステータス (503=model overloaded / 429=rate / 500)。4xx は即失敗。 */
+const GEMINI_RETRY_STATUSES = new Set([429, 500, 503]);
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const intEnv = (name: string, def: number): number => {
+  const n = parseInt(env(name) || '', 10);
+  return Number.isFinite(n) && n >= 0 ? n : def;
+};
+
 export async function callGemini(
   apiKey: string,
   request: GeminiRequest,
@@ -137,21 +145,48 @@ export async function callGemini(
     ...request,
     generationConfig: normalizeGenerationConfigForModel(request.generationConfig, model),
   };
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-    body: JSON.stringify(normalized),
-  });
-
-  const text = await res.text();
-  if (!res.ok) {
-    throw new GeminiError(`Gemini request failed: ${res.status}`, res.status, text);
+  // 503(model overloaded)/429/500 を待って再試行 (サーバ側=キーのある Vercel でのみ意味を持つ)。
+  //   3.5-flash 等の上位モデルは混雑時に 503 で「バッチ全滅」する実績があるため、ここで吸収する。
+  //   既定は控えめ (3回×4s=最大12s待機・関数タイムアウト内)。検証時は env で強められる:
+  //   GEMINI_MAX_RETRIES / GEMINI_RETRY_BASE_MS (例: 5 / 5000 = Gemini 提案の 5回×5s)。固定バックオフ。
+  const maxRetries = intEnv('GEMINI_MAX_RETRIES', 3);
+  const backoffMs = intEnv('GEMINI_RETRY_BASE_MS', 4000);
+  let lastStatus = 0;
+  let lastText = '';
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+        body: JSON.stringify(normalized),
+      });
+    } catch (e) {
+      // ネットワーク断も一時障害として再試行。
+      lastStatus = 0;
+      lastText = String(e);
+      if (attempt < maxRetries) { await sleep(backoffMs + Math.floor(Math.random() * 1000)); continue; }
+      throw new GeminiError(`Gemini fetch failed: ${lastText}`, 0, '');
+    }
+    const text = await res.text();
+    if (!res.ok) {
+      if (GEMINI_RETRY_STATUSES.has(res.status) && attempt < maxRetries) {
+        lastStatus = res.status;
+        lastText = text;
+        // 固定バックオフ + ジッター(0〜1s)。0秒/同期リトライは Google のレートリミッタに
+        // 悪質判定され 429/IPバンに悪化するため、待機とゆらぎを必ず入れる (Gemini 助言)。
+        await sleep(backoffMs + Math.floor(Math.random() * 1000));
+        continue;
+      }
+      throw new GeminiError(`Gemini request failed: ${res.status}`, res.status, text);
+    }
+    try {
+      return JSON.parse(text) as GeminiResponse;
+    } catch (err) {
+      throw new GeminiError('Gemini response is not valid JSON', 502, text);
+    }
   }
-  try {
-    return JSON.parse(text) as GeminiResponse;
-  } catch (err) {
-    throw new GeminiError('Gemini response is not valid JSON', 502, text);
-  }
+  throw new GeminiError(`Gemini request failed after ${maxRetries} retries: ${lastStatus}`, lastStatus || 503, lastText);
 }
 
 /** candidates から最初のテキストを取り出す。なければ空文字。 */
