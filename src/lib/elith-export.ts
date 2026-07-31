@@ -285,7 +285,9 @@ export function salvageQualitativeResult(el: Record<string, unknown>): Record<st
   for (const key of ['ref_high', 'ref_low', 'note'] as const) {
     const c = typeof el[key] === 'string' ? (el[key] as string).trim() : '';
     if (QUAL_RESULT_TOKEN.test(c)) {
-      return { ...el, value: c, [key]: null };
+      // value と inferred の両方に入れる: leanMeasurement は inferred を優先するため
+      // (value だけ埋めても inferred が空だと再び null 化され脱落する)。移送元 key は消す。
+      return { ...el, value: c, inferred: c, [key]: null };
     }
   }
   return el;
