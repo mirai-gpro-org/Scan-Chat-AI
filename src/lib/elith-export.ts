@@ -282,16 +282,23 @@ export function measurementAnomalyReason(m: Record<string, unknown>): string | n
   if (unit === '%' && vn != null && (vn < 0 || vn > 100)) return 'percent_out_of_range（0–100外）';
   return null;
 }
-// 定性結果の列取り違えサルベージ (Phase 0・決定論・名称スコープ限定)。
-//   免疫便潜血反応 は run により結果 "(-)" が基準列(ref_high)へ吸われ value 空→納品脱落する
-//   (2026-07 実測・非決定)。value 空のときだけ、括弧付き定性記号 (-)/(+)/(±) や 陰性/陽性 を
-//   ref_high/ref_low/note から value へ移送する。**便潜血系のみ**に限定 (他項目の「基準=(-)」を
-//   結果として拾わないため。血清PR/TP抗体等の未実施行を誤って埋めない)。
-const FECAL_OCCULT_NAME = /便潜血/;
+// 定性結果の列取り違えサルベージ (Phase 0・決定論・名称 allow-list スコープ)。
+//   尿ディップ定性 (尿蛋白/尿潜血/尿糖) と免疫便潜血は run により結果 "(-)" が基準列(ref_high)へ
+//   吸われ value 空→納品脱落する (2026-07 実測・非決定=Semantic Tie)。value 空のときだけ、括弧付き
+//   定性記号 (-)/(+)/(±) や 陰性/陽性 を ref_high/ref_low/note から value へ移送して救済する。
+//   **allow-list に限定** (他項目の「基準=(-)」を結果と誤読して埋める=False-Value 捏造を避けるため):
+//     許可 = 免疫便潜血 / 尿蛋白(納品名=蛋白) / 尿潜血(潜血) / 尿糖 (検体があれば概ね必ず実施される項目)。
+//     除外 = 血清 RPR/TP抗体/HBs/HCV・尿沈渣 細菌/円柱/結晶・総蛋白/血糖 等
+//            (「基準=(-) だが今回空=未実施」が正当なため。埋めると False-Value)。
+//            総蛋白/血糖は allow の ^…$ アンカーで、血清/沈渣は deny で二重に除外。
+//   ※ 残リスク: 検体未採取で尿ディップ全欄が空の run では基準(-)を誤救済し得る → 恒久策は VQA 再読。
+//     本 salvage は 🎯 4象限 (実施済(-)/(+)・未実施空) で False-Value=0 を確認してから常用する。
+const QUAL_SALVAGE_ALLOW = /便潜血|^(?:尿蛋白|尿潜血|尿糖|蛋白|潜血)$/;
+const QUAL_SALVAGE_DENY = /抗体|抗原|RPR|TP|HBs|HCV|HBV|CRP|梅毒|ピロリ|ペプシノーゲン|細菌|円柱|結晶|沈渣|総蛋白|血糖/;
 const QUAL_RESULT_TOKEN = /^[(（]\s*[-+±]\s*[)）]$|^(陰性|陽性)$/;
 export function salvageQualitativeResult(el: Record<string, unknown>): Record<string, unknown> {
   const name = typeof el.name === 'string' ? el.name : '';
-  if (!FECAL_OCCULT_NAME.test(name)) return el;
+  if (!QUAL_SALVAGE_ALLOW.test(name) || QUAL_SALVAGE_DENY.test(name)) return el;
   const base = typeof el.inferred === 'string' ? el.inferred : el.value;
   if (cleanDeliveryValue(base) != null) return el; // 既に value がある
   for (const key of ['ref_high', 'ref_low', 'note'] as const) {
