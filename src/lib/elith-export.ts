@@ -535,14 +535,18 @@ function normNameKey(s: string): string {
   return String(s || '').replace(/[\s　]/g, '').replace(/(数|量|値)$/, '');
 }
 /** 再読対象の境界項目 (name=納品名/ゴールデン名, label=再読プロンプト表記, hint=その画像にありそうか)。 */
-const BOUNDARY_RECHECK_ITEMS: { name: string; label: string; hint: RegExp }[] = [
-  { name: '免疫便潜血反応 1日目', label: '免疫便潜血反応（検便）1日目', hint: /便潜血|検便/ },
-  { name: '免疫便潜血反応 2日目', label: '免疫便潜血反応（検便）2日目', hint: /便潜血|検便/ },
-  { name: '尿糖', label: '尿糖（尿定性）', hint: /尿糖/ },
-  { name: '蛋白', label: '尿蛋白（尿定性の蛋白。血液の総蛋白ではない）', hint: /蛋白/ },
-  { name: '潜血', label: '尿潜血（尿定性の潜血）', hint: /潜血/ },
-  { name: 'K-W分類右', label: 'K-W分類 右（眼底）', hint: /眼底|K.?W/i },
-  { name: 'K-W分類左', label: 'K-W分類 左（眼底）', hint: /眼底|K.?W/i },
+// 各項目の「今回値として妥当な結果集合」。VQA トリガー(集合外=unexpected_token)と採用ガードに使う。
+//   尿定性/便潜血: 括弧付き ±/-/+・陰性/陽性・(+-)・尿の程度 1+〜3+。K-W分類: 0〜4 のグレード。
+const QUAL_URINE_ALLOW = /^([(（]?[-+±][)）]?|陰性|陽性|\(\+-\)|[1-3]\+)$/;
+const KW_GRADE_ALLOW = /^[0-4]$/;
+const BOUNDARY_RECHECK_ITEMS: { name: string; label: string; hint: RegExp; allow: RegExp }[] = [
+  { name: '免疫便潜血反応 1日目', label: '免疫便潜血反応（検便）1日目', hint: /便潜血|検便/, allow: QUAL_URINE_ALLOW },
+  { name: '免疫便潜血反応 2日目', label: '免疫便潜血反応（検便）2日目', hint: /便潜血|検便/, allow: QUAL_URINE_ALLOW },
+  { name: '尿糖', label: '尿糖（尿定性）', hint: /尿糖/, allow: QUAL_URINE_ALLOW },
+  { name: '蛋白', label: '尿蛋白（尿定性の蛋白。血液の総蛋白ではない）', hint: /蛋白/, allow: QUAL_URINE_ALLOW },
+  { name: '潜血', label: '尿潜血（尿定性の潜血）', hint: /潜血/, allow: QUAL_URINE_ALLOW },
+  { name: 'K-W分類右', label: 'K-W分類 右（眼底）', hint: /眼底|K.?W/i, allow: KW_GRADE_ALLOW },
+  { name: 'K-W分類左', label: 'K-W分類 左（眼底）', hint: /眼底|K.?W/i, allow: KW_GRADE_ALLOW },
 ];
 
 /**
@@ -556,10 +560,17 @@ async function boundaryRecheck(
   rawFull: string,
   measurements: ElithMeasurement[],
 ): Promise<ElithMeasurement[]> {
-  // 満たされているか (同名で非空値が既にあるか)。無く、かつ画像に該当セクションがありそうなら再読候補。
-  const satisfied = (name: string): boolean =>
-    measurements.some((m) => normNameKey(m.name || '') === normNameKey(name) && cleanDeliveryValue(m.value) != null);
-  const candidates = BOUNDARY_RECHECK_ITEMS.filter((it) => !satisfied(it.name) && it.hint.test(rawFull));
+  // 再読候補 (定性 HIGH のみ・numeric はリストに無いので対象外): 画像に該当セクションがあり、かつ
+  //  (missing) 今回値が空、または (unexpected_token) 値はあるが定性許可集合外 (例 免疫便潜血="1")。
+  const currentVal = (name: string): string | null => {
+    const m = measurements.find((mm) => normNameKey(mm.name || '') === normNameKey(name));
+    return m ? cleanDeliveryValue(m.value) : null;
+  };
+  const candidates = BOUNDARY_RECHECK_ITEMS.filter((it) => {
+    if (!it.hint.test(rawFull)) return false;
+    const cur = currentVal(it.name);
+    return cur == null || !it.allow.test(cur);
+  });
   if (candidates.length === 0) return measurements;
 
   let items: Array<{ name?: string; value?: string; present?: boolean }> = [];
@@ -590,31 +601,33 @@ async function boundaryRecheck(
   const out = measurements.slice();
   for (const it of items) {
     if (it.present === false) continue;
-    const val = cleanDeliveryValue(typeof it.value === 'string' ? it.value : null);
-    if (val == null) continue; // 空返し (今回未実施) は埋めない
+    const rawv = typeof it.value === 'string' ? it.value.trim() : '';
+    if (rawv === '' || rawv.includes('?')) continue; // 判定不能/未指定 → 触らない (fail-safe)
+    const val = cleanDeliveryValue(rawv);
+    if (val == null) continue; // 今回セル空 → Phase1 は充填も削除もしない (削除は Phase2 の timeline_leak)
     // 返り name をラベル/正規化名で候補へ対応付け。
     const cand =
       candidates.find((c) => c.label === it.name) ||
       candidates.find((c) => normNameKey(c.name) === normNameKey(it.name || '')) ||
       candidates.find((c) => (it.name || '').includes(c.name));
     if (!cand) continue;
+    if (!cand.allow.test(val)) continue; // VQA が許可集合外を返した → 信用しない (fail-safe)
     const idx = out.findIndex((m) => normNameKey(m.name || '') === normNameKey(cand.name));
     if (idx >= 0) {
-      if (cleanDeliveryValue(out[idx].value) == null) {
-        out[idx] = tidyMeasurement({ ...(out[idx] as ElithMeasurement), value: val, value_num: null });
+      const cur = cleanDeliveryValue(out[idx].value);
+      if (cur == null) {
+        // missing_detection: 空欄を VQA の妥当トークンで補完 (numeric には来ない=定性HIGHのみ)。
+        out[idx] = tidyMeasurement({ ...(out[idx] as ElithMeasurement), value: val, value_num: null, note: 'vqa:missing_detection' });
+      } else if (!cand.allow.test(cur)) {
+        // unexpected_token: 許可集合外の誤読 (例 "1") を VQA の妥当トークンで上書き。
+        //   **既に妥当な値は上書きしない**。numeric は対象リスト外なので不変。
+        out[idx] = tidyMeasurement({ ...(out[idx] as ElithMeasurement), value: val, value_num: null, note: 'vqa:unexpected_token' });
       }
     } else {
       out.push(
         tidyMeasurement({
-          name: cand.name,
-          name_detail: null,
-          value: val,
-          value_num: null,
-          unit: null,
-          ref_low: null,
-          ref_high: null,
-          flag: null,
-          note: 'boundary-recheck',
+          name: cand.name, name_detail: null, value: val, value_num: null,
+          unit: null, ref_low: null, ref_high: null, flag: null, note: 'vqa:missing_detection',
         }),
       );
     }

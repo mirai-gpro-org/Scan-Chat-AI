@@ -166,11 +166,20 @@
       高信頼の空確認時のみ)。定性の VQA (下記) と同一機構で扱う。未実装。
     - 照合器に RPR/TP抗体/HBs/HCV を today='' 番人として追加済 (従来 golden 未検出だった漏れを可視化。撤回後は
       眼圧/RPR/TP が再び False-Value として出るが、これは"検出できている"正しい状態。恒久対処は上記 C)。
-  - **定性の恒久対処 = 第2パス VQA (収束方針・未実装)**: 主パス(10列Markdown)は不変のまま、`SCAN_BOUNDARY_RECHECK`
-    経路を「値抽出」から**局所VQA**へ格上げする。プロンプトで「基準に(-)があるのは既知。**結果セル**に印字が
-    あるか」を宣言(グラウンディング)し、`結果=(-)/(+)/完全空欄` の3択のみ返させ、**後段は (-)/(+) の完全一致時だけ
-    採用・空欄/迷いはドロップ**(捏造ゼロ)。主パスへの O/X 列追加は numeric 回帰リスクで不採用(3者合意)。
-    クロップ前処理は画像ライブラリ不在(追加依存なし方針)のため保留 (payoff を見て判断)。
+  - **定性の恒久対処 = 第2パス VQA (Verify & Repair・Gemini/ChatGPT/実装3者収束)**: 主パス(10列Markdown)は不変のまま、
+    `SCAN_BOUNDARY_RECHECK` 経路を「値抽出」から**局所VQA(監査役・列挙回答・グラウンディング)**へ格上げ。
+    プロンプト/スキーマは `scan-prompt.ts` の `BOUNDARY_RECHECK_SYSTEM`/`BOUNDARY_RECHECK_SCHEMA`/`buildBoundaryRecheckUser`
+    (「今回セルだけ・過去列/基準を混同しない・列でなく行で辿る」)。後段パッチは `elith-export.ts boundaryRecheck`。
+    - **Phase 1 (実装済・🎯検証待ち)**: `missing_detection`(今回空→VQAの妥当トークンで充填) と
+      `unexpected_token`(今回値が定性許可集合外=例 免疫便潜血"1" → VQAトークンで上書き)。項目別 allow 集合
+      (`QUAL_URINE_ALLOW`/`KW_GRADE_ALLOW`)でトリガー/採用をガード。**fail-safe**: VQA が空/不能/集合外なら不変・
+      **既に妥当な値と numeric は絶対に触らない**。監査は note=`vqa:...`。
+    - **Phase 2 (未実装)**: `timeline_leak` の**削除(値→空)**。眼圧・眼底その他・血清等の「今回=空が正」で過去列値が
+      混入した False-Value を、**③3条件 (VQAが今回空 & 過去列に値 & 現value==過去列値) を全て満たす時だけ**後段で
+      ドロップ (本番は過去列を持たないので VQA に過去列値も報告させ突合)。誤削除=Missing を構造的に防ぐ。
+      眼圧/血清が"実施済"の第2検体ゴールデンで「実施済を落とさない」を確認してから有効化する想定。
+    - 主パスへの O/X 列追加・時系列規則強化は numeric 回帰で不採用(実証済)。クロップ前処理は画像ライブラリ不在
+      (追加依存なし方針)のため保留 (VQA単機能化=実質 attention 仮想クロップで当面足りる)。
 
 ### 検査種別ごとの本番処理 (役割分担)
 根拠: `docs/elith_batch_centralization_design.md`
