@@ -225,7 +225,8 @@ export function normDeliveryStr(v: unknown): string | null {
 export function cleanDeliveryValue(v: unknown): string | null {
   const raw = typeof v === 'string' ? v : v == null ? null : String(v);
   if (raw == null) return null;
-  const s = raw.replace(/[↑↓⤴⤵➡→←]/g, '').trim();
+  // 矢印マーカ除去 + 末尾の脚注記号(*＊※†‡ 等)除去 ((-)* → (-) 等。値の意味は変えない)。
+  const s = raw.replace(/[↑↓⤴⤵➡→←]/g, '').replace(/[*＊※†‡]+$/, '').trim();
   // 単独の斜線(半角/全角)は検査票で「該当なし/値なし」を意味する → 空扱い。
   // ("127/82" 等の複合値は s==='/' に一致しないので影響しない。)
   return s === '' || s === '-' || s === '/' || s === '／' ? null : s;
