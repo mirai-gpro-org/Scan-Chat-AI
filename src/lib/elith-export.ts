@@ -549,9 +549,18 @@ const BOUNDARY_RECHECK_ITEMS: { name: string; label: string; hint: RegExp; allow
   { name: 'K-W分類左', label: 'K-W分類 左（眼底）', hint: /眼底|K.?W/i, allow: KW_GRADE_ALLOW },
 ];
 
+/** VQA 再読の監査記録 (可視化用・Elith 納品には含めない)。 */
+export interface VqaAuditEntry {
+  name: string;
+  reason: 'missing_detection' | 'unexpected_token';
+  before: string | null; // 主パスの今回値 (再読前)
+  vqa: string | null;     // VQA が返した生の回答
+  action: 'filled' | 'overwritten' | 'left_unresolved' | 'vqa_error';
+}
+
 /**
- * 一次パスで空だった境界項目だけを、その画像へ軽量再読しギャップ埋めする (既存値は上書きしない)。
- * env SCAN_BOUNDARY_RECHECK=on のときだけ呼ばれる。numeric には一切触れない。
+ * 一次パスで空/誤読だった境界定性項目だけを、その画像へ VQA 再読して補正する (Phase 1)。
+ * env SCAN_BOUNDARY_RECHECK=on のときだけ呼ばれる。numeric には一切触れない。監査を audit で返す。
  */
 async function boundaryRecheck(
   apiKey: string,
@@ -559,20 +568,23 @@ async function boundaryRecheck(
   mimeType: string,
   rawFull: string,
   measurements: ElithMeasurement[],
-): Promise<ElithMeasurement[]> {
+): Promise<{ measurements: ElithMeasurement[]; audit: VqaAuditEntry[] }> {
   // 再読候補 (定性 HIGH のみ・numeric はリストに無いので対象外): 画像に該当セクションがあり、かつ
   //  (missing) 今回値が空、または (unexpected_token) 値はあるが定性許可集合外 (例 免疫便潜血="1")。
   const currentVal = (name: string): string | null => {
     const m = measurements.find((mm) => normNameKey(mm.name || '') === normNameKey(name));
     return m ? cleanDeliveryValue(m.value) : null;
   };
+  const candReason = (name: string): 'missing_detection' | 'unexpected_token' =>
+    currentVal(name) == null ? 'missing_detection' : 'unexpected_token';
   const candidates = BOUNDARY_RECHECK_ITEMS.filter((it) => {
     if (!it.hint.test(rawFull)) return false;
     const cur = currentVal(it.name);
     return cur == null || !it.allow.test(cur);
   });
-  if (candidates.length === 0) return measurements;
+  if (candidates.length === 0) return { measurements, audit: [] };
 
+  const audit: VqaAuditEntry[] = [];
   let items: Array<{ name?: string; value?: string; present?: boolean }> = [];
   try {
     const res = await callGemini(
@@ -595,44 +607,59 @@ async function boundaryRecheck(
     const parsed = JSON.parse(stripJsonCodeFence(extractText(res))) as { items?: typeof items };
     if (Array.isArray(parsed.items)) items = parsed.items;
   } catch {
-    return measurements; // 再読失敗はギャップ埋めなしで続行 (一次結果を壊さない)
+    // 再読失敗はギャップ埋めなしで続行 (一次結果を壊さない)。監査に vqa_error を残す。
+    for (const c of candidates) audit.push({ name: c.name, reason: candReason(c.name), before: currentVal(c.name), vqa: null, action: 'vqa_error' });
+    return { measurements, audit };
   }
 
-  const out = measurements.slice();
+  // VQA 回答を候補へ対応付け (ラベル/正規化名/包含)。
+  const vqaByName = new Map<string, string>();
   for (const it of items) {
-    if (it.present === false) continue;
-    const rawv = typeof it.value === 'string' ? it.value.trim() : '';
-    if (rawv === '' || rawv.includes('?')) continue; // 判定不能/未指定 → 触らない (fail-safe)
-    const val = cleanDeliveryValue(rawv);
-    if (val == null) continue; // 今回セル空 → Phase1 は充填も削除もしない (削除は Phase2 の timeline_leak)
-    // 返り name をラベル/正規化名で候補へ対応付け。
     const cand =
       candidates.find((c) => c.label === it.name) ||
       candidates.find((c) => normNameKey(c.name) === normNameKey(it.name || '')) ||
       candidates.find((c) => (it.name || '').includes(c.name));
     if (!cand) continue;
-    if (!cand.allow.test(val)) continue; // VQA が許可集合外を返した → 信用しない (fail-safe)
+    vqaByName.set(cand.name, it.present === false ? '' : typeof it.value === 'string' ? it.value.trim() : '');
+  }
+
+  const out = measurements.slice();
+  for (const cand of candidates) {
+    const reason = candReason(cand.name);
+    const before = currentVal(cand.name);
+    const rawv = vqaByName.get(cand.name) ?? '';
+    // fail-safe: 空/"?"(判定不能)/許可集合外 の VQA 回答は採用しない。
+    const val = rawv === '' || rawv.includes('?') ? null : cleanDeliveryValue(rawv);
+    if (val == null || !cand.allow.test(val)) {
+      audit.push({ name: cand.name, reason, before, vqa: rawv || null, action: 'left_unresolved' });
+      continue;
+    }
     const idx = out.findIndex((m) => normNameKey(m.name || '') === normNameKey(cand.name));
-    if (idx >= 0) {
-      const cur = cleanDeliveryValue(out[idx].value);
-      if (cur == null) {
-        // missing_detection: 空欄を VQA の妥当トークンで補完 (numeric には来ない=定性HIGHのみ)。
-        out[idx] = tidyMeasurement({ ...(out[idx] as ElithMeasurement), value: val, value_num: null, note: 'vqa:missing_detection' });
-      } else if (!cand.allow.test(cur)) {
-        // unexpected_token: 許可集合外の誤読 (例 "1") を VQA の妥当トークンで上書き。
-        //   **既に妥当な値は上書きしない**。numeric は対象リスト外なので不変。
-        out[idx] = tidyMeasurement({ ...(out[idx] as ElithMeasurement), value: val, value_num: null, note: 'vqa:unexpected_token' });
-      }
-    } else {
+    if (idx < 0) {
       out.push(
         tidyMeasurement({
           name: cand.name, name_detail: null, value: val, value_num: null,
           unit: null, ref_low: null, ref_high: null, flag: null, note: 'vqa:missing_detection',
         }),
       );
+      audit.push({ name: cand.name, reason, before, vqa: val, action: 'filled' });
+      continue;
+    }
+    const cur = cleanDeliveryValue(out[idx].value);
+    if (cur == null) {
+      // missing_detection: 空欄を VQA の妥当トークンで補完 (numeric には来ない=定性HIGHのみ)。
+      out[idx] = tidyMeasurement({ ...(out[idx] as ElithMeasurement), value: val, value_num: null, note: 'vqa:missing_detection' });
+      audit.push({ name: cand.name, reason, before, vqa: val, action: 'filled' });
+    } else if (!cand.allow.test(cur)) {
+      // unexpected_token: 許可集合外の誤読 (例 "1") を上書き。**既に妥当な値・numeric は不変**。
+      out[idx] = tidyMeasurement({ ...(out[idx] as ElithMeasurement), value: val, value_num: null, note: 'vqa:unexpected_token' });
+      audit.push({ name: cand.name, reason, before, vqa: val, action: 'overwritten' });
+    } else {
+      // 既に妥当 → 触らない。
+      audit.push({ name: cand.name, reason, before, vqa: val, action: 'left_unresolved' });
     }
   }
-  return out;
+  return { measurements: out, audit };
 }
 
 /**
@@ -648,6 +675,7 @@ interface ScanArtifacts {
   measurements: ElithMeasurement[];
   notes: string[];
   examDateFromScan: string | null; // JSON の exam_date (Markdown 経路は null → 本文抽出に委ねる)
+  vqaAudit: VqaAuditEntry[];       // VQA 再読の監査 (可視化用・Elith 納品には含めない)
 }
 async function scanArtifacts(
   apiKey: string,
@@ -667,6 +695,7 @@ async function scanArtifacts(
       measurements: toMeasurements(regions),
       notes: collectNotes(regions),
       examDateFromScan: normalizeSchemaExamDate(parsed.exam_date),
+      vqaAudit: [],
     };
   } else {
     const { markdown, finishReason } = await scanImage(apiKey, imageBase64, mimeType, hint);
@@ -680,11 +709,13 @@ async function scanArtifacts(
       measurements: toMeasurements(regions),
       notes: collectNotes(regions),
       examDateFromScan: null,
+      vqaAudit: [],
     };
   }
-  // Phase 1: 境界定性項目のギャップ埋め (env で有効時のみ・空欄だけ・numeric不変)。
+  // Phase 1: 境界定性項目の VQA 再読 (env で有効時のみ・定性HIGHのみ・numeric不変)。監査も回収。
   if (boundaryRecheckEnabled()) {
-    art = { ...art, measurements: await boundaryRecheck(apiKey, imageBase64, mimeType, art.rawFull, art.measurements) };
+    const r = await boundaryRecheck(apiKey, imageBase64, mimeType, art.rawFull, art.measurements);
+    art = { ...art, measurements: r.measurements, vqaAudit: r.audit };
   }
   return art;
 }
@@ -700,6 +731,7 @@ export interface ParsedScan {
   measurements: ElithMeasurement[];
   regions: ScanRegionJson[];
   notes: string[];
+  vqaAudit: VqaAuditEntry[]; // VQA 再読の監査 (可視化用・Elith 納品には含めない)
 }
 
 export async function scanImageToParsed(input: {
@@ -733,6 +765,7 @@ export async function scanImageToParsed(input: {
     measurements: a.measurements,
     regions: a.regions,
     notes: a.notes,
+    vqaAudit: a.vqaAudit,
   };
 }
 
