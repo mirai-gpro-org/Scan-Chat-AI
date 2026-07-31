@@ -135,6 +135,7 @@ export const POST: APIRoute = async ({ request }) => {
       notes: scan.notes,
       raw_markdown: scan.markdown,
       finish_reason: scan.finishReason,
+      vqa_audit: scan.vqaAudit, // VQA 再読の監査 (可視化用・Elith 納品 data には含めない)
     });
   }
 

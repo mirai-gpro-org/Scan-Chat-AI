@@ -173,7 +173,10 @@
     - **Phase 1 (実装済・🎯検証待ち)**: `missing_detection`(今回空→VQAの妥当トークンで充填) と
       `unexpected_token`(今回値が定性許可集合外=例 免疫便潜血"1" → VQAトークンで上書き)。項目別 allow 集合
       (`QUAL_URINE_ALLOW`/`KW_GRADE_ALLOW`)でトリガー/採用をガード。**fail-safe**: VQA が空/不能/集合外なら不変・
-      **既に妥当な値と numeric は絶対に触らない**。監査は note=`vqa:...`。
+      **既に妥当な値と numeric は絶対に触らない**。
+      **可視化**: `boundaryRecheck` が `VqaAuditEntry[]`(name/reason/before/vqa/action=filled|overwritten|left_unresolved|vqa_error)
+      を返し、`scanImageToParsed`→hc-merge の per-part 応答 `vqa_audit`→admin(`elith-batch.astro`)で
+      「VQA再読 充填/上書き/未解決/エラー」を表示 (Elith 納品 data には含めない)。「VQAが発火したか/残差か」を🎯とは別に判別可能。
     - **Phase 2 (未実装)**: `timeline_leak` の**削除(値→空)**。眼圧・眼底その他・血清等の「今回=空が正」で過去列値が
       混入した False-Value を、**③3条件 (VQAが今回空 & 過去列に値 & 現value==過去列値) を全て満たす時だけ**後段で
       ドロップ (本番は過去列を持たないので VQA に過去列値も報告させ突合)。誤削除=Missing を構造的に防ぐ。
