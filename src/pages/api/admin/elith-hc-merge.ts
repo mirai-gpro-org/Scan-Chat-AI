@@ -136,6 +136,7 @@ export const POST: APIRoute = async ({ request }) => {
       raw_markdown: scan.markdown,
       finish_reason: scan.finishReason,
       vqa_audit: scan.vqaAudit, // VQA 再読の監査 (可視化用・Elith 納品 data には含めない)
+      scan_model: MODELS.scan, // 実際に使用したスキャンモデル (lite/3.5 判別用)
     });
   }
 
@@ -190,7 +191,7 @@ export const POST: APIRoute = async ({ request }) => {
     const necessity = checkNecessity(jsonObj); // 不要項目チェック(必要要素検証)
 
     if (!isS3Configured() || !cfg) {
-      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, necessity, preview: jsonObj });
+      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, necessity, scan_model: MODELS.scan, preview: jsonObj });
     }
     try {
       const uploaded = await putFiles([{ key: json_key, contentType: 'application/json; charset=utf-8', body: jsonBody, bytes: utf8Bytes(jsonBody) }]);
@@ -198,6 +199,7 @@ export const POST: APIRoute = async ({ request }) => {
         ok: true, action: 'finalize', configured: true, bucket: cfg.bucket,
         client_id: clientId, format_id: 'HealthCheckupData', test_date: testDate,
         part_count: parts.length, rows: measurements.length, json_key, necessity,
+        scan_model: MODELS.scan, // 実際に使用したスキャンモデル (lite/3.5 判別用)
         uri: uploaded[0]?.uri ?? null,
       });
     } catch (err) {
