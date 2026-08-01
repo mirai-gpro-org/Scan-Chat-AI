@@ -17,8 +17,10 @@ import {
   extFromMime,
   ELITH_HANDOFF_SCHEMA_VERSION,
   sanitizeMeasurementsForDelivery,
+  canonicalizeEnabled,
   type ParsedScan,
 } from '../../../lib/elith-export';
+import { canonicalize } from '../../../lib/canonicalize';
 import { MODELS } from '../../../lib/gemini';
 import { getS3Config, isS3Configured, putFiles, type S3PutFile } from '../../../lib/s3';
 import { checkNecessity } from '../../../lib/elith-necessity-check';
@@ -159,7 +161,13 @@ export const POST: APIRoute = async ({ request }) => {
     }
     // 書き出し時点で lean 正規化 (↑↓→flag/value_num・空行/総合判定欄 除外・妥当性ガード)。
     // 監査は raw_markdown + 元画像(S3) に保持。全マージ分をまとめて 1 回で正規化する。
-    const measurements = sanitizeMeasurementsForDelivery(rawMeasurements).kept;
+    const kept = sanitizeMeasurementsForDelivery(rawMeasurements).kept;
+    // ②正準化 (S1〜S3)。SCAN_CANONICALIZE=on のときだけ。監査(canon)は納品 data に含めず応答へ返す。
+    const canon = canonicalizeEnabled() ? canonicalize(kept) : null;
+    const measurements = canon ? canon.delivery : kept;
+    const canonAudit = canon
+      ? { mapped: canon.mapped, unmapped: canon.unmapped, deficient: canon.deficient }
+      : null;
     const sourceFiles = Array.isArray(body.sourceFiles) ? (body.sourceFiles as unknown[]).filter((x): x is string => typeof x === 'string') : [];
 
     const { folder, stem } = folderOf(prefix, clientId, testDate);
@@ -191,14 +199,14 @@ export const POST: APIRoute = async ({ request }) => {
     const necessity = checkNecessity(jsonObj); // 不要項目チェック(必要要素検証)
 
     if (!isS3Configured() || !cfg) {
-      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, necessity, scan_model: MODELS.scan, preview: jsonObj });
+      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, necessity, canon: canonAudit, scan_model: MODELS.scan, preview: jsonObj });
     }
     try {
       const uploaded = await putFiles([{ key: json_key, contentType: 'application/json; charset=utf-8', body: jsonBody, bytes: utf8Bytes(jsonBody) }]);
       return json({
         ok: true, action: 'finalize', configured: true, bucket: cfg.bucket,
         client_id: clientId, format_id: 'HealthCheckupData', test_date: testDate,
-        part_count: parts.length, rows: measurements.length, json_key, necessity,
+        part_count: parts.length, rows: measurements.length, json_key, necessity, canon: canonAudit,
         scan_model: MODELS.scan, // 実際に使用したスキャンモデル (lite/3.5 判別用)
         uri: uploaded[0]?.uri ?? null,
       });

@@ -83,8 +83,9 @@
 **実装計画・進捗**（詳細は下記ドキュメント）:
 - `docs/基本設定書.md` §3.6 / `docs/基本設定書_実装修正プラン.md`（P1〜P5・🎯ゲート）
 - 機能別: `docs/修正仕様書_標準マスタ.md` / `docs/修正仕様書_正準化エンジン.md` / `docs/修正仕様書_検証と確定運用.md`
-- **P1 完了**: starter 標準マスタを実装（`src/lib/standard-master.ts`・`StandardItem`/`STANDARD_MASTER`(41項目)/`masterItemNames()`/`findByAlias()`）。ゴールデン実在項目のみ・捏造ゼロ・`findByAlias` は完全一致（危険同義語は非マッチをテスト確認）。まだ結線しておらず**挙動不変**。
-- **次（P2）**: `canonicalize.ts`（S1〜S3）新規＋`pickDeliveryName` の後段マスタ照合、env `SCAN_CANONICALIZE`（既定 off）。
+- **P1 完了**: starter 標準マスタを実装（`src/lib/standard-master.ts`・`StandardItem`/`STANDARD_MASTER`(41項目)/`masterItemNames()`/`findByAlias()`/`buildAliasIndex()`）。ゴールデン実在項目のみ・捏造ゼロ・`findByAlias` は完全一致（危険同義語は非マッチをテスト確認）。
+- **P2 実装済（既定 off・🎯実画像は未）**: 正準化エンジン `src/lib/canonicalize.ts`（S1〜S3：名寄せ・単位正準化・カバレッジ `mapped/unmapped/deficient`）。全書き出し経路（`buildElithScanBundle`/`elith-hc-merge`/`elith-assemble.sanitizeDelivery`）へ結線し、env `SCAN_CANONICALIZE=on` のときだけ発火（既定 off＝挙動不変）。読取値(numeric)は変えない・非ヒットは元名のまま・監査は納品 data に混ぜない（hc-merge 応答 `canon` で返す）。`pickDeliveryName` は前段維持（その上でマスタ照合）。astro check 0エラー・単体テスト14件 PASS。
+- **次（P3）**: `checkNecessity` へ既定マスタ供給、admin(`elith-batch.astro`) に `mapped/unmapped/deficient` 可視化、🎯実画像ゲート（Vercel）。
 
 ---
 

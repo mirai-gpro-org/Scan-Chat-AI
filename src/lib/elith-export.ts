@@ -26,6 +26,7 @@ import {
   buildBoundaryRecheckUser,
 } from './scan-prompt';
 import { parseScanRegions, type ScanRegionJson } from './scan-export';
+import { canonicalize } from './canonicalize';
 import type { S3PutFile } from './s3';
 
 export const ELITH_HANDOFF_SCHEMA_VERSION = 'elith-handoff-v0.1';
@@ -72,6 +73,15 @@ export function scanOutputFormat(): 'json' | 'markdown' {
  */
 export function boundaryRecheckEnabled(): boolean {
   return env('SCAN_BOUNDARY_RECHECK') === 'on';
+}
+/**
+ * ②正準化（標準マスタへの名寄せ/単位正準化・テンプレート穴埋め）を有効にするか。
+ * env `SCAN_CANONICALIZE=on` で有効（既定 off）。off の間は挙動不変（現行と完全同一）。
+ * 🎯 ゴールデンで numeric 全一致・False-Value 0・名寄せ Missing 減 を確認してから on にする（P2/P4）。
+ * 実装: `canonicalize()`（src/lib/canonicalize.ts）。読取値(numeric)は変えない・非ヒットは元名のまま。
+ */
+export function canonicalizeEnabled(): boolean {
+  return env('SCAN_CANONICALIZE') === 'on';
 }
 
 // ── MIME / 拡張子 ───────────────────────────────────────────────
@@ -900,7 +910,11 @@ export async function buildElithScanBundle(input: ElithScanInput): Promise<Elith
     // 納品 data は共通 measurements[] + notes のみ。版面座標 (regions/bbox) は含めない (§7.1)。
     // 書き出し時点で lean 正規化 (↑↓→flag/value_num・空行/総合判定欄 除外・妥当性ガード)。
     data: {
-      measurements: sanitizeMeasurementsForDelivery(a.measurements).kept,
+      // 書き出し時点の決定論整形（S4/S5）。SCAN_CANONICALIZE=on のとき②正準化（S1〜S3）を後段で通す。
+      measurements: (() => {
+        const kept = sanitizeMeasurementsForDelivery(a.measurements).kept;
+        return canonicalizeEnabled() ? canonicalize(kept).delivery : kept;
+      })(),
       notes: a.notes,
     },
     raw_markdown: a.cleanedRaw,

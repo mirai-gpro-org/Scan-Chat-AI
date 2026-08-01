@@ -46,7 +46,7 @@ export interface StandardItem {
  * ※末尾の 数/量/値 は落とさない（白血球↔白血球数 は明示 synonyms で受ける。
  *   自動で落とすと予期せぬ衝突を生みうるため。捏造ゼロ・安全側）。
  */
-function normKey(s: string): string {
+export function normKey(s: string): string {
   return String(s || '')
     .normalize('NFKC')
     .toLowerCase()
@@ -110,10 +110,13 @@ export const STANDARD_MASTER: StandardItem[] = [
 ];
 
 // ── 索引（正規化した完全一致のみ。危険な部分一致はしない） ──
-// alias(正規化) → canonical_name。衝突（別項目が同一キー）は starter バグなので後勝ちさせず先勝ちで無視する。
-const ALIAS_INDEX: Map<string, StandardItem> = (() => {
+/**
+ * alias(正規化) → StandardItem の索引を作る。衝突（別項目が同一キー）は starter バグなので
+ * 後勝ちさせず先勝ちで無視する（正準化エンジンが opts.master を渡すときも同じ規則で使う）。
+ */
+export function buildAliasIndex(master: StandardItem[]): Map<string, StandardItem> {
   const idx = new Map<string, StandardItem>();
-  for (const item of STANDARD_MASTER) {
+  for (const item of master) {
     for (const alias of [item.canonical_name, ...item.synonyms]) {
       const k = normKey(alias);
       if (!k) continue;
@@ -121,7 +124,8 @@ const ALIAS_INDEX: Map<string, StandardItem> = (() => {
     }
   }
   return idx;
-})();
+}
+const ALIAS_INDEX: Map<string, StandardItem> = buildAliasIndex(STANDARD_MASTER);
 
 /** checkNecessity の requiredItemsMaster 用: 標準項目名（canonical_name）の一覧。 */
 export function masterItemNames(): string[] {

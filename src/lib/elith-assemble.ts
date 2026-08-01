@@ -15,9 +15,11 @@ import {
   isElithFormatId,
   ELITH_HANDOFF_SCHEMA_VERSION,
   sanitizeMeasurementsForDelivery,
+  canonicalizeEnabled,
   type ElithFormatId,
   type MeasurementAnomaly,
 } from './elith-export';
+import { canonicalize } from './canonicalize';
 import { listObjects, getObjectText, type S3PutFile } from './s3';
 
 /** 納品対象の 5 種別 (順序は納品時の見せ方に使用) */
@@ -278,7 +280,8 @@ function sanitizeDelivery(obj: Record<string, unknown>): MeasurementAnomaly[] {
     if (Array.isArray(d.measurements)) {
       const { kept, anomalies: anos } = sanitizeMeasurementsForDelivery(d.measurements);
       anomalies.push(...anos);
-      d.measurements = kept;
+      // ②正準化 (S1〜S3)。SCAN_CANONICALIZE=on のときだけ。off の間は挙動不変。
+      d.measurements = canonicalizeEnabled() ? canonicalize(kept).delivery : kept;
     }
     // 遺伝子等 items: 版面情報のみ除去 (lean はしない=構造が別)。
     if (Array.isArray(d.items)) {
