@@ -26,7 +26,7 @@ import {
   buildBoundaryRecheckUser,
 } from './scan-prompt';
 import { parseScanRegions, type ScanRegionJson } from './scan-export';
-import { canonicalize } from './canonicalize';
+import { canonicalize, canonAudit, type CanonAudit } from './canonicalize';
 import type { S3PutFile } from './s3';
 
 export const ELITH_HANDOFF_SCHEMA_VERSION = 'elith-handoff-v0.1';
@@ -849,6 +849,8 @@ export interface ElithScanBundle {
   markdown: string;
   finishReason: string | null;
   files: S3PutFile[];
+  /** ②正準化の監査 (SCAN_CANONICALIZE=on のときのみ非 null)。Elith 納品 json には含めない (可視化用)。 */
+  canon: CanonAudit | null;
 }
 
 function utf8Bytes(s: string): number {
@@ -888,6 +890,10 @@ export async function buildElithScanBundle(input: ElithScanInput): Promise<Elith
   const dateFolder = testDate.replace(/-/g, '_');
 
   const diagnosticId = input.diagnosticId || randomUuid();
+  // 決定論整形（S4/S5）→ ②正準化（S1〜S3・SCAN_CANONICALIZE=on のときだけ）。監査は bundle.canon に返す。
+  const keptMeasurements = sanitizeMeasurementsForDelivery(a.measurements).kept;
+  const canonResult = canonicalizeEnabled() ? canonicalize(keptMeasurements) : null;
+  const deliveryMeasurements = canonResult ? canonResult.delivery : keptMeasurements;
   const json = {
     format_id: input.formatId,
     schema_version: ELITH_HANDOFF_SCHEMA_VERSION,
@@ -911,10 +917,7 @@ export async function buildElithScanBundle(input: ElithScanInput): Promise<Elith
     // 書き出し時点で lean 正規化 (↑↓→flag/value_num・空行/総合判定欄 除外・妥当性ガード)。
     data: {
       // 書き出し時点の決定論整形（S4/S5）。SCAN_CANONICALIZE=on のとき②正準化（S1〜S3）を後段で通す。
-      measurements: (() => {
-        const kept = sanitizeMeasurementsForDelivery(a.measurements).kept;
-        return canonicalizeEnabled() ? canonicalize(kept).delivery : kept;
-      })(),
+      measurements: deliveryMeasurements,
       notes: a.notes,
     },
     raw_markdown: a.cleanedRaw,
@@ -947,5 +950,6 @@ export async function buildElithScanBundle(input: ElithScanInput): Promise<Elith
     markdown: a.cleanedRaw,
     finishReason,
     files,
+    canon: canonResult ? canonAudit(canonResult) : null,
   };
 }

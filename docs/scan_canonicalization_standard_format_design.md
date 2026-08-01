@@ -85,7 +85,8 @@
 - 機能別: `docs/修正仕様書_標準マスタ.md` / `docs/修正仕様書_正準化エンジン.md` / `docs/修正仕様書_検証と確定運用.md`
 - **P1 完了**: starter 標準マスタを実装（`src/lib/standard-master.ts`・`StandardItem`/`STANDARD_MASTER`(41項目)/`masterItemNames()`/`findByAlias()`/`buildAliasIndex()`）。ゴールデン実在項目のみ・捏造ゼロ・`findByAlias` は完全一致（危険同義語は非マッチをテスト確認）。
 - **P2 実装済（既定 off・🎯実画像は未）**: 正準化エンジン `src/lib/canonicalize.ts`（S1〜S3：名寄せ・単位正準化・カバレッジ `mapped/unmapped/deficient`）。全書き出し経路（`buildElithScanBundle`/`elith-hc-merge`/`elith-assemble.sanitizeDelivery`）へ結線し、env `SCAN_CANONICALIZE=on` のときだけ発火（既定 off＝挙動不変）。読取値(numeric)は変えない・非ヒットは元名のまま・監査は納品 data に混ぜない（hc-merge 応答 `canon` で返す）。`pickDeliveryName` は前段維持（その上でマスタ照合）。astro check 0エラー・単体テスト14件 PASS。
-- **次（P3）**: `checkNecessity` へ既定マスタ供給、admin(`elith-batch.astro`) に `mapped/unmapped/deficient` 可視化、🎯実画像ゲート（Vercel）。
+- **P3 実装済（既定 off・🎯実画像は未）**: API が canon 監査を返す（scan=`bundle.canon`→`elith-scan.ts` 応答、merge=`elith-hc-merge` 応答 `canon`）。`checkNecessity` へ既定 starter マスタ供給（surplus/カバレッジ可視化。**starter は Elith 必須サブセットでないため deficient は非ブロック＝情報提示**。明示 `requiredItems` 指定時のみブロック）。admin `elith-batch.astro`（wellfort-site）に「②正準化 写像/マスタ外/不足」を表示。両 repo astro check クリーン。
+- **次（P4/P5）**: 🎯実画像ゲート（Vercel で `SCAN_CANONICALIZE=on` → ゴールデン再RUN → numeric 全一致・False-Value 0・名寄せ Missing 減 を確認）→ 確定運用へ。完全マスタ（KMAT/特定健診）受領で starter 差替＋Elith 必要サブセット確定。
 
 ---
 

@@ -150,7 +150,10 @@
     全書出し経路 (`buildElithScanBundle`/`elith-hc-merge`/`elith-assemble.sanitizeDelivery`) に結線。
     **env `SCAN_CANONICALIZE=on` のときだけ発火・既定 off=挙動不変**。numeric は変えない・非ヒットは元名のまま・
     監査(`mapped/unmapped/deficient`)は納品 data に混ぜない (hc-merge 応答 `canon`)。`pickDeliveryName` は前段維持。
-  - **次 P3**: `checkNecessity` へ既定マスタ供給・admin 可視化・🎯実画像ゲート(Vercel)。**on 化は🎯回帰ゼロ確認後**。
+  - **P3 実装済 (既定 off)**: API が canon 監査を返す (scan=`bundle.canon`→`elith-scan.ts`, merge=`elith-hc-merge` 応答 `canon`)。
+    `checkNecessity` へ既定 starter マスタ供給 (surplus/カバレッジ可視化)。**starter は Elith 必須サブセットでないため deficient は非ブロック
+    =情報提示。明示 `requiredItems` 指定時のみブロック**。admin 表示は wellfort-site `src/pages/admin/elith-batch.astro` (②正準化 写像/マスタ外/不足)。
+  - **次 P4/P5**: 🎯実画像ゲート(Vercel で `SCAN_CANONICALIZE=on`→ゴールデン再RUN) → 確定運用。完全マスタ受領で starter 差替。**on 化は🎯回帰ゼロ確認後**。
 - **却下再掲**: 様式別プロンプト/テンプレOCR=却下 / 主パス規則強化=numeric回帰で不採用 / モデル3.5格上げ=md段階で lite 超えず不採用。
 
 ### スキャン読取の共通ルール (検査票 → JSON)

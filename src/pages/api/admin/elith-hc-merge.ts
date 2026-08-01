@@ -21,6 +21,7 @@ import {
   type ParsedScan,
 } from '../../../lib/elith-export';
 import { canonicalize } from '../../../lib/canonicalize';
+import { masterItemNames } from '../../../lib/standard-master';
 import { MODELS } from '../../../lib/gemini';
 import { getS3Config, isS3Configured, putFiles, type S3PutFile } from '../../../lib/s3';
 import { checkNecessity } from '../../../lib/elith-necessity-check';
@@ -196,7 +197,11 @@ export const POST: APIRoute = async ({ request }) => {
       raw_markdown: markdowns.join('\n\n---\n\n'),
     };
     const jsonBody = JSON.stringify(jsonObj, null, 2);
-    const necessity = checkNecessity(jsonObj); // 不要項目チェック(必要要素検証)
+    // 不要項目チェック(必要要素検証)。canonicalize on のとき starter 標準マスタで
+    // surplus/カバレッジも判定(hc-merge はブロックしないため情報提示のみ)。
+    const necessity = checkNecessity(jsonObj, {
+      requiredItemsMaster: canonicalizeEnabled() ? masterItemNames() : null,
+    });
 
     if (!isS3Configured() || !cfg) {
       return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, necessity, canon: canonAudit, scan_model: MODELS.scan, preview: jsonObj });

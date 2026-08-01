@@ -32,6 +32,16 @@ export interface CanonicalizeResult {
   deficient: string[];                 // S3: マスタにあるが値が来なかった標準名
 }
 
+/** 監査サマリ（delivery を除いた可視化用。Elith 納品 data には含めない）。 */
+export interface CanonAudit {
+  mapped: CanonMapEntry[];
+  unmapped: CanonUnmapped[];
+  deficient: string[];
+}
+export function canonAudit(r: CanonicalizeResult): CanonAudit {
+  return { mapped: r.mapped, unmapped: r.unmapped, deficient: r.deficient };
+}
+
 /** 単位の照合用正規化（NFKC・小文字・空白除去。記号は保持=単位の区別に必要）。 */
 function normUnit(s: unknown): string {
   return typeof s === 'string' ? s.normalize('NFKC').toLowerCase().replace(/[\s　]/g, '') : '';

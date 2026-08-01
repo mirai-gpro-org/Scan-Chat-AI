@@ -26,9 +26,10 @@
  */
 
 import type { APIRoute } from 'astro';
-import { buildElithScanBundle, isElithFormatId, ELITH_FORMAT_IDS } from '../../../lib/elith-export';
+import { buildElithScanBundle, isElithFormatId, ELITH_FORMAT_IDS, canonicalizeEnabled } from '../../../lib/elith-export';
 import { getS3Config, isS3Configured, putFiles } from '../../../lib/s3';
 import { checkNecessity } from '../../../lib/elith-necessity-check';
+import { masterItemNames } from '../../../lib/standard-master';
 
 export const prerender = false;
 
@@ -119,9 +120,12 @@ export const POST: APIRoute = async ({ request }) => {
     : 0;
 
   // 不要項目チェック（必要要素検証）。要望: S3書出し前に不要項目が無いか検証する。
-  const requiredItems = Array.isArray(body.requiredItems)
+  // requiredItems の供給: 呼び出し側が明示指定すればそれ(=真の必須マスタ)、無ければ
+  // canonicalize on のとき starter 標準マスタを既定にして surplus/カバレッジを可視化する。
+  const explicitRequired = Array.isArray(body.requiredItems)
     ? (body.requiredItems as unknown[]).filter((x): x is string => typeof x === 'string')
     : null;
+  const requiredItems = explicitRequired ?? (canonicalizeEnabled() ? masterItemNames() : null);
   const necessity = checkNecessity(bundle.json, { requiredItemsMaster: requiredItems });
 
   // checkOnly: 生成＋チェックのみ返す（S3へは書き出さない＝チェックフェーズ）。
@@ -137,13 +141,16 @@ export const POST: APIRoute = async ({ request }) => {
       json_key: bundle.jsonKey,
       image_key: bundle.imageKey,
       necessity,
+      canon: bundle.canon,
       preview: bundle.json,
     });
   }
 
   // 不足(必要項目マスタにあるのに欠落)は分析に影響するため、既定で書出しブロック。
+  // ただしブロックは「明示指定された必須マスタ」のときだけ。starter 既定マスタでは未実施項目が
+  // 多数 deficient になるため情報提示に留める(Elith 必要サブセット確定後に厳格化・P4/P5)。
   // override:true で管理者が強制書出し可（理由は呼び出し側で記録）。
-  if (necessity.result === 'deficient' && body.override !== true) {
+  if (explicitRequired && necessity.result === 'deficient' && body.override !== true) {
     return json({
       ok: false,
       blocked: 'deficient',
@@ -151,6 +158,7 @@ export const POST: APIRoute = async ({ request }) => {
       client_id: clientId,
       format_id: formatId,
       necessity,
+      canon: bundle.canon,
       preview: bundle.json,
     }, 409);
   }
@@ -168,6 +176,7 @@ export const POST: APIRoute = async ({ request }) => {
       json_key: bundle.jsonKey,
       image_key: bundle.imageKey,
       necessity,
+      canon: bundle.canon,
       preview: bundle.json,
     });
   }
@@ -186,6 +195,7 @@ export const POST: APIRoute = async ({ request }) => {
       json_key: bundle.jsonKey,
       image_key: bundle.imageKey,
       necessity,
+      canon: bundle.canon,
       uploaded: uploaded.map((u) => ({ key: u.key, uri: u.uri })),
     });
   } catch (err) {
