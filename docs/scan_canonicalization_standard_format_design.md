@@ -68,6 +68,28 @@
 
 ---
 
+## 4.5 処理モデル：テンプレート穴埋め方式（②の具体化・実装計画）
+
+②正準化の処理は「出力側を後追いで整形」ではなく、**出力の形（標準の項目名・単位）を先に固定した空テンプレートへ読取値を流し込む**モデルで行う。要旨は【元画像の検査結果を、正確に（漏れなく・捏造なく・不要は落として）業界標準の項目名・単位で、Elith と決めた JSON にする】。
+
+- **S1** 空テンプレート生成（標準マスタ §2.4 から {標準名, 標準単位, ref, value=null} のスロット集合）
+- **S2** 穴埋め（①読取＋sanitize 済 measurement を名寄せ/単位換算し、**高信頼時のみ**スロットへ代入。非ヒットは元名のまま通す＝捨てない・別項目に当てない）
+- **S3** 移植カバレッジ照合（未写像＝surplus として**記録**・silent drop しない／必須スロット空＝deficient）
+- **S4** 空スロット削除（当該検体で未実施のスロットは納品除外＝既存 `sanitizeMeasurementsForDelivery` に一致）
+- **S5** Elith JSON 化（lean measurement ＋ エンベロープ）
+
+**①読取との直交**: S2 で穴埋めする値は「今回列の値」でなければならない。3期間リーク（過去値の今回混入）が残ったまま②に入ると正しいスロットに誤値が入る（発見困難な False-Value）ため、**VQA 第2パス（①）で読取を正した後に②を通す**。②は読取値に触れない。
+
+**実装計画・進捗**（詳細は下記ドキュメント）:
+- `docs/基本設定書.md` §3.6 / `docs/基本設定書_実装修正プラン.md`（P1〜P5・🎯ゲート）
+- 機能別: `docs/修正仕様書_標準マスタ.md` / `docs/修正仕様書_正準化エンジン.md` / `docs/修正仕様書_検証と確定運用.md`
+- **P1 完了**: starter 標準マスタを実装（`src/lib/standard-master.ts`・`StandardItem`/`STANDARD_MASTER`(41項目)/`masterItemNames()`/`findByAlias()`/`buildAliasIndex()`）。ゴールデン実在項目のみ・捏造ゼロ・`findByAlias` は完全一致（危険同義語は非マッチをテスト確認）。
+- **P2 実装済（既定 off・🎯実画像は未）**: 正準化エンジン `src/lib/canonicalize.ts`（S1〜S3：名寄せ・単位正準化・カバレッジ `mapped/unmapped/deficient`）。全書き出し経路（`buildElithScanBundle`/`elith-hc-merge`/`elith-assemble.sanitizeDelivery`）へ結線し、env `SCAN_CANONICALIZE=on` のときだけ発火（既定 off＝挙動不変）。読取値(numeric)は変えない・非ヒットは元名のまま・監査は納品 data に混ぜない（hc-merge 応答 `canon` で返す）。`pickDeliveryName` は前段維持（その上でマスタ照合）。astro check 0エラー・単体テスト14件 PASS。
+- **P3 実装済（既定 off・🎯実画像は未）**: API が canon 監査を返す（scan=`bundle.canon`→`elith-scan.ts` 応答、merge=`elith-hc-merge` 応答 `canon`）。`checkNecessity` へ既定 starter マスタ供給（surplus/カバレッジ可視化。**starter は Elith 必須サブセットでないため deficient は非ブロック＝情報提示**。明示 `requiredItems` 指定時のみブロック）。admin `elith-batch.astro`（wellfort-site）に「②正準化 写像/マスタ外/不足」を表示。両 repo astro check クリーン。
+- **次（P4/P5）**: 🎯実画像ゲート（Vercel で `SCAN_CANONICALIZE=on` → ゴールデン再RUN → numeric 全一致・False-Value 0・名寄せ Missing 減 を確認）→ 確定運用へ。完全マスタ（KMAT/特定健診）受領で starter 差替＋Elith 必要サブセット確定。
+
+---
+
 ## 5. 実装方針（決定論・捏造ゼロ・保守的）
 
 - **正準名/単位/判定は決定論マスタで**決める（LLM に判定・整形させない＝現行の集約原則 CLAUDE.md と一致）。

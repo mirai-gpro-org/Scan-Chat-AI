@@ -142,6 +142,18 @@
   KMAT ver5.0≒2000項目。**完全マスタは推進機構/HASTOS or クライアント/Elith 経由で入手(捏造しない)**。
 - **受け皿は実装済**: `elith-necessity-check.ts` の `requiredItemsMaster`(現 null)にサブセットを与えれば起動。
   `elith_check_phase_spec §8` の「必要項目マスタ」の正体がこの標準。`pickDeliveryName` の当て推量はマスタ照合へ置換していく。
+- **実装進捗 (テンプレート穴埋め方式)**: 計画=`docs/基本設定書_実装修正プラン.md`、基本設定=`docs/基本設定書.md §3.6`、
+  機能別=`docs/修正仕様書_{標準マスタ,正準化エンジン,検証と確定運用}.md`。
+  - **P1 完了**: starter 標準マスタ `src/lib/standard-master.ts` (41項目・ゴールデン実在項目のみ・捏造ゼロ・
+    `findByAlias` 完全一致=危険同義語 総蛋白/便潜血 は非マッチ)。
+  - **P2 実装済 (既定 off・🎯実画像は未)**: `src/lib/canonicalize.ts` (S1〜S3: 名寄せ/単位正準化/カバレッジ)。
+    全書出し経路 (`buildElithScanBundle`/`elith-hc-merge`/`elith-assemble.sanitizeDelivery`) に結線。
+    **env `SCAN_CANONICALIZE=on` のときだけ発火・既定 off=挙動不変**。numeric は変えない・非ヒットは元名のまま・
+    監査(`mapped/unmapped/deficient`)は納品 data に混ぜない (hc-merge 応答 `canon`)。`pickDeliveryName` は前段維持。
+  - **P3 実装済 (既定 off)**: API が canon 監査を返す (scan=`bundle.canon`→`elith-scan.ts`, merge=`elith-hc-merge` 応答 `canon`)。
+    `checkNecessity` へ既定 starter マスタ供給 (surplus/カバレッジ可視化)。**starter は Elith 必須サブセットでないため deficient は非ブロック
+    =情報提示。明示 `requiredItems` 指定時のみブロック**。admin 表示は wellfort-site `src/pages/admin/elith-batch.astro` (②正準化 写像/マスタ外/不足)。
+  - **次 P4/P5**: 🎯実画像ゲート(Vercel で `SCAN_CANONICALIZE=on`→ゴールデン再RUN) → 確定運用。完全マスタ受領で starter 差替。**on 化は🎯回帰ゼロ確認後**。
 - **却下再掲**: 様式別プロンプト/テンプレOCR=却下 / 主パス規則強化=numeric回帰で不採用 / モデル3.5格上げ=md段階で lite 超えず不採用。
 
 ### スキャン読取の共通ルール (検査票 → JSON)
