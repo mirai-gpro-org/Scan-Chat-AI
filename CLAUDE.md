@@ -132,6 +132,18 @@
   - `client_id` = `diagnostic_user_id` (PII 非含有)。必要データが揃った時点で一括書き出し。
 - S3 既定: バケット `wellfort-ai-input` / prefix は用途による (`src/lib/s3.ts`)。
 
+### 戦略正本: 検査票→標準フォーマット正準化 (2層・最優先で読む)
+- **正本: `docs/scan_canonicalization_standard_format_design.md`**。最終ゴール(正確=漏れなし/捏造なし/余剰なし なJSON→Elith→高精度診断)を
+  最上位に置き、設計思想(native multimodal・OCRパターンマッチを使わない)は**手段=従属**とする(ゴールが勝つ)。
+- **2層に分ける**: ①**読取(Perception)=native multimodal 維持**(レイアウト多様→テンプレOCR不可)。
+  ②**正準化(Normalize)=業界標準「健診標準フォーマット(KMAT)」への決定論マッピング(新規)**。②は"1つの標準マスタ"が標的で
+  レイアウト別テンプレではない(=汎化しない負債でない)。名寄せ/単位/判定/余剰・不足を②で得点する。
+- **一次資料(R3)**: 健診標準フォーマット=日本医学健康管理評価協議会策定。維持運用=日本医学健康管理推進機構(HASTOS/hastos.jp)。
+  KMAT ver5.0≒2000項目。**完全マスタは推進機構/HASTOS or クライアント/Elith 経由で入手(捏造しない)**。
+- **受け皿は実装済**: `elith-necessity-check.ts` の `requiredItemsMaster`(現 null)にサブセットを与えれば起動。
+  `elith_check_phase_spec §8` の「必要項目マスタ」の正体がこの標準。`pickDeliveryName` の当て推量はマスタ照合へ置換していく。
+- **却下再掲**: 様式別プロンプト/テンプレOCR=却下 / 主パス規則強化=numeric回帰で不採用 / モデル3.5格上げ=md段階で lite 超えず不採用。
+
 ### スキャン読取の共通ルール (検査票 → JSON)
 - **時系列列は「今回」のみ採用**: 検査票に「今回/前回/前々回」や受診日付きの複数回分が
   並ぶ場合、**"今回"(最新回) の値だけを採用し、前回・前々回以前は捨てる**。今回が空欄なら
@@ -220,6 +232,7 @@
 | `docs/data_integration_requirements.md` | PII 分離・連携要件 |
 | `docs/diagnostic_session_data_spec.md` | 診断セッションのデータ構造 |
 | `docs/scan_feature_requirements.md` / `docs/scan_s3_export.md` | AIスキャン機能要件 / S3書き出し |
+| `docs/scan_canonicalization_standard_format_design.md` | **戦略正本: 検査票→標準フォーマット正準化(2層戦略)**。①読取=native multimodal維持 / ②正準化=健診標準フォーマット(KMAT)への決定論マッピング新規 |
 
 ## コード / スタック
 - Astro v5 + TypeScript (SSR / Vercel)。UI=`.astro`、API=`src/pages/api/**.ts`、ロジック=`src/lib/`。
