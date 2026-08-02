@@ -18,9 +18,11 @@ import {
   ELITH_HANDOFF_SCHEMA_VERSION,
   sanitizeMeasurementsForDelivery,
   canonicalizeEnabled,
+  obsDedupEnabled,
   type ParsedScan,
 } from '../../../lib/elith-export';
 import { canonicalize } from '../../../lib/canonicalize';
+import { dedupObservations, dedupAudit } from '../../../lib/observation-dedup';
 import { masterItemNames } from '../../../lib/standard-master';
 import { MODELS } from '../../../lib/gemini';
 import { getS3Config, isS3Configured, putFiles, type S3PutFile } from '../../../lib/s3';
@@ -165,10 +167,15 @@ export const POST: APIRoute = async ({ request }) => {
     const kept = sanitizeMeasurementsForDelivery(rawMeasurements).kept;
     // ②正準化 (S1〜S3)。SCAN_CANONICALIZE=on のときだけ。監査(canon)は納品 data に含めず応答へ返す。
     const canon = canonicalizeEnabled() ? canonicalize(kept) : null;
-    const measurements = canon ? canon.delivery : kept;
+    const canonMeasurements = canon ? canon.delivery : kept;
+    // 後段 dedup (課題C 別名重複/課題B 同名別値の競合・SCAN_OBS_DEDUP=on のときだけ)。マージ由来の
+    // ページ跨ぎ重複 (体重×2・眼底×2 等) はこのマージ finalize でしか消せない (単画像経路の dedup では届かない)。
+    const dedup = obsDedupEnabled() ? dedupObservations(canonMeasurements) : null;
+    const measurements = dedup ? dedup.delivery : canonMeasurements;
     const canonAudit = canon
       ? { mapped: canon.mapped, unmapped: canon.unmapped, deficient: canon.deficient }
       : null;
+    const dedupAuditOut = dedup ? dedupAudit(dedup) : null;
     const sourceFiles = Array.isArray(body.sourceFiles) ? (body.sourceFiles as unknown[]).filter((x): x is string => typeof x === 'string') : [];
 
     const { folder, stem } = folderOf(prefix, clientId, testDate);
@@ -204,14 +211,14 @@ export const POST: APIRoute = async ({ request }) => {
     });
 
     if (!isS3Configured() || !cfg) {
-      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, necessity, canon: canonAudit, scan_model: MODELS.scan, preview: jsonObj });
+      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, necessity, canon: canonAudit, dedup: dedupAuditOut, scan_model: MODELS.scan, preview: jsonObj });
     }
     try {
       const uploaded = await putFiles([{ key: json_key, contentType: 'application/json; charset=utf-8', body: jsonBody, bytes: utf8Bytes(jsonBody) }]);
       return json({
         ok: true, action: 'finalize', configured: true, bucket: cfg.bucket,
         client_id: clientId, format_id: 'HealthCheckupData', test_date: testDate,
-        part_count: parts.length, rows: measurements.length, json_key, necessity, canon: canonAudit,
+        part_count: parts.length, rows: measurements.length, json_key, necessity, canon: canonAudit, dedup: dedupAuditOut,
         scan_model: MODELS.scan, // 実際に使用したスキャンモデル (lite/3.5 判別用)
         uri: uploaded[0]?.uri ?? null,
       });

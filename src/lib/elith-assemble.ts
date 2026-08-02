@@ -16,10 +16,12 @@ import {
   ELITH_HANDOFF_SCHEMA_VERSION,
   sanitizeMeasurementsForDelivery,
   canonicalizeEnabled,
+  obsDedupEnabled,
   type ElithFormatId,
   type MeasurementAnomaly,
 } from './elith-export';
 import { canonicalize } from './canonicalize';
+import { dedupObservations } from './observation-dedup';
 import { listObjects, getObjectText, type S3PutFile } from './s3';
 
 /** 納品対象の 5 種別 (順序は納品時の見せ方に使用) */
@@ -281,7 +283,9 @@ function sanitizeDelivery(obj: Record<string, unknown>): MeasurementAnomaly[] {
       const { kept, anomalies: anos } = sanitizeMeasurementsForDelivery(d.measurements);
       anomalies.push(...anos);
       // ②正準化 (S1〜S3)。SCAN_CANONICALIZE=on のときだけ。off の間は挙動不変。
-      d.measurements = canonicalizeEnabled() ? canonicalize(kept).delivery : kept;
+      const canonKept = canonicalizeEnabled() ? canonicalize(kept).delivery : kept;
+      // 後段 dedup (課題C/B・SCAN_OBS_DEDUP=on のときだけ)。別名重複を統合・同名別値は競合として保持。
+      d.measurements = obsDedupEnabled() ? dedupObservations(canonKept).delivery : canonKept;
     }
     // 遺伝子等 items: 版面情報のみ除去 (lean はしない=構造が別)。
     if (Array.isArray(d.items)) {
