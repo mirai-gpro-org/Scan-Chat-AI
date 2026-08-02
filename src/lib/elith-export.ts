@@ -701,8 +701,10 @@ async function boundaryRecheck(
       if (val == null || !cand.allow.test(val)) { audit.push({ name: cand.names[0], reason, before, vqa: rawv0 || null, action: 'left_unresolved' }); continue; }
       const idx = idxOfAny(cand.names);
       if (idx < 0) {
-        out.push(tidyMeasurement({ name: cand.names[0], name_detail: null, value: val, value_num: null, unit: null, ref_low: null, ref_high: null, flag: null, note: 'vqa:missing_detection' }));
-        audit.push({ name: cand.names[0], reason, before, vqa: val, action: 'filled' });
+        // 該当行が主パス結果に無い = この様式に当該項目が無い可能性 → 新規 push は捏造リスク
+        //   (実測 2026-08: K-W の無い様式で VQA が 0 を push=捏造 / 潜血の検便ページ跨ぎ push=重複)。
+        //   捏造ゼロのため push しない。充填は「主パスが行を作った=様式に存在が確認済」の空行のみに限定。
+        audit.push({ name: cand.names[0], reason, before, vqa: val, action: 'left_unresolved' });
         continue;
       }
       const cur = cleanDeliveryValue(out[idx].value);
