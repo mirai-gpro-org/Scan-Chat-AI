@@ -26,6 +26,9 @@ export interface VerifyDiscrepancy {
   image_value?: string | null;
   /** 食い違ったフィールド (value/unit/ref_low/ref_high/flag)。misread で使用。 */
   field?: string | null;
+  /** 画像上の bbox [ymin,xmin,ymax,xmax](0-1000正規化)。missing/misread の根拠付け=グラウンディング用。
+   *  ※位置決め(クロップ座標)には使わない。捏造・見落とし抑止のための「指し示せるか」の証跡。 */
+  image_bbox?: string | null;
   /** 補足 (根拠・疑い列ズレ 等)。 */
   note?: string | null;
 }
@@ -100,6 +103,12 @@ ${measurementTable}
   ⚠**「今回」列が空欄の項目は、前回・前々回列に値があっても missing にしない**(今回未実施のため JSON に
   無いのが正しい)。missing 候補として挙げる前に、その値が「今回」列のものか必ず確認する。
   **その値が前回・前々回・参考基準値と一致する場合は列の取り違えなので missing にしない。**
+- **疎ページ(今回列がほぼ空欄)での見落とし厳禁**: 今回列の大半が空のページでも、**今回セルに印字がある項目は
+  必ず拾う**。「このページは今回列に値が無い」と早合点して、印字のある今回値(例: 尿酸)を missing から漏らさない。
+- **行(row)で辿る**: 各項目は「項目名 → 同じ行の"今回"セル」を横一列に辿って確認する。列位置の当て推量で
+  値を拾わない。今回セルに何が印字されているかを行単位で1つずつ確かめる(今回/前回/前々回の関係を保持したまま見る)。
+- **グラウンディング(捏造・見落とし両抑止)**: missing/misread として値を主張するときは、その値が画像の
+  **どこにあるか image_bbox [ymin,xmin,ymax,xmax](0-1000正規化)を必ず示す**。指し示せない値は主張しない。
 - **misread(誤読)**: JSON に項目はあるが、value / unit / ref_low / ref_high / flag のいずれかが
   画像の該当セルと食い違う。数値の桁・小数点・単位取り違え・列ズレ(隣の項目の値が入っている)を特に疑う。
   食い違ったフィールド名を field に入れ、image_value に画像の正しい値、json_value に JSON の値を入れる。
@@ -111,8 +120,8 @@ ${measurementTable}
 {
   "items_image": <画像の「今回」列に値がある項目の概算数(整数)>,
   "match_rate": <0-100の整数。実施済み項目のうち JSON が正しく取れた割合>,
-  "missing":   [{"name": "...", "image_value": "...", "note": "..."}],
-  "misread":   [{"name": "...", "field": "value|unit|ref_low|ref_high|flag", "image_value": "...", "json_value": "...", "note": "..."}],
+  "missing":   [{"name": "...", "image_value": "...", "image_bbox": [ymin,xmin,ymax,xmax], "note": "..."}],
+  "misread":   [{"name": "...", "field": "value|unit|ref_low|ref_high|flag", "image_value": "...", "image_bbox": [ymin,xmin,ymax,xmax], "json_value": "...", "note": "..."}],
   "extra":     [{"name": "...", "json_value": "...", "note": "..."}],
   "duplicate": [{"name": "...", "note": "..."}],
   "summary": "<1-2文の総評(日本語)>"
@@ -124,7 +133,9 @@ function asArray(v: unknown): Record<string, unknown>[] {
 }
 function toDisc(o: Record<string, unknown>): VerifyDiscrepancy {
   const s = (k: string): string | null => (typeof o[k] === 'string' && (o[k] as string).trim() ? (o[k] as string).trim() : null);
-  return { name: s('name'), json_value: s('json_value'), image_value: s('image_value'), field: s('field'), note: s('note') };
+  // bbox は配列でも文字列でも来うる。表示・監査用に文字列化して素通し(位置決めには使わない)。
+  const bbox = Array.isArray(o.image_bbox) ? (o.image_bbox as unknown[]).join(',') : s('image_bbox');
+  return { name: s('name'), json_value: s('json_value'), image_value: s('image_value'), field: s('field'), image_bbox: bbox, note: s('note') };
 }
 
 /**
