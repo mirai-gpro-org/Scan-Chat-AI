@@ -549,6 +549,24 @@ function normNameKey(s: string): string {
 //   尿定性/便潜血: 括弧付き ±/-/+・陰性/陽性・(+-)・尿の程度 1+〜3+。K-W分類: 0〜4 のグレード。
 const QUAL_URINE_ALLOW = /^([(（]?[-+±][)）]?|陰性|陽性|\(\+-\)|[1-3]\+)$/;
 const KW_GRADE_ALLOW = /^[0-4]$/;
+// VQA が陰性/陽性を素のサイン (-/−/＋) や各種ダッシュ・全角で返すと、cleanDeliveryValue が素の "-" を
+// "値なし(null)" と扱うため充填が落ちる (実測 2026-08: 潜血 VQA=− ⇒ left_unresolved→Missing)。
+// 定性トークンを括弧付き ((-)/(+)/(±)) へ正規化してから判定する。空文字は空のまま(=未実施を陰性と捏造しない)。
+function normalizeQualToken(s: string): string {
+  let t = String(s || '').trim();
+  if (!t) return t;
+  t = t
+    .replace(/[‐‑‒–—―−ー－]/g, '-') // 各種ダッシュ/長音/全角ハイフン → '-'
+    .replace(/[＋﹢]/g, '+') // 全角＋ → '+'
+    .replace(/（/g, '(')
+    .replace(/）/g, ')');
+  if (t === '-') return '(-)';
+  if (t === '+') return '(+)';
+  if (t === '±' || t === '+-' || t === '(+-)') return '(±)';
+  if (t === '陰性') return '(-)';
+  if (t === '陽性') return '(+)';
+  return t;
+}
 // aliases: 納品名の揺れ (pickDeliveryName により 尿蛋白/尿潜血 のまま納品される run がある) を吸収する候補。
 //   これが無いと currentVal/idxOfAny が既存の尿蛋白行を見つけられず、VQA充填が別名の重複行を push してしまう
 //   (実測 2026-08: 尿蛋白 と 蛋白 / 尿潜血 と 潜血 の二重計上)。allow/hint は据え置き。
@@ -672,10 +690,12 @@ async function boundaryRecheck(
 
     if (cand.kind === 'fill') {
       const reason: VqaAuditEntry['reason'] = before == null ? 'missing_detection' : 'unexpected_token';
-      const rawv = !vqa || vqa.present === false ? '' : typeof vqa.value === 'string' ? vqa.value.trim() : '';
+      const rawv0 = !vqa || vqa.present === false ? '' : typeof vqa.value === 'string' ? vqa.value.trim() : '';
+      // 素のサイン/ダッシュ (-/−/＋/全角) を括弧付き定性トークンへ正規化 (present:false=空 は rawv0='' で対象外)。
+      const rawv = normalizeQualToken(rawv0);
       // fail-safe: 空/"?"(判定不能)/許可集合外 の VQA 回答は採用しない。
       const val = rawv === '' || rawv.includes('?') ? null : cleanDeliveryValue(rawv);
-      if (val == null || !cand.allow.test(val)) { audit.push({ name: cand.names[0], reason, before, vqa: rawv || null, action: 'left_unresolved' }); continue; }
+      if (val == null || !cand.allow.test(val)) { audit.push({ name: cand.names[0], reason, before, vqa: rawv0 || null, action: 'left_unresolved' }); continue; }
       const idx = idxOfAny(cand.names);
       if (idx < 0) {
         out.push(tidyMeasurement({ name: cand.names[0], name_detail: null, value: val, value_num: null, unit: null, ref_low: null, ref_high: null, flag: null, note: 'vqa:missing_detection' }));
