@@ -715,6 +715,110 @@ async function boundaryRecheck(
   return { measurements: out, audit };
 }
 
+// ── ① 行クロップ独立VQA (env SCAN_VQA_ROWCROP=on・既定off・Vercel🎯検証前提) ──────────────
+// 目的: timeline_leak(今回=空が正)なのに、主パスも全画像VQAも今回セルに過去値を読む「相関失敗」の救済。
+//   実測(2026-08): 眼圧 右/左=16 を主パス+全画像VQA が両方 today=16 と読み、Phase2の削除3条件を満たせず
+//   False-Value が残存。対策=全画像でなく「その行だけを切り出した独立画像」で今回セルを読み直す
+//   (=ページ全体の"今回列は空"バイアス/過去列の引力を物理的に排除。ReaderとRepairの失敗モードを非相関化)。
+// 安全設計: sharp は遅延 import + 全 try/catch。失敗時は一切変更しない(フォールバック=現挙動)。既定 off。
+export function rowCropEnabled(): boolean {
+  return String(process.env.SCAN_VQA_ROWCROP || '').toLowerCase() === 'on';
+}
+const ROWCROP_LOCATE_SYSTEM = `あなたは健診結果表の座標特定器です。指定された検査項目の「行」が画像のどこにあるかだけを答えます。`;
+function buildRowLocateUser(label: string): string {
+  return `画像から「${label}」の行(項目名〜単位までの横一列)の位置を求めよ。
+出力はJSONのみ: {"row_bbox":[ymin,xmin,ymax,xmax]} (0-1000正規化)。見つからなければ {"row_bbox":null}。`;
+}
+const ROWCROP_CONFIRM_SYSTEM = `あなたは健診結果表の監査役です。渡された画像は「1行」だけを切り出したものです。
+その行の「今回」列のセルに"今回の値"が印字されているかだけを、行を横に辿って厳密に確認します。推測は禁止。`;
+function buildRowConfirmUser(label: string): string {
+  return `この画像は「${label}」の行だけを切り出したもの。列は概ね [項目名 | 今回 | 前回 | 前々回 | 単位] の順。
+「今回」列のセルだけを見て答えよ(前回/前々回/基準値の数値を今回として拾わない)。
+出力はJSONのみ:
+{"today": "<今回セルの値。空欄なら空文字>", "past_seen": "<前回/前々回列に見えた値(なければ空)>", "present": <今回セルに印字があれば true, 空欄なら false>}`;
+}
+function parseRowBbox(text: string): number[] | null {
+  try {
+    const o = JSON.parse(stripJsonCodeFence(text)) as { row_bbox?: unknown };
+    const b = o.row_bbox;
+    if (Array.isArray(b) && b.length >= 4 && b.every((x) => typeof x === 'number' && Number.isFinite(x))) {
+      return b.slice(0, 4) as number[];
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+async function cropRowBandBase64(imageBase64: string, bbox: number[]): Promise<string | null> {
+  try {
+    const sharpMod = (await import('sharp')).default;
+    const buf = Buffer.from(imageBase64, 'base64');
+    const meta = await sharpMod(buf).metadata();
+    const W = meta.width, H = meta.height;
+    if (!W || !H) return null;
+    const [ymin, , ymax] = bbox;
+    if (!(ymax > ymin) || ymin < 0 || ymax > 1000) return null;
+    const padY = Math.round(0.02 * H);
+    const top = Math.max(0, Math.round((ymin / 1000) * H) - padY);
+    const bottom = Math.min(H, Math.round((ymax / 1000) * H) + padY);
+    const height = bottom - top;
+    if (height < 8) return null;
+    // 全幅・Y帯のみ=今回/前回/前々回 列を保持 (X座標特定の泥沼を避ける)。
+    const out = await sharpMod(buf).extract({ left: 0, top, width: W, height }).toBuffer();
+    return out.toString('base64');
+  } catch {
+    return null;
+  }
+}
+/** timeline_leak が left_unresolved のまま値を保持する行を、行クロップ独立VQAで再確認して削除する。 */
+async function rowCropLeakRescue(
+  apiKey: string, imageBase64: string, mimeType: string,
+  out: ElithMeasurement[], audit: VqaAuditEntry[],
+): Promise<void> {
+  const idxOf = (names: string[]): number =>
+    out.findIndex((m) => names.some((n) => normNameKey(m.name || '') === normNameKey(n)));
+  for (const it of TIMELINE_LEAK_ITEMS) {
+    const idx = idxOf(it.names);
+    if (idx < 0) continue;
+    const cur = cleanDeliveryValue(out[idx].value);
+    if (cur == null) continue; // 既に空(削除済/未読)なら対象外
+    try {
+      const loc = await callGemini(apiKey, {
+        systemInstruction: { parts: [{ text: ROWCROP_LOCATE_SYSTEM }] },
+        contents: [{ role: 'user', parts: [
+          { inline_data: { mime_type: mimeType, data: imageBase64 } },
+          { text: buildRowLocateUser(it.label) },
+        ] }],
+        generationConfig: { responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } },
+      }, MODELS.scan);
+      const bbox = parseRowBbox(extractText(loc));
+      if (!bbox) { audit.push({ name: it.names[0], reason: 'timeline_leak', before: cur, vqa: 'rowcrop:locate_failed', action: 'left_unresolved' }); continue; }
+      const strip = await cropRowBandBase64(imageBase64, bbox);
+      if (!strip) { audit.push({ name: it.names[0], reason: 'timeline_leak', before: cur, vqa: 'rowcrop:crop_failed', action: 'left_unresolved' }); continue; }
+      const conf = await callGemini(apiKey, {
+        systemInstruction: { parts: [{ text: ROWCROP_CONFIRM_SYSTEM }] },
+        contents: [{ role: 'user', parts: [
+          { inline_data: { mime_type: mimeType, data: strip } },
+          { text: buildRowConfirmUser(it.label) },
+        ] }],
+        generationConfig: { responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } },
+      }, MODELS.scan);
+      const ans = JSON.parse(stripJsonCodeFence(extractText(conf))) as { today?: string; past_seen?: string; present?: boolean };
+      const todayRaw = ans && ans.present !== false && typeof ans.today === 'string' ? ans.today.trim() : '';
+      const todayEmpty = ans != null && ans.present !== false && !todayRaw.includes('?') && cleanDeliveryValue(todayRaw) == null;
+      const past = ans && typeof ans.past_seen === 'string' ? cleanDeliveryValue(ans.past_seen) : null;
+      const summary = `rowcrop today=${ans?.today ?? '-'} / past=${ans?.past_seen ?? '-'}`;
+      // ③3条件 (行クロップVQAが今回空 & 過去列に値 & 現value==過去値) 全満たしの時だけ削除。誤削除防止。
+      if (todayEmpty && past != null && cur.replace(/\s/g, '') === past.replace(/\s/g, '')) {
+        out[idx] = { ...(out[idx] as ElithMeasurement), value: null, value_num: null, note: 'vqa:rowcrop_leak_dropped' };
+        audit.push({ name: it.names[0], reason: 'timeline_leak', before: cur, vqa: summary, action: 'dropped' });
+      } else {
+        audit.push({ name: it.names[0], reason: 'timeline_leak', before: cur, vqa: summary, action: 'left_unresolved' });
+      }
+    } catch {
+      // フォールバック: 失敗は本経路を壊さない (現値を維持)。
+    }
+  }
+}
+
 /**
  * スキャン取得の統一入口。env で Markdown / JSON を切替え、両経路とも
  * 「監査用 raw・regions・measurements・notes・(schema由来)検査日」を同じ形で返す。
@@ -765,10 +869,18 @@ async function scanArtifacts(
       vqaAudit: [],
     };
   }
-  // Phase 1: 境界定性項目の VQA 再読 (env で有効時のみ・定性HIGHのみ・numeric不変)。監査も回収。
+  // Phase 1/2: 境界定性項目の VQA 再読 (env で有効時のみ・定性HIGHのみ・numeric不変)。監査も回収。
   if (boundaryRecheckEnabled()) {
     const r = await boundaryRecheck(apiKey, imageBase64, mimeType, art.rawFull, art.measurements);
     art = { ...art, measurements: r.measurements, vqaAudit: r.audit };
+  }
+  // ① 行クロップ独立VQA (env SCAN_VQA_ROWCROP=on・既定off): timeline_leak の相関失敗残りを
+  //   「行だけ切り出した独立画像」で読み直して削除。sharp遅延import+全try/catchで本経路は不変(フォールバック)。
+  if (rowCropEnabled()) {
+    const measurements = art.measurements.slice();
+    const audit = (art.vqaAudit || []).slice();
+    await rowCropLeakRescue(apiKey, imageBase64, mimeType, measurements, audit);
+    art = { ...art, measurements, vqaAudit: audit };
   }
   return art;
 }
