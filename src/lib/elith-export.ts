@@ -744,46 +744,66 @@ async function boundaryRecheck(
 export function rowCropEnabled(): boolean {
   return String(process.env.SCAN_VQA_ROWCROP || '').toLowerCase() === 'on';
 }
-const ROWCROP_LOCATE_SYSTEM = `あなたは健診結果表の座標特定器です。指定された検査項目の「行」が画像のどこにあるかだけを答えます。`;
+const ROWCROP_LOCATE_SYSTEM = `あなたは健診結果表の座標特定器です。指定された行と、表の列見出し行の位置だけを答えます。`;
 function buildRowLocateUser(label: string): string {
-  return `画像から「${label}」の行(項目名〜単位までの横一列)の位置を求めよ。
-出力はJSONのみ: {"row_bbox":[ymin,xmin,ymax,xmax]} (0-1000正規化)。見つからなければ {"row_bbox":null}。`;
+  return `画像から次の2領域の位置(0-1000正規化 [ymin,xmin,ymax,xmax])を求めよ:
+1) row_bbox = 「${label}」の行(項目名〜単位までの横一列)。
+2) header_bbox = その表の列見出し行(「今回」「前回(受診日)」「前々回(受診日)」等の見出しが横に並ぶ行)。
+出力はJSONのみ: {"row_bbox":[...],"header_bbox":[...]}。見つからない領域は null。`;
 }
-const ROWCROP_CONFIRM_SYSTEM = `あなたは健診結果表の監査役です。渡された画像は「1行」だけを切り出したものです。
-その行の「今回」列のセルに"今回の値"が印字されているかだけを、行を横に辿って厳密に確認します。推測は禁止。`;
+const ROWCROP_CONFIRM_SYSTEM = `あなたは健診結果表の監査役です。渡された画像は上段に「列見出し行」、下段に対象の「1行」を
+縦に並べたものです。上段の見出しで列位置を合わせ、下段の行の「今回」列セルだけを厳密に確認します。推測は禁止。`;
 function buildRowConfirmUser(label: string): string {
-  return `この画像は「${label}」の行だけを切り出したもの。列は概ね [項目名 | 今回 | 前回 | 前々回 | 単位] の順。
-「今回」列のセルだけを見て答えよ(前回/前々回/基準値の数値を今回として拾わない)。
+  return `この画像は上段=列見出し行(今回/前回/前々回 等)、下段=「${label}」の行。上下は同じ横位置で揃っている。
+上段の見出し「今回」の真下の列だけを読め。前回・前々回(受診日付きの見出し)の下の値を今回として拾わない。
+・今回列セルが空欄なら today は空文字にする。
+・past_seen には前回/前々回列に見えた値を必ず報告する(複数あれば代表1つ。無ければ空)。
 出力はJSONのみ:
-{"today": "<今回セルの値。空欄なら空文字>", "past_seen": "<前回/前々回列に見えた値(なければ空)>", "present": <今回セルに印字があれば true, 空欄なら false>}`;
+{"today":"<今回セルの値。空欄なら空文字>","past_seen":"<前回/前々回列の値。無ければ空>","present":<今回セルに印字があれば true, 空欄なら false>}`;
 }
-function parseRowBbox(text: string): number[] | null {
+function pickBbox(b: unknown): number[] | null {
+  return Array.isArray(b) && b.length >= 4 && b.every((x) => typeof x === 'number' && Number.isFinite(x))
+    ? (b.slice(0, 4) as number[]) : null;
+}
+function parseLocateBboxes(text: string): { row: number[] | null; header: number[] | null } {
   try {
-    const o = JSON.parse(stripJsonCodeFence(text)) as { row_bbox?: unknown };
-    const b = o.row_bbox;
-    if (Array.isArray(b) && b.length >= 4 && b.every((x) => typeof x === 'number' && Number.isFinite(x))) {
-      return b.slice(0, 4) as number[];
-    }
-  } catch { /* ignore */ }
-  return null;
+    const o = JSON.parse(stripJsonCodeFence(text)) as { row_bbox?: unknown; header_bbox?: unknown };
+    return { row: pickBbox(o.row_bbox), header: pickBbox(o.header_bbox) };
+  } catch { return { row: null, header: null }; }
 }
-async function cropRowBandBase64(imageBase64: string, bbox: number[]): Promise<string | null> {
+// ヘッダ帯(あれば)+ 対象行帯 を全幅で切り出し縦連結して PNG base64 で返す。
+//   全幅=今回/前回/前々回 列を保持し、上にヘッダを付けることで切り出し画像でも列を対応付けられる
+//   (実測: ヘッダ無しの行のみだと今回/前回の取り違えが残る=眼圧右 today=16)。
+async function cropRowStripBase64(imageBase64: string, headerBbox: number[] | null, rowBbox: number[]): Promise<string | null> {
   try {
     const sharpMod = (await import('sharp')).default;
     const buf = Buffer.from(imageBase64, 'base64');
     const meta = await sharpMod(buf).metadata();
     const W = meta.width, H = meta.height;
     if (!W || !H) return null;
-    const [ymin, , ymax] = bbox;
-    if (!(ymax > ymin) || ymin < 0 || ymax > 1000) return null;
-    const padY = Math.round(0.02 * H);
-    const top = Math.max(0, Math.round((ymin / 1000) * H) - padY);
-    const bottom = Math.min(H, Math.round((ymax / 1000) * H) + padY);
-    const height = bottom - top;
-    if (height < 8) return null;
-    // 全幅・Y帯のみ=今回/前回/前々回 列を保持 (X座標特定の泥沼を避ける)。
-    const out = await sharpMod(buf).extract({ left: 0, top, width: W, height }).toBuffer();
-    return out.toString('base64');
+    const bandOf = async (bbox: number[] | null, pad: number): Promise<{ buf: Buffer; h: number } | null> => {
+      if (!bbox) return null;
+      const [ymin, , ymax] = bbox;
+      if (!(ymax > ymin) || ymin < 0 || ymax > 1000) return null;
+      const p = Math.round(pad * H);
+      const top = Math.max(0, Math.round((ymin / 1000) * H) - p);
+      const bottom = Math.min(H, Math.round((ymax / 1000) * H) + p);
+      const h = bottom - top;
+      if (h < 6) return null;
+      return { buf: await sharpMod(buf).extract({ left: 0, top, width: W, height: h }).toBuffer(), h };
+    };
+    const row = await bandOf(rowBbox, 0.02);
+    if (!row) return null;
+    const header = await bandOf(headerBbox, 0.006); // ヘッダは取れなくても行のみで続行
+    const bands = header ? [header, row] : [row];
+    const gap = header ? 8 : 0;
+    const totalH = bands.reduce((s, b) => s + b.h, 0) + gap * (bands.length - 1);
+    const comps: { input: Buffer; top: number; left: number }[] = [];
+    let y = 0;
+    for (const b of bands) { comps.push({ input: b.buf, top: y, left: 0 }); y += b.h + gap; }
+    const outBuf = await sharpMod({ create: { width: W, height: totalH, channels: 3, background: '#ffffff' } })
+      .composite(comps).png().toBuffer();
+    return outBuf.toString('base64');
   } catch {
     return null;
   }
@@ -809,21 +829,22 @@ async function rowCropLeakRescue(
         ] }],
         generationConfig: { responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } },
       }, MODELS.scan);
-      const bbox = parseRowBbox(extractText(loc));
-      if (!bbox) { audit.push({ name: it.names[0], reason: 'timeline_leak', before: cur, vqa: 'rowcrop:locate_failed', action: 'left_unresolved' }); continue; }
-      const strip = await cropRowBandBase64(imageBase64, bbox);
+      const loc2 = parseLocateBboxes(extractText(loc));
+      if (!loc2.row) { audit.push({ name: it.names[0], reason: 'timeline_leak', before: cur, vqa: 'rowcrop:locate_failed', action: 'left_unresolved' }); continue; }
+      const strip = await cropRowStripBase64(imageBase64, loc2.header, loc2.row);
       if (!strip) { audit.push({ name: it.names[0], reason: 'timeline_leak', before: cur, vqa: 'rowcrop:crop_failed', action: 'left_unresolved' }); continue; }
       const conf = await callGemini(apiKey, {
         systemInstruction: { parts: [{ text: ROWCROP_CONFIRM_SYSTEM }] },
         contents: [{ role: 'user', parts: [
-          { inline_data: { mime_type: mimeType, data: strip } },
+          { inline_data: { mime_type: 'image/png', data: strip } }, // 連結クロップは PNG
           { text: buildRowConfirmUser(it.label) },
         ] }],
         generationConfig: { responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } },
       }, MODELS.scan);
       const ans = JSON.parse(stripJsonCodeFence(extractText(conf))) as { today?: string; past_seen?: string; present?: boolean };
-      const todayRaw = ans && ans.present !== false && typeof ans.today === 'string' ? ans.today.trim() : '';
-      const todayEmpty = ans != null && ans.present !== false && !todayRaw.includes('?') && cleanDeliveryValue(todayRaw) == null;
+      const todayRaw = ans && typeof ans.today === 'string' ? ans.today.trim() : '';
+      // 今回空の判定: present:false(印字なし) か today値が空 のいずれか。'?'(判定不能)は空扱いにしない。
+      const todayEmpty = ans != null && !todayRaw.includes('?') && (ans.present === false || cleanDeliveryValue(todayRaw) == null);
       const past = ans && typeof ans.past_seen === 'string' ? cleanDeliveryValue(ans.past_seen) : null;
       const summary = `rowcrop today=${ans?.today ?? '-'} / past=${ans?.past_seen ?? '-'}`;
       // ③3条件 (行クロップVQAが今回空 & 過去列に値 & 現value==過去値) 全満たしの時だけ削除。誤削除防止。
