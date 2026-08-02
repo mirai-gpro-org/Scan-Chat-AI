@@ -29,6 +29,7 @@ import { parseScanRegions, type ScanRegionJson } from './scan-export';
 import { canonicalize, canonAudit, type CanonAudit } from './canonicalize';
 import { dedupObservations, dedupAudit, semanticKey, type DedupAudit } from './observation-dedup';
 import { isHighRisk, evidenceVerdict, emitDecision } from './perception-repair';
+import { findByAlias, normKey as stdNormKey } from './standard-master';
 import type { S3PutFile } from './s3';
 
 export const ELITH_HANDOFF_SCHEMA_VERSION = 'elith-handoff-v0.1';
@@ -954,27 +955,38 @@ async function inventoryReread(
   const outKeys = new Set(out.map((m) => semanticKey(m.name)).filter(Boolean));
   let repairs = 0;
   for (const label of labels) {
-    const key = semanticKey(label);
-    if (!key || outKeys.has(key)) continue; // 主パスに既にある概念は対象外
+    // 捏造防止ゲート(実測 2026-08: インベントリが 好中球/LDH/右耳/受診コース 等を幻覚し push→捏造):
+    //   新規 push は「標準マスタに実在する概念」だけに限定する。マスタ非ヒット名は push しない
+    //   (CLAUDE.md 確定ルール「VQA充填は新規pushしない」の趣旨。未知名の充填=捏造の温床を断つ)。
+    const std = findByAlias(label);
+    if (!std) {
+      audit.push({ name: label, reason: 'row_omission', before: null, vqa: 'not_in_master', action: 'left_unresolved' });
+      continue;
+    }
+    const key = stdNormKey(std.canonical_name);
+    if (outKeys.has(key)) continue; // 既にある概念(別名含む)は対象外=重複を作らない
     if (Date.now() >= deadline || repairs >= MAX_INVENTORY_REPAIRS) {
-      audit.push({ name: label, reason: 'row_omission', before: null, vqa: 'budget_stop', action: 'left_unresolved' });
+      audit.push({ name: std.canonical_name, reason: 'row_omission', before: null, vqa: 'budget_stop', action: 'left_unresolved' });
       continue; // 予算/上限: 未解決として残す(次リクエストで再試行=RETRY_PENDING)
     }
     repairs++;
     try {
       const r = await readTodayForLabel(apiKey, imageBase64, mimeType, label);
-      if (r && r.present && r.today != null) {
+      const today = r?.today ?? null;
+      // 日付/年月日は検査値でない(受診日等の混入を弾く)。数値化不能で日付様のトークンを除外。
+      const dateLike = today != null && /(?:\d{4}\s*年|\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}\s*月\s*\d{1,2}\s*日)/.test(today);
+      if (r && r.present && today != null && !dateLike) {
         out.push({
-          name: label, name_detail: null, value: r.today, value_num: toValueNum(r.today),
+          name: std.canonical_name, name_detail: null, value: today, value_num: toValueNum(today),
           unit: null, ref_low: null, ref_high: null, flag: null, note: 'perception:inventory_filled',
         });
         outKeys.add(key);
-        audit.push({ name: label, reason: 'row_omission', before: null, vqa: `inv today=${r.today}`, action: 'filled' });
+        audit.push({ name: std.canonical_name, reason: 'row_omission', before: null, vqa: `inv today=${today}`, action: 'filled' });
       } else {
-        audit.push({ name: label, reason: 'row_omission', before: null, vqa: 'inv:unread', action: 'left_unresolved' });
+        audit.push({ name: std.canonical_name, reason: 'row_omission', before: null, vqa: dateLike ? 'inv:date_rejected' : 'inv:unread', action: 'left_unresolved' });
       }
     } catch {
-      audit.push({ name: label, reason: 'row_omission', before: null, vqa: 'inv:error', action: 'vqa_error' });
+      audit.push({ name: std.canonical_name, reason: 'row_omission', before: null, vqa: 'inv:error', action: 'vqa_error' });
     }
   }
 }
