@@ -281,6 +281,25 @@
 - 標準スクリプトは `scripts/*.mjs` (Node ESM, 追加依存なし方針)。
 - 主要ライブラリ: `@google/genai`(Gemini)、`@aws-sdk/client-s3`(S3)、`@supabase/supabase-js`。
 
-## 開発ブランチ
-- 本作業ブランチ: `claude/clever-cray-ngg0h6` (指示がある限りここへコミット/プッシュ)。
+## 開発ブランチ / ブランチ管理 (2リポジトリ・ドメイン別・ペア運用・2026-08 定義)
+- **ドメイン別ブランチ**: wellfort-site は EC/FA/Elith 等 関心事が混在するため、関心事ごとにブランチを分ける
+  (`claude/<domain>-<topic>`。EC/FA と Elith を混ぜない)。
+- **Elith/scan精度 作業の正本ペア (この作業線)**:
+  - **Scan-Chat-AI = `claude/clever-cray-ngg0h6`** (読取/正準化/dedup/perception/**golden 正解データ(docs)**)。
+  - **wellfort-site = `claude/elith-verify-image-json`** (admin UI・**goldenCheck 照合器**・necessity 可視化)。
+  - **🎯 検証はこの2本を同時デプロイして成立** (Scan-Chat-AI API × wellfort-site admin)。EC/FA ブランチには触らない。
+- **照合(検証)のタイプ別定義** (照合器=wellfort-site admin / golden正解データ=Scan-Chat-AI docs):
+  | タイプ | format_id | 取得 | 🎯値golden(決定論・画像非依存) | 🔍画像照合(LLM) | ④の照合 |
+  |---|---|---|---|---|---|
+  | 健康診断(検診) | HealthCheckupData | アプリscan | ○ `scan_golden_healthcheckup_20250123.md` | ○ | — |
+  | 人間ドック | HealthCheckupData | アプリscan | ○ `scan_golden_humandock_20240924.md` | ○ | — |
+  | がんリスク | CancerRiskAssessmentData | adminバッチ | 建立待ち(様式1) | ○ | — |
+  | 遺伝子 | GeneticTestResultData | adminバッチ | 建立待ち(様式1) | ○ | — |
+  | 血液 | BloodTestData | デメカルCSV | (CSV由来値で可) | **×(画像なし)** | **CSV↔JSON構造照合(決定論・Scan-Chat-AI scripts)** |
+  - **🎯値golden = 画像非依存**なので全タイプで使える(正解値さえ建立すれば)。`elith-batch.astro goldenCheck` は
+    `test_date` で検体切替(検診/人間ドック実装済・②③は様式1つで各1本)。
+  - **🔍画像照合 = 画像がある型(検診/人間ドック/がん/遺伝子)のみ**。④血液は CSV が決定論正解源=画像照合不可 →
+    **CSV↔JSON 構造照合**(全項目写像=漏れゼロ/余剰=捏造ゼロ/単位・判定コード対応)を Scan-Chat-AI 側 fixture で。
+- **git 規定との関係**: タスク既定は両repo `clever-cray-ngg0h6` だが、wellfort-site の Elith admin は上記のとおり
+  `elith-verify-image-json` を正本とする(発注者承認 2026-08)。別ブランチへの push は都度明示許可を得る。
 </content>
