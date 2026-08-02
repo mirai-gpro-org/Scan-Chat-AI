@@ -159,6 +159,8 @@
   - **P-perc-1 実装済 (env `SCAN_OBS_DEDUP`・既定off)**: 課題C 決定論 dedup `src/lib/observation-dedup.ts`。概念ID(canonical_name)で同一性判定・**同一キー同値のみ統合**(別名重複除去)・**別値は競合記録で自動採用しない**(捏造ゼロ・課題B 検知)。table_id/row は意味キーに含めない。眼圧右/左・便潜血1/2日目 は別 canonical_name=統合しない。`buildElithScanBundle` の canonicalize 後に発火→監査 `bundle.dedup`。numeric 不変。astro check 0error・ロジック15ケース検証。**on 化は🎯後**。
   - **P-perc-2/3/4 実装済 (env `SCAN_PERCEPTION_REPAIR`・既定off・Vercel🎯前提)**: 決定論コア `src/lib/perception-repair.ts` (課題B リスク別ゲート evidenceVerdict/emitDecision: 高リスク=証拠必須/通常=weak保持/過去・グラフ一致=contradicted除外/推定不能=ambiguous非ドロップ・状態機械 ATTEMPT_1→2→3→EXHAUSTED_UNRESOLVED・双方向会計 buildAccounting。ロジック22ケース検証)。画像I/O `elith-export.ts` (`perceptionRepair`= A:Geminiインベントリ→照合→局所VQA充填[画像証拠に基づくpush=捏造ゼロ] / B:同名別値の領域判定→ゲートで除外)。`scanArtifacts` に結線・Gemini/sharp全try/catch=フォールバック・主パス不変。astro check 0error。
     **タイムバジェット必須(実測504対応・2026-08)**: 後段の直列Gemini呼び出しは60s関数タイムアウト=**504でスキャン全損**を起こす(実測 ⑧-1.JPG)。→ `scanArtifacts` の主パス開始 t0 から `PERCEPTION_DEADLINE_MS=45000` の deadline を rowcrop/perception に渡し、各Gemini呼び出し前に `Date.now()>=deadline` で打ち切り+呼び出し上限(MAX_INVENTORY_REPAIRS/MAX_REGION_CHECKS=8)。打ち切り分は `budget_stop`=left_unresolved(次リクエストで再試行=RETRY_PENDING)。関数は必ず60s内に主結果を返す。
+    **実測回帰(2026-08・⑧検体 perception=on)→捏造ゲート追加**: `inventoryReread` が 好中球(画像は分葉核球)/LDH/右耳/受診コース(=日付) 等を**幻覚して push=捏造5**、かつ 視力右眼/眼圧右眼 等を別名で push=重複増(rows100→116)。**CLAUDE.md 確定ルール「VQA充填は新規pushしない」を P-perc で上書きしたのが誤り**(R5撤回)。→ `inventoryReread` の新規pushを **findByAlias ヒット(starter標準マスタ実在概念)のみ + 日付様value除外 + canonical_name で既存概念と重複回避** に厳格ゲート(幻覚名/メタデータ/日付を全弾き)。**結果: 課題Aの push はマスタ収録項目に限定=大半の真の欠落(FT3/内科診察等)は非対象**(捏造ゼロ優先)。**当面 SCAN_PERCEPTION_REPAIR は off 推奨**(baseline=perception off が 98%/誤読0/捏造0 で優位)。完全マスタ受領で push 対象が広がる。
+    **課題B 単独値リークは未解決**: LDL=102/TG=129(前回値混入)は主パス由来だが regionGate は「同名別値の競合」しか見ず単独値を取り逃す(Gemini①指摘)。全値の領域照会は60s予算外→ dedup で 129 が復元され競合化した時のみ拾える。恒久策は要検討。
     **残る精密化はVercel🎯で調整**: 純CV occupied検出・残留証拠監査・current_column_confidence・跨リクエストの client リトライループ。VQA/CVの効き(漏れ検知率/誤ドロップ/503/60s)はローカル不可(キー無)=決定論部とastro checkのみ検証。**on化は人間ドックゴールデン(FT3欠落・推移グラフ)での🎯回帰ゼロ確認後** (`SCAN_VQA_ROWCROP` と同運用)。
   - **「必ず入れる」の実行形 (発注者裁定2026-08)**: 漏れなし(§1.1絶対)=**サイレント脱落ゼロ＋自動リトライラダーで読み切り(人手ゼロ)**。読めないインクに値を出す=捏造なので不可。終端は自動停止でなく**自動継続の状態機械** `ATTEMPT_1→2→3→EXHAUSTED_UNRESOLVED`(未解決+証拠を永続化し次リクエストへ・1画像=1reqは分割規則で再試行を禁じない)。EXHAUSTED_UNRESOLVED は通常納品しない・捏造しない・黙って消さない。**保証=サイレント脱落ゼロ / 非保証=常に完全JSON(確率モデル単体で数学的に不可)**。
 - **却下再掲**: 様式別プロンプト/テンプレOCR=却下 / 主パス規則強化=numeric回帰で不採用 / モデル3.5格上げ=md段階で lite 超えず不採用。
@@ -279,6 +281,25 @@
 - 標準スクリプトは `scripts/*.mjs` (Node ESM, 追加依存なし方針)。
 - 主要ライブラリ: `@google/genai`(Gemini)、`@aws-sdk/client-s3`(S3)、`@supabase/supabase-js`。
 
-## 開発ブランチ
-- 本作業ブランチ: `claude/clever-cray-ngg0h6` (指示がある限りここへコミット/プッシュ)。
+## 開発ブランチ / ブランチ管理 (2リポジトリ・ドメイン別・ペア運用・2026-08 定義)
+- **ドメイン別ブランチ**: wellfort-site は EC/FA/Elith 等 関心事が混在するため、関心事ごとにブランチを分ける
+  (`claude/<domain>-<topic>`。EC/FA と Elith を混ぜない)。
+- **Elith/scan精度 作業の正本ペア (この作業線)**:
+  - **Scan-Chat-AI = `claude/clever-cray-ngg0h6`** (読取/正準化/dedup/perception/**golden 正解データ(docs)**)。
+  - **wellfort-site = `claude/elith-verify-image-json`** (admin UI・**goldenCheck 照合器**・necessity 可視化)。
+  - **🎯 検証はこの2本を同時デプロイして成立** (Scan-Chat-AI API × wellfort-site admin)。EC/FA ブランチには触らない。
+- **照合(検証)のタイプ別定義** (照合器=wellfort-site admin / golden正解データ=Scan-Chat-AI docs):
+  | タイプ | format_id | 取得 | 🎯値golden(決定論・画像非依存) | 🔍画像照合(LLM) | ④の照合 |
+  |---|---|---|---|---|---|
+  | 健康診断(検診) | HealthCheckupData | アプリscan | ○ `scan_golden_healthcheckup_20250123.md` | ○ | — |
+  | 人間ドック | HealthCheckupData | アプリscan | ○ `scan_golden_humandock_20240924.md` | ○ | — |
+  | がんリスク | CancerRiskAssessmentData | adminバッチ | 建立待ち(様式1) | ○ | — |
+  | 遺伝子 | GeneticTestResultData | adminバッチ | 建立待ち(様式1) | ○ | — |
+  | 血液 | BloodTestData | デメカルCSV | (CSV由来値で可) | **×(画像なし)** | **CSV↔JSON構造照合(決定論・Scan-Chat-AI scripts)** |
+  - **🎯値golden = 画像非依存**なので全タイプで使える(正解値さえ建立すれば)。`elith-batch.astro goldenCheck` は
+    `test_date` で検体切替(検診/人間ドック実装済・②③は様式1つで各1本)。
+  - **🔍画像照合 = 画像がある型(検診/人間ドック/がん/遺伝子)のみ**。④血液は CSV が決定論正解源=画像照合不可 →
+    **CSV↔JSON 構造照合**(全項目写像=漏れゼロ/余剰=捏造ゼロ/単位・判定コード対応)を Scan-Chat-AI 側 fixture で。
+- **git 規定との関係**: タスク既定は両repo `clever-cray-ngg0h6` だが、wellfort-site の Elith admin は上記のとおり
+  `elith-verify-image-json` を正本とする(発注者承認 2026-08)。別ブランチへの push は都度明示許可を得る。
 </content>
