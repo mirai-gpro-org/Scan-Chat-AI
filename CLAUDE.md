@@ -209,11 +209,15 @@
       第2検体ゴールデン**で「実施済を落とさない」を確認してから本番常用する。監査 action に `dropped` を追加。
     - **① 行クロップ独立VQA (実装済・env `SCAN_VQA_ROWCROP`・既定off・🎯Vercel検証前提)**: Phase2 の**相関失敗**
       (主パスも全画像VQAも今回に過去値を読む run。実測 2026-08: 眼圧右/左=16 を両方 today=16 と読み削除できず
-      False-Value 残存) を救済。対象 timeline_leak 行だけを **`sharp` で Y帯クロップした独立画像**で今回セルを
-      読み直し、③3条件 (行クロップVQAが今回空 & 過去列に値 & 現value==過去値) 全満たしで削除。**全幅Y帯=今回/
-      前回/前々回を保持し X 座標特定の泥沼を回避**。`sharp` は**遅延import+全try/catch**=失敗時フォールバック
-      (本経路は不変)。狙い=Reader(全体)と Repair(行局所)の失敗モードを非相関化。実装 `elith-export.ts`
-      `rowCropLeakRescue`/`cropRowBandBase64`。**on化は🎯回帰ゼロ確認後**(ローカルはキー不可＝クロップのみ検証済)。
+      False-Value 残存) を救済。対象 timeline_leak 行を `sharp` で切り出した独立画像で今回セルを読み直し、
+      ③3条件 (行クロップVQAが今回空 & 過去列に値 & 現value==過去値) 全満たしで削除。**全幅Y帯=今回/前回/前々回
+      を保持し X 座標特定の泥沼を回避**。`sharp` は**遅延import+全try/catch**=失敗時フォールバック(本経路は不変)。
+      実装 `elith-export.ts` `rowCropLeakRescue`/`cropRowStripBase64`。
+      - **🎯初回(2026-08)で判明→改良**: 行のみクロップだと**列見出しが無く今回/前回を取り違える**(眼圧左=today空 正読・
+        眼圧右=today16 誤読)。→ locate で **header_bbox(列見出し行) も取得し「ヘッダ帯＋行帯」を縦連結**して列を
+        対応付け。confirm プロンプトで **past_seen(過去列値) の報告を強制**(3条件の past を安定取得)。今回空判定は
+        **present:false か today値空**で成立(修正)。numeric値は削除しか行わない(充填しない)=捏造ゼロ。
+      - **on化は🎯回帰ゼロ確認後**(ローカルはキー不可＝連結クロップの画像生成のみ検証済。VQA部は Vercel🎯 で検証)。
     - **VQA充填の別名dedup (実装済)**: `BOUNDARY_RECHECK_ITEMS` に `aliases` (蛋白≡尿蛋白/潜血≡尿潜血)。
       これが無いと充填が別名の重複行を push する (実測 2026-08 重複2)。既存の尿蛋白/尿潜血行を照合し重複を作らない。
     - 主パスへの O/X 列追加・時系列規則強化は numeric 回帰で不採用(実証済)。~~クロップ前処理は画像ライブラリ不在で保留~~
