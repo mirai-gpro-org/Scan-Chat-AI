@@ -29,6 +29,8 @@ export interface VerifyDiscrepancy {
   /** 画像上の bbox [ymin,xmin,ymax,xmax](0-1000正規化)。missing/misread の根拠付け=グラウンディング用。
    *  ※位置決め(クロップ座標)には使わない。捏造・見落とし抑止のための「指し示せるか」の証跡。 */
   image_bbox?: string | null;
+  /** 読んだ値の真上の列見出し (今回 / 前回 日付 / 前々回 日付 / 基準値)。過去列・基準列の誤指摘を決定論で除外する。 */
+  column_header?: string | null;
   /** 補足 (根拠・疑い列ズレ 等)。 */
   note?: string | null;
 }
@@ -109,6 +111,13 @@ ${measurementTable}
   値を拾わない。今回セルに何が印字されているかを行単位で1つずつ確かめる(今回/前回/前々回の関係を保持したまま見る)。
 - **グラウンディング(捏造・見落とし両抑止)**: missing/misread として値を主張するときは、その値が画像の
   **どこにあるか image_bbox [ymin,xmin,ymax,xmax](0-1000正規化)を必ず示す**。指し示せない値は主張しない。
+- **列見出しの申告 (最重要・列取り違え防止)**: missing/misread で値を挙げる時は、その値の**真上にある列見出し**を
+  column_header に必ず書く(例: "今回" / "前回 2023/4/22" / "前々回 2020/8/3" / "基準値")。
+  **column_header が "今回" 以外(日付付きの過去列・基準値/参考値列)の値は絶対に挙げない**。迷ったら挙げない。
+- **範囲/不等号は基準値**: "2.1〜7.0" "20未満" "80以上" "0.300未満" 等の範囲・不等号表記は**基準値**であって
+  今回値ではない。これらを今回値として missing/misread に挙げない。
+- **別項目を重複/捏造としない**: 尿潜血(尿定性)と免疫便潜血(検便)、尿蛋白(尿定性)と総蛋白(血液)は**別の検査**。
+  名前が似ていても duplicate/extra にしない。
 - **misread(誤読)**: JSON に項目はあるが、value / unit / ref_low / ref_high / flag のいずれかが
   画像の該当セルと食い違う。数値の桁・小数点・単位取り違え・列ズレ(隣の項目の値が入っている)を特に疑う。
   食い違ったフィールド名を field に入れ、image_value に画像の正しい値、json_value に JSON の値を入れる。
@@ -120,8 +129,8 @@ ${measurementTable}
 {
   "items_image": <画像の「今回」列に値がある項目の概算数(整数)>,
   "match_rate": <0-100の整数。実施済み項目のうち JSON が正しく取れた割合>,
-  "missing":   [{"name": "...", "image_value": "...", "image_bbox": [ymin,xmin,ymax,xmax], "note": "..."}],
-  "misread":   [{"name": "...", "field": "value|unit|ref_low|ref_high|flag", "image_value": "...", "image_bbox": [ymin,xmin,ymax,xmax], "json_value": "...", "note": "..."}],
+  "missing":   [{"name": "...", "image_value": "...", "column_header": "今回|前回 …|前々回 …|基準値", "image_bbox": [ymin,xmin,ymax,xmax], "note": "..."}],
+  "misread":   [{"name": "...", "field": "value|unit|ref_low|ref_high|flag", "image_value": "...", "column_header": "今回|前回 …|前々回 …|基準値", "image_bbox": [ymin,xmin,ymax,xmax], "json_value": "...", "note": "..."}],
   "extra":     [{"name": "...", "json_value": "...", "note": "..."}],
   "duplicate": [{"name": "...", "note": "..."}],
   "summary": "<1-2文の総評(日本語)>"
@@ -135,7 +144,7 @@ function toDisc(o: Record<string, unknown>): VerifyDiscrepancy {
   const s = (k: string): string | null => (typeof o[k] === 'string' && (o[k] as string).trim() ? (o[k] as string).trim() : null);
   // bbox は配列でも文字列でも来うる。表示・監査用に文字列化して素通し(位置決めには使わない)。
   const bbox = Array.isArray(o.image_bbox) ? (o.image_bbox as unknown[]).join(',') : s('image_bbox');
-  return { name: s('name'), json_value: s('json_value'), image_value: s('image_value'), field: s('field'), image_bbox: bbox, note: s('note') };
+  return { name: s('name'), json_value: s('json_value'), image_value: s('image_value'), field: s('field'), image_bbox: bbox, column_header: s('column_header'), note: s('note') };
 }
 
 /**
@@ -180,20 +189,42 @@ export async function verifyScanAgainstImages(input: {
     throw new Error(`grader returned non-JSON (finishReason=${finishReason}): ${raw.slice(0, 200)}`);
   }
 
-  const missing = asArray(parsed.missing).map(toDisc);
-  const misread = asArray(parsed.misread).map(toDisc);
+  const missingRaw = asArray(parsed.missing).map(toDisc);
+  const misreadRaw = asArray(parsed.misread).map(toDisc);
   const extra = asArray(parsed.extra).map(toDisc);
   const duplicate = asArray(parsed.duplicate).map(toDisc);
+
+  // 決定論フィルタ: grader が過去列(日付付き 前回/前々回)・基準値列 を「今回」と誤読した指摘を除外する。
+  //   実測 2026-08: 尿沈渣(前回列)・眼圧(基準"20未満")・K-W 等を誤って取りこぼし/捏造に挙げた(採点LLMも
+  //   列帰属の弱点を持つ)。column_header が過去/基準 を指す、または image_value が範囲/不等号(=基準値表記)
+  //   の指摘を落とす。見出し未申告(空)は過剰除外を避けて残す。決定論ゴールデンが主指標・本フィルタは補助。
+  const PAST_OR_REF_HDR = /前回|前々回|過去|基準|参考|範囲|正常|\d{4}\s*[/.年]\s*\d{1,2}/;
+  const REF_VALUE = /(未満|以上|以下|超える|\d+(?:\.\d+)?\s*[〜~]\s*\d+)/;
+  const isTodayFinding = (d: VerifyDiscrepancy): boolean => {
+    const h = (d.column_header || '').trim();
+    if (h && PAST_OR_REF_HDR.test(h)) return false;
+    const v = (d.image_value || '').trim();
+    if (REF_VALUE.test(v)) return false;
+    return true;
+  };
+  const missing = missingRaw.filter(isTodayFinding);
+  const misread = misreadRaw.filter(isTodayFinding);
+  const filteredOut = (missingRaw.length - missing.length) + (misreadRaw.length - misread.length);
+
   const items_image = typeof parsed.items_image === 'number' && Number.isFinite(parsed.items_image)
     ? Math.round(parsed.items_image)
     : null;
+  // match_rate は「フィルタ後の指摘」と整合させて再計算する(grader 生の値は過去列誤指摘込みで過小)。
   let match_rate = typeof parsed.match_rate === 'number' && Number.isFinite(parsed.match_rate)
     ? Math.max(0, Math.min(100, Math.round(parsed.match_rate)))
     : null;
-  // フォールバック: モデルが match_rate を返さない時は missing+misread から概算。
-  if (match_rate == null && items_image != null && items_image > 0) {
+  if (items_image != null && items_image > 0) {
     match_rate = Math.max(0, Math.min(100, Math.round((1 - (missing.length + misread.length) / items_image) * 100)));
   }
+  const baseSummary = typeof parsed.summary === 'string' ? parsed.summary : '';
+  const summary = filteredOut > 0
+    ? `${baseSummary}${baseSummary ? ' ' : ''}（過去列/基準列の誤指摘 ${filteredOut} 件を自動除外）`
+    : baseSummary;
 
   return {
     match_rate,
@@ -204,7 +235,7 @@ export async function verifyScanAgainstImages(input: {
     misread,
     extra,
     duplicate,
-    summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+    summary,
     model: MODELS.scan,
     finish_reason: finishReason,
   };
