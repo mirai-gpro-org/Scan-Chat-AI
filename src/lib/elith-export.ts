@@ -828,11 +828,12 @@ async function cropRowStripBase64(imageBase64: string, headerBbox: number[] | nu
 /** timeline_leak が left_unresolved のまま値を保持する行を、行クロップ独立VQAで再確認して削除する。 */
 async function rowCropLeakRescue(
   apiKey: string, imageBase64: string, mimeType: string,
-  out: ElithMeasurement[], audit: VqaAuditEntry[],
+  out: ElithMeasurement[], audit: VqaAuditEntry[], deadline: number,
 ): Promise<void> {
   const idxOf = (names: string[]): number =>
     out.findIndex((m) => names.some((n) => normNameKey(m.name || '') === normNameKey(n)));
   for (const it of TIMELINE_LEAK_ITEMS) {
+    if (Date.now() >= deadline) break; // タイムバジェット: 60s 関数タイムアウトを防ぐ(残りは次回)
     const idx = idxOf(it.names);
     if (idx < 0) continue;
     const cur = cleanDeliveryValue(out[idx].value);
@@ -924,11 +925,20 @@ async function readTodayForLabel(
   const today = ans && typeof ans.today === 'string' ? cleanDeliveryValue(ans.today) : null;
   return { today, present: ans?.present !== false && today != null };
 }
+// タイムバジェット: 後段補修が Vercel 60s を超えて関数全体を落とす(504=スキャン全損)のを防ぐ。
+//   主パス開始からの経過が deadline を超えたら残りの再読/照会を打ち切り、未解決は次リクエストへ委ねる
+//   (P-perc-4 の TIME_BUDGET・RETRY_PENDING の実行形)。直列呼び出し数も上限で二重にガードする。
+const PERCEPTION_DEADLINE_MS = 45000; // 主パス開始から45秒で打ち切り(15秒の安全余白)
+const MAX_INVENTORY_REPAIRS = 8;      // 1画像あたりのインベントリ再読の上限
+const MAX_REGION_CHECKS = 8;          // 1画像あたりの領域照会の上限
 /** 課題A: インベントリ(今回値あり項目)を主パス出力と照合し、欠落行だけを局所VQAで読み直して充填する。
- *   充填は「インベントリが今回値を確認 AND 局所VQAが値を読めた」時だけ(=画像証拠に基づく push・捏造ゼロ)。 */
+ *   充填は「インベントリが今回値を確認 AND 局所VQAが値を読めた」時だけ(=画像証拠に基づく push・捏造ゼロ)。
+ *   deadline 超過 or 上限到達で打ち切り(TIME_BUDGET)=関数タイムアウトを防ぐ。 */
 async function inventoryReread(
   apiKey: string, imageBase64: string, mimeType: string, out: ElithMeasurement[], audit: VqaAuditEntry[],
+  deadline: number,
 ): Promise<void> {
+  if (Date.now() >= deadline) return; // 予算切れ: インベントリ照会自体を行わない
   let labels: string[] = [];
   try {
     const inv = await callGemini(apiKey, {
@@ -942,9 +952,15 @@ async function inventoryReread(
     labels = Array.isArray(o.labels) ? o.labels.filter((x): x is string => typeof x === 'string') : [];
   } catch { return; }
   const outKeys = new Set(out.map((m) => semanticKey(m.name)).filter(Boolean));
+  let repairs = 0;
   for (const label of labels) {
     const key = semanticKey(label);
     if (!key || outKeys.has(key)) continue; // 主パスに既にある概念は対象外
+    if (Date.now() >= deadline || repairs >= MAX_INVENTORY_REPAIRS) {
+      audit.push({ name: label, reason: 'row_omission', before: null, vqa: 'budget_stop', action: 'left_unresolved' });
+      continue; // 予算/上限: 未解決として残す(次リクエストで再試行=RETRY_PENDING)
+    }
+    repairs++;
     try {
       const r = await readTodayForLabel(apiKey, imageBase64, mimeType, label);
       if (r && r.present && r.today != null) {
@@ -966,6 +982,7 @@ async function inventoryReread(
  *   位置推定不能(unknown)は落とさない(ambiguous=漏れを作らない)。 */
 async function regionGate(
   apiKey: string, imageBase64: string, mimeType: string, out: ElithMeasurement[], audit: VqaAuditEntry[],
+  deadline: number,
 ): Promise<void> {
   const byKey = new Map<string, number[]>();
   out.forEach((m, i) => {
@@ -973,6 +990,7 @@ async function regionGate(
     if (!k || cleanDeliveryValue(m.value) == null) return;
     const arr = byKey.get(k); if (arr) arr.push(i); else byKey.set(k, [i]);
   });
+  let checks = 0;
   for (const idxs of byKey.values()) {
     if (idxs.length < 2) continue; // 競合(同名別値)だけを対象にする(全値の領域照会は 60s 予算外)
     const distinct = new Set(idxs.map((i) => cleanDeliveryValue(out[i].value)));
@@ -980,6 +998,11 @@ async function regionGate(
     for (const i of idxs) {
       const val = cleanDeliveryValue(out[i].value);
       if (val == null) continue;
+      if (Date.now() >= deadline || checks >= MAX_REGION_CHECKS) {
+        audit.push({ name: out[i].name || '', reason: 'region_gate', before: val, vqa: 'budget_stop', action: 'left_unresolved' });
+        continue; // 予算/上限: 判定せず値を維持(誤ドロップを作らない)
+      }
+      checks++;
       try {
         const res = await callGemini(apiKey, {
           systemInstruction: { parts: [{ text: REGION_SYSTEM }] },
@@ -1012,9 +1035,10 @@ async function regionGate(
  *   A を先に走らせて欠落行を復元→ B が同名別値の競合として拾えるようにする。全 try/catch で本経路は不変。 */
 async function perceptionRepair(
   apiKey: string, imageBase64: string, mimeType: string, out: ElithMeasurement[], audit: VqaAuditEntry[],
+  deadline: number,
 ): Promise<void> {
-  try { await inventoryReread(apiKey, imageBase64, mimeType, out, audit); } catch { /* fallback */ }
-  try { await regionGate(apiKey, imageBase64, mimeType, out, audit); } catch { /* fallback */ }
+  try { await inventoryReread(apiKey, imageBase64, mimeType, out, audit, deadline); } catch { /* fallback */ }
+  try { await regionGate(apiKey, imageBase64, mimeType, out, audit, deadline); } catch { /* fallback */ }
 }
 
 /**
@@ -1038,6 +1062,7 @@ async function scanArtifacts(
   mimeType: string,
   hint?: string | null,
 ): Promise<ScanArtifacts> {
+  const t0 = Date.now(); // 後段補修のタイムバジェット基点(60s 関数タイムアウトの防止)
   let art: ScanArtifacts;
   if (scanOutputFormat() === 'json') {
     const { parsed, raw, finishReason } = await scanImageJson(apiKey, imageBase64, mimeType, hint);
@@ -1077,7 +1102,7 @@ async function scanArtifacts(
   if (rowCropEnabled()) {
     const measurements = art.measurements.slice();
     const audit = (art.vqaAudit || []).slice();
-    await rowCropLeakRescue(apiKey, imageBase64, mimeType, measurements, audit);
+    await rowCropLeakRescue(apiKey, imageBase64, mimeType, measurements, audit, t0 + PERCEPTION_DEADLINE_MS);
     art = { ...art, measurements, vqaAudit: audit };
   }
   // P-perc (env SCAN_PERCEPTION_REPAIR=on・既定off): 課題A 行欠落のインベントリ充填 + 課題B グラフ混入の
@@ -1085,7 +1110,7 @@ async function scanArtifacts(
   if (perceptionRepairEnabled()) {
     const measurements = art.measurements.slice();
     const audit = (art.vqaAudit || []).slice();
-    await perceptionRepair(apiKey, imageBase64, mimeType, measurements, audit);
+    await perceptionRepair(apiKey, imageBase64, mimeType, measurements, audit, t0 + PERCEPTION_DEADLINE_MS);
     art = { ...art, measurements, vqaAudit: audit };
   }
   return art;
