@@ -27,6 +27,7 @@ import {
 } from './scan-prompt';
 import { parseScanRegions, type ScanRegionJson } from './scan-export';
 import { canonicalize, canonAudit, type CanonAudit } from './canonicalize';
+import { dedupObservations, dedupAudit, type DedupAudit } from './observation-dedup';
 import type { S3PutFile } from './s3';
 
 export const ELITH_HANDOFF_SCHEMA_VERSION = 'elith-handoff-v0.1';
@@ -82,6 +83,16 @@ export function boundaryRecheckEnabled(): boolean {
  */
 export function canonicalizeEnabled(): boolean {
   return env('SCAN_CANONICALIZE') === 'on';
+}
+/**
+ * ①読取後段の決定論 dedup（課題C 別名重複の統合／課題B 同名別値の競合検知）を有効にするか。
+ * env `SCAN_OBS_DEDUP=on` で有効（既定 off）。off の間は挙動不変。
+ * 同一概念・同一値のみ統合し、同一概念・別値は統合せず competition として監査に残す（自動採用しない）。
+ * 実装: `dedupObservations()`（src/lib/observation-dedup.ts）。numeric は変えない・値の採否はしない。
+ * 🎯 ゴールデンで numeric 全一致・別名重複減・実施済の非統合 を確認してから on（P-perc）。
+ */
+export function obsDedupEnabled(): boolean {
+  return env('SCAN_OBS_DEDUP') === 'on';
 }
 
 // ── MIME / 拡張子 ───────────────────────────────────────────────
@@ -1012,6 +1023,8 @@ export interface ElithScanBundle {
   files: S3PutFile[];
   /** ②正準化の監査 (SCAN_CANONICALIZE=on のときのみ非 null)。Elith 納品 json には含めない (可視化用)。 */
   canon: CanonAudit | null;
+  /** 後段 dedup の監査 (SCAN_OBS_DEDUP=on のときのみ非 null)。統合した別名重複と同名別値の競合。納品 json には含めない。 */
+  dedup: DedupAudit | null;
 }
 
 function utf8Bytes(s: string): number {
@@ -1054,7 +1067,11 @@ export async function buildElithScanBundle(input: ElithScanInput): Promise<Elith
   // 決定論整形（S4/S5）→ ②正準化（S1〜S3・SCAN_CANONICALIZE=on のときだけ）。監査は bundle.canon に返す。
   const keptMeasurements = sanitizeMeasurementsForDelivery(a.measurements).kept;
   const canonResult = canonicalizeEnabled() ? canonicalize(keptMeasurements) : null;
-  const deliveryMeasurements = canonResult ? canonResult.delivery : keptMeasurements;
+  const canonMeasurements = canonResult ? canonResult.delivery : keptMeasurements;
+  // ①読取後段の決定論 dedup（課題C/B・SCAN_OBS_DEDUP=on のときだけ）。canonicalize 後に通す
+  // （概念キーが canonical_name に揃った状態で別名重複を統合できる）。監査は bundle.dedup に返す。
+  const dedupResult = obsDedupEnabled() ? dedupObservations(canonMeasurements) : null;
+  const deliveryMeasurements = dedupResult ? dedupResult.delivery : canonMeasurements;
   const json = {
     format_id: input.formatId,
     schema_version: ELITH_HANDOFF_SCHEMA_VERSION,
@@ -1112,5 +1129,6 @@ export async function buildElithScanBundle(input: ElithScanInput): Promise<Elith
     finishReason,
     files,
     canon: canonResult ? canonAudit(canonResult) : null,
+    dedup: dedupResult ? dedupAudit(dedupResult) : null,
   };
 }

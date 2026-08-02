@@ -154,6 +154,11 @@
     `checkNecessity` へ既定 starter マスタ供給 (surplus/カバレッジ可視化)。**starter は Elith 必須サブセットでないため deficient は非ブロック
     =情報提示。明示 `requiredItems` 指定時のみブロック**。admin 表示は wellfort-site `src/pages/admin/elith-batch.astro` (②正準化 写像/マスタ外/不足)。
   - **次 P4/P5**: 🎯実画像ゲート(Vercel で `SCAN_CANONICALIZE=on`→ゴールデン再RUN) → 確定運用。完全マスタ受領で starter 差替。**on 化は🎯回帰ゼロ確認後**。
+- **P-perc: 画像証拠ベースの後段補修 (人間ドック課題A/B/C・①読取層・②とは直交)**。正本=`基本設定書 §3.4.1`/`実装修正プラン §3.1`。
+  Gemini/ChatGPT 再レビュー収束(2026-08)。共通根=主パス出力に「画像のどの領域/セル由来か」の来歴が無いこと → **出力起点でなく画像証拠候補と主パス出力の双方向照合**で確定 (§3.6.1 S3 の①層への拡張)。主パス(プロンプト/入力画像)は不変。
+  - **P-perc-1 実装済 (env `SCAN_OBS_DEDUP`・既定off)**: 課題C 決定論 dedup `src/lib/observation-dedup.ts`。概念ID(canonical_name)で同一性判定・**同一キー同値のみ統合**(別名重複除去)・**別値は競合記録で自動採用しない**(捏造ゼロ・課題B 検知)。table_id/row は意味キーに含めない。眼圧右/左・便潜血1/2日目 は別 canonical_name=統合しない。`buildElithScanBundle` の canonicalize 後に発火→監査 `bundle.dedup`。numeric 不変。astro check 0error・ロジック15ケース検証。**on 化は🎯後**。
+  - **P-perc-2/3/4 未実装 (画像層=Gemini/sharp＋Vercel🎯前提)**: 課題B 正の証拠リスク別ゲート(高リスク=証拠必須/通常=EVIDENCE_WEAK/過去・グラフ一致=EVIDENCE_CONTRADICTED/推定失敗=AMBIGUOUS_EVIDENCE_LINK 非ドロップ) / 課題A occupied-cell-first インベントリ+局所VQA+残留証拠監査(複数検出器和集合・相対閾値・current_column_confidence・列全体パスfallback・reject専用) / 状態機械+双方向会計。`SCAN_VQA_ROWCROP` と同じ env gate+Vercel🎯 運用。人間ドックゴールデン(FT3欠落・推移グラフ含む)の建立が前提。
+  - **「必ず入れる」の実行形 (発注者裁定2026-08)**: 漏れなし(§1.1絶対)=**サイレント脱落ゼロ＋自動リトライラダーで読み切り(人手ゼロ)**。読めないインクに値を出す=捏造なので不可。終端は自動停止でなく**自動継続の状態機械** `ATTEMPT_1→2→3→EXHAUSTED_UNRESOLVED`(未解決+証拠を永続化し次リクエストへ・1画像=1reqは分割規則で再試行を禁じない)。EXHAUSTED_UNRESOLVED は通常納品しない・捏造しない・黙って消さない。**保証=サイレント脱落ゼロ / 非保証=常に完全JSON(確率モデル単体で数学的に不可)**。
 - **却下再掲**: 様式別プロンプト/テンプレOCR=却下 / 主パス規則強化=numeric回帰で不採用 / モデル3.5格上げ=md段階で lite 超えず不採用。
 
 ### スキャン読取の共通ルール (検査票 → JSON)
