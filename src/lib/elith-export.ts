@@ -27,6 +27,8 @@ import {
 } from './scan-prompt';
 import { parseScanRegions, type ScanRegionJson } from './scan-export';
 import { canonicalize, canonAudit, type CanonAudit } from './canonicalize';
+import { dedupObservations, dedupAudit, semanticKey, type DedupAudit } from './observation-dedup';
+import { isHighRisk, evidenceVerdict, emitDecision } from './perception-repair';
 import type { S3PutFile } from './s3';
 
 export const ELITH_HANDOFF_SCHEMA_VERSION = 'elith-handoff-v0.1';
@@ -82,6 +84,16 @@ export function boundaryRecheckEnabled(): boolean {
  */
 export function canonicalizeEnabled(): boolean {
   return env('SCAN_CANONICALIZE') === 'on';
+}
+/**
+ * ①読取後段の決定論 dedup（課題C 別名重複の統合／課題B 同名別値の競合検知）を有効にするか。
+ * env `SCAN_OBS_DEDUP=on` で有効（既定 off）。off の間は挙動不変。
+ * 同一概念・同一値のみ統合し、同一概念・別値は統合せず competition として監査に残す（自動採用しない）。
+ * 実装: `dedupObservations()`（src/lib/observation-dedup.ts）。numeric は変えない・値の採否はしない。
+ * 🎯 ゴールデンで numeric 全一致・別名重複減・実施済の非統合 を確認してから on（P-perc）。
+ */
+export function obsDedupEnabled(): boolean {
+  return env('SCAN_OBS_DEDUP') === 'on';
 }
 
 // ── MIME / 拡張子 ───────────────────────────────────────────────
@@ -575,7 +587,10 @@ const BOUNDARY_RECHECK_ITEMS: { name: string; label: string; hint: RegExp; allow
   { name: '免疫便潜血反応 2日目', label: '免疫便潜血反応（検便）2日目', hint: /便潜血|検便/, allow: QUAL_URINE_ALLOW },
   { name: '尿糖', label: '尿糖（尿定性）', hint: /尿糖/, allow: QUAL_URINE_ALLOW },
   { name: '蛋白', label: '尿蛋白（尿定性の蛋白。血液の総蛋白ではない）', hint: /蛋白/, allow: QUAL_URINE_ALLOW, aliases: ['尿蛋白'] },
-  { name: '潜血', label: '尿潜血（尿定性の潜血）', hint: /潜血/, allow: QUAL_URINE_ALLOW, aliases: ['尿潜血'] },
+  // hint は「便に前置されない潜血」に限定: boundaryRecheck は画像1枚ごとに走るため、hint=/潜血/ だと
+  //   免疫便潜血のある検便ページ(③-4)にも誤マッチし、尿定性潜血の無いそのページへ VQA が新規「潜血」行を
+  //   push → ③-2 の本物の尿定性潜血とマージ後に重複する(実測 2026-08)。(?<!便) で免疫便潜血を除外する。
+  { name: '潜血', label: '尿潜血（尿定性の潜血。免疫便潜血ではない）', hint: /(?<!便)潜血/, allow: QUAL_URINE_ALLOW, aliases: ['尿潜血'] },
   { name: 'K-W分類右', label: 'K-W分類 右（眼底）', hint: /眼底|K.?W/i, allow: KW_GRADE_ALLOW },
   { name: 'K-W分類左', label: 'K-W分類 左（眼底）', hint: /眼底|K.?W/i, allow: KW_GRADE_ALLOW },
 ];
@@ -583,7 +598,7 @@ const BOUNDARY_RECHECK_ITEMS: { name: string; label: string; hint: RegExp; allow
 /** VQA 再読の監査記録 (可視化用・Elith 納品には含めない)。 */
 export interface VqaAuditEntry {
   name: string;
-  reason: 'missing_detection' | 'unexpected_token' | 'timeline_leak';
+  reason: 'missing_detection' | 'unexpected_token' | 'timeline_leak' | 'row_omission' | 'region_gate';
   before: string | null; // 主パスの今回値 (再読前)
   vqa: string | null;     // VQA が返した生の回答 (leak は today/past を要約)
   action: 'filled' | 'overwritten' | 'dropped' | 'left_unresolved' | 'vqa_error';
@@ -698,8 +713,10 @@ async function boundaryRecheck(
       if (val == null || !cand.allow.test(val)) { audit.push({ name: cand.names[0], reason, before, vqa: rawv0 || null, action: 'left_unresolved' }); continue; }
       const idx = idxOfAny(cand.names);
       if (idx < 0) {
-        out.push(tidyMeasurement({ name: cand.names[0], name_detail: null, value: val, value_num: null, unit: null, ref_low: null, ref_high: null, flag: null, note: 'vqa:missing_detection' }));
-        audit.push({ name: cand.names[0], reason, before, vqa: val, action: 'filled' });
+        // 該当行が主パス結果に無い = この様式に当該項目が無い可能性 → 新規 push は捏造リスク
+        //   (実測 2026-08: K-W の無い様式で VQA が 0 を push=捏造 / 潜血の検便ページ跨ぎ push=重複)。
+        //   捏造ゼロのため push しない。充填は「主パスが行を作った=様式に存在が確認済」の空行のみに限定。
+        audit.push({ name: cand.names[0], reason, before, vqa: val, action: 'left_unresolved' });
         continue;
       }
       const cur = cleanDeliveryValue(out[idx].value);
@@ -860,6 +877,146 @@ async function rowCropLeakRescue(
   }
 }
 
+// ── 画像証拠ベース後段補修 (P-perc・env SCAN_PERCEPTION_REPAIR=on・既定off・Vercel🎯検証前提) ──────
+// 課題A(行欠落)/課題B(グラフ混入) を「画像証拠候補 ↔ 主パス出力」の双方向照合で補修する。
+// 決定論の採否/会計は perception-repair.ts、画像I/O(インベントリ/局所VQA/領域判定) は本ファイル。
+// 安全設計: Gemini/sharp は全 try/catch。失敗時は一切変更しない(フォールバック=現挙動)。主パス不変。
+// ※ occupied のCV検出・残留証拠監査・列信頼度の精密化は Vercel🎯 での調整対象 (実装修正プラン §3.1 P-perc-3)。
+export function perceptionRepairEnabled(): boolean {
+  return String(process.env.SCAN_PERCEPTION_REPAIR || '').toLowerCase() === 'on';
+}
+const INVENTORY_SYSTEM = `あなたは健診結果表の棚卸し器です。画像に印字された検査項目のうち「今回(最新回)列に値・記号が入っている」項目名だけを列挙します。値は読まず、項目名だけを返します。推測禁止。`;
+function buildInventoryUser(): string {
+  return `画像の検査表を上から順に見て、「今回(最新回)列に値・記号が印字されている」検査項目の名称だけを返せ。
+過去回のみに値がある項目・空欄の項目・「検査結果の推移」等グラフの項目は含めない。
+出力はJSONのみ: {"labels":["<項目名>", ...]}`;
+}
+const REGION_SYSTEM = `あなたは健診結果表の領域判定器です。指定項目の指定値が、詳細表の「今回」セル由来か、前回/前々回列 or 推移グラフ由来かを判定します。確認できないときは unknown。推測で断定しない。`;
+function buildRegionUser(label: string, value: string): string {
+  return `画像で「${label}」の値「${value}」の出所を判定せよ。
+- current_cell: 詳細表の「今回(最新回)」列セルにこの値が印字されている。
+- past_or_graph: 前回/前々回列 or 推移グラフの点にこの値があり、今回セルには無い(空)。
+- unknown: 確認できない。
+出力はJSONのみ: {"source":"current_cell"|"past_or_graph"|"unknown"}`;
+}
+async function readTodayForLabel(
+  apiKey: string, imageBase64: string, mimeType: string, label: string,
+): Promise<{ today: string | null; present: boolean } | null> {
+  const loc = await callGemini(apiKey, {
+    systemInstruction: { parts: [{ text: ROWCROP_LOCATE_SYSTEM }] },
+    contents: [{ role: 'user', parts: [
+      { inline_data: { mime_type: mimeType, data: imageBase64 } }, { text: buildRowLocateUser(label) },
+    ] }],
+    generationConfig: { responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } },
+  }, MODELS.scan);
+  const loc2 = parseLocateBboxes(extractText(loc));
+  if (!loc2.row) return null;
+  const strip = await cropRowStripBase64(imageBase64, loc2.header, loc2.row);
+  if (!strip) return null;
+  const conf = await callGemini(apiKey, {
+    systemInstruction: { parts: [{ text: ROWCROP_CONFIRM_SYSTEM }] },
+    contents: [{ role: 'user', parts: [
+      { inline_data: { mime_type: 'image/png', data: strip } }, { text: buildRowConfirmUser(label) },
+    ] }],
+    generationConfig: { responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } },
+  }, MODELS.scan);
+  const ans = JSON.parse(stripJsonCodeFence(extractText(conf))) as { today?: string; present?: boolean };
+  const today = ans && typeof ans.today === 'string' ? cleanDeliveryValue(ans.today) : null;
+  return { today, present: ans?.present !== false && today != null };
+}
+/** 課題A: インベントリ(今回値あり項目)を主パス出力と照合し、欠落行だけを局所VQAで読み直して充填する。
+ *   充填は「インベントリが今回値を確認 AND 局所VQAが値を読めた」時だけ(=画像証拠に基づく push・捏造ゼロ)。 */
+async function inventoryReread(
+  apiKey: string, imageBase64: string, mimeType: string, out: ElithMeasurement[], audit: VqaAuditEntry[],
+): Promise<void> {
+  let labels: string[] = [];
+  try {
+    const inv = await callGemini(apiKey, {
+      systemInstruction: { parts: [{ text: INVENTORY_SYSTEM }] },
+      contents: [{ role: 'user', parts: [
+        { inline_data: { mime_type: mimeType, data: imageBase64 } }, { text: buildInventoryUser() },
+      ] }],
+      generationConfig: { responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } },
+    }, MODELS.scan);
+    const o = JSON.parse(stripJsonCodeFence(extractText(inv))) as { labels?: unknown };
+    labels = Array.isArray(o.labels) ? o.labels.filter((x): x is string => typeof x === 'string') : [];
+  } catch { return; }
+  const outKeys = new Set(out.map((m) => semanticKey(m.name)).filter(Boolean));
+  for (const label of labels) {
+    const key = semanticKey(label);
+    if (!key || outKeys.has(key)) continue; // 主パスに既にある概念は対象外
+    try {
+      const r = await readTodayForLabel(apiKey, imageBase64, mimeType, label);
+      if (r && r.present && r.today != null) {
+        out.push({
+          name: label, name_detail: null, value: r.today, value_num: toValueNum(r.today),
+          unit: null, ref_low: null, ref_high: null, flag: null, note: 'perception:inventory_filled',
+        });
+        outKeys.add(key);
+        audit.push({ name: label, reason: 'row_omission', before: null, vqa: `inv today=${r.today}`, action: 'filled' });
+      } else {
+        audit.push({ name: label, reason: 'row_omission', before: null, vqa: 'inv:unread', action: 'left_unresolved' });
+      }
+    } catch {
+      audit.push({ name: label, reason: 'row_omission', before: null, vqa: 'inv:error', action: 'vqa_error' });
+    }
+  }
+}
+/** 課題B: 同一概念・別値の競合について領域判定し、過去/グラフ由来(今回セル証拠なし)をリスク別ゲートで除外する。
+ *   位置推定不能(unknown)は落とさない(ambiguous=漏れを作らない)。 */
+async function regionGate(
+  apiKey: string, imageBase64: string, mimeType: string, out: ElithMeasurement[], audit: VqaAuditEntry[],
+): Promise<void> {
+  const byKey = new Map<string, number[]>();
+  out.forEach((m, i) => {
+    const k = semanticKey(m.name);
+    if (!k || cleanDeliveryValue(m.value) == null) return;
+    const arr = byKey.get(k); if (arr) arr.push(i); else byKey.set(k, [i]);
+  });
+  for (const idxs of byKey.values()) {
+    if (idxs.length < 2) continue; // 競合(同名別値)だけを対象にする(全値の領域照会は 60s 予算外)
+    const distinct = new Set(idxs.map((i) => cleanDeliveryValue(out[i].value)));
+    if (distinct.size < 2) continue; // 同値=別名重複は dedup が担当
+    for (const i of idxs) {
+      const val = cleanDeliveryValue(out[i].value);
+      if (val == null) continue;
+      try {
+        const res = await callGemini(apiKey, {
+          systemInstruction: { parts: [{ text: REGION_SYSTEM }] },
+          contents: [{ role: 'user', parts: [
+            { inline_data: { mime_type: mimeType, data: imageBase64 } },
+            { text: buildRegionUser(out[i].name || '', val) },
+          ] }],
+          generationConfig: { responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } },
+        }, MODELS.scan);
+        const src = (JSON.parse(stripJsonCodeFence(extractText(res))) as { source?: string }).source;
+        const sig = {
+          currentCellEvidence: src === 'current_cell' ? true : src === 'past_or_graph' ? false : null,
+          matchesPastOrGraph: src === 'past_or_graph',
+        };
+        const verdict = evidenceVerdict(isHighRisk({ duplicateName: true, nearTrendOrSummary: src === 'past_or_graph' }), sig);
+        const dec = emitDecision(verdict);
+        if (!dec.keep) {
+          audit.push({ name: out[i].name || '', reason: 'region_gate', before: val, vqa: `src=${src} verdict=${verdict}`, action: 'dropped' });
+          out[i] = { ...out[i], value: null, value_num: null, note: `perception:region_${verdict}` };
+        } else {
+          audit.push({ name: out[i].name || '', reason: 'region_gate', before: val, vqa: `src=${src} verdict=${verdict}`, action: 'left_unresolved' });
+        }
+      } catch {
+        audit.push({ name: out[i].name || '', reason: 'region_gate', before: val, vqa: 'region:error', action: 'vqa_error' });
+      }
+    }
+  }
+}
+/** P-perc オーケストレータ: 課題A(インベントリ充填) → 課題B(領域ゲート) の順で後段補修する。
+ *   A を先に走らせて欠落行を復元→ B が同名別値の競合として拾えるようにする。全 try/catch で本経路は不変。 */
+async function perceptionRepair(
+  apiKey: string, imageBase64: string, mimeType: string, out: ElithMeasurement[], audit: VqaAuditEntry[],
+): Promise<void> {
+  try { await inventoryReread(apiKey, imageBase64, mimeType, out, audit); } catch { /* fallback */ }
+  try { await regionGate(apiKey, imageBase64, mimeType, out, audit); } catch { /* fallback */ }
+}
+
 /**
  * スキャン取得の統一入口。env で Markdown / JSON を切替え、両経路とも
  * 「監査用 raw・regions・measurements・notes・(schema由来)検査日」を同じ形で返す。
@@ -921,6 +1078,14 @@ async function scanArtifacts(
     const measurements = art.measurements.slice();
     const audit = (art.vqaAudit || []).slice();
     await rowCropLeakRescue(apiKey, imageBase64, mimeType, measurements, audit);
+    art = { ...art, measurements, vqaAudit: audit };
+  }
+  // P-perc (env SCAN_PERCEPTION_REPAIR=on・既定off): 課題A 行欠落のインベントリ充填 + 課題B グラフ混入の
+  //   領域ゲート。画像証拠 ↔ 主パス出力の双方向照合。Gemini/sharp は全 try/catch=失敗時フォールバック。
+  if (perceptionRepairEnabled()) {
+    const measurements = art.measurements.slice();
+    const audit = (art.vqaAudit || []).slice();
+    await perceptionRepair(apiKey, imageBase64, mimeType, measurements, audit);
     art = { ...art, measurements, vqaAudit: audit };
   }
   return art;
@@ -1007,6 +1172,8 @@ export interface ElithScanBundle {
   files: S3PutFile[];
   /** ②正準化の監査 (SCAN_CANONICALIZE=on のときのみ非 null)。Elith 納品 json には含めない (可視化用)。 */
   canon: CanonAudit | null;
+  /** 後段 dedup の監査 (SCAN_OBS_DEDUP=on のときのみ非 null)。統合した別名重複と同名別値の競合。納品 json には含めない。 */
+  dedup: DedupAudit | null;
 }
 
 function utf8Bytes(s: string): number {
@@ -1049,7 +1216,11 @@ export async function buildElithScanBundle(input: ElithScanInput): Promise<Elith
   // 決定論整形（S4/S5）→ ②正準化（S1〜S3・SCAN_CANONICALIZE=on のときだけ）。監査は bundle.canon に返す。
   const keptMeasurements = sanitizeMeasurementsForDelivery(a.measurements).kept;
   const canonResult = canonicalizeEnabled() ? canonicalize(keptMeasurements) : null;
-  const deliveryMeasurements = canonResult ? canonResult.delivery : keptMeasurements;
+  const canonMeasurements = canonResult ? canonResult.delivery : keptMeasurements;
+  // ①読取後段の決定論 dedup（課題C/B・SCAN_OBS_DEDUP=on のときだけ）。canonicalize 後に通す
+  // （概念キーが canonical_name に揃った状態で別名重複を統合できる）。監査は bundle.dedup に返す。
+  const dedupResult = obsDedupEnabled() ? dedupObservations(canonMeasurements) : null;
+  const deliveryMeasurements = dedupResult ? dedupResult.delivery : canonMeasurements;
   const json = {
     format_id: input.formatId,
     schema_version: ELITH_HANDOFF_SCHEMA_VERSION,
@@ -1107,5 +1278,6 @@ export async function buildElithScanBundle(input: ElithScanInput): Promise<Elith
     finishReason,
     files,
     canon: canonResult ? canonAudit(canonResult) : null,
+    dedup: dedupResult ? dedupAudit(dedupResult) : null,
   };
 }
