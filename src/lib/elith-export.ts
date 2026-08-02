@@ -575,7 +575,10 @@ const BOUNDARY_RECHECK_ITEMS: { name: string; label: string; hint: RegExp; allow
   { name: '免疫便潜血反応 2日目', label: '免疫便潜血反応（検便）2日目', hint: /便潜血|検便/, allow: QUAL_URINE_ALLOW },
   { name: '尿糖', label: '尿糖（尿定性）', hint: /尿糖/, allow: QUAL_URINE_ALLOW },
   { name: '蛋白', label: '尿蛋白（尿定性の蛋白。血液の総蛋白ではない）', hint: /蛋白/, allow: QUAL_URINE_ALLOW, aliases: ['尿蛋白'] },
-  { name: '潜血', label: '尿潜血（尿定性の潜血）', hint: /潜血/, allow: QUAL_URINE_ALLOW, aliases: ['尿潜血'] },
+  // hint は「便に前置されない潜血」に限定: boundaryRecheck は画像1枚ごとに走るため、hint=/潜血/ だと
+  //   免疫便潜血のある検便ページ(③-4)にも誤マッチし、尿定性潜血の無いそのページへ VQA が新規「潜血」行を
+  //   push → ③-2 の本物の尿定性潜血とマージ後に重複する(実測 2026-08)。(?<!便) で免疫便潜血を除外する。
+  { name: '潜血', label: '尿潜血（尿定性の潜血。免疫便潜血ではない）', hint: /(?<!便)潜血/, allow: QUAL_URINE_ALLOW, aliases: ['尿潜血'] },
   { name: 'K-W分類右', label: 'K-W分類 右（眼底）', hint: /眼底|K.?W/i, allow: KW_GRADE_ALLOW },
   { name: 'K-W分類左', label: 'K-W分類 左（眼底）', hint: /眼底|K.?W/i, allow: KW_GRADE_ALLOW },
 ];
