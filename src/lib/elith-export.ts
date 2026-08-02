@@ -549,12 +549,15 @@ function normNameKey(s: string): string {
 //   尿定性/便潜血: 括弧付き ±/-/+・陰性/陽性・(+-)・尿の程度 1+〜3+。K-W分類: 0〜4 のグレード。
 const QUAL_URINE_ALLOW = /^([(（]?[-+±][)）]?|陰性|陽性|\(\+-\)|[1-3]\+)$/;
 const KW_GRADE_ALLOW = /^[0-4]$/;
-const BOUNDARY_RECHECK_ITEMS: { name: string; label: string; hint: RegExp; allow: RegExp }[] = [
+// aliases: 納品名の揺れ (pickDeliveryName により 尿蛋白/尿潜血 のまま納品される run がある) を吸収する候補。
+//   これが無いと currentVal/idxOfAny が既存の尿蛋白行を見つけられず、VQA充填が別名の重複行を push してしまう
+//   (実測 2026-08: 尿蛋白 と 蛋白 / 尿潜血 と 潜血 の二重計上)。allow/hint は据え置き。
+const BOUNDARY_RECHECK_ITEMS: { name: string; label: string; hint: RegExp; allow: RegExp; aliases?: string[] }[] = [
   { name: '免疫便潜血反応 1日目', label: '免疫便潜血反応（検便）1日目', hint: /便潜血|検便/, allow: QUAL_URINE_ALLOW },
   { name: '免疫便潜血反応 2日目', label: '免疫便潜血反応（検便）2日目', hint: /便潜血|検便/, allow: QUAL_URINE_ALLOW },
   { name: '尿糖', label: '尿糖（尿定性）', hint: /尿糖/, allow: QUAL_URINE_ALLOW },
-  { name: '蛋白', label: '尿蛋白（尿定性の蛋白。血液の総蛋白ではない）', hint: /蛋白/, allow: QUAL_URINE_ALLOW },
-  { name: '潜血', label: '尿潜血（尿定性の潜血）', hint: /潜血/, allow: QUAL_URINE_ALLOW },
+  { name: '蛋白', label: '尿蛋白（尿定性の蛋白。血液の総蛋白ではない）', hint: /蛋白/, allow: QUAL_URINE_ALLOW, aliases: ['尿蛋白'] },
+  { name: '潜血', label: '尿潜血（尿定性の潜血）', hint: /潜血/, allow: QUAL_URINE_ALLOW, aliases: ['尿潜血'] },
   { name: 'K-W分類右', label: 'K-W分類 右（眼底）', hint: /眼底|K.?W/i, allow: KW_GRADE_ALLOW },
   { name: 'K-W分類左', label: 'K-W分類 左（眼底）', hint: /眼底|K.?W/i, allow: KW_GRADE_ALLOW },
 ];
@@ -604,8 +607,8 @@ async function boundaryRecheck(
   const sameLoose = (a: string, b: string): boolean => a.replace(/\s/g, '') === b.replace(/\s/g, '');
   // Phase 1: 定性の補完/誤読上書き候補 (今回が空 or 定性許可集合外 例 免疫便潜血="1")。
   const fillCands = BOUNDARY_RECHECK_ITEMS
-    .filter((it) => { if (!it.hint.test(rawFull)) return false; const c = currentVal(it.name); return c == null || !it.allow.test(c); })
-    .map((it) => ({ kind: 'fill' as const, label: it.label, names: [it.name], allow: it.allow }));
+    .filter((it) => { if (!it.hint.test(rawFull)) return false; const c = currentValAny([it.name, ...(it.aliases || [])]); return c == null || !it.allow.test(c); })
+    .map((it) => ({ kind: 'fill' as const, label: it.label, names: [it.name, ...(it.aliases || [])], allow: it.allow }));
   // Phase 2: 時系列軸リーク候補 (今回=空が正の項目に値がある=過去列読みの疑い)。値ありのみ対象。
   const leakCands = TIMELINE_LEAK_ITEMS
     .filter((it) => it.hint.test(rawFull) && currentValAny(it.names) != null)
