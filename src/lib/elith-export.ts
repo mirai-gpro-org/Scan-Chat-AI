@@ -309,6 +309,28 @@ export function isReceiptMetaRow(m: Record<string, unknown>): boolean {
   return /受診日|受診コース|受診オプション|専門セット|未実施検査|診察券番号|受付番号|カルテ番号|依頼団体|生年月日/.test(name);
 }
 /**
+ * 血圧の結合セル (収縮期/拡張期 が「111/74」の1セル) を最高/最低の2行へ決定論分割する。
+ * 実測(2026-08 人間ドック): 「①血圧(収縮期/拡張期)」= 111/74 が1行で読まれ、pickDeliveryName で
+ * 最高血圧=111/74 となり、最高=Wrong・最低=Missing になっていた。血圧文脈かつ NNN/NN 値のときだけ分割。
+ * ガード: 収縮期>拡張期・生理的範囲内・厳密に「数値/数値」のみ (日付 2024/09/24 は3片で非該当)。
+ * @returns 分割した2行 [最高血圧, 最低血圧] / 非該当は null
+ */
+export function splitBloodPressure(m: Record<string, unknown>): Record<string, unknown>[] | null {
+  const name = typeof m.name === 'string' ? m.name : '';
+  if (!/血圧|収縮期|拡張期/.test(name)) return null;
+  const v = typeof m.value === 'string' ? m.value.trim() : '';
+  const mm = v.match(/^(\d{2,3})\s*[/／]\s*(\d{2,3})$/);
+  if (!mm) return null;
+  const sys = parseInt(mm[1], 10);
+  const dia = parseInt(mm[2], 10);
+  if (!(sys >= 60 && sys <= 260 && dia >= 30 && dia <= 200 && sys > dia)) return null;
+  const mk = (nm: string, n: number): Record<string, unknown> => ({
+    ...m, name: nm, name_detail: null, value: String(n), value_num: n,
+    unit: 'mmHg', ref_low: null, ref_high: null, flag: null,
+  });
+  return [mk('最高血圧', sys), mk('最低血圧', dia)];
+}
+/**
  * 妥当性ガード (誤配信防止): 明らかに壊れた測定値の除外理由。null=正常。
  *  - 単位が純数値 = 列ズレ疑い (例: HDL 行で unit="40")。
  *  - 割合(%)が 0–100 の範囲外 = 物理的にあり得ない (例: 体脂肪率 105%)。
@@ -369,6 +391,8 @@ export function sanitizeMeasurementsForDelivery(list: unknown): {
     if (m.value == null && m.value_num == null) continue; // 未測定(値なし)は納品しない
     if (isJudgementSummaryRow(m)) continue; // 総合判定(A/B/C)欄は測定値でない
     if (isReceiptMetaRow(m)) continue; // 受診日/受診コース/オプション 等の受付メタは測定値でない
+    const bp = splitBloodPressure(m); // 血圧結合セル(111/74)→最高/最低の2行へ分割
+    if (bp) { for (const r of bp) kept.push(r); continue; }
     const reason = measurementAnomalyReason(m);
     if (reason) {
       anomalies.push({
