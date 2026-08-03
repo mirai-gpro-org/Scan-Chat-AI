@@ -170,6 +170,7 @@ export const POST: APIRoute = async ({ request }) => {
         client_id: clientId, format_id: 'GeneticTestResultData', test_date: testDate,
         page_count: parts.length, item_count: items.length, json_key,
         uri: uploaded[0]?.uri ?? null,
+        preview: jsonObj, // 🎯 照合用: 納品JSON(data.items)を返す(S3未設定分岐と同様)。
       });
     } catch (err) {
       return json({ ok: false, configured: true, error: 'S3 upload failed', detail: String(err) }, 502);
