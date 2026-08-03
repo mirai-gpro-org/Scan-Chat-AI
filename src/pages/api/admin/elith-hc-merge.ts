@@ -19,12 +19,12 @@ import {
   sanitizeMeasurementsForDelivery,
   canonicalizeEnabled,
   obsDedupEnabled,
+  scrambleFixEnabled,
   type ParsedScan,
 } from '../../../lib/elith-export';
 import { canonicalize } from '../../../lib/canonicalize';
 import { dedupObservations, dedupAudit, semanticKey } from '../../../lib/observation-dedup';
-import { detectScramble } from '../../../lib/scramble-detect';
-import { majorityMerge, mergeAuditSummary } from '../../../lib/multi-run-merge';
+import { detectScramble, reassignScramble } from '../../../lib/scramble-detect';
 import { masterItemNames } from '../../../lib/standard-master';
 import { MODELS } from '../../../lib/gemini';
 import { getS3Config, isS3Configured, putFiles, type S3PutFile } from '../../../lib/s3';
@@ -66,47 +66,6 @@ function folderOf(prefix: string, clientId: string, testDate: string): { folder:
   return { folder, dateFolder, stem: `HealthCheckupData_date_${dateFolder}_user_${clientId}` };
 }
 
-/**
- * 1 run 分の parts（画像ごとの解析結果）を納品 measurements[] へ畳み込む。
- * 推移グラフ非納品化(trend) → sanitize → canonicalize → dedup を通す（単一 run 経路と同一）。
- * N-run 多数決では各 run にこれを適用してから majorityMerge する。
- */
-function runPartsToMeasurements(parts: Array<Record<string, unknown>>): {
-  measurements: Record<string, unknown>[];
-  trendDropped: number;
-  canon: { mapped: unknown[]; unmapped: unknown[]; deficient: string[] } | null;
-  dedup: ReturnType<typeof dedupObservations> | null;
-} {
-  const nameOf = (m: unknown): string | null => {
-    const nm = m && typeof m === 'object' ? (m as Record<string, unknown>).name : null;
-    return typeof nm === 'string' && nm.trim() ? nm : null;
-  };
-  const rawMeasurements: unknown[] = [];
-  const trendMeas: unknown[] = [];
-  const detailKeys = new Set<string>();
-  for (const p of parts) {
-    const md = typeof p.raw_markdown === 'string' ? p.raw_markdown : '';
-    const isTrend = /検査結果の推移/.test(md);
-    if (Array.isArray(p.measurements)) {
-      if (isTrend) trendMeas.push(...p.measurements);
-      else for (const m of p.measurements) { rawMeasurements.push(m); const nm = nameOf(m); if (nm) detailKeys.add(semanticKey(nm)); }
-    }
-  }
-  let trendDropped = 0;
-  for (const m of trendMeas) {
-    const nm = nameOf(m);
-    if (nm && detailKeys.has(semanticKey(nm))) { trendDropped++; continue; }
-    rawMeasurements.push(m);
-  }
-  const kept = sanitizeMeasurementsForDelivery(rawMeasurements).kept;
-  const canon = canonicalizeEnabled() ? canonicalize(kept) : null;
-  const canonMeasurements = canon ? canon.delivery : kept;
-  const dedup = obsDedupEnabled() ? dedupObservations(canonMeasurements) : null;
-  const measurements = (dedup ? dedup.delivery : canonMeasurements) as Record<string, unknown>[];
-  const canonAudit = canon ? { mapped: canon.mapped, unmapped: canon.unmapped, deficient: canon.deficient } : null;
-  return { measurements, trendDropped, canon: canonAudit, dedup };
-}
-
 interface Body {
   action?: unknown;
   image?: unknown;
@@ -117,7 +76,6 @@ interface Body {
   hint?: unknown;
   testDate?: unknown;
   parts?: unknown;
-  runs?: unknown;
   sourceFiles?: unknown;
 }
 
@@ -196,43 +154,64 @@ export const POST: APIRoute = async ({ request }) => {
       return json({ ok: false, error: 'testDate (YYYY-MM-DD) is required for finalize' }, 400);
     }
     const parts = Array.isArray(body.parts) ? (body.parts as Array<Record<string, unknown>>) : [];
-    // N-run 多数決 (Phase 2-2): body.runs = run ごとの parts[]（各 run = 全画像を1回スキャンした結果）。
-    // 未指定なら単一 run = [parts]（従来挙動・後方互換）。クライアントが N 回スキャンして runs を送る。
-    const rawRuns = Array.isArray(body.runs) ? (body.runs as unknown[]) : null;
-    const runsParts: Array<Array<Record<string, unknown>>> =
-      rawRuns && rawRuns.length
-        ? rawRuns.map((r) => (Array.isArray(r) ? (r as Array<Record<string, unknown>>) : []))
-        : [parts];
-    if (runsParts.every((rp) => rp.length === 0)) {
-      return json({ ok: false, error: 'parts (or runs) is required for finalize' }, 400);
-    }
+    if (parts.length === 0) return json({ ok: false, error: 'parts is required for finalize' }, 400);
 
-    // 各 run を納品 measurements へ畳み込む（trend非納品→sanitize→canon→dedup）。
-    const perRun = runsParts.map((rp) => runPartsToMeasurements(rp));
-    const runCount = perRun.length;
-
-    let measurements: Record<string, unknown>[];
-    let mergeAudit: ReturnType<typeof mergeAuditSummary> | null = null;
-    if (runCount >= 2) {
-      // N-run 多数決 + レンジ tiebreak。scramble/入替/名称/脱落 の全種に効く（値は実読のみ=捏造ゼロ）。
-      const merged = majorityMerge(perRun.map((x) => x.measurements));
-      measurements = merged.delivery;
-      mergeAudit = mergeAuditSummary(merged);
-    } else {
-      measurements = perRun[0].measurements;
-    }
-    const trendDropped = perRun.reduce((s, x) => s + x.trendDropped, 0);
-    // 監査は代表 run(0) を返す（canon/dedup は run 毎に同傾向）。
-    const canonAudit = perRun[0].canon;
-    const dedupAuditOut = perRun[0].dedup ? dedupAudit(perRun[0].dedup) : null;
-    // notes / raw_markdown は代表 run(0) の parts から（N×重複を避ける）。
+    const rawMeasurements: unknown[] = [];
     const notes: string[] = [];
     const markdowns: string[] = [];
-    for (const p of runsParts[0]) {
+    // 推移グラフページ(⑧-2「検査結果の推移」)由来の行は非納品(前回/トレンド点=詳細表の重複 or 過去値)。
+    // 同一概念が詳細ページにも在れば trend 行を落とす(汚染除去=選択でない・ChatGPT案A)。trend にしか無い
+    // 概念は残す(漏れ防止=捏造ゼロ/漏れゼロ両立)。part の raw_markdown ヘッダで trend ページを識別する。
+    // 推移ページが無い/検出できない検体では発火せず挙動不変(fail-safe)。
+    const nameOf = (m: unknown): string | null => {
+      const nm = m && typeof m === 'object' ? (m as Record<string, unknown>).name : null;
+      return typeof nm === 'string' && nm.trim() ? nm : null;
+    };
+    const trendMeas: unknown[] = [];
+    const detailKeys = new Set<string>();
+    for (const p of parts) {
+      const md = typeof p.raw_markdown === 'string' ? p.raw_markdown : '';
+      const isTrend = /検査結果の推移/.test(md);
+      if (Array.isArray(p.measurements)) {
+        if (isTrend) {
+          trendMeas.push(...p.measurements);
+        } else {
+          for (const m of p.measurements) {
+            rawMeasurements.push(m);
+            const nm = nameOf(m);
+            if (nm) detailKeys.add(semanticKey(nm));
+          }
+        }
+      }
       if (Array.isArray(p.notes)) notes.push(...(p.notes as string[]));
       if (typeof p.raw_markdown === 'string' && p.raw_markdown.trim()) markdowns.push(p.raw_markdown);
     }
-    // Phase 2-1: 基準レンジ scramble 検知（監査のみ・delivery 不変）。多数決後の残 scramble を可視化する。
+    // trend 行: 詳細に同概念が在れば除外(重複/前回列混入の汚染除去)、無ければ残す(漏れ防止)。
+    let trendDropped = 0;
+    for (const m of trendMeas) {
+      const nm = nameOf(m);
+      if (nm && detailKeys.has(semanticKey(nm))) { trendDropped++; continue; }
+      rawMeasurements.push(m);
+    }
+    // 書き出し時点で lean 正規化 (↑↓→flag/value_num・空行/総合判定欄 除外・妥当性ガード)。
+    // 監査は raw_markdown + 元画像(S3) に保持。全マージ分をまとめて 1 回で正規化する。
+    const kept = sanitizeMeasurementsForDelivery(rawMeasurements).kept;
+    // ②正準化 (S1〜S3)。SCAN_CANONICALIZE=on のときだけ。監査(canon)は納品 data に含めず応答へ返す。
+    const canon = canonicalizeEnabled() ? canonicalize(kept) : null;
+    const canonMeasurements = canon ? canon.delivery : kept;
+    // 後段 dedup (課題C 別名重複/課題B 同名別値の競合・SCAN_OBS_DEDUP=on のときだけ)。マージ由来の
+    // ページ跨ぎ重複 (体重×2・眼底×2 等) はこのマージ finalize でしか消せない (単画像経路の dedup では届かない)。
+    const dedup = obsDedupEnabled() ? dedupObservations(canonMeasurements) : null;
+    let measurements = dedup ? dedup.delivery : canonMeasurements;
+    const canonAudit = canon
+      ? { mapped: canon.mapped, unmapped: canon.unmapped, deficient: canon.deficient }
+      : null;
+    const dedupAuditOut = dedup ? dedupAudit(dedup) : null;
+    // Phase 2-2: 基準レンジ再割当（scramble 修正・SCAN_SCRAMBLE_FIX=on のときだけ・単一run決定論）。
+    // 出力値は実読値の付け替えのみ＝捏造ゼロ。肝酵素等の値-ラベル回転を欠落スロットへ戻す。
+    const reassign = scrambleFixEnabled() ? reassignScramble(measurements) : null;
+    if (reassign) measurements = reassign.delivery as Record<string, unknown>[];
+    // Phase 2-1: 基準レンジ scramble 検知（監査のみ）。再割当**後**の残 scramble を可視化する。
     const scramble = detectScramble(measurements);
     const sourceFiles = Array.isArray(body.sourceFiles) ? (body.sourceFiles as unknown[]).filter((x): x is string => typeof x === 'string') : [];
 
@@ -245,8 +224,7 @@ export const POST: APIRoute = async ({ request }) => {
       client_id: clientId,
       diagnostic_id: randomUuid(),
       source_images: sourceFiles,
-      part_count: runsParts[0].length,
-      run_count: runCount,
+      part_count: parts.length,
       test_date: testDate,
       date_source: 'merged',
       exported_at: new Date().toISOString(),
@@ -270,14 +248,14 @@ export const POST: APIRoute = async ({ request }) => {
     });
 
     if (!isS3Configured() || !cfg) {
-      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, measurements, necessity, canon: canonAudit, dedup: dedupAuditOut, trend_dropped: trendDropped, scramble, run_count: runCount, merge: mergeAudit, scan_model: MODELS.scan, preview: jsonObj });
+      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, measurements, necessity, canon: canonAudit, dedup: dedupAuditOut, trend_dropped: trendDropped, scramble, reassigned: reassign?.reassigned ?? null, scan_model: MODELS.scan, preview: jsonObj });
     }
     try {
       const uploaded = await putFiles([{ key: json_key, contentType: 'application/json; charset=utf-8', body: jsonBody, bytes: utf8Bytes(jsonBody) }]);
       return json({
         ok: true, action: 'finalize', configured: true, bucket: cfg.bucket,
         client_id: clientId, format_id: 'HealthCheckupData', test_date: testDate,
-        part_count: runsParts[0].length, run_count: runCount, merge: mergeAudit, rows: measurements.length, measurements, json_key, necessity, canon: canonAudit, dedup: dedupAuditOut, trend_dropped: trendDropped, scramble,
+        part_count: parts.length, rows: measurements.length, measurements, json_key, necessity, canon: canonAudit, dedup: dedupAuditOut, trend_dropped: trendDropped, scramble, reassigned: reassign?.reassigned ?? null,
         scan_model: MODELS.scan, // 実際に使用したスキャンモデル (lite/3.5 判別用)
         uri: uploaded[0]?.uri ?? null,
       });

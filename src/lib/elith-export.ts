@@ -101,6 +101,10 @@ export function canonicalizeEnabled(): boolean {
 export function obsDedupEnabled(): boolean {
   return envOn('SCAN_OBS_DEDUP');
 }
+/** Phase 2-2: 基準レンジ再割当（scramble 修正）。SCAN_SCRAMBLE_FIX=on のときだけ。既定 off。 */
+export function scrambleFixEnabled(): boolean {
+  return envOn('SCAN_SCRAMBLE_FIX');
+}
 
 // ── MIME / 拡張子 ───────────────────────────────────────────────
 const MIME_TO_EXT: Record<string, string> = {
