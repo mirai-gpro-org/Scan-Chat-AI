@@ -298,6 +298,11 @@
   | 血液 | BloodTestData | デメカルCSV | (CSV由来値で可) | **×(画像なし)** | **CSV↔JSON構造照合(決定論・Scan-Chat-AI scripts)** |
   - **🎯値golden = 画像非依存**なので全タイプで使える(正解値さえ建立すれば)。`elith-batch.astro goldenCheck` は
     `test_date` で検体切替(検診/人間ドック実装済・②③は様式1つで各1本)。
+  - **golden は必ず元画像から人手で起こす (2026-08 確定・R2/R3)**: スキャン run の raw_markdown を"正解"にしてはならない。
+    実障害(2026-08): 人間ドック golden を scan 出力から作った結果、その run の隣接行シフト/脂質混入を golden が継承し
+    (LDL/HDL/TG・LDH/ALP/γ-GTP・好酸球/好塩基球 が誤り。LDL+HDL=176>TC=151 の物理矛盾を見落とし)、**正しいスキャンを
+    誤判定して改善を誤導**した(ChatGPT指摘で発覚→元画像で全項目再監査し修正、`scan_golden_humandock_20240924.md`)。
+    建立時は 推移グラフ/Friedewald(TC≒LDL+HDL+TG/5)/基準値レンジ 等でクロス検算する。
   - **🔍画像照合 = 画像がある型(検診/人間ドック/がん/遺伝子)のみ**。④血液は CSV が決定論正解源=画像照合不可 →
     **CSV↔JSON 構造照合**(全項目写像=漏れゼロ/余剰=捏造ゼロ/単位・判定コード対応)を Scan-Chat-AI 側 fixture で。
 - **git 規定との関係**: タスク既定は両repo `clever-cray-ngg0h6` だが、wellfort-site の Elith admin は上記のとおり
