@@ -60,22 +60,22 @@ var GOLDEN_HC_20240924 = [
   { name: '内臓脂肪面積', today: '140.3' }, { name: '握力', today: '22.6' },
   { name: '最高血圧', today: '111', alt: ['①血圧(収縮期/拡張期)','収縮期血圧'] },
   { name: '最低血圧', today: '74', alt: ['拡張期血圧'] }, { name: '脈拍', today: '76' },
-  { name: '裸眼視力右', today: '0.4', alt: ['裸眼視力(右)'] }, { name: '裸眼視力左', today: '0.9', alt: ['裸眼視力(左)'] },
-  { name: '眼圧右', today: '10.0', alt: ['眼圧(右)'] }, { name: '眼圧左', today: '10.0', alt: ['眼圧(左)'] },
+  { name: '裸眼視力右', today: '0.4', alt: ['裸眼視力(右)', '裸眼視力(右眼)', '視力右眼'] }, { name: '裸眼視力左', today: '0.9', alt: ['裸眼視力(左)', '裸眼視力(左眼)', '視力左眼'] },
+  { name: '眼圧右', today: '10.0', alt: ['眼圧(右)', '眼圧(右眼)'] }, { name: '眼圧左', today: '10.0', alt: ['眼圧(左)', '眼圧(左眼)'] },
   { name: '白血球数', today: '6700' }, { name: '赤血球数', today: '458' }, { name: '血色素量', today: '12.8', alt: ['ヘモグロビン'] },
   { name: 'ヘマトクリット', today: '40.7' }, { name: 'MCV', today: '88.9' }, { name: 'MCH', today: '27.9' },
   { name: 'MCHC', today: '31.4' }, { name: '血小板数', today: '29.4' }, { name: '分葉核球', today: '62.5' },
   { name: 'リンパ球', today: '30.9' }, { name: '単球', today: '4.3' }, { name: '好塩基球', today: '1.6' }, { name: '好酸球', today: '0.7' },
   { name: 'AST(GOT)', today: '16', alt: ['GOT(AST)'] }, { name: 'ALT(GPT)', today: '26', alt: ['GPT(ALT)'] },
-  { name: 'γ-GTP', today: '78' }, { name: 'コリンエステラーゼ', today: '384' }, { name: 'ALP', today: '157' },
+  { name: 'γ-GTP', today: '78', alt: ['Y-GTP', 'YGTP', 'ガンマGTP', 'γGTP'] }, { name: 'コリンエステラーゼ', today: '384' }, { name: 'ALP', today: '157' },
   { name: '総ビリルビン', today: '0.5' }, { name: '直接ビリルビン', today: '0.1' }, { name: '総蛋白', today: '7.5' },
-  { name: 'アルブミン', today: '3.9' }, { name: 'アミラーゼ', today: '31' },
-  { name: 'Lp(a)', today: '18.0' }, { name: 'ApoA-I', today: '127' }, { name: 'ApoB', today: '69' },
+  { name: 'アルブミン', today: '3.9' }, { name: 'アミラーゼ', today: '31', alt: ['膵アミラーゼ', 'AMY'] },
+  { name: 'Lp(a)', today: '18.0' }, { name: 'ApoA-I', today: '127', alt: ['アポA-I', 'アポA-1', 'ApoA-1'] }, { name: 'ApoB', today: '69', alt: ['アポB'] },
   { name: '動脈硬化指数', today: '2.2' }, { name: '総コレステロール', today: '151' },
   { name: 'LDLコレステロール', today: '47', past: ['102'], alt: ['LDL'] },       // 課題B: グラフ102は誤
   { name: 'HDLコレステロール', today: '129', alt: ['HDL'] },                      // 本物129(TGグラフ129と別概念)
   { name: '中性脂肪(TG)', today: '82', past: ['129'], alt: ['中性脂肪','TG'] },   // 課題B: グラフ129は誤
-  { name: '空腹時血糖', today: '101' }, { name: 'HbA1c(NGSP)', today: '5.7', alt: ['HbA1c'] },
+  { name: '空腹時血糖', today: '101' }, { name: 'HbA1c(NGSP)', today: '5.7', alt: ['HbA1c', 'HbA1c(NGS)', 'HbA1cNGSP', 'HbA1c(NGSP)'] },
   { name: '空腹時インスリン', today: '27.5' }, { name: 'HOMA-R', today: '6.9' }, { name: 'HOMA-B', today: '260.5', alt: ['HOMA-β'] },
   { name: '尿素窒素', today: '10.7' }, { name: 'クレアチニン', today: '0.68' }, { name: 'eGFR', today: '72' },
   { name: '尿酸', today: '3.5', alt: ['UA','痛風'] },
@@ -90,6 +90,17 @@ var GOLDEN_HC_20240924 = [
   { name: '好中球', today: '' },     // 実体は分葉核球。好中球名の push は捏造
 ];
 ```
+
+## 実🎯の切り分け（2026-08-03・run test-…0856・perception off/dedup off baseline）
+Missing13 を raw で1件ずつ照合した結果、**約9件は名称ノイズ(値は正読・golden alt 不足)**、**4件が真の主パス問題**:
+- 名称ノイズ(alt 追加で解消済): 裸眼視力/眼圧(右眼/左眼)・γ-GTP(Y-GTP誤読)・膵アミラーゼ・アポA-I/アポB・HbA1c(NGS)。
+- **真の残課題(主パス・要対処)**:
+  1. **課題B 脂質シャッフル**: LDL=82(正47)/HDL=47(正129)/TG=129(正82・グラフ混入)。隣接項目の値取り違え＋グラフ列混入。
+  2. **FT3/FT4 取り違え**: FT4=3.1(実はFT3値)・FT3脱落・FT4本値1.3喪失。
+  3. **ALP 脱落**(run毎に落ちる)/ **分画シフト**(好中球/好塩基球/好酸球のラベルずれ)。
+  4. **血圧結合セル**: 「111/74」を1セルで読む→最高=111/74(誤)・最低=脱落。→ 決定論分割(`^\d+/\d+$`を最高/最低へ)を検討。
+- **判定漏れ捏造(視力(まとめ)=F 等6件)は `isJudgementSummaryRow` 拡張で修正済**(Scan-Chat-AI `a61a1c5`)。
+- 分画(好塩基球/好酸球)の正解値は本 golden も1 run 由来で確度限定 → 実画像での確認が望ましい(捏造ゼロ範囲で保留)。
 
 ## 照合器への追加（要実装・wellfort-site `elith-batch.astro`）
 1. 上記 `GOLDEN_HC_20240924` + 人間ドックのセクション別カバレッジ。
