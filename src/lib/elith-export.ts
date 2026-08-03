@@ -105,6 +105,10 @@ export function obsDedupEnabled(): boolean {
 export function scrambleFixEnabled(): boolean {
   return envOn('SCAN_SCRAMBLE_FIX');
 }
+/** Phase 2-2: 眼科 collapsed-row 付け替え（右眼/左眼→種別）。SCAN_EYE_RESOLVE=on のときだけ。既定 off。 */
+export function scanEyeResolveEnabled(): boolean {
+  return envOn('SCAN_EYE_RESOLVE');
+}
 
 // ── MIME / 拡張子 ───────────────────────────────────────────────
 const MIME_TO_EXT: Record<string, string> = {
@@ -305,6 +309,9 @@ export function isJudgementSummaryRow(m: Record<string, unknown>): boolean {
   if (/型|ABO|Rh|血液型/.test(name)) return false;
   const noData = m.value_num == null && m.unit == null && m.ref_low == null && m.ref_high == null;
   if (noData && /まとめ/.test(name)) return true; // 「○○(まとめ)」= 総合判定欄のサマリ行
+  // 判定区分表(⑧-2上)の行が「判定 A / 判定B2」等の名前で漏れる(検査名と判定列を取り違え)。判定欄=非納品。
+  // 実測(2026-08): PET-CT/胸部CT/上腹部超音波/上部消化器/便潜血反応 が「判定 A/B2/C0/E」名で混入。
+  if (/^判定\s*[A-FＡ-Ｆ][0-9０-９]?$/.test(name.trim())) return true;
   return /^[A-FＡ-Ｆ][0-9０-９]?$/.test(v) && noData;
 }
 /**
