@@ -22,7 +22,7 @@ import {
   type ParsedScan,
 } from '../../../lib/elith-export';
 import { canonicalize } from '../../../lib/canonicalize';
-import { dedupObservations, dedupAudit } from '../../../lib/observation-dedup';
+import { dedupObservations, dedupAudit, semanticKey } from '../../../lib/observation-dedup';
 import { masterItemNames } from '../../../lib/standard-master';
 import { MODELS } from '../../../lib/gemini';
 import { getS3Config, isS3Configured, putFiles, type S3PutFile } from '../../../lib/s3';
@@ -157,10 +157,39 @@ export const POST: APIRoute = async ({ request }) => {
     const rawMeasurements: unknown[] = [];
     const notes: string[] = [];
     const markdowns: string[] = [];
+    // 推移グラフページ(⑧-2「検査結果の推移」)由来の行は非納品(前回/トレンド点=詳細表の重複 or 過去値)。
+    // 同一概念が詳細ページにも在れば trend 行を落とす(汚染除去=選択でない・ChatGPT案A)。trend にしか無い
+    // 概念は残す(漏れ防止=捏造ゼロ/漏れゼロ両立)。part の raw_markdown ヘッダで trend ページを識別する。
+    // 推移ページが無い/検出できない検体では発火せず挙動不変(fail-safe)。
+    const nameOf = (m: unknown): string | null => {
+      const nm = m && typeof m === 'object' ? (m as Record<string, unknown>).name : null;
+      return typeof nm === 'string' && nm.trim() ? nm : null;
+    };
+    const trendMeas: unknown[] = [];
+    const detailKeys = new Set<string>();
     for (const p of parts) {
-      if (Array.isArray(p.measurements)) rawMeasurements.push(...p.measurements);
+      const md = typeof p.raw_markdown === 'string' ? p.raw_markdown : '';
+      const isTrend = /検査結果の推移/.test(md);
+      if (Array.isArray(p.measurements)) {
+        if (isTrend) {
+          trendMeas.push(...p.measurements);
+        } else {
+          for (const m of p.measurements) {
+            rawMeasurements.push(m);
+            const nm = nameOf(m);
+            if (nm) detailKeys.add(semanticKey(nm));
+          }
+        }
+      }
       if (Array.isArray(p.notes)) notes.push(...(p.notes as string[]));
       if (typeof p.raw_markdown === 'string' && p.raw_markdown.trim()) markdowns.push(p.raw_markdown);
+    }
+    // trend 行: 詳細に同概念が在れば除外(重複/前回列混入の汚染除去)、無ければ残す(漏れ防止)。
+    let trendDropped = 0;
+    for (const m of trendMeas) {
+      const nm = nameOf(m);
+      if (nm && detailKeys.has(semanticKey(nm))) { trendDropped++; continue; }
+      rawMeasurements.push(m);
     }
     // 書き出し時点で lean 正規化 (↑↓→flag/value_num・空行/総合判定欄 除外・妥当性ガード)。
     // 監査は raw_markdown + 元画像(S3) に保持。全マージ分をまとめて 1 回で正規化する。
@@ -211,14 +240,14 @@ export const POST: APIRoute = async ({ request }) => {
     });
 
     if (!isS3Configured() || !cfg) {
-      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, measurements, necessity, canon: canonAudit, dedup: dedupAuditOut, scan_model: MODELS.scan, preview: jsonObj });
+      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, measurements, necessity, canon: canonAudit, dedup: dedupAuditOut, trend_dropped: trendDropped, scan_model: MODELS.scan, preview: jsonObj });
     }
     try {
       const uploaded = await putFiles([{ key: json_key, contentType: 'application/json; charset=utf-8', body: jsonBody, bytes: utf8Bytes(jsonBody) }]);
       return json({
         ok: true, action: 'finalize', configured: true, bucket: cfg.bucket,
         client_id: clientId, format_id: 'HealthCheckupData', test_date: testDate,
-        part_count: parts.length, rows: measurements.length, measurements, json_key, necessity, canon: canonAudit, dedup: dedupAuditOut,
+        part_count: parts.length, rows: measurements.length, measurements, json_key, necessity, canon: canonAudit, dedup: dedupAuditOut, trend_dropped: trendDropped,
         scan_model: MODELS.scan, // 実際に使用したスキャンモデル (lite/3.5 判別用)
         uri: uploaded[0]?.uri ?? null,
       });
