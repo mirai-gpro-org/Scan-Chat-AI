@@ -109,6 +109,10 @@ export function scrambleFixEnabled(): boolean {
 export function scanEyeResolveEnabled(): boolean {
   return envOn('SCAN_EYE_RESOLVE');
 }
+/** Phase 2-2: 脂質 LDL↔TG 入替の物理制約修正。SCAN_LIPID_FIX=on のときだけ。既定 off。 */
+export function scanLipidFixEnabled(): boolean {
+  return envOn('SCAN_LIPID_FIX');
+}
 
 // ── MIME / 拡張子 ───────────────────────────────────────────────
 const MIME_TO_EXT: Record<string, string> = {
