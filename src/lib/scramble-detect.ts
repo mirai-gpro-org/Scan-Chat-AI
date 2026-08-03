@@ -147,3 +147,61 @@ export function detectScramble(
   }
   return { suspects, checked };
 }
+
+export interface ReassignEntry {
+  from: string; // 元ラベル
+  to: string;   // 付け替え先 canonical
+  value: number;
+}
+export interface ReassignResult {
+  delivery: Record<string, unknown>[];
+  reassigned: ReassignEntry[];
+}
+
+/**
+ * Phase 2-2: 基準レンジ再割当（検知→"修正"・単一 run・決定論・捏造ゼロ）。
+ * 「値がラベル基準に不適合 かつ 別項目 B の基準に**唯一**適合 かつ B が納品に欠落」の行を、
+ * **B へ付け替える**（値は実読値のまま・移動のみ＝新値を作らない）。跨run整合が不要＝名称ゆれ/union膨張なし。
+ * 二重割当ガード: 同一 B へは1回だけ（filledTargets）。曖昧(複数候補)は触らない。numeric値は変えない。
+ */
+export function reassignScramble(measurements: unknown, opts?: { ranges?: RangeDef[] }): ReassignResult {
+  const ranges = opts?.ranges ?? SCRAMBLE_RANGES;
+  const idx = buildIndex(ranges);
+  const list: Record<string, unknown>[] = Array.isArray(measurements)
+    ? (measurements as unknown[]).filter((m): m is Record<string, unknown> => !!m && typeof m === 'object')
+    : [];
+
+  // pass1: 各 canonical に適合値が存在するか（再割当可能性＝欠落判定用）。
+  const hasInRange = new Map<string, boolean>();
+  for (const rec of list) {
+    const r = rangeOf(typeof rec.name === 'string' ? rec.name : null, idx);
+    if (!r) continue;
+    const v = numOf(rec);
+    if (v == null) continue;
+    if (inRange(v, r)) hasInRange.set(r.canonical, true);
+    else if (!hasInRange.has(r.canonical)) hasInRange.set(r.canonical, false);
+  }
+
+  const delivery: Record<string, unknown>[] = [];
+  const reassigned: ReassignEntry[] = [];
+  const filledTargets = new Set<string>(); // 既に再割当で埋めた B（二重割当防止）
+  for (const rec of list) {
+    const name = typeof rec.name === 'string' ? rec.name : null;
+    const r = rangeOf(name, idx);
+    const v = r ? numOf(rec) : null;
+    if (r && v != null && !inRange(v, r)) {
+      const likely = ranges.filter(
+        (o) => o.canonical !== r.canonical && inRange(v, o) && hasInRange.get(o.canonical) === undefined && !filledTargets.has(o.canonical),
+      );
+      if (likely.length === 1) {
+        const to = likely[0].canonical;
+        filledTargets.add(to);
+        delivery.push({ ...rec, name: to }); // ラベルのみ付け替え（value/value_num 不変＝捏造ゼロ）
+        reassigned.push({ from: name as string, to, value: v });
+        continue;
+      }
+    }
+    delivery.push(rec);
+  }
+  return { delivery, reassigned };
+}

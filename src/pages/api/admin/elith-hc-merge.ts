@@ -19,11 +19,12 @@ import {
   sanitizeMeasurementsForDelivery,
   canonicalizeEnabled,
   obsDedupEnabled,
+  scrambleFixEnabled,
   type ParsedScan,
 } from '../../../lib/elith-export';
 import { canonicalize } from '../../../lib/canonicalize';
 import { dedupObservations, dedupAudit, semanticKey } from '../../../lib/observation-dedup';
-import { detectScramble } from '../../../lib/scramble-detect';
+import { detectScramble, reassignScramble } from '../../../lib/scramble-detect';
 import { masterItemNames } from '../../../lib/standard-master';
 import { MODELS } from '../../../lib/gemini';
 import { getS3Config, isS3Configured, putFiles, type S3PutFile } from '../../../lib/s3';
@@ -201,12 +202,16 @@ export const POST: APIRoute = async ({ request }) => {
     // 後段 dedup (課題C 別名重複/課題B 同名別値の競合・SCAN_OBS_DEDUP=on のときだけ)。マージ由来の
     // ページ跨ぎ重複 (体重×2・眼底×2 等) はこのマージ finalize でしか消せない (単画像経路の dedup では届かない)。
     const dedup = obsDedupEnabled() ? dedupObservations(canonMeasurements) : null;
-    const measurements = dedup ? dedup.delivery : canonMeasurements;
+    let measurements = dedup ? dedup.delivery : canonMeasurements;
     const canonAudit = canon
       ? { mapped: canon.mapped, unmapped: canon.unmapped, deficient: canon.deficient }
       : null;
     const dedupAuditOut = dedup ? dedupAudit(dedup) : null;
-    // Phase 2-1: 基準レンジ scramble 検知（監査のみ・delivery 不変）。肝酵素等の値-ラベル回転を可視化する。
+    // Phase 2-2: 基準レンジ再割当（scramble 修正・SCAN_SCRAMBLE_FIX=on のときだけ・単一run決定論）。
+    // 出力値は実読値の付け替えのみ＝捏造ゼロ。肝酵素等の値-ラベル回転を欠落スロットへ戻す。
+    const reassign = scrambleFixEnabled() ? reassignScramble(measurements) : null;
+    if (reassign) measurements = reassign.delivery as Record<string, unknown>[];
+    // Phase 2-1: 基準レンジ scramble 検知（監査のみ）。再割当**後**の残 scramble を可視化する。
     const scramble = detectScramble(measurements);
     const sourceFiles = Array.isArray(body.sourceFiles) ? (body.sourceFiles as unknown[]).filter((x): x is string => typeof x === 'string') : [];
 
@@ -243,14 +248,14 @@ export const POST: APIRoute = async ({ request }) => {
     });
 
     if (!isS3Configured() || !cfg) {
-      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, measurements, necessity, canon: canonAudit, dedup: dedupAuditOut, trend_dropped: trendDropped, scramble, scan_model: MODELS.scan, preview: jsonObj });
+      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, measurements, necessity, canon: canonAudit, dedup: dedupAuditOut, trend_dropped: trendDropped, scramble, reassigned: reassign?.reassigned ?? null, scan_model: MODELS.scan, preview: jsonObj });
     }
     try {
       const uploaded = await putFiles([{ key: json_key, contentType: 'application/json; charset=utf-8', body: jsonBody, bytes: utf8Bytes(jsonBody) }]);
       return json({
         ok: true, action: 'finalize', configured: true, bucket: cfg.bucket,
         client_id: clientId, format_id: 'HealthCheckupData', test_date: testDate,
-        part_count: parts.length, rows: measurements.length, measurements, json_key, necessity, canon: canonAudit, dedup: dedupAuditOut, trend_dropped: trendDropped, scramble,
+        part_count: parts.length, rows: measurements.length, measurements, json_key, necessity, canon: canonAudit, dedup: dedupAuditOut, trend_dropped: trendDropped, scramble, reassigned: reassign?.reassigned ?? null,
         scan_model: MODELS.scan, // 実際に使用したスキャンモデル (lite/3.5 判別用)
         uri: uploaded[0]?.uri ?? null,
       });
