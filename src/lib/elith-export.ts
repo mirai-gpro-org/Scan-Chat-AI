@@ -299,6 +299,16 @@ export function isJudgementSummaryRow(m: Record<string, unknown>): boolean {
   return /^[A-FＡ-Ｆ][0-9０-９]?$/.test(v) && noData;
 }
 /**
+ * 患者受付/事務メタデータ行か (検査測定値でない → 納品しない)。
+ * 実測(2026-08 人間ドック): ⑧-1 受付表の 受診日/受診コース・専門セット/受診オプション/未実施検査 が
+ * measurement として抽出され、しかも前回受診分まで混入して捏造になっていた。名前で決定論除外する。
+ * (受診日は test_date として別途エンベロープに載るため測定値としては不要。)
+ */
+export function isReceiptMetaRow(m: Record<string, unknown>): boolean {
+  const name = (typeof m.name === 'string' ? m.name : '') + '｜' + (typeof m.name_detail === 'string' ? m.name_detail : '');
+  return /受診日|受診コース|受診オプション|専門セット|未実施検査|診察券番号|受付番号|カルテ番号|依頼団体|生年月日/.test(name);
+}
+/**
  * 妥当性ガード (誤配信防止): 明らかに壊れた測定値の除外理由。null=正常。
  *  - 単位が純数値 = 列ズレ疑い (例: HDL 行で unit="40")。
  *  - 割合(%)が 0–100 の範囲外 = 物理的にあり得ない (例: 体脂肪率 105%)。
@@ -358,6 +368,7 @@ export function sanitizeMeasurementsForDelivery(list: unknown): {
     const m = leanMeasurement(el);
     if (m.value == null && m.value_num == null) continue; // 未測定(値なし)は納品しない
     if (isJudgementSummaryRow(m)) continue; // 総合判定(A/B/C)欄は測定値でない
+    if (isReceiptMetaRow(m)) continue; // 受診日/受診コース/オプション 等の受付メタは測定値でない
     const reason = measurementAnomalyReason(m);
     if (reason) {
       anomalies.push({
