@@ -310,8 +310,15 @@ export function isJudgementSummaryRow(m: Record<string, unknown>): boolean {
  * (受診日は test_date として別途エンベロープに載るため測定値としては不要。)
  */
 export function isReceiptMetaRow(m: Record<string, unknown>): boolean {
-  const name = (typeof m.name === 'string' ? m.name : '') + '｜' + (typeof m.name_detail === 'string' ? m.name_detail : '');
-  return /受診日|受診コース|受診オプション|専門セット|未実施検査|診察券番号|受付番号|カルテ番号|依頼団体|生年月日/.test(name);
+  const nm = (typeof m.name === 'string' ? m.name : '').trim();
+  const name = nm + '｜' + (typeof m.name_detail === 'string' ? m.name_detail : '');
+  if (/受診日|受診コース|受診オプション|専門セット|未実施検査|診察券番号|受付番号|カルテ番号|依頼団体|生年月日/.test(name)) return true;
+  // 受診表の時系列ラベル(今回/前回/前々回)が項目名になった行(値=日付/コース/オプション)。測定値でない。
+  if (/^(今回|前回|前々回)$/.test(nm)) return true;
+  // 値が日付(YYYY年MM月DD日 / YYYY-MM-DD 等)の行は測定値でない(受診日等の混入)。
+  const v = typeof m.value === 'string' ? m.value.trim() : '';
+  if (/(?:令和|平成|昭和)?\s*\d{1,4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}$/.test(v)) return true;
+  return false;
 }
 /**
  * 血圧の結合セル (収縮期/拡張期 が「111/74」の1セル) を最高/最低の2行へ決定論分割する。
