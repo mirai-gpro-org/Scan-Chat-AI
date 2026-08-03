@@ -284,14 +284,19 @@ export function leanMeasurement(el: Record<string, unknown>): Record<string, unk
 }
 /**
  * 総合判定(A/B/C…)欄か (「項目別判定」欄はランク文字のみで測定値でない → 納品しない)。
- * 条件: value が単独ランク文字(A〜E) かつ 数値/単位/基準値なし。
+ * 条件: value が判定ランク(A〜F + 任意の1桁。例 A/B/B1/B2/C/C0/C1/C3/D/E/F) かつ 数値/単位/基準値なし。
+ *   実測(2026-08 人間ドック): 判定区分表の B1/C0/C3/B2/F が単一[A-E]判定で漏れ、視力(まとめ)=F 等が
+ *   measurement として捏造混入した → letter+digit と F まで拡張し、name の「まとめ」も除外する。
  * 例外: 血液型(ABO/Rh)等 name に「型」を含む定性結果は残す ("A"/"B" が正当なため)。
+ * ※ numeric は value_num!=null で除外されない (回帰なし)。単位/基準がある行も測定値として残す。
  */
 export function isJudgementSummaryRow(m: Record<string, unknown>): boolean {
   const v = typeof m.value === 'string' ? m.value.trim() : '';
   const name = typeof m.name === 'string' ? m.name : '';
   if (/型|ABO|Rh|血液型/.test(name)) return false;
-  return /^[A-EＡ-Ｅ]$/.test(v) && m.value_num == null && m.unit == null && m.ref_low == null && m.ref_high == null;
+  const noData = m.value_num == null && m.unit == null && m.ref_low == null && m.ref_high == null;
+  if (noData && /まとめ/.test(name)) return true; // 「○○(まとめ)」= 総合判定欄のサマリ行
+  return /^[A-FＡ-Ｆ][0-9０-９]?$/.test(v) && noData;
 }
 /**
  * 妥当性ガード (誤配信防止): 明らかに壊れた測定値の除外理由。null=正常。
