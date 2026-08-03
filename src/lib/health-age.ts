@@ -63,9 +63,13 @@ export interface HealthAgeResult {
 const REQUIRED: (keyof HealthAgeMarkers)[] = [
   'albumin', 'creatinine', 'glucose', 'lymph', 'mcv', 'alp', 'wbc',
 ];
-const CRP_MEDIAN_MGDL = 0.15; // 集団中央値 (mg/dL)
-const RDW_MEDIAN = 13.0;      // % (未測定時の補完中央値)
-/** クレアチニンの性別正規化: 各性別中央値を PhenoAge開発集団基準 ref に合わせる位置シフト。 */
+// 以下の補完定数は Wellfort 確認済 (2026-08・確定・暫定でない)。詳細: docs/health_age_caba_v5.4_spec.md
+const CRP_MEDIAN_MGDL = 0.15; // hs-CRP は任意入力。実測→NLR推定→この集団中央値で補完 (mg/dL・炎症寄与は中立)
+const RDW_MEDIAN = 13.0;      // % RDW は検査機関により無し → 中央値13.0を代用 (Wellfort確認)
+/**
+ * クレアチニンの性別正規化: 各性別中央値を PhenoAge開発集団基準 ref に合わせる位置シフト。
+ * Wellfort 確認 (2026-08): 男0.86/女0.63 は原著に無く性別選択時の基準として設定=**このまま使用(確定)**。
+ */
 const SEX_NORM_CREAT = { male: 0.86, female: 0.63, ref: 0.85 } as const;
 
 function num(v: unknown): number | null {
@@ -240,6 +244,24 @@ const SYNONYMS: Record<Exclude<keyof HealthAgeMarkers, 'age' | 'sex'>, string[]>
   fev1fvc: ['fev1/fvc', 'fev1.0%', '1秒率', 'fev1fvc'],
   bmi: ['bmi', '体格指数'],
 };
+/**
+ * WBC を PhenoAge 式が要求する ×10³/μL へスケール正規化する。
+ * Wellfort 確認 (2026-08): 白血球(赤血球・血小板も同様)の**桁数は検査機関でバラバラ**で
+ * 決まっていないため、**読み取り都度オーダー(桁)で判断**して正規化する必要がある。
+ *   ・/μL 表記       例 6700 (人間ドック) → ÷1000 = 6.7   (値 ≥ 1000)
+ *   ・×10²/μL 表記   例 45.2 (検診)       → ÷10   = 4.52  (正常域 ≒ 33〜95)
+ *   ・×10³/μL 表記   例 6.7               → そのまま        (正常域 ≒ 3.3〜9.5)
+ * 冪等 (正規化後の値を再投入しても不変)。しきい値30は ×10³/μL の臨床上限(高度白血球増多でも
+ * ≒20-30)と ×10²/μL の正常下限(≒33)の境界。※極端な白血球増多(≥30×10³/μL)は稀で桁判定の
+ * 対象外(その値は臨床的に別途フラグされる)。RBC は MCV 補完側で別途スケール処理済・血小板は式に不使用。
+ */
+export function normalizeWbcScale(v: number): number {
+  if (!Number.isFinite(v) || v <= 0) return v;
+  if (v >= 1000) return v / 1000; // /μL → ×10³/μL
+  if (v >= 30) return v / 10;     // ×10²/μL → ×10³/μL
+  return v;                        // 既に ×10³/μL
+}
+
 const HEIGHT_SYN = ['身長', 'height'];
 const WEIGHT_SYN = ['体重', 'weight'];
 // MCV を赤血球+ヘマトクリットから算出する場合の同義語
@@ -290,6 +312,9 @@ export function normalizeMarkers(items: RawItem[]): Partial<HealthAgeMarkers> {
       }
     }
   }
+  // WBC 桁正規化 (検査機関で /μL・×10²/μL・×10³/μL が混在 → 式が要求する ×10³/μL へ)。
+  // Wellfort 確認 (2026-08): 桁は都度判断が必要。normalizeWbcScale は冪等。
+  if (out.wbc != null) out.wbc = normalizeWbcScale(out.wbc);
   // BMI 補完 (身長cm・体重kg から)。※ v5.4 では計算に使わないが参考表示用に保持。
   if (out.bmi == null) {
     let h: number | null = null, w: number | null = null;
