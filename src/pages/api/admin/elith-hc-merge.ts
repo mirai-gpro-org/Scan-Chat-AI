@@ -21,12 +21,14 @@ import {
   obsDedupEnabled,
   scrambleFixEnabled,
   scanEyeResolveEnabled,
+  scanLipidFixEnabled,
   type ParsedScan,
 } from '../../../lib/elith-export';
 import { canonicalize } from '../../../lib/canonicalize';
 import { dedupObservations, dedupAudit, semanticKey } from '../../../lib/observation-dedup';
 import { detectScramble, reassignScramble } from '../../../lib/scramble-detect';
 import { resolveEyeCollapsed } from '../../../lib/collapsed-row';
+import { fixLipidSwap } from '../../../lib/lipid-fix';
 import { masterItemNames } from '../../../lib/standard-master';
 import { MODELS } from '../../../lib/gemini';
 import { getS3Config, isS3Configured, putFiles, type S3PutFile } from '../../../lib/s3';
@@ -219,6 +221,9 @@ export const POST: APIRoute = async ({ request }) => {
     // Phase 2-2: 眼科 collapsed-row 付け替え（右眼/左眼→裸眼視力/眼圧/眼底・SCAN_EYE_RESOLVE=on のときだけ）。
     const eye = scanEyeResolveEnabled() ? resolveEyeCollapsed(measurements) : null;
     if (eye) measurements = eye.delivery as Record<string, unknown>[];
+    // Phase 2-2: 脂質 LDL↔TG 入替の物理制約修正（LDL+HDL≤TC・SCAN_LIPID_FIX=on のときだけ）。
+    const lipid = scanLipidFixEnabled() ? fixLipidSwap(measurements) : null;
+    if (lipid && lipid.swapped) measurements = lipid.delivery as Record<string, unknown>[];
     // ⚠ 残差 = 検知した scramble から「自動修正済(reassigned.from)」を除いた未修正分のみ表示。
     const fixedFrom = new Set((reassign?.reassigned ?? []).map((r) => r.from));
     const scramble = { checked: preScramble.checked, suspects: preScramble.suspects.filter((s) => !fixedFrom.has(s.name)) };
@@ -257,14 +262,14 @@ export const POST: APIRoute = async ({ request }) => {
     });
 
     if (!isS3Configured() || !cfg) {
-      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, measurements, necessity, canon: canonAudit, dedup: dedupAuditOut, trend_dropped: trendDropped, scramble, reassigned: reassign?.reassigned ?? null, eye_resolved: eye?.resolved ?? null, scan_model: MODELS.scan, preview: jsonObj });
+      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, measurements, necessity, canon: canonAudit, dedup: dedupAuditOut, trend_dropped: trendDropped, scramble, reassigned: reassign?.reassigned ?? null, eye_resolved: eye?.resolved ?? null, lipid_fix: lipid && lipid.swapped ? lipid.detail : null, scan_model: MODELS.scan, preview: jsonObj });
     }
     try {
       const uploaded = await putFiles([{ key: json_key, contentType: 'application/json; charset=utf-8', body: jsonBody, bytes: utf8Bytes(jsonBody) }]);
       return json({
         ok: true, action: 'finalize', configured: true, bucket: cfg.bucket,
         client_id: clientId, format_id: 'HealthCheckupData', test_date: testDate,
-        part_count: parts.length, rows: measurements.length, measurements, json_key, necessity, canon: canonAudit, dedup: dedupAuditOut, trend_dropped: trendDropped, scramble, reassigned: reassign?.reassigned ?? null, eye_resolved: eye?.resolved ?? null,
+        part_count: parts.length, rows: measurements.length, measurements, json_key, necessity, canon: canonAudit, dedup: dedupAuditOut, trend_dropped: trendDropped, scramble, reassigned: reassign?.reassigned ?? null, eye_resolved: eye?.resolved ?? null, lipid_fix: lipid && lipid.swapped ? lipid.detail : null,
         scan_model: MODELS.scan, // 実際に使用したスキャンモデル (lite/3.5 判別用)
         uri: uploaded[0]?.uri ?? null,
       });
