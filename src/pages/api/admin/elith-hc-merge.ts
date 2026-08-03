@@ -211,14 +211,14 @@ export const POST: APIRoute = async ({ request }) => {
     });
 
     if (!isS3Configured() || !cfg) {
-      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, necessity, canon: canonAudit, dedup: dedupAuditOut, scan_model: MODELS.scan, preview: jsonObj });
+      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, rows: measurements.length, measurements, necessity, canon: canonAudit, dedup: dedupAuditOut, scan_model: MODELS.scan, preview: jsonObj });
     }
     try {
       const uploaded = await putFiles([{ key: json_key, contentType: 'application/json; charset=utf-8', body: jsonBody, bytes: utf8Bytes(jsonBody) }]);
       return json({
         ok: true, action: 'finalize', configured: true, bucket: cfg.bucket,
         client_id: clientId, format_id: 'HealthCheckupData', test_date: testDate,
-        part_count: parts.length, rows: measurements.length, json_key, necessity, canon: canonAudit, dedup: dedupAuditOut,
+        part_count: parts.length, rows: measurements.length, measurements, json_key, necessity, canon: canonAudit, dedup: dedupAuditOut,
         scan_model: MODELS.scan, // 実際に使用したスキャンモデル (lite/3.5 判別用)
         uri: uploaded[0]?.uri ?? null,
       });
