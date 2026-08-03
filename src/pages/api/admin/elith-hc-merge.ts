@@ -207,12 +207,16 @@ export const POST: APIRoute = async ({ request }) => {
       ? { mapped: canon.mapped, unmapped: canon.unmapped, deficient: canon.deficient }
       : null;
     const dedupAuditOut = dedup ? dedupAudit(dedup) : null;
+    // Phase 2-1: 基準レンジ scramble 検知（監査のみ）。**再割当前**の生の scramble を捉える
+    // (再割当後に検知すると、修正で空いたスロットを次の行が埋める偽陽性=ALT→γ-GTP 等が出るため)。
+    const preScramble = detectScramble(measurements);
     // Phase 2-2: 基準レンジ再割当（scramble 修正・SCAN_SCRAMBLE_FIX=on のときだけ・単一run決定論）。
     // 出力値は実読値の付け替えのみ＝捏造ゼロ。肝酵素等の値-ラベル回転を欠落スロットへ戻す。
     const reassign = scrambleFixEnabled() ? reassignScramble(measurements) : null;
     if (reassign) measurements = reassign.delivery as Record<string, unknown>[];
-    // Phase 2-1: 基準レンジ scramble 検知（監査のみ）。再割当**後**の残 scramble を可視化する。
-    const scramble = detectScramble(measurements);
+    // ⚠ 残差 = 検知した scramble から「自動修正済(reassigned.from)」を除いた未修正分のみ表示。
+    const fixedFrom = new Set((reassign?.reassigned ?? []).map((r) => r.from));
+    const scramble = { checked: preScramble.checked, suspects: preScramble.suspects.filter((s) => !fixedFrom.has(s.name)) };
     const sourceFiles = Array.isArray(body.sourceFiles) ? (body.sourceFiles as unknown[]).filter((x): x is string => typeof x === 'string') : [];
 
     const { folder, stem } = folderOf(prefix, clientId, testDate);
