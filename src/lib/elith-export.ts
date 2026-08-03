@@ -55,6 +55,11 @@ function env(name: string): string | undefined {
   const fromProc = typeof process !== 'undefined' ? process.env?.[name] : undefined;
   return fromProc != null && fromProc !== '' ? fromProc : undefined;
 }
+/** on 系フラグの寛容判定 (on/true/1/yes・前後空白/大文字小文字を許容)。厳密 === 'on' だと ON/true 等で不発になるため統一。 */
+function envOn(name: string): boolean {
+  const v = env(name);
+  return v != null && ['on', 'true', '1', 'yes'].includes(v.trim().toLowerCase());
+}
 export function getGeminiApiKey(): string | undefined {
   return env('GEMINI_API_KEY');
 }
@@ -75,7 +80,7 @@ export function scanOutputFormat(): 'json' | 'markdown' {
  * ギャップ埋めする (既存値は上書きしない)。numeric は触らない。🎯 回帰ゼロ確認後に常用する想定。
  */
 export function boundaryRecheckEnabled(): boolean {
-  return env('SCAN_BOUNDARY_RECHECK') === 'on';
+  return envOn('SCAN_BOUNDARY_RECHECK');
 }
 /**
  * ②正準化（標準マスタへの名寄せ/単位正準化・テンプレート穴埋め）を有効にするか。
@@ -84,7 +89,7 @@ export function boundaryRecheckEnabled(): boolean {
  * 実装: `canonicalize()`（src/lib/canonicalize.ts）。読取値(numeric)は変えない・非ヒットは元名のまま。
  */
 export function canonicalizeEnabled(): boolean {
-  return env('SCAN_CANONICALIZE') === 'on';
+  return envOn('SCAN_CANONICALIZE');
 }
 /**
  * ①読取後段の決定論 dedup（課題C 別名重複の統合／課題B 同名別値の競合検知）を有効にするか。
@@ -94,7 +99,7 @@ export function canonicalizeEnabled(): boolean {
  * 🎯 ゴールデンで numeric 全一致・別名重複減・実施済の非統合 を確認してから on（P-perc）。
  */
 export function obsDedupEnabled(): boolean {
-  return env('SCAN_OBS_DEDUP') === 'on';
+  return envOn('SCAN_OBS_DEDUP');
 }
 
 // ── MIME / 拡張子 ───────────────────────────────────────────────
@@ -800,7 +805,7 @@ async function boundaryRecheck(
 //   (=ページ全体の"今回列は空"バイアス/過去列の引力を物理的に排除。ReaderとRepairの失敗モードを非相関化)。
 // 安全設計: sharp は遅延 import + 全 try/catch。失敗時は一切変更しない(フォールバック=現挙動)。既定 off。
 export function rowCropEnabled(): boolean {
-  return String(process.env.SCAN_VQA_ROWCROP || '').toLowerCase() === 'on';
+  return envOn('SCAN_VQA_ROWCROP');
 }
 const ROWCROP_LOCATE_SYSTEM = `あなたは健診結果表の座標特定器です。指定された行と、表の列見出し行の位置だけを答えます。`;
 function buildRowLocateUser(label: string): string {
@@ -925,7 +930,7 @@ async function rowCropLeakRescue(
 // 安全設計: Gemini/sharp は全 try/catch。失敗時は一切変更しない(フォールバック=現挙動)。主パス不変。
 // ※ occupied のCV検出・残留証拠監査・列信頼度の精密化は Vercel🎯 での調整対象 (実装修正プラン §3.1 P-perc-3)。
 export function perceptionRepairEnabled(): boolean {
-  return String(process.env.SCAN_PERCEPTION_REPAIR || '').toLowerCase() === 'on';
+  return envOn('SCAN_PERCEPTION_REPAIR');
 }
 const INVENTORY_SYSTEM = `あなたは健診結果表の棚卸し器です。画像に印字された検査項目のうち「今回(最新回)列に値・記号が入っている」項目名だけを列挙します。値は読まず、項目名だけを返します。推測禁止。`;
 function buildInventoryUser(): string {
