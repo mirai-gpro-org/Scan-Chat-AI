@@ -311,7 +311,7 @@
   |---|---|---|---|---|---|
   | 健康診断(検診) | HealthCheckupData | アプリscan | ○ `scan_golden_healthcheckup_20250123.md` | ○ | — |
   | 人間ドック | HealthCheckupData | アプリscan | ○ `scan_golden_humandock_20240924.md` | ○ | — |
-  | がんリスク | CancerRiskAssessmentData | adminバッチ | 建立待ち(様式1) | ○ | — |
+  | がんリスク | CancerRiskAssessmentData | adminバッチ | ○ `scan_golden_cancer_alapds_20251226.md`(ALA-PDS様式1) | ○ | — |
   | 遺伝子 | GeneticTestResultData | adminバッチ | 建立待ち(様式1) | ○ | — |
   | 血液 | BloodTestData | デメカルCSV | (CSV由来値で可) | **×(画像なし)** | **CSV↔JSON構造照合(決定論・Scan-Chat-AI scripts)** |
   - **🎯値golden = 画像非依存**なので全タイプで使える(正解値さえ建立すれば)。`elith-batch.astro goldenCheck` は
