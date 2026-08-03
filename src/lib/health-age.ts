@@ -1,20 +1,26 @@
 /**
- * 健康年齢 (生物学的年齢) の決定論計算 — CABA v4d (Levine 2018 Phenotypic Age ベース)。
+ * 健康年齢 (生物学的年齢) の決定論計算 — CABA v5.4 (Levine 2018 PhenoAge ベース)。
  *
- * ロジックは `biological_age_calculator_v4d.html` (PMID 30596641 / Levine 2018 PMID 29676998)
- * をそのまま移植。LLM は使わない (血液CSVパーサ `elith-blood-csv.ts` と同思想)。
+ * ロジックは `biological_age_calculator_v5.4.html` (PMID 30596641 / Levine 2018) をそのまま移植。
+ * LLM は使わない (血液CSVパーサ `elith-blood-csv.ts` と同思想)。
  *
- * - `computeHealthAge(markers)`  : 正規化済みマーカー → 生物学的年齢と内訳。
- * - `normalizeMarkers(items)`    : 人間ドック measurements[] / 血液 items[] の自由テキストを
- *                                  CABA 入力マーカーへ正規化 (名称同義語マッチ + 数値パース)。
+ * v5.4 の v4d からの変更点:
+ *  - 定数を原著実装に精緻化 (creat×88.42 / alp係数0.0019 / 切片-19.9067 / crp下限0.001)。
+ *  - RDW を固定13.0でなく実測を使用 (無ければ中央値13.0で補完=imputed)。
+ *  - 性別補正を「flat ±1.0歳」から「クレアチニンの性別正規化(位置シフト)」へ変更
+ *    (男0.86/女0.63 → PhenoAge開発集団基準0.85 に一致させる shift。性差アーチファクト除去)。
+ *  - CRP 未測定時は NLR(好中球%/リンパ球%)から対数線形で推定 → 無ければ中央値0.15で補完。
+ *  - SBP/FEV1FVC は PhenoAge外の補助オーバーレイ (SBP:(sbp-120)*0.06±3 / FEV:(78-fev)*0.15∈[-2,3] / 合計±4)。
+ *  - BMI 補正は廃止 (v5.4 では BMI は参考表示のみ・計算に使わない)。
+ *  - 最終クランプ 18–95。
  *
- * 必須9項目: age, albumin, creatinine, glucose, crp, lymph, mcv, alp, sbp
- * (wbc 未入力は 6.0 で補完 / RDW は特定健診に無いため 13.0 固定 / bmi・sex は年数補正)。
+ * 必須(ハード)9: age + albumin, creatinine, glucose, lymph, mcv, alp, wbc
+ *   (RDW は無ければ13.0補完 / CRP は NLR or 0.15補完 / SBP・FEV1FVC・好中球 は任意)。
  */
 
-export const HEALTH_AGE_MODEL_VERSION = 'CABA-v4d';
+export const HEALTH_AGE_MODEL_VERSION = 'CABA-v5.4';
 
-/** CABA 入力マーカー (すべて数値。sex は補正用)。 */
+/** CABA 入力マーカー (すべて数値。sex はクレアチニン正規化に使用)。 */
 export interface HealthAgeMarkers {
   age: number;
   sex: 'male' | 'female' | null;
@@ -24,11 +30,13 @@ export interface HealthAgeMarkers {
   crp?: number | null;        // mg/dL (高感度)
   lymph?: number | null;      // %
   mcv?: number | null;        // fL
-  alp?: number | null;        // U/L
-  sbp?: number | null;        // mmHg (収縮期)
-  bmi?: number | null;        // kg/m^2
-  wbc?: number | null;        // ×10^3/μL (任意)
-  fev1fvc?: number | null;    // % (任意)
+  rdw?: number | null;        // % (無ければ13.0補完)
+  alp?: number | null;        // U/L (IFCC)
+  wbc?: number | null;        // ×10^3/μL
+  neut?: number | null;       // % (好中球。CRP未測定時の NLR 代用に使用)
+  sbp?: number | null;        // mmHg (収縮期・オーバーレイ)
+  fev1fvc?: number | null;    // % (1秒率・オーバーレイ)
+  bmi?: number | null;        // kg/m^2 (参考表示のみ・計算に使わない)
 }
 
 export interface HealthAgeResult {
@@ -37,33 +45,39 @@ export interface HealthAgeResult {
   chronological_age: number;
   biological_age: number | null; // 小数第1位まで
   delta: number | null;          // biological - chronological
-  mortality_risk: number | null; // 0..1 (Gompertz 10年)
-  pheno_base: number | null;
-  adjustments: { sbp: number; fev: number; bmi: number; sex: number; total: number } | null;
+  mortality_risk: number | null; // 0..1 (Gompertz 10年 = 120か月)
+  pheno_base: number | null;     // PhenoAge本体 (オーバーレイ前)
+  crp_source: 'measured' | 'nlr' | 'imputed' | null; // CRP の由来
+  adjustments: { sbp: number; fev: number; total: number; creat_sex_shift: number } | null;
   used_markers: string[];        // 実測が入った必須マーカー
-  carried_markers: string[];     // 据え置きされたマーカー (血液回の前回ドック値など。呼び出し側が設定)
-  imputed_markers: string[];     // 測定値が無く標準値で補完したマーカー (crp 等 → 参考値)
+  carried_markers: string[];     // 据え置きされたマーカー (呼び出し側が設定)
+  imputed_markers: string[];     // 測定値が無く標準値で補完 (crp/rdw 等 → 参考値)
   missing_required: string[];    // 欠落している必須マーカー (age 除く)
 }
 
 /**
  * ハード必須マーカー (これらが欠けると算出不可)。
- * CRP は標準的な人間ドックの血液パネルに含まれないことが多いため必須から外し、
- * 測定値が無い場合は健常者中央値で補完する (参考値。imputed_markers で明示)。
+ * v5.4 の血液必須から RDW を除外し (人間ドック/特定健診に無いことが多く 13.0 補完で代替)、
+ * SBP はオーバーレイ扱い(任意)。CRP は NLR/中央値補完前提のため必須に含めない。
  */
 const REQUIRED: (keyof HealthAgeMarkers)[] = [
-  'albumin', 'creatinine', 'glucose', 'lymph', 'mcv', 'alp', 'sbp',
+  'albumin', 'creatinine', 'glucose', 'lymph', 'mcv', 'alp', 'wbc',
 ];
-/** CRP 測定値が無いときの補完値 (健常者中央値 目安, mg/dL)。 */
-const CRP_DEFAULT_MGDL = 0.1;
+const CRP_MEDIAN_MGDL = 0.15; // 集団中央値 (mg/dL)
+const RDW_MEDIAN = 13.0;      // % (未測定時の補完中央値)
+/** クレアチニンの性別正規化: 各性別中央値を PhenoAge開発集団基準 ref に合わせる位置シフト。 */
+const SEX_NORM_CREAT = { male: 0.86, female: 0.63, ref: 0.85 } as const;
 
 function num(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
+function clamp(x: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, x));
+}
 
 /**
- * 適合チェック: CRP を除く必須マーカー (REQUIRED) の充足状況を返す。
- * CRP は補完前提のためここには含めない。`computable=true` なら算出可能 (CRPは補完)。
+ * 適合チェック: 必須マーカー (REQUIRED) の充足状況を返す。
+ * CRP/RDW は補完前提のためここに含めない。`computable=true` なら算出可能。
  */
 export function requiredCoverage(
   m: Partial<HealthAgeMarkers>,
@@ -72,6 +86,50 @@ export function requiredCoverage(
   const missing: string[] = [];
   for (const k of REQUIRED) (num(m[k]) !== null ? present : missing).push(k as string);
   return { present, missing, computable: missing.length === 0 };
+}
+
+/** CRP を解決する (実測 → NLR推定 → 中央値補完)。 */
+function resolveCRP(m: HealthAgeMarkers): { crp: number; source: 'measured' | 'nlr' | 'imputed' } {
+  const crp = num(m.crp);
+  if (crp !== null) return { crp, source: 'measured' };
+  const neut = num(m.neut);
+  const lymph = num(m.lymph);
+  if (neut !== null && lymph !== null && lymph > 0) {
+    const nlr = neut / lymph; // 好中球% / リンパ球%
+    // 基準NLR≈2.0で中央値、上昇で炎症寄与増 (対数空間・減衰係数0.4)。
+    return { crp: Math.exp(Math.log(CRP_MEDIAN_MGDL) + 0.4 * (nlr - 2.0)), source: 'nlr' };
+  }
+  return { crp: CRP_MEDIAN_MGDL, source: 'imputed' };
+}
+
+/** PhenoAge本体 (v5.4 定数)。入力: albumin g/dL, creat mg/dL, glucose mg/dL, crp mg/dL, 他は表示単位。 */
+function phenoAgeCore(v: {
+  albumin: number; creatinine: number; glucose: number; crp: number;
+  lymph: number; mcv: number; rdw: number; alp: number; wbc: number; age: number;
+}): { pheno: number; mortality: number } {
+  const albumin_gL = v.albumin * 10;
+  const creat_umol = v.creatinine * 88.42;
+  const glucose_mmol = v.glucose / 18.0;
+  const lncrp = Math.log(Math.max(v.crp, 0.001));
+
+  const xb = -19.9067
+    - 0.0336 * albumin_gL
+    + 0.0095 * creat_umol
+    + 0.1953 * glucose_mmol
+    + 0.0954 * lncrp
+    - 0.0120 * v.lymph
+    + 0.0268 * v.mcv
+    + 0.3306 * v.rdw
+    + 0.0019 * v.alp
+    + 0.0554 * v.wbc
+    + 0.0804 * v.age;
+
+  const g = 0.0076927;
+  const M = 1 - Math.exp((-Math.exp(xb) * (Math.exp(g * 120) - 1)) / g);
+  const Mc = Math.min(M, 0.999999);
+  let pheno = 141.50225 + Math.log(-0.00553 * Math.log(1 - Mc)) / 0.090165;
+  if (!Number.isFinite(pheno)) pheno = v.age;
+  return { pheno, mortality: M };
 }
 
 /**
@@ -92,6 +150,7 @@ export function computeHealthAge(m: HealthAgeMarkers, carriedMarkers: string[] =
     delta: null,
     mortality_risk: null,
     pheno_base: null,
+    crp_source: null,
     adjustments: null,
     used_markers: REQUIRED.filter((k) => num(m[k]) !== null && !carriedMarkers.includes(k)) as string[],
     carried_markers: carriedMarkers,
@@ -103,73 +162,51 @@ export function computeHealthAge(m: HealthAgeMarkers, carriedMarkers: string[] =
   const albumin = num(m.albumin)!;
   const creat = num(m.creatinine)!;
   const glucose = num(m.glucose)!;
-  // CRP は測定値が無ければ標準値で補完 (参考値扱い)。
-  let crp = num(m.crp);
-  if (crp === null) { crp = CRP_DEFAULT_MGDL; imputed.push('crp'); }
   const lymph = num(m.lymph)!;
   const mcv = num(m.mcv)!;
   const alp = num(m.alp)!;
-  const sbp = num(m.sbp)!;
-  const wbc = num(m.wbc) ?? 6.0;         // 未入力は 6.0
-  const bmi = num(m.bmi);
-  const fev1fvc = num(m.fev1fvc);
+  const wbc = num(m.wbc)!;
 
-  // --- 単位換算 (Levine 原著の入力単位に合わせる) ---
-  const albumin_gL = albumin * 10;       // g/dL -> g/L
-  const creat_umol = creat * 88.4;       // mg/dL -> µmol/L
-  const glucose_mmol = glucose / 18.0;   // mg/dL -> mmol/L
-  const crp_ln = Math.log(Math.max(crp, 0.01)); // ln(mg/dL)
-  const RDW = 13.0;                       // 特定健診に無い → 13.0% 近似
+  // RDW: 実測優先。無ければ中央値補完 (参考値)。
+  let rdw = num(m.rdw);
+  if (rdw === null) { rdw = RDW_MEDIAN; imputed.push('rdw'); }
 
-  // --- Levine 2018 線形予測子 ---
-  const xb =
-    -19.907 +
-    (-0.0336 * albumin_gL) +
-    (0.0095 * creat_umol) +
-    (0.1953 * glucose_mmol) +
-    (0.0954 * crp_ln) +
-    (-0.0120 * lymph) +
-    (0.0268 * mcv) +
-    (0.3306 * RDW) +
-    (0.00188 * alp) +
-    (0.0554 * wbc) +
-    (0.0804 * age);
+  // CRP: 実測 → NLR推定 → 中央値補完。
+  const crpRes = resolveCRP(m);
+  if (crpRes.source !== 'measured') imputed.push(crpRes.source === 'nlr' ? 'crp(nlr)' : 'crp');
 
-  // --- Gompertz 10年死亡リスク ---
-  const gamma = 0.0076927;
-  const mortRisk = 1 - Math.exp((-Math.exp(xb) * (Math.exp(gamma * 120) - 1)) / gamma);
-  const mortClamped = Math.min(mortRisk, 0.9999);
+  // クレアチニンの性別正規化 (位置シフト)。sex 未選択は無補正。
+  let creatShift = 0;
+  if (m.sex === 'male' || m.sex === 'female') creatShift = SEX_NORM_CREAT.ref - SEX_NORM_CREAT[m.sex];
+  const creatAdj = creat + creatShift;
 
-  // --- 逆変換 (原著定数) ---
-  let phenoBase = 141.50225 + Math.log(-0.00553 * Math.log(1 - mortClamped)) / 0.090165;
-  if (!Number.isFinite(phenoBase)) phenoBase = age;
+  const { pheno, mortality } = phenoAgeCore({
+    albumin, creatinine: creatAdj, glucose, crp: crpRes.crp, lymph, mcv, rdw, alp, wbc, age,
+  });
 
-  // --- CABA 独自の年数補正 (上限つき) ---
-  const sbpAdj = Math.max(-4, Math.min(8, (sbp - 120) * 0.04));
-  const fevAdj = fev1fvc === null ? 0 : Math.max(0, Math.min(6, (70 - fev1fvc) * 0.15));
-  let bmiAdj = 0;
-  if (bmi !== null) {
-    if (bmi >= 25) bmiAdj = Math.min(8, (bmi - 25) * 0.5);
-    else if (bmi < 18.5) bmiAdj = Math.min(6, (18.5 - bmi) * 0.6);
-  }
-  let sexAdj = 0;
-  if (m.sex === 'female') sexAdj = -1.0;
-  else if (m.sex === 'male') sexAdj = 1.0;
+  // オーバーレイ (PhenoAge外・任意)。
+  const sbp = num(m.sbp);
+  const fev = num(m.fev1fvc);
+  const sbpAdj = sbp === null ? 0 : clamp((sbp - 120) * 0.06, -3, 3);
+  const fevAdj = fev === null ? 0 : clamp((78 - fev) * 0.15, -2, 3);
+  const total = clamp(sbpAdj + fevAdj, -4, 4);
 
-  let phenoAge = phenoBase + sbpAdj + fevAdj + bmiAdj + sexAdj;
-  phenoAge = Math.max(18, Math.min(100, phenoAge));
+  const bioClamped = clamp(pheno + total, 18, 95);
+  const bio = Math.round(bioClamped * 10) / 10;
 
-  const bio = Math.round(phenoAge * 10) / 10;
   return {
     ...base,
     ok: true,
     biological_age: bio,
     delta: Math.round((bio - age) * 10) / 10,
-    mortality_risk: mortRisk,
-    pheno_base: Math.round(phenoBase * 10) / 10,
+    mortality_risk: mortality,
+    pheno_base: Math.round(pheno * 10) / 10,
+    crp_source: crpRes.source,
     adjustments: {
-      sbp: sbpAdj, fev: fevAdj, bmi: bmiAdj, sex: sexAdj,
-      total: Math.round((sbpAdj + fevAdj + bmiAdj + sexAdj) * 100) / 100,
+      sbp: Math.round(sbpAdj * 100) / 100,
+      fev: Math.round(fevAdj * 100) / 100,
+      total: Math.round(total * 100) / 100,
+      creat_sex_shift: Math.round(creatShift * 100) / 100,
     },
   };
 }
@@ -193,13 +230,15 @@ const SYNONYMS: Record<Exclude<keyof HealthAgeMarkers, 'age' | 'sex'>, string[]>
   crp: ['高感度crp', 'hscrp', 'crp', 'c反応性蛋白'],
   lymph: ['リンパ球比率', 'リンパ球', 'リンパ', 'lympho', 'lymph'],
   mcv: ['平均赤血球容積', 'mcv'],
+  rdw: ['赤血球分布幅', 'rdw-cv', 'rdwcv', 'rdw'],
   alp: ['アルカリフォスファターゼ', 'アルカリホスファターゼ', 'alp'],
-  // 「血圧(収縮期/拡張期) 127/82」「来院時 110/60」等も拾う。値は先頭数値=収縮期。
-  // '最低血圧'/'拡張期' は '収縮期' を含まないため誤爆しない。結合値は下の fallback でも拾う。
-  sbp: ['収縮期血圧', '収縮期', '最高血圧', '大血圧', '来院時', '診察室血圧', '家庭血圧', 'sbp', '血圧上'],
-  bmi: ['bmi', '体格指数'],
   wbc: ['白血球数', '白血球', 'wbc'],
+  // 好中球% (NLR代用)。'好中球' に一致 (分葉核球のみの様式は総好中球でないため拾わない=保守的)。
+  neut: ['好中球比率', '好中球', 'neut'],
+  // 「血圧(収縮期/拡張期) 127/82」「来院時 110/60」等も拾う。値は先頭数値=収縮期。
+  sbp: ['収縮期血圧', '収縮期', '最高血圧', '大血圧', '来院時', '診察室血圧', '家庭血圧', 'sbp', '血圧上'],
   fev1fvc: ['fev1/fvc', 'fev1.0%', '1秒率', 'fev1fvc'],
+  bmi: ['bmi', '体格指数'],
 };
 const HEIGHT_SYN = ['身長', 'height'];
 const WEIGHT_SYN = ['体重', 'weight'];
@@ -251,7 +290,7 @@ export function normalizeMarkers(items: RawItem[]): Partial<HealthAgeMarkers> {
       }
     }
   }
-  // BMI 補完 (身長cm・体重kg から)
+  // BMI 補完 (身長cm・体重kg から)。※ v5.4 では計算に使わないが参考表示用に保持。
   if (out.bmi == null) {
     let h: number | null = null, w: number | null = null;
     for (const it of items) {
@@ -261,8 +300,7 @@ export function normalizeMarkers(items: RawItem[]): Partial<HealthAgeMarkers> {
     if (h && w && h > 100 && h < 230) out.bmi = Math.round((w / ((h / 100) ** 2)) * 10) / 10;
   }
   // MCV 補完 (欄が空でも 赤血球 + ヘマトクリット から算出可)。
-  // MCV(fL) = Ht(%) / RBC(10^6/µL) × 10。RBC は ×10^4 表記(例 482)と ×10^6 表記(例 4.82)が
-  // 混在するため magnitude で吸収し、算出値が生理的範囲のときだけ採用する。
+  // MCV(fL) = Ht(%) / RBC(10^6/µL) × 10。RBC は ×10^4 表記(例 482)と ×10^6 表記(例 4.82)が混在。
   if (out.mcv == null) {
     let rbc: number | null = null, hct: number | null = null;
     for (const it of items) {
@@ -278,7 +316,6 @@ export function normalizeMarkers(items: RawItem[]): Partial<HealthAgeMarkers> {
     }
   }
   // SBP fallback: 「NNN / NN」(収縮期/拡張期) 形式の値を、血圧文脈の行から収縮期として拾う。
-  // 行ラベルが '来院時' 等で同義語に載らない書式を救済 (名称/詳細/セクション名に '血圧' 等)。
   if (out.sbp == null) {
     for (const it of items) {
       const v = typeof it.value === 'string' ? it.value : '';

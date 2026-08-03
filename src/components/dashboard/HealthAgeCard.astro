@@ -1,6 +1,6 @@
 ---
 /**
- * 健康年齢 (生物学的年齢 / CABA v4d) カード。
+ * 健康年齢 (生物学的年齢 / CABA v5.4) カード。
  * 生物学的年齢を大きく表示し、実年齢との差をバッジで示す。
  * 血液回で一部項目を据え置いた場合・必須項目が欠けた場合は注記を出す。
  */
@@ -45,7 +45,7 @@ const isReference = imputed.length > 0 || carried.length > 0;
 <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
   <header class="mb-2 flex items-center justify-between">
     <h2 class="text-sm font-bold text-slate-800 dark:text-slate-100">🎂 健康年齢{isReference && bio != null && <span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800">参考値</span>}</h2>
-    <span class="text-[10px] text-slate-500">CABA v4d ／ {sourceLabel}</span>
+    <span class="text-[10px] text-slate-500">CABA v5.4 ／ {sourceLabel}</span>
   </header>
 
   {bio != null ? (
