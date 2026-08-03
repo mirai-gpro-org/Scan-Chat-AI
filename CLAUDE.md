@@ -68,7 +68,25 @@
     (尿蛋白/尿潜血/尿糖/免疫便潜血/K-W) が run 毎に入れ替わりで空返しされる (検出の揺れ=非決定)。一次パスで
     空だった該当項目**だけ**を、その画像へ軽量シングルタスクで再読しギャップ埋めする (`boundaryRecheck`・既存値は
     絶対に上書きしない=numeric不変・空返しは埋めない=捏造しない)。モード非依存。🎯回帰ゼロ確認後に常用する想定。
-- **確定運用 (2026-07・🎯検証済)**: 本番スキャンは **`SCAN_OUTPUT_FORMAT` 未設定(=markdown) + `SCAN_BOUNDARY_RECHECK=on`**。
+- **確定運用 (2026-08・人間ドック決定論スタック確定)**: 本番 env は **`SCAN_OUTPUT_FORMAT` 未設定(=markdown) +
+  `SCAN_BOUNDARY_RECHECK=on` + `SCAN_OBS_DEDUP=on` + `SCAN_SCRAMBLE_FIX=on` + `SCAN_EYE_RESOLVE=on` + `SCAN_LIPID_FIX=on`**。
+  すべて**捏造ゼロ(出力値は実読値のみ・新値を作らない)**・env off で挙動不変・🎯回帰ゼロで on 化。**Phase 2-2 決定論修正スタック** (hc-merge finalize 順):
+  1. **推移グラフ非納品** (⑧-2「検査結果の推移」由来を詳細に同概念あれば除外・trend のみは残す=漏れ防止)。
+  2. **dedup** (`observation-dedup`・同値統合/別値は競合記録=自動採用しない)。
+  3. **肝鉄 scramble 再割当** (`scramble-detect.reassignScramble`・env `SCAN_SCRAMBLE_FIX`): 値がラベル基準に不適合 かつ
+     別項目Bの基準に**唯一**適合 かつ B欠落 → B へラベル付け替え。**block内限定**(liver/iron。血清鉄40-188がALP/LDHと重複するため)。
+     例 γ-GTP=157→LDH・ChE=78→ALP・TIBC=43→血清鉄。検知は再割当**前**に実行(偽陽性防止)。
+  4. **眼科 collapsed-row** (`collapsed-row.resolveEyeCollapsed`・env `SCAN_EYE_RESOLVE`): `右眼`/`左眼` ちょうどの行を値域で
+     種別へ (0.01-2.0→裸眼視力/5-30→眼圧/定性→眼底所見・左右別・付け替え先が既存なら作らない・範囲外は不触)。
+  5. **脂質 LDL↔TG 物理制約修正** (`lipid-fix.fixLipidSwap`・env `SCAN_LIPID_FIX`): 不変量 **LDL+HDL≤TC**。現状 LDL+HDL が
+     TC を MARGIN(15)超で超え(物理不能)、LDL↔TG 入替で解消するときだけ両行の値を交換(Friedewald絶食仮定不要=施設非依存)。
+  - **受容する確率的残差 (決定論で取れない=確定運用で許容)**: **分画の同レンジ入替**(好酸球↔好塩基球・独立制約なし)、
+    **系統脱落**(run依存で 好酸球/LDH/γ-GTP/血小板/身長 等が時々落ちる)。実務は**別 run 引き直し**で吸収。
+    (b)完全性チェック+ターゲット再読は VQA 信頼性課題(実測で眼圧を19.0と誤読)のため保留。
+  - **多数決(N-run)は撤回**: 名称が run 毎に揺れるため semanticKey で整合できず union 膨張(rows95→123・重複15・捏造5)=逆効果と実証。
+    scramble は「run毎に別ブロック」だが、レンジ再割当(単一run・跨run整合不要)の方が安全で確実。
+  - **wellfort-site admin 表示**: `🔧再割当`/`👁眼科`/`🧪脂質`/`⚠scramble疑い(残)` を監査表示(納品 data には含めない)。
+- **(旧・検診の確定運用) 2026-07・🎯検証済**: 本番スキャンは **`SCAN_OUTPUT_FORMAT` 未設定(=markdown) + `SCAN_BOUNDARY_RECHECK=on`**。
   🎯決定論ゴールデンで numeric 全一致・False-Value 0・Shift/Wrong 0 を確認。名称ゆれ(血圧最高/最低・白血球数↔白血球)は
   `pickDeliveryName` 正規化と照合器 alt で吸収。定性(-)の列取り違えは `salvageQualitativeResult`
   (便潜血→尿定性へ allow-list 一般化・🎯検証待ち)で救済。照合器(`elith-batch.astro goldenCheck`)に
@@ -293,7 +311,7 @@
   |---|---|---|---|---|---|
   | 健康診断(検診) | HealthCheckupData | アプリscan | ○ `scan_golden_healthcheckup_20250123.md` | ○ | — |
   | 人間ドック | HealthCheckupData | アプリscan | ○ `scan_golden_humandock_20240924.md` | ○ | — |
-  | がんリスク | CancerRiskAssessmentData | adminバッチ | 建立待ち(様式1) | ○ | — |
+  | がんリスク | CancerRiskAssessmentData | adminバッチ | ○ `scan_golden_cancer_alapds_20251226.md`(ALA-PDS様式1) | ○ | — |
   | 遺伝子 | GeneticTestResultData | adminバッチ | 建立待ち(様式1) | ○ | — |
   | 血液 | BloodTestData | デメカルCSV | (CSV由来値で可) | **×(画像なし)** | **CSV↔JSON構造照合(決定論・Scan-Chat-AI scripts)** |
   - **🎯値golden = 画像非依存**なので全タイプで使える(正解値さえ建立すれば)。`elith-batch.astro goldenCheck` は

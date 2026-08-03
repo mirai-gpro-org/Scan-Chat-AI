@@ -311,6 +311,8 @@ export function isJudgementSummaryRow(m: Record<string, unknown>): boolean {
   const v = typeof m.value === 'string' ? m.value.trim() : '';
   const name = typeof m.name === 'string' ? m.name : '';
   if (/型|ABO|Rh|血液型/.test(name)) return false;
+  // がんリスク(ALA-PDS)の「リスクランク=A/B/C/D」は総合判定でなく**主結果**。除外してはならない。
+  if (/リスクランク|リスク判定|リスクレベル|リスクグレード/.test(name)) return false;
   const noData = m.value_num == null && m.unit == null && m.ref_low == null && m.ref_high == null;
   if (noData && /まとめ/.test(name)) return true; // 「○○(まとめ)」= 総合判定欄のサマリ行
   // 判定区分表(⑧-2上)の行が「判定 A / 判定B2」等の名前で漏れる(検査名と判定列を取り違え)。判定欄=非納品。
