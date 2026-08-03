@@ -22,18 +22,25 @@ export interface RangeDef {
   canonical: string;
   low: number;
   high: number;
+  /** ブロック（同一表内のみで候補判定＝跨ブロック誤割当を防ぐ）。例: 肝酵素 vs 鉄代謝。 */
+  block: string;
   /** findByAlias で canonical に寄らない表記ゆれ（主パスの実測名）。 */
   aliases?: string[];
 }
 
-// starter: 人間ドック様式で検証済みの well-separated レンジのみ（肝酵素ブロック＝scramble 多発域）。
+// starter: 人間ドック様式で検証済みの実レンジのみ。**block 内でのみ候補判定**する（血清鉄 40-188 が
+// ALP 38-113/LDH 124-222 と重複するため。block を分けないと γ-GTP=157 が LDH と血清鉄で曖昧化し肝修正が壊れる）。
 export const SCRAMBLE_RANGES: RangeDef[] = [
-  { canonical: 'AST(GOT)', low: 13, high: 30, aliases: ['AST', 'GOT', 'GOT(AST)'] },
-  { canonical: 'ALT(GPT)', low: 7, high: 23, aliases: ['ALT', 'GPT', 'GPT(ALT)'] },
-  { canonical: 'LDH', low: 124, high: 222, aliases: ['LD'] },
-  { canonical: 'ALP', low: 38, high: 113, aliases: ['アルカリフォスファターゼ'] },
-  { canonical: 'γ-GTP', low: 9, high: 32, aliases: ['Y-GTP', 'YGTP', 'γGTP', 'ガンマGTP', 'GGT'] },
-  { canonical: 'コリンエステラーゼ', low: 201, high: 421, aliases: ['ChE', 'CHE'] },
+  // 肝・胆・膵（block=liver）。157→LDH・78→ALP は liver 内で一意（他 liver レンジと非重複）。
+  { canonical: 'AST(GOT)', low: 13, high: 30, block: 'liver', aliases: ['AST', 'GOT', 'GOT(AST)'] },
+  { canonical: 'ALT(GPT)', low: 7, high: 23, block: 'liver', aliases: ['ALT', 'GPT', 'GPT(ALT)'] },
+  { canonical: 'LDH', low: 124, high: 222, block: 'liver', aliases: ['LD'] },
+  { canonical: 'ALP', low: 38, high: 113, block: 'liver', aliases: ['アルカリフォスファターゼ'] },
+  { canonical: 'γ-GTP', low: 9, high: 32, block: 'liver', aliases: ['Y-GTP', 'YGTP', 'γGTP', 'ガンマGTP', 'GGT'] },
+  { canonical: 'コリンエステラーゼ', low: 201, high: 421, block: 'liver', aliases: ['ChE', 'CHE'] },
+  // 鉄代謝（block=iron）。TIBC↔血清鉄 は互いに非重複。liver とは block 分離で干渉させない。
+  { canonical: 'TIBC', low: 246, high: 410, block: 'iron', aliases: ['総鉄結合能', '総鉄結合能(TIBC)'] },
+  { canonical: '血清鉄', low: 40, high: 188, block: 'iron', aliases: ['鉄', 'Fe', '血清鉄(Fe)'] },
 ];
 
 export interface ScrambleSuspect {
@@ -127,6 +134,7 @@ export function detectScramble(
     const likely: string[] = [];
     for (const other of ranges) {
       if (other.canonical === r.canonical) continue;
+      if (other.block !== r.block) continue; // 同一ブロック内のみ（跨ブロック誤割当を防ぐ）
       if (!inRange(v, other)) continue;
       // (3) 再割当可能 = other が納品に**欠落**のときのみ（誤検知抑制）。
       //     「other が在るが範囲外」= 連鎖(chain)は false-positive を生む(実測: 本物の高ALT=26 が γ-GTP へ
@@ -191,7 +199,7 @@ export function reassignScramble(measurements: unknown, opts?: { ranges?: RangeD
     const v = r ? numOf(rec) : null;
     if (r && v != null && !inRange(v, r)) {
       const likely = ranges.filter(
-        (o) => o.canonical !== r.canonical && inRange(v, o) && hasInRange.get(o.canonical) === undefined && !filledTargets.has(o.canonical),
+        (o) => o.canonical !== r.canonical && o.block === r.block && inRange(v, o) && hasInRange.get(o.canonical) === undefined && !filledTargets.has(o.canonical),
       );
       if (likely.length === 1) {
         const to = likely[0].canonical;
