@@ -28,6 +28,7 @@ import {
 import { parseScanRegions, type ScanRegionJson } from './scan-export';
 import { canonicalize, canonAudit, type CanonAudit } from './canonicalize';
 import { dedupObservations, dedupAudit, semanticKey, type DedupAudit } from './observation-dedup';
+import { normalizeCancerRisk } from './cancer-risk-fix';
 import { isHighRisk, evidenceVerdict, emitDecision } from './perception-repair';
 import { findByAlias, normKey as stdNormKey } from './standard-master';
 import type { S3PutFile } from './s3';
@@ -1282,6 +1283,8 @@ export interface ElithScanBundle {
   canon: CanonAudit | null;
   /** 後段 dedup の監査 (SCAN_OBS_DEDUP=on のときのみ非 null)。統合した別名重複と同名別値の競合。納品 json には含めない。 */
   dedup: DedupAudit | null;
+  /** がんリスク様式固有の正規化監査 (CancerRiskAssessmentData のときのみ非 null)。目安表閾値の除外/分数正規化。 */
+  cancerFix: { dropped: { name: string; value: string }[]; normalized: { name: string; from: string; to: string }[] } | null;
 }
 
 function utf8Bytes(s: string): number {
@@ -1328,7 +1331,10 @@ export async function buildElithScanBundle(input: ElithScanInput): Promise<Elith
   // ①読取後段の決定論 dedup（課題C/B・SCAN_OBS_DEDUP=on のときだけ）。canonicalize 後に通す
   // （概念キーが canonical_name に揃った状態で別名重複を統合できる）。監査は bundle.dedup に返す。
   const dedupResult = obsDedupEnabled() ? dedupObservations(canonMeasurements) : null;
-  const deliveryMeasurements = dedupResult ? dedupResult.delivery : canonMeasurements;
+  const dedupedMeasurements = dedupResult ? dedupResult.delivery : canonMeasurements;
+  // がんリスク(ALA-PDS)様式固有: 目安表の基準閾値(インデックス値=2.0未満等)除外＋分数「0.8/8.0」→0.8 正規化。
+  const cancerFix = input.formatId === 'CancerRiskAssessmentData' ? normalizeCancerRisk(dedupedMeasurements) : null;
+  const deliveryMeasurements = cancerFix ? cancerFix.delivery : dedupedMeasurements;
   const json = {
     format_id: input.formatId,
     schema_version: ELITH_HANDOFF_SCHEMA_VERSION,
@@ -1387,5 +1393,6 @@ export async function buildElithScanBundle(input: ElithScanInput): Promise<Elith
     files,
     canon: canonResult ? canonAudit(canonResult) : null,
     dedup: dedupResult ? dedupAudit(dedupResult) : null,
+    cancerFix: cancerFix ? { dropped: cancerFix.dropped, normalized: cancerFix.normalized } : null,
   };
 }

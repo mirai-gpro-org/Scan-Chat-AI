@@ -142,6 +142,7 @@ export const POST: APIRoute = async ({ request }) => {
       image_key: bundle.imageKey,
       necessity,
       canon: bundle.canon,
+      cancer_fix: bundle.cancerFix,
       preview: bundle.json,
     });
   }
@@ -159,6 +160,7 @@ export const POST: APIRoute = async ({ request }) => {
       format_id: formatId,
       necessity,
       canon: bundle.canon,
+      cancer_fix: bundle.cancerFix,
       preview: bundle.json,
     }, 409);
   }
@@ -177,6 +179,7 @@ export const POST: APIRoute = async ({ request }) => {
       image_key: bundle.imageKey,
       necessity,
       canon: bundle.canon,
+      cancer_fix: bundle.cancerFix,
       preview: bundle.json,
     });
   }
@@ -196,6 +199,7 @@ export const POST: APIRoute = async ({ request }) => {
       image_key: bundle.imageKey,
       necessity,
       canon: bundle.canon,
+      cancer_fix: bundle.cancerFix,
       preview: bundle.json, // 🎯/🔍 照合用: 納品JSON(data.measurements)を返す(他分岐と同様)。
       uploaded: uploaded.map((u) => ({ key: u.key, uri: u.uri })),
     });
