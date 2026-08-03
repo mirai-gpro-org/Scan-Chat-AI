@@ -401,6 +401,8 @@ export function sanitizeMeasurementsForDelivery(list: unknown): {
     const el = salvageQualitativeResult(el0);
     const m = leanMeasurement(el);
     if (m.value == null && m.value_num == null) continue; // 未測定(値なし)は納品しない
+    // 区切り記号のみの値(「-/-」「/」等=未実施の②③血圧等)は測定値でない。定性「(-)」等は括弧付きで除外しない。
+    if (m.value_num == null && typeof m.value === 'string' && /^[\s\-‐‑–—―ー－/／]+$/.test(m.value.trim())) continue;
     if (isJudgementSummaryRow(m)) continue; // 総合判定(A/B/C)欄は測定値でない
     if (isReceiptMetaRow(m)) continue; // 受診日/受診コース/オプション 等の受付メタは測定値でない
     const bp = splitBloodPressure(m); // 血圧結合セル(111/74)→最高/最低の2行へ分割
