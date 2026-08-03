@@ -291,6 +291,7 @@
 | `docs/data_integration_requirements.md` | PII 分離・連携要件 |
 | `docs/diagnostic_session_data_spec.md` | 診断セッションのデータ構造 |
 | `docs/scan_feature_requirements.md` / `docs/scan_s3_export.md` | AIスキャン機能要件 / S3書き出し |
+| `docs/health_age_caba_v5.4_spec.md` | **健康年齢(CABA v5.4)確定事項** (免責2文/WBC桁正規化/補完定数/SBP・FEV補正・Wellfort確認2026-08) |
 | `docs/scan_canonicalization_standard_format_design.md` | **戦略正本: 検査票→標準フォーマット正準化(2層戦略)**。①読取=native multimodal維持 / ②正準化=健診標準フォーマット(KMAT)への決定論マッピング新規 |
 
 ## コード / スタック

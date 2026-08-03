@@ -69,4 +69,10 @@ const isReference = imputed.length > 0 || carried.length > 0;
       {carried.length > 0 && <span>※ {jp(carried)} は直近の人間ドック値を据え置いて再計算しています。</span>}
     </p>
   )}
+
+  {/* 免責 (Wellfort 確認 2026-08・対外表記に明記・必須)。 */}
+  <p class="mt-3 border-t border-slate-100 pt-2 text-[11px] leading-relaxed text-slate-400 dark:border-slate-800">
+    診断・治療の根拠にしないでください。本結果は、検査結果に基づく理論値です。<br />
+    本数値は、原著に基づきウェルフォート社が改変したものです。
+  </p>
 </section>
