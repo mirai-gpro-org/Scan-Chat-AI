@@ -56,7 +56,9 @@ interface Body {
   amplitude?: unknown;
   seeds?: unknown;        // { [formatId]: sourceKey }
   seedClientId?: unknown; // seeds 未指定 format をこの client の最新で解決
-  sourcePrefix?: unknown;
+  seedPrefix?: unknown;   // 種の探索先 prefix (既定=sourcePrefix。UI は納品層 'user/' を渡す)
+  sourcePrefix?: unknown; // 生成物の出力先 prefix (既定 scan-accuracy-test/)
+  deliveryPrefix?: unknown; // mode=list: 納品(assembled)層の走査 prefix (既定 'user/')
   dryRun?: unknown;
 }
 
@@ -87,24 +89,33 @@ export const POST: APIRoute = async ({ request }) => {
 
   const mode = str(body.mode) ?? 'generate';
 
-  // ── mode=list: ソース層の client_id 候補を「保有 format 付き」で返す (UI の種プルダウン用) ──
-  // 種は単一 client_id を全 format に使うため、プランに必要な format を揃えた client を選べるようにする。
+  // ── mode=list: 種 client_id 候補を「層(納品/ソース)・保有 format 付き」で返す (UI プルダウン用) ──
+  // 種は単一 client_id を全 format に使うため、**全 format が1IDに揃う「納品(assembled)層」を優先**する。
+  //   - 納品(assembled)層: バケット直下 user/{id}/... = アセンブリ済み完全バンドル(推奨・seed_prefix='user/')。
+  //   - ソース層: {sourcePrefix}user/{id}/... = 生スキャン(単一 format が多い・seed_prefix=sourcePrefix)。
+  // 各候補に seed_prefix を付け、generate 時に seedPrefix として渡すと探索先が一致する。
   if (mode === 'list') {
-    const objs = await listObjects(sourcePrefix);
+    const deliveryPrefix = (str(body.deliveryPrefix) ?? 'user/').replace(/^\/+/, '').replace(/\/*$/, '/');
     const re = /^(HealthCheckupData|BloodTestData|CancerRiskAssessmentData|GeneticTestResultData|Other)_date_(\d{4}_\d{2}_\d{2})_user_(.+)\.json$/;
-    const map = new Map<string, { formats: Set<string>; latest: string | null; count: number }>();
-    for (const o of objs) {
-      const m = re.exec(basename(o.key));
-      if (!m) continue;
-      const e = map.get(m[3]) ?? { formats: new Set<string>(), latest: null, count: 0 };
-      e.formats.add(m[1]); e.count++;
-      if (!e.latest || m[2] > e.latest) e.latest = m[2];
-      map.set(m[3], e);
+    const layers: { prefix: string; layer: 'assembled' | 'source' }[] = [{ prefix: deliveryPrefix, layer: 'assembled' }];
+    if (cleanPrefix !== deliveryPrefix) layers.push({ prefix: cleanPrefix, layer: 'source' });
+    const byKey = new Map<string, { client_id: string; layer: string; seed_prefix: string; formats: Set<string>; latest: string | null; count: number }>();
+    for (const L of layers) {
+      const objs = await listObjects(L.prefix);
+      for (const o of objs) {
+        const m = re.exec(basename(o.key));
+        if (!m) continue;
+        const k = `${L.layer}::${m[3]}`;
+        const e = byKey.get(k) ?? { client_id: m[3], layer: L.layer, seed_prefix: L.prefix, formats: new Set<string>(), latest: null, count: 0 };
+        e.formats.add(m[1]); e.count++;
+        if (!e.latest || m[2] > e.latest) e.latest = m[2];
+        byKey.set(k, e);
+      }
     }
-    const clients = [...map.entries()]
-      .map(([client_id, e]) => ({ client_id, formats: [...e.formats].sort(), latest_date: e.latest ? e.latest.replace(/_/g, '-') : null, count: e.count }))
-      .sort((a, b) => a.client_id.localeCompare(b.client_id));
-    return json({ ok: true, mode: 'list', source_prefix: sourcePrefix, clients });
+    const clients = [...byKey.values()]
+      .map((e) => ({ client_id: e.client_id, layer: e.layer, seed_prefix: e.seed_prefix, formats: [...e.formats].sort(), latest_date: e.latest ? e.latest.replace(/_/g, '-') : null, count: e.count }))
+      .sort((a, b) => (a.layer === b.layer ? a.client_id.localeCompare(b.client_id) : a.layer === 'assembled' ? -1 : 1));
+    return json({ ok: true, mode: 'list', delivery_prefix: deliveryPrefix, source_prefix: cleanPrefix, clients });
   }
 
   const planKey = str(body.plan) ?? '';
@@ -123,6 +134,10 @@ export const POST: APIRoute = async ({ request }) => {
   const dryRun = body.dryRun === true;
   const seedsIn = body.seeds && typeof body.seeds === 'object' ? (body.seeds as Record<string, unknown>) : {};
   const seedClientId = str(body.seedClientId);
+  // 種の探索先 (seedClientId 解決に使う)。既定はソース層だが、UI は納品(assembled)層の完全バンドルを渡す。
+  const seedPrefix = str(body.seedPrefix)
+    ? str(body.seedPrefix)!.replace(/^\/+/, '').replace(/\/*$/, '/')
+    : cleanPrefix;
 
   // 1) 各 format の種(seed) key を解決 (seeds[fmt] 明示 → seedClientId で最新)。
   const planFormats = [...new Set(plan.formats.map((f) => f.formatId))];
@@ -133,7 +148,7 @@ export const POST: APIRoute = async ({ request }) => {
     if (explicit) { seedKey[fmt] = explicit; continue; }
     if (seedClientId) {
       try {
-        const k = await resolveSeedKey(fmt, seedClientId, sourcePrefix);
+        const k = await resolveSeedKey(fmt, seedClientId, seedPrefix);
         if (k) { seedKey[fmt] = k; continue; }
       } catch (err) {
         return json({ ok: false, error: 'seed_resolve_failed', detail: String(err instanceof Error ? err.message : err) }, 502);
