@@ -105,6 +105,14 @@ async function resolveSeedKey(format: string, seedClientId: string, sourcePrefix
     .sort((a, b) => b.key.localeCompare(a.key));
   return mine[0]?.key ?? null;
 }
+/** prefix 配下の {format}_ 最新 key を「任意 client から」解決 (種フォールバック用)。 */
+async function resolveLatestFormatKey(format: string, prefix: string): Promise<string | null> {
+  const objs = await listObjects(prefix);
+  const all = objs
+    .filter((o) => o.key.endsWith('.json') && basename(o.key).startsWith(`${format}_`))
+    .sort((a, b) => b.key.localeCompare(a.key));
+  return all[0]?.key ?? null;
+}
 
 export const POST: APIRoute = async ({ request }) => {
   if (!authorized(request)) return json({ ok: false, error: 'unauthorized', detail: 'Invalid API key' }, 401);
@@ -174,25 +182,33 @@ export const POST: APIRoute = async ({ request }) => {
     ? str(body.seedPrefix)!.replace(/^\/+/, '').replace(/\/*$/, '/')
     : cleanPrefix;
 
-  // 1) 各 format の種(seed) key を解決 (seeds[fmt] 明示 → seedClientId で最新)。
+  // 1) 各 format の種(seed) key を解決。優先順位:
+  //    ① seeds[fmt] 明示 → ② 選択 client(seedClientId)の当該 format → ③ seedPrefix 内の任意 client(最新)
+  //    → ④ ソース層の任意 client(最新)。②で無くても③④で「借用」してプラン全 format を揃える
+  //    (アセンブリIDが Other 等を欠いても、他所に実在すれば流用=合成なので可・借用元は応答で明示)。
   const planFormats = [...new Set(plan.formats.map((f) => f.formatId))];
   const seedKey: Record<string, string> = {};
+  const borrowed: Record<string, string> = {}; // ②で解決できず③④で借用した format → 借用元 key
   const missing: string[] = [];
   for (const fmt of planFormats) {
     const explicit = str(seedsIn[fmt]);
     if (explicit) { seedKey[fmt] = explicit; continue; }
-    if (seedClientId) {
-      try {
-        const k = await resolveSeedKey(fmt, seedClientId, seedPrefix);
-        if (k) { seedKey[fmt] = k; continue; }
-      } catch (err) {
-        return json({ ok: false, error: 'seed_resolve_failed', detail: String(err instanceof Error ? err.message : err) }, 502);
-      }
+    try {
+      let k = seedClientId ? await resolveSeedKey(fmt, seedClientId, seedPrefix) : null;
+      if (!k) { k = await resolveLatestFormatKey(fmt, seedPrefix); if (k) borrowed[fmt] = k; }
+      if (!k && cleanPrefix !== seedPrefix) { k = await resolveLatestFormatKey(fmt, cleanPrefix); if (k) borrowed[fmt] = k; }
+      if (k) { seedKey[fmt] = k; continue; }
+    } catch (err) {
+      return json({ ok: false, error: 'seed_resolve_failed', detail: String(err instanceof Error ? err.message : err) }, 502);
     }
     missing.push(fmt);
   }
   if (missing.length) {
-    return json({ ok: false, error: 'seed_missing', detail: `種(seed)未指定の format: ${missing.join(', ')}。seeds[formatId]=sourceKey か seedClientId を指定してください。` }, 400);
+    return json({
+      ok: false, error: 'seed_missing',
+      detail: `種がどの client/層にも存在しない format: ${missing.join(', ')}。まず該当検査を1件スキャン/投入して種を用意するか、seeds[formatId]=sourceKey を明示指定してください。`,
+      missing, seed_keys: seedKey, borrowed,
+    }, 400);
   }
 
   // 2) 種を取得・検証。
@@ -307,6 +323,7 @@ export const POST: APIRoute = async ({ request }) => {
     manifests: manifestFiles.length,
     per_format: perFormatCount,
     seed_keys: seedKey,
+    seed_borrowed: borrowed, // ②選択clientに無く③④他所から借用した format → 借用元key
     health_age: { source_format: haSourceFormat, generated: haGenerated, skipped: haSkipped, age: Number.isFinite(personaAge) ? Math.round(personaAge) : null, sex: personaSex },
     files: [...dataFiles, ...manifestFiles].map((f) => f.key),
   };
