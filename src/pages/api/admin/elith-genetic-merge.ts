@@ -11,7 +11,7 @@
  */
 
 import type { APIRoute } from 'astro';
-import { scanGeneticPage } from '../../../lib/elith-genetic';
+import { scanGeneticPage, scanAiPredictionPage } from '../../../lib/elith-genetic';
 import { ELITH_HANDOFF_SCHEMA_VERSION, jstTodayIso } from '../../../lib/elith-export';
 import { MODELS } from '../../../lib/gemini';
 import { getS3Config, isS3Configured, putFiles } from '../../../lib/s3';
@@ -45,17 +45,24 @@ function randomUuid(): string {
 function utf8Bytes(s: string): number {
   return typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(s).length : Buffer.byteLength(s, 'utf-8');
 }
-function folderOf(prefix: string, clientId: string, testDate: string): { folder: string; stem: string } {
+function folderOf(prefix: string, clientId: string, testDate: string, formatId: string): { folder: string; stem: string } {
   const dateFolder = testDate.replace(/-/g, '_');
   const cleanPrefix = prefix ? prefix.replace(/^\/+/, '').replace(/\/*$/, '/') : '';
   return {
     folder: `${cleanPrefix}user/${clientId}/date/${dateFolder}/`,
-    stem: `GeneticTestResultData_date_${dateFolder}_user_${clientId}`,
+    stem: `${formatId}_date_${dateFolder}_user_${clientId}`,
   };
+}
+/** このエンドポイントが扱う多ページ自由構造レポート。既定=遺伝子。Other=LAiF AI疾病発症予測。 */
+function resolveFormat(v: unknown): { formatId: 'GeneticTestResultData' | 'Other'; kind: string } {
+  return v === 'Other'
+    ? { formatId: 'Other', kind: 'ai_prediction' }
+    : { formatId: 'GeneticTestResultData', kind: 'genetic_scan_merged' };
 }
 
 interface Body {
   action?: unknown;
+  formatId?: unknown;   // 'GeneticTestResultData'(既定) | 'Other'(LAiF AI疾病発症予測)
   image?: unknown;
   mimeType?: unknown;
   clientId?: unknown;
@@ -79,6 +86,7 @@ export const POST: APIRoute = async ({ request }) => {
   }
 
   const action = str(body.action) ?? 'part';
+  const { formatId, kind } = resolveFormat(str(body.formatId));
   const clientId = str(body.clientId);
   if (!clientId) return json({ ok: false, error: 'clientId is required' }, 400);
 
@@ -94,7 +102,8 @@ export const POST: APIRoute = async ({ request }) => {
     const mimeType = parsedImg.mime || str(body.mimeType) || 'image/jpeg';
 
     try {
-      const r = await scanGeneticPage({ imageBase64: parsedImg.data, mimeType, hint: str(body.hint) });
+      const scanPage = formatId === 'Other' ? scanAiPredictionPage : scanGeneticPage;
+      const r = await scanPage({ imageBase64: parsedImg.data, mimeType, hint: str(body.hint) });
       return json({
         ok: true,
         action: 'part',
@@ -132,12 +141,12 @@ export const POST: APIRoute = async ({ request }) => {
       });
     }
 
-    const { folder, stem } = folderOf(prefix, clientId, testDate);
+    const { folder, stem } = folderOf(prefix, clientId, testDate, formatId);
     const json_key = `${folder}${stem}.json`;
     const jsonObj = {
-      format_id: 'GeneticTestResultData',
+      format_id: formatId,
       schema_version: ELITH_HANDOFF_SCHEMA_VERSION,
-      kind: 'genetic_scan_merged',
+      kind,
       client_id: clientId,
       diagnostic_id: randomUuid(),
       source_file: str(body.sourceFile),
@@ -151,15 +160,17 @@ export const POST: APIRoute = async ({ request }) => {
         origin: 'scan-chat-ai',
         app: 'scan-chat-ai',
         model: MODELS.scan,
-        note: 'admin バッチ (遺伝子・AIスキャン・構造化はLLM全面委任)。項目構造はLLM判定。',
-        lab_name: null,
+        note: formatId === 'Other'
+          ? 'admin バッチ (LAiF AI疾病発症予測・AIスキャン・構造化はLLM全面委任)。項目構造はLLM判定。'
+          : 'admin バッチ (遺伝子・AIスキャン・構造化はLLM全面委任)。項目構造はLLM判定。',
+        lab_name: formatId === 'Other' ? 'LAiF' : null,
       },
       data: { item_count: items.length, items, pages },
     };
     const jsonBody = JSON.stringify(jsonObj, null, 2);
 
     if (!isS3Configured() || !cfg) {
-      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, item_count: items.length, preview: jsonObj });
+      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, item_count: items.length, format_id: formatId, preview: jsonObj });
     }
     try {
       const uploaded = await putFiles([
@@ -167,7 +178,7 @@ export const POST: APIRoute = async ({ request }) => {
       ]);
       return json({
         ok: true, action: 'finalize', configured: true, bucket: cfg.bucket,
-        client_id: clientId, format_id: 'GeneticTestResultData', test_date: testDate,
+        client_id: clientId, format_id: formatId, test_date: testDate,
         page_count: parts.length, item_count: items.length, json_key,
         uri: uploaded[0]?.uri ?? null,
         preview: jsonObj, // 🎯 照合用: 納品JSON(data.items)を返す(S3未設定分岐と同様)。

@@ -51,12 +51,37 @@ export interface GeneticPageResult {
   parsed: boolean;
 }
 
-/** 1 ページを Gemini に渡し、構造化 JSON を得る (LLM 全面委任)。 */
-export async function scanGeneticPage(input: {
-  imageBase64: string;
-  mimeType: string;
-  hint?: string | null;
-}): Promise<GeneticPageResult> {
+// ── LAiF「AI 疾病発症予測」レポート (format_id=Other / kind=ai_prediction) ──
+// 遺伝子と同じく多ページの画像レポートで、構造は LLM 全面委任 (専用 format 無し=自由構造)。
+const AI_PREDICTION_SYSTEM =
+  'あなたは「AI 疾病発症予測」検査結果レポートを読み取り、項目ごとに構造化データへ変換する専門家です。書かれている情報だけを正確に構造化し、創作・推測はしません。';
+const AI_PREDICTION_USER = `これは LAiF社「AI 疾病発症予測」検査結果レポートの1ページの画像です。
+このページに含まれる各疾患の予測項目を、内容が正確に伝わるように構造化し、JSON で返してください。
+
+このレポートの構成:
+- 発症予測ページ … 疾患ごとに「5年発症率(%)」「10年発症率(%)」「相対リスク比」「昨年の相対リスク比」が並ぶ。
+  疾患は「生活習慣病 / 循環器疾患 / 悪性腫瘍 / 神経疾患」等のカテゴリに分かれる。
+- リスク因子・予防策ページ … 疾患ごとに「AIのアドバイス(予防策の文章)」が並ぶ。
+- 表紙・説明ページ … 予測項目は無い。
+
+出力仕様:
+- 出力は必ず次の形の JSON オブジェクト1つ: {"section": <このページのカテゴリ見出し。無ければ null>, "items": [ <各疾患のオブジェクト>, ... ]}
+- **各項目オブジェクトには、印字されていれば必ず次のフィールドを含めてください**(他の情報は任意キーで自由に追加してよい):
+  1. \`項目名\`: 疾患名の文字列 (例「糖尿病」「脳梗塞」「肺がん」)。
+  2. 発症予測ページなら \`5年発症率\`・\`10年発症率\`(いずれも「X%」文字列)・\`相対リスク比\`(数値)・\`昨年の相対リスク比\`(数値, 印字があれば)。
+  3. リスク因子・予防策ページなら \`アドバイス\`(予防策の文章そのまま)。
+- **数値・文章は印字どおりに写す。創作・推測・補完はしない**。印字が無い項目は省略する。
+- **氏名・生年月日・住所などの個人情報(「様」の付く氏名等)は一切含めない**。
+- カテゴリ見出し(「生活習慣病」等)や凡例は項目ではないので items に入れない。
+- 予測項目が無いページ(表紙・説明ページ)なら items は空配列 [] にする。
+- JSON 以外の文章・注釈・コードフェンスは出力しない。`;
+
+/** 1 ページを Gemini で構造化 (LLM 全面委任・system/user 差替でレポート種別に対応)。 */
+async function scanReportPage(
+  input: { imageBase64: string; mimeType: string; hint?: string | null },
+  systemText: string,
+  userText: string,
+): Promise<GeneticPageResult> {
   const apiKey = getGeminiApiKey();
   if (!apiKey) throw new Error('GEMINI_API_KEY is not configured (server env)');
   if (!isSupportedMime(input.mimeType)) throw new Error(`unsupported mime: ${input.mimeType}`);
@@ -64,13 +89,13 @@ export async function scanGeneticPage(input: {
   const res = await callGemini(
     apiKey,
     {
-      systemInstruction: { parts: [{ text: GENETIC_SYSTEM }] },
+      systemInstruction: { parts: [{ text: systemText }] },
       contents: [
         {
           role: 'user',
           parts: [
             { inline_data: { mime_type: input.mimeType, data: input.imageBase64 } },
-            { text: GENETIC_USER + (input.hint ? `\n\n補足: ${input.hint}` : '') },
+            { text: userText + (input.hint ? `\n\n補足: ${input.hint}` : '') },
           ],
         },
       ],
@@ -99,4 +124,13 @@ export async function scanGeneticPage(input: {
     parsed = false; // raw は返す (呼び出し側で監査)
   }
   return { section, items, raw, finishReason, parsed };
+}
+
+/** 遺伝子検査 1 ページを構造化 (項目名/発症リスク倍率/発症率 を固定・案A-lite)。 */
+export function scanGeneticPage(input: { imageBase64: string; mimeType: string; hint?: string | null }): Promise<GeneticPageResult> {
+  return scanReportPage(input, GENETIC_SYSTEM, GENETIC_USER);
+}
+/** LAiF「AI 疾病発症予測」1 ページを構造化 (項目名/発症予測 を固定・自由構造)。 */
+export function scanAiPredictionPage(input: { imageBase64: string; mimeType: string; hint?: string | null }): Promise<GeneticPageResult> {
+  return scanReportPage(input, AI_PREDICTION_SYSTEM, AI_PREDICTION_USER);
 }
