@@ -1,0 +1,156 @@
+# Elith 納品セット アセンブリ ― ラップ仕様 説明書（健康年齢の時系列対応版）
+
+| 項目 | 内容 |
+|---|---|
+| 目的 | 「📦 Elith 納品セット アセンブリ」および「プラン時系列生成（疑似データ）」が、**どのようにファイルをラップして S3 へ配置しているか**を、Elith 受け渡し仕様（`elith-handoff-v0.1`）に準拠して説明する。特に **健康年齢（HealthAgeData）を他検査と同様に時系列で納品する**点を明記する。 |
+| 宛先 | 株式会社 Elith 御中 ／ 作成: 株式会社ウェルフォート・UNFIX（開発） |
+| 版 | 2026-08-04 |
+| 根拠仕様 | `docs/elith_s3_data_handoff_spec.md`（正本 §3 フォルダ/命名・§6 共通エンベロープ・§7 各format・§8 一括書出し）／ `docs/elith_handoff.schema.json`（JSON Schema `elith-handoff-v0.1`・format_id 7種）／ `docs/elith_masking_definition.md`（除外＝PII/bbox/region/category）。 |
+| 重要な変更点 | **健康年齢を「1ユーザー1件」→「検査日毎（時系列）」に変更**（発注者判断 2026-08）。旧 §7.3.1 の「時系列は不要（2026-07）」を撤回。Elith 側の読み取りも「各 `date/` フォルダ内の `HealthAgeData_*`」を走査する形へ更新をお願いします。 |
+
+---
+
+## 1. フォルダ / ファイル構造（Elith 仕様 §3 準拠）
+
+納品はすべて **バケット直下 `user/`** 配下に、**1 ユーザー ID = 1 フォルダ、受診回ごとに `date/` サブフォルダ**で配置します。
+
+```
+s3://{bucket}/user/{client_id}/date/{YYYY_MM_DD}/
+    {format_id}_date_{YYYY_MM_DD}_user_{client_id}.json    # その受診回の各検査（複数）
+```
+
+- `client_id` … 仮名 ID（`diagnostic_user_id` 相当。PII 非含有）。**通年で不変**、受診回は `date/` で分離。
+- `{YYYY_MM_DD}` … その回の検査日（アンダースコア区切り）。
+- 命名は Elith 仕様 §3.2 / §7 と同一。**健康年齢も同じ命名規則**に従います（後述）。
+
+年に複数回受診する検査は、Elith 仕様 §3.3 のとおり **回ごとに `date/` フォルダを 1 つ作成**し、その回で揃った format だけを収めます。
+
+---
+
+## 2. 収録 format（`elith-handoff-v0.1` の 7 種）
+
+`format_id`（`elith_handoff.schema.json` の enum）:
+
+| format_id | 内容 | 取得元 |
+|---|---|---|
+| `HealthCheckupData` | 健診・人間ドック | アプリ AI スキャン |
+| `BloodTestData` | 血液検査 | デメカル等 |
+| `CancerRiskAssessmentData` | がんリスク（尿） | 検査機関 |
+| `GeneticTestResultData` | 遺伝子検査 | 検査機関 |
+| `LifestyleQuestionnaireData` | 生活習慣・AI 問診 | アプリ |
+| **`HealthAgeData`** | **健康年齢（CABA）** | **納品時に算出・生成** |
+| `Other` | AI 疾病予測等（専用 format 無し） | 各種 |
+
+各ファイルは共通エンベロープ（Elith 仕様 §6 / スキーマ必須項目）を持ちます:
+`format_id` / `schema_version`（`elith-handoff-v0.1`）/ `client_id` / `test_date` / `exported_at` / `subject` / `source` / `data`。
+**除外**（`elith_masking_definition.md`）: 氏名・住所・生年月日等の PII、版面座標(bbox)、見出し(region)、区分(category)。
+
+---
+
+## 3. 健康年齢（HealthAgeData）のラップ ― 【今回の主眼】
+
+### 3.1 位置づけと命名
+- 健康年齢は、他の検査ファイルと **完全に同じ場所・同じ命名規則** で納品します:
+  ```
+  user/{client_id}/date/{YYYY_MM_DD}/HealthAgeData_date_{YYYY_MM_DD}_user_{client_id}.json
+  ```
+- **特別な場所・特別な名前ではありません。** 各 `date/` フォルダ内に、他検査と並んで置かれます。
+
+### 3.2 時系列化（旧「1ユーザー1件」からの変更）
+- **健康年齢は「血液検査ごとに最新を算出」する運用に合わせ、検査日毎（時系列）に納品します。**
+  - 血液検査がある回 → **その血液検査日**に健康年齢を同梱。
+  - 血液検査が無いプラン → **健診/人間ドック日**に健康年齢を同梱。
+  - 同一 date に健診と血液が両方ある回は **健診（人間ドック）を優先**して 1 件。
+- → Elith 側は **「各 `date/` フォルダ内の `HealthAgeData_*` を、その回の健康年齢として読む」** 形にしてください（従来の「ユーザーに 1 件だけ」という前提だと、2 回目以降の `date/` にある健康年齢を取りこぼします＝**今回の受信不良の主因と推定**）。
+
+### 3.3 data スキーマ（`elith_handoff.schema.json` §HealthAgeData）
+`data` は以下 5 項目（必須）:
+```jsonc
+{
+  "format_id": "HealthAgeData",
+  "schema_version": "elith-handoff-v0.1",
+  "kind": "health_age",
+  "client_id": "elith-test-exec-001",
+  "test_date": "2024-02-15",           // その回の検査日
+  "exported_at": "2026-08-04T…Z",
+  "subject": { "sex": "male", "age": 51 },   // age=その回時点の実年齢
+  "source": { "origin": "scan-chat-ai", "model": "CABA-v5.4", "note": "健康年齢(CABA)" },
+  "data": {
+    "health_age": 48.3,        // 健康年齢（生物学的年齢）
+    "actual_age": 51,          // 実年齢
+    "computed_date": "2026-08-04",
+    "delta": -2.7,             // health_age - actual_age
+    "model_version": "CABA-v5.4"
+  }
+}
+```
+- **モデルは `CABA-v5.4`**（Levine PhenoAge ベース＋ウェルフォート改変。旧 v4d から更新）。
+- 実データ納品時は、算出済みスコア（`diagnosis.health_age_scores`）を **元 S3 キー（source_ref）で突合**して各回に載せます。算出済みスコアが無い回は **載せません（age は PII 除去済み納品からは再計算不可＝捏造しない）**。
+
+---
+
+## 4. 疑似（合成）時系列データの生成とラップ
+
+Elith 結合テスト用に、**契約プランごとに 3 年分の時系列疑似データ**を生成します（`docs/elith_synthetic_timeseries_plan_spec.md`）。
+- 各 format は **実データ 1 件を種に、数値のみ ±5% の決定論ジッタ**（seed 固定＝再現可能・値をゼロから捏造しない）。
+- **健康年齢も他検査と同様に時系列で生成**します。**数・タイミングは血液検査（無ければ健診）に一致**:
+
+| プラン | 健康年齢の本数（3年） | 算出タイミング |
+|---|---|---|
+| 経営層・幹部 | **9 本** | 血液検査の各回（年3回×3年）。その回の合成血液値から算出 |
+| ミドルマネジメント | **3 本** | 健診/人間ドックの各回（年1回×3年）。その回の合成健診値から算出 |
+
+- 合成の健康年齢は、**その回の合成検査値から CABA v5.4 で算出**し、同じ `date/` フォルダへ同梱します（実データと同一のラップ）。
+- 実年齢は経年で加算（`D0 実年齢 + 経過年数`）。
+- 各ファイルに `synthetic: true` / `date_source: "synthetic"` を付与。**PII 非含有**。
+
+### 4.1 配置例（経営層・幹部プラン・D0=2023-06-15）
+```
+user/elith-test-exec-001/
+  date/2023_06_15/   ← Y1-R1
+      HealthCheckupData_date_2023_06_15_user_elith-test-exec-001.json
+      BloodTestData_date_2023_06_15_user_elith-test-exec-001.json
+      CancerRiskAssessmentData_date_2023_06_15_user_elith-test-exec-001.json
+      GeneticTestResultData_date_2023_06_15_user_elith-test-exec-001.json
+      HealthAgeData_date_2023_06_15_user_elith-test-exec-001.json     ← 健康年齢（この回）
+      (Other は種がある場合のみ)
+  date/2023_10_15/   ← Y1-R2（血液・がん・健康年齢）
+      BloodTestData_…json / CancerRiskAssessmentData_…json
+      HealthAgeData_date_2023_10_15_user_elith-test-exec-001.json     ← 健康年齢（この回）
+  date/2024_02_15/   ← Y1-R3（同上）
+      …
+      HealthAgeData_date_2024_02_15_user_elith-test-exec-001.json
+  …（Y2/Y3 も同様。健康年齢は血液の全 9 回に 1 件ずつ）
+```
+→ **健康年齢は全 9 個の `date/` フォルダに 1 件ずつ**入ります。ミドルは健診の 3 回分に 1 件ずつ。
+
+---
+
+## 5. Elith 側の読み取り手順（推奨）
+
+1. `user/{client_id}/` 配下の **各 `date/{YYYY_MM_DD}/` を走査**する（回数分ある）。
+2. 各 `date/` フォルダ内の `*.json` を **`format_id` で識別**して取り込む。
+3. **`HealthAgeData` は「その回の健康年齢」**として、他検査と同じ粒度（date 単位）で時系列に積む。
+   - ※「ユーザーに 1 件だけ」の前提は撤回。**date フォルダごとに存在し得る**。
+
+---
+
+## 6. 確認事項（受信不良の切り分け）
+
+Elith 側で「アセンブリ内容／健康年齢を認識できない」場合、次のいずれかが原因と考えられます。ご確認ください。
+
+1. **健康年齢の時系列化（本書 §3.2）に読み取りが未対応** … 最有力。各 `date/` の `HealthAgeData_*` を走査する形へ更新をお願いします。
+2. **`format_id: "HealthAgeData"` の未対応** … 本 format は `elith-handoff-v0.1` スキーマの 7 種に含まれます（`elith_handoff.schema.json`）。enum に無い実装であれば追加をお願いします。
+3. **`manifest.json` の扱い（要相談）**:
+   - 実データの「納品セット アセンブリ」は、以前の Elith ご指摘（「構成が違う」）を受け、**`manifest.json` を書き出していません**（各 `date/` には `{format_id}_…json` のみ）。
+   - 一方、**疑似データの「プラン時系列生成」は、完了合図として各 `date/` に `manifest.json`（`complete:true`・収録一覧）を最後に置いています**（`elith_s3_data_handoff_spec.md §8.3` 提案どおり）。
+   - **この不一致が受信不良の一因であれば、疑似データ側の `manifest.json` を無効化（実データと同一構成に統一）します。** manifest を「読む／無視する／不要」のいずれをご希望か、ご指定ください。
+
+---
+
+## 7. 参照
+- `docs/elith_s3_data_handoff_spec.md`（正本・パス/命名/エンベロープ/各format/一括書出し）
+- `docs/elith_handoff.schema.json`（JSON Schema `elith-handoff-v0.1`・7 format_id）
+- `docs/elith_masking_definition.md`（納品除外＝PII/bbox/region/category）
+- `docs/elith_synthetic_timeseries_plan_spec.md`（3年疑似データ生成の全体仕様）
+- `docs/health_age_caba_v5.4_spec.md`（健康年齢 CABA v5.4 の確定事項）
