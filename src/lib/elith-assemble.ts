@@ -456,22 +456,33 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
       }
     }
 
-    // 健康年齢: 採用元(人間ドック優先→血液)の source_ref に対応する算出済みスコアがあれば納品に追加。
+    // 健康年齢: Elith 要望で正式に納品。**検査日毎に**算出済みスコア(source_ref 突合)を載せる
+    // (健康年齢は血液検査毎に最新を算出する運用に一致)。同一 date は 人間ドック(検診)優先→血液。
+    // 算出済みスコアが無い回は載せない(age は PII で再計算不可・捏造しない)。
     if (opts.healthAgeByRef) {
-      const refCandidates = [p.picks.HealthCheckupData?.key, p.picks.BloodTestData?.key].filter((k): k is string => !!k);
-      let rec: HealthAgeRecord | undefined;
-      let matchedRef: string | undefined;
-      for (const k of refCandidates) {
-        if (opts.healthAgeByRef[k]) { rec = opts.healthAgeByRef[k]; matchedRef = k; break; }
-      }
-      if (rec && matchedRef) {
-        const stem = `HealthAgeData_date_${bundleDate}_user_${p.userId}`;
-        const key = `${deliveryPrefix}user/${p.userId}/date/${bundleDate}/${stem}.json`;
-        const bodyStr = buildHealthAgeJson(p.userId, bundleDate, rec, matchedRef);
+      const byDate = new Map<string, string>(); // deliveredDate(YYYY_MM_DD) → 採用元 source_ref
+      const collect = (f: ElithFormatId, overwrite: boolean) => {
+        const item = p.picks[f];
+        if (!item) return;
+        const sm = seriesByFormat.get(f);
+        const series = sm ? (sm.get(item.clientId ?? '(unknown)') ?? [item]) : [item];
+        for (const s of series) {
+          if (!opts.healthAgeByRef![s.key]) continue; // その回のスコアが無ければ載せない
+          const bd = /^\d{4}_\d{2}_\d{2}$/.test(s.date) ? s.date : bundleDate;
+          if (overwrite || !byDate.has(bd)) byDate.set(bd, s.key);
+        }
+      };
+      collect('HealthCheckupData', true); // 人間ドック(検診)優先 (同 date は上書き採用)
+      collect('BloodTestData', false);    // 血液は健診の無い date のみ
+      for (const [date, sourceKey] of byDate) {
+        const rec = opts.healthAgeByRef[sourceKey];
+        const stem = `HealthAgeData_date_${date}_user_${p.userId}`;
+        const key = `${deliveryPrefix}user/${p.userId}/date/${date}/${stem}.json`;
+        const bodyStr = buildHealthAgeJson(p.userId, date, rec, sourceKey);
         files.push({ key, contentType: 'application/json; charset=utf-8', body: bodyStr, bytes: utf8Bytes(bodyStr) });
         sources.push({
-          formatId: 'HealthAgeData', sourceKey: matchedRef, sourceDate: rec.test_date ?? bundleDate,
-          deliveredDate: bundleDate, newKey: key, dataItems: rec.biological_age != null ? 1 : 0,
+          formatId: 'HealthAgeData', sourceKey, sourceDate: rec.test_date ?? date,
+          deliveredDate: date, newKey: key, dataItems: rec.biological_age != null ? 1 : 0,
         });
       }
     }
