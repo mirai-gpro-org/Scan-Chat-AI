@@ -189,7 +189,7 @@ export const POST: APIRoute = async ({ request }) => {
   const planFormats = [...new Set(plan.formats.map((f) => f.formatId))];
   const seedKey: Record<string, string> = {};
   const borrowed: Record<string, string> = {}; // ②で解決できず③④で借用した format → 借用元 key
-  const missing: string[] = [];
+  const skippedFormats: string[] = [];         // 種がどこにも無い format = 生成せずスキップ(捏造しない)
   for (const fmt of planFormats) {
     const explicit = str(seedsIn[fmt]);
     if (explicit) { seedKey[fmt] = explicit; continue; }
@@ -201,19 +201,20 @@ export const POST: APIRoute = async ({ request }) => {
     } catch (err) {
       return json({ ok: false, error: 'seed_resolve_failed', detail: String(err instanceof Error ? err.message : err) }, 502);
     }
-    missing.push(fmt);
+    skippedFormats.push(fmt); // 種がどこにも無い → その format のみ生成しない。他 format は通常生成。
   }
-  if (missing.length) {
+  // ハード失敗はプランの全 format で種が皆無のときだけ (それ以外は在る分を生成し、欠けた分は報告)。
+  if (Object.keys(seedKey).length === 0) {
     return json({
-      ok: false, error: 'seed_missing',
-      detail: `種がどの client/層にも存在しない format: ${missing.join(', ')}。まず該当検査を1件スキャン/投入して種を用意するか、seeds[formatId]=sourceKey を明示指定してください。`,
-      missing, seed_keys: seedKey, borrowed,
+      ok: false, error: 'no_seeds',
+      detail: `プランの全 format で種が見つかりません: ${skippedFormats.join(', ')}。まず各検査を1件スキャン/投入して種を用意してください。`,
+      skipped_formats: skippedFormats,
     }, 400);
   }
 
-  // 2) 種を取得・検証。
+  // 2) 種を取得・検証 (解決できた format のみ)。
   const seedObj: Record<string, Record<string, unknown>> = {};
-  for (const fmt of planFormats) {
+  for (const fmt of Object.keys(seedKey)) {
     try {
       const o = JSON.parse(await getObjectText(seedKey[fmt])) as Record<string, unknown>;
       if (o.format_id !== fmt) {
@@ -240,8 +241,8 @@ export const POST: APIRoute = async ({ request }) => {
   let haGenerated = 0;
   let haSkipped = 0; // 必要マーカー不足等で算出不可(捏造せず空きにする)
 
-  // 3) スケジュール展開 → occurrence ごとにスナップショット生成。
-  const occurrences = expandPlanSchedule(plan, baseDate, years);
+  // 3) スケジュール展開 → occurrence ごとにスナップショット生成 (種が在る format のみ)。
+  const occurrences = expandPlanSchedule(plan, baseDate, years).filter((o) => seedKey[o.formatId]);
   const exportedAt = new Date().toISOString();
   const dataFiles: { key: string; contentType: string; body: string; bytes: number }[] = [];
   const byFolder = new Map<string, { date: string; files: { format_id: string; file: string }[] }>();
@@ -323,7 +324,8 @@ export const POST: APIRoute = async ({ request }) => {
     manifests: manifestFiles.length,
     per_format: perFormatCount,
     seed_keys: seedKey,
-    seed_borrowed: borrowed, // ②選択clientに無く③④他所から借用した format → 借用元key
+    seed_borrowed: borrowed,       // ②選択clientに無く③④他所から借用した format → 借用元key
+    skipped_formats: skippedFormats, // 種がどこにも無く生成しなかった format (捏造しない)
     health_age: { source_format: haSourceFormat, generated: haGenerated, skipped: haSkipped, age: Number.isFinite(personaAge) ? Math.round(personaAge) : null, sex: personaSex },
     files: [...dataFiles, ...manifestFiles].map((f) => f.key),
   };
