@@ -15,6 +15,7 @@ import { getS3Config, isS3Configured, listObjects, getObjectText, putFiles } fro
 import { ELITH_HANDOFF_SCHEMA_VERSION } from '../../../lib/elith-export';
 import { PLANS, expandPlanSchedule } from '../../../lib/elith-plan';
 import { buildSnapshot } from '../../../lib/elith-synthetic';
+import { computeHealthAge, normalizeMarkers, type RawItem } from '../../../lib/health-age';
 
 export const prerender = false;
 
@@ -43,6 +44,38 @@ function basename(key: string): string {
 function utf8Bytes(s: string): number {
   return typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(s).length : Buffer.byteLength(s, 'utf-8');
 }
+function randomUuid(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+}
+/** 合成 HealthAgeData 納品JSON (buildHealthAgeJson[assemble] と同形。synthetic 明記)。 */
+function buildSyntheticHealthAge(
+  clientId: string, testDate: string, ha: { biological_age: number | null; chronological_age: number; delta: number | null; model_version: string },
+  sex: 'male' | 'female' | null, exportedAt: string, seedRef: string | null,
+): Record<string, unknown> {
+  return {
+    format_id: 'HealthAgeData',
+    schema_version: ELITH_HANDOFF_SCHEMA_VERSION,
+    kind: 'health_age',
+    synthetic: true,
+    client_id: clientId,
+    diagnostic_id: randomUuid(),
+    test_date: testDate,
+    date_source: 'synthetic',
+    exported_at: exportedAt,
+    subject: { sex: sex ?? null, age: ha.chronological_age },
+    source: {
+      origin: 'scan-chat-ai', app: 'scan-chat-ai', model: ha.model_version,
+      note: '健康年齢(CABA)。合成: 血液(なければ健診)の合成値から算出。', lab_name: null, seed_ref: seedRef ?? null,
+    },
+    data: {
+      health_age: ha.biological_age,
+      actual_age: ha.chronological_age,
+      computed_date: exportedAt.slice(0, 10),
+      delta: ha.delta,
+      model_version: ha.model_version,
+    },
+  };
+}
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8' } });
 }
@@ -59,6 +92,8 @@ interface Body {
   seedPrefix?: unknown;   // 種の探索先 prefix (既定=sourcePrefix。UI は納品層 'user/' を渡す)
   sourcePrefix?: unknown; // 生成物の出力先 prefix (既定 scan-accuracy-test/)
   deliveryPrefix?: unknown; // mode=list: 納品(assembled)層の走査 prefix (既定 'user/')
+  age?: unknown;          // 合成ペルソナの D0 時点実年齢 (健康年齢算出に必須)
+  sex?: unknown;          // 'male' | 'female' (クレアチニン性別正規化に使用・任意)
   dryRun?: unknown;
 }
 
@@ -174,6 +209,21 @@ export const POST: APIRoute = async ({ request }) => {
     }
   }
 
+  // 健康年齢(HealthAgeData)の生成設定。
+  //   - 「血液検査毎に最新を算出」→ 生成の数/タイミングは **血液(あれば)/無ければ健診** の各回に一致。
+  //     幹部=血液9回→9本 / ミドル=血液なし→健診3回→3本。
+  //   - 算出には実年齢が必須。age 未指定なら健康年齢は生成しない(捏造しない)。
+  const haSourceFormat = plan.formats.some((f) => f.formatId === 'BloodTestData')
+    ? 'BloodTestData'
+    : plan.formats.some((f) => f.formatId === 'HealthCheckupData')
+      ? 'HealthCheckupData'
+      : null;
+  const personaAge = num(body.age, NaN);
+  const sexRaw = str(body.sex);
+  const personaSex: 'male' | 'female' | null = sexRaw === 'male' ? 'male' : sexRaw === 'female' ? 'female' : null;
+  let haGenerated = 0;
+  let haSkipped = 0; // 必要マーカー不足等で算出不可(捏造せず空きにする)
+
   // 3) スケジュール展開 → occurrence ごとにスナップショット生成。
   const occurrences = expandPlanSchedule(plan, baseDate, years);
   const exportedAt = new Date().toISOString();
@@ -203,6 +253,30 @@ export const POST: APIRoute = async ({ request }) => {
     const folder = byFolder.get(dateFolder) ?? { date: dateFolder, files: [] };
     folder.files.push({ format_id: occ.formatId, file: fileName });
     byFolder.set(dateFolder, folder);
+
+    // 健康年齢: 血液(なければ健診)の各回に、その回の合成値から算出して同日フォルダへ同梱。
+    if (haSourceFormat && occ.formatId === haSourceFormat && Number.isFinite(personaAge)) {
+      const meas = (snap.obj as { data?: { measurements?: unknown } }).data?.measurements;
+      const ageAt = Math.round(personaAge) + Math.floor(occ.monthsFromBase / 12); // 経年で実年齢も進む
+      const markers = { ...normalizeMarkers(Array.isArray(meas) ? (meas as RawItem[]) : []), age: ageAt, sex: personaSex };
+      const ha = computeHealthAge(markers);
+      if (ha.ok && ha.biological_age != null) {
+        const haFile = `HealthAgeData_date_${dateFolder}_user_${clientId}.json`;
+        const haKey = `${cleanPrefix}user/${clientId}/date/${dateFolder}/${haFile}`;
+        const haObj = buildSyntheticHealthAge(
+          clientId, occ.testDate,
+          { biological_age: ha.biological_age, chronological_age: ageAt, delta: ha.delta, model_version: ha.model_version },
+          personaSex, exportedAt, seedKey[occ.formatId] ?? null,
+        );
+        const haBody = JSON.stringify(haObj, null, 2);
+        dataFiles.push({ key: haKey, contentType: 'application/json; charset=utf-8', body: haBody, bytes: utf8Bytes(haBody) });
+        perFormatCount.HealthAgeData = (perFormatCount.HealthAgeData ?? 0) + 1;
+        folder.files.push({ format_id: 'HealthAgeData', file: haFile });
+        haGenerated++;
+      } else {
+        haSkipped++; // 必要マーカー不足 → 捏造せずスキップ (種の血液に CABA 必須項目が無い等)
+      }
+    }
   }
 
   // 4) 各 date フォルダの manifest.json (complete:true)。※ format JSON を全て Put した後に Put する。
@@ -233,6 +307,7 @@ export const POST: APIRoute = async ({ request }) => {
     manifests: manifestFiles.length,
     per_format: perFormatCount,
     seed_keys: seedKey,
+    health_age: { source_format: haSourceFormat, generated: haGenerated, skipped: haSkipped, age: Number.isFinite(personaAge) ? Math.round(personaAge) : null, sex: personaSex },
     files: [...dataFiles, ...manifestFiles].map((f) => f.key),
   };
 
