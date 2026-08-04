@@ -48,6 +48,7 @@ function json(data: unknown, status = 200): Response {
 }
 
 interface Body {
+  mode?: unknown;         // 'generate'(既定) | 'list'(種client_id候補を返す)
   plan?: unknown;
   clientId?: unknown;
   baseDate?: unknown;
@@ -78,6 +79,34 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ ok: false, error: 'Invalid JSON body' }, 400);
   }
 
+  // S3 と sourcePrefix を先に解決 (mode=list でも使う)。
+  const cfg = getS3Config();
+  if (!isS3Configured() || !cfg) return json({ ok: false, error: 's3_not_configured', detail: 'AWS_REGION 未設定' }, 400);
+  const sourcePrefix = str(body.sourcePrefix) ?? cfg.prefix ?? 'scan-accuracy-test/';
+  const cleanPrefix = sourcePrefix.replace(/^\/+/, '').replace(/\/*$/, '/');
+
+  const mode = str(body.mode) ?? 'generate';
+
+  // ── mode=list: ソース層の client_id 候補を「保有 format 付き」で返す (UI の種プルダウン用) ──
+  // 種は単一 client_id を全 format に使うため、プランに必要な format を揃えた client を選べるようにする。
+  if (mode === 'list') {
+    const objs = await listObjects(sourcePrefix);
+    const re = /^(HealthCheckupData|BloodTestData|CancerRiskAssessmentData|GeneticTestResultData|Other)_date_(\d{4}_\d{2}_\d{2})_user_(.+)\.json$/;
+    const map = new Map<string, { formats: Set<string>; latest: string | null; count: number }>();
+    for (const o of objs) {
+      const m = re.exec(basename(o.key));
+      if (!m) continue;
+      const e = map.get(m[3]) ?? { formats: new Set<string>(), latest: null, count: 0 };
+      e.formats.add(m[1]); e.count++;
+      if (!e.latest || m[2] > e.latest) e.latest = m[2];
+      map.set(m[3], e);
+    }
+    const clients = [...map.entries()]
+      .map(([client_id, e]) => ({ client_id, formats: [...e.formats].sort(), latest_date: e.latest ? e.latest.replace(/_/g, '-') : null, count: e.count }))
+      .sort((a, b) => a.client_id.localeCompare(b.client_id));
+    return json({ ok: true, mode: 'list', source_prefix: sourcePrefix, clients });
+  }
+
   const planKey = str(body.plan) ?? '';
   const plan = PLANS[planKey];
   if (!plan) return json({ ok: false, error: 'unknown_plan', detail: `plan は ${Object.keys(PLANS).join(' / ')} のいずれか` }, 400);
@@ -94,11 +123,6 @@ export const POST: APIRoute = async ({ request }) => {
   const dryRun = body.dryRun === true;
   const seedsIn = body.seeds && typeof body.seeds === 'object' ? (body.seeds as Record<string, unknown>) : {};
   const seedClientId = str(body.seedClientId);
-
-  const cfg = getS3Config();
-  if (!isS3Configured() || !cfg) return json({ ok: false, error: 's3_not_configured', detail: 'AWS_REGION 未設定' }, 400);
-  const sourcePrefix = str(body.sourcePrefix) ?? cfg.prefix ?? 'scan-accuracy-test/';
-  const cleanPrefix = sourcePrefix.replace(/^\/+/, '').replace(/\/*$/, '/');
 
   // 1) 各 format の種(seed) key を解決 (seeds[fmt] 明示 → seedClientId で最新)。
   const planFormats = [...new Set(plan.formats.map((f) => f.formatId))];
