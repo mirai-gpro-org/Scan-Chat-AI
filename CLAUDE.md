@@ -280,7 +280,7 @@
 | `docs/system_architecture_overview.md` | 全体構成・**Vercel/タイムアウト**・データフロー |
 | `docs/elith_s3_data_handoff_spec.md` | **Elith S3 受け渡し仕様** (パス/命名/format_id/JSON) |
 | `docs/elith_batch_centralization_design.md` | Elith バッチ**一元化設計**(キーは Vercel・役割分担・admin バッチ) |
-| `docs/elith_assembly_wrapping_spec.md` | **納品セット アセンブリのラップ仕様(Elith向け説明)**。フォルダ/命名/健康年齢の時系列化(検査日毎・旧1件を撤回)・疑似データも同様に時系列生成・manifest不一致の確認事項 |
+| `docs/elith_assembly_wrapping_spec.md` | **納品セット アセンブリのラップ仕様(Elith向け説明)**。フォルダ/命名/健康年齢の時系列化(検査日毎・旧1件を撤回)・疑似データも同様に時系列生成・**LAiF AI疾病発症予測(Other/ai_prediction)のファイル仕様提案(§5)**・manifest不一致の確認事項 |
 | `docs/batch_scan_to_elith_usage.md` | サンプル一括スキャン→S3 バッチ手順 (`scripts/batch-scan-to-elith.mjs`) |
 | `docs/demecal_auto_download_overview_spec.md` | 血液検査データ自動DL (デメカル/mTLS) 概要 |
 | `docs/demecal_inquiry_email_template.md` | 検査会社への自動DL可否 照会メール雛形 |

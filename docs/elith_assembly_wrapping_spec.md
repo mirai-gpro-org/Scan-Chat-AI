@@ -126,7 +126,78 @@ user/elith-test-exec-001/
 
 ---
 
-## 5. Elith 側の読み取り手順（推奨）
+## 5. LAiF「AI 疾病発症予測」(`Other` / `ai_prediction`) のファイル仕様【提案】
+
+Wellfort・Elith 双方で確認のとおり、**LAiF 社「AI 疾病発症予測」も PDF を AI スキャンして JSON 化し、
+S3 経由で Elith へ受け渡します**（他検査と同じ経路）。健康年齢と同様に**時系列の疑似データも生成**します。
+`elith-handoff-v0.1` に専用 format は無いため **`format_id: "Other"` / `kind: "ai_prediction"`** で納品します（スキーマ §7.4「Other=自由構造」）。
+本 §5 の `data` 構造・時系列頻度は **提案（要 Elith 確認）** です。
+
+### 5.1 命名・配置（他検査と同一）
+```
+user/{client_id}/date/{YYYY_MM_DD}/Other_date_{YYYY_MM_DD}_user_{client_id}.json
+```
+
+### 5.2 元レポートの構成（実サンプル LAiF PDF より）
+- **発症予測ページ**: 疾患ごとに **5年発症率(%) / 10年発症率(%) / 相対リスク比 / 昨年の相対リスク比**。
+  疾患は **生活習慣病 / 循環器疾患 / 悪性腫瘍 / 神経疾患** 等のカテゴリに分かれる
+  （糖尿病・高血圧・脂質異常症・痛風・鉄欠乏性貧血・うつ病・労作性狭心症・急性心筋梗塞・心不全・
+  閉塞性動脈硬化症・脳梗塞・肺がん・大腸がん・胃がん・すい臓がん・子宮頚がん・乳がん・前立腺がん 等）。
+- **リスク因子・予防策ページ**: 疾患ごとに「AI のアドバイス（予防策の文章）」。
+
+### 5.3 `data` 構造（提案）
+```jsonc
+{
+  "format_id": "Other",
+  "schema_version": "elith-handoff-v0.1",
+  "kind": "ai_prediction",
+  "client_id": "elith-test-exec-001",
+  "test_date": "2023-06-15",
+  "exported_at": "…Z",
+  "subject": { "sex": null, "age": null },
+  "source": { "origin": "scan-chat-ai", "model": "gemini-3.1-flash-lite", "lab_name": "LAiF",
+              "note": "AI疾病発症予測(LAiF)。構造化はLLM。" },
+  "data": {
+    "item_count": 18,
+    "items": [
+      { "section": "生活習慣病", "項目名": "糖尿病",
+        "5年発症率": "4.1%", "10年発症率": "8.0%", "相対リスク比": 0.7, "昨年の相対リスク比": 0.7,
+        "アドバイス": "体重変化が発症リスクに関与します。体重コントロールをお願いします。" },
+      { "section": "悪性腫瘍", "項目名": "肺がん",
+        "5年発症率": "2.4%", "10年発症率": "4.7%", "相対リスク比": 0.6 }
+      // …疾患ごとに1オブジェクト。印字が無いフィールドは省略（創作しない）。
+    ],
+    "pages": [ { "page": 2, "section": "生活習慣病/循環器疾患", "count": 11 }, … ]
+  }
+}
+```
+- **数値・文章は印字どおり**。読めない/無い項目は省略（捏造ゼロ）。カテゴリ見出し・凡例・氏名(PII)は含めない。
+
+### 5.4 時系列の疑似データ（健康年齢と同じ考え方）
+- LAiF「AI 疾病発症予測」は **年1回**の検査として扱い、**健診/人間ドックと同じ受診回（各年 R1）**に同梱します。
+  - 経営層・幹部プラン: **年1回 → 3年で 3 本**（各年 R1 の `date/` に `Other_…json`）。
+  - ミドルプラン: プラン定義に含めない場合は 0 本（含める場合は健診と同じ 3 本）。※要 Elith/Wellfort 確定。
+- 生成方法: **実 LAiF JSON（§5.3）を種に、数値フィールド（5年発症率・10年発症率・相対リスク比）を
+  ±5% の決定論ジッタ**（seed 固定＝再現可能）。**疾患名・アドバイス文は維持**。`synthetic:true` 付与・PII 非含有。
+- `昨年の相対リスク比` は **前年回の `相対リスク比` を引き継ぐ**ことで時系列として自然に表現できます（提案）。
+
+### 5.5 配置例（経営層・幹部・D0=2023-06-15）
+```
+user/elith-test-exec-001/
+  date/2023_06_15/  … HealthCheckup / Blood / Cancer / Genetic / HealthAge / Other(AI疾病発症予測)
+  date/2024_06_15/  … HealthCheckup / Blood / Cancer / HealthAge / Other(AI疾病発症予測)
+  date/2025_06_15/  … 〃
+```
+→ **AI疾病発症予測（Other）は各年 R1 の 3 フォルダに 1 件ずつ**（健診と同じタイミング）。
+
+### 5.6 確認のお願い（Elith 御中）
+1. `format_id:"Other"` / `kind:"ai_prediction"` で受領可能か。専用 format 追加をご希望なら仕様をご指定ください。
+2. §5.3 の `data.items` フィールド名（`5年発症率`/`10年発症率`/`相対リスク比`/`昨年の相対リスク比`/`アドバイス`）で問題ないか。
+3. 時系列頻度（年1回・健診と同回）と、ミドルプランでの有無。
+
+---
+
+## 6. Elith 側の読み取り手順（推奨）
 
 1. `user/{client_id}/` 配下の **各 `date/{YYYY_MM_DD}/` を走査**する（回数分ある）。
 2. 各 `date/` フォルダ内の `*.json` を **`format_id` で識別**して取り込む。
@@ -135,20 +206,21 @@ user/elith-test-exec-001/
 
 ---
 
-## 6. 確認事項（受信不良の切り分け）
+## 7. 確認事項（受信不良の切り分け）
 
 Elith 側で「アセンブリ内容／健康年齢を認識できない」場合、次のいずれかが原因と考えられます。ご確認ください。
 
 1. **健康年齢の時系列化（本書 §3.2）に読み取りが未対応** … 最有力。各 `date/` の `HealthAgeData_*` を走査する形へ更新をお願いします。
 2. **`format_id: "HealthAgeData"` の未対応** … 本 format は `elith-handoff-v0.1` スキーマの 7 種に含まれます（`elith_handoff.schema.json`）。enum に無い実装であれば追加をお願いします。
-3. **`manifest.json` の扱い（要相談）**:
+3. **LAiF「AI疾病発症予測」(`Other`/`ai_prediction`) の受領（本書 §5）** … `data` フィールド名・時系列頻度をご確認ください（§5.6）。
+4. **`manifest.json` の扱い（要相談）**:
    - 実データの「納品セット アセンブリ」は、以前の Elith ご指摘（「構成が違う」）を受け、**`manifest.json` を書き出していません**（各 `date/` には `{format_id}_…json` のみ）。
    - 一方、**疑似データの「プラン時系列生成」は、完了合図として各 `date/` に `manifest.json`（`complete:true`・収録一覧）を最後に置いています**（`elith_s3_data_handoff_spec.md §8.3` 提案どおり）。
    - **この不一致が受信不良の一因であれば、疑似データ側の `manifest.json` を無効化（実データと同一構成に統一）します。** manifest を「読む／無視する／不要」のいずれをご希望か、ご指定ください。
 
 ---
 
-## 7. 参照
+## 8. 参照
 - `docs/elith_s3_data_handoff_spec.md`（正本・パス/命名/エンベロープ/各format/一括書出し）
 - `docs/elith_handoff.schema.json`（JSON Schema `elith-handoff-v0.1`・7 format_id）
 - `docs/elith_masking_definition.md`（納品除外＝PII/bbox/region/category）
