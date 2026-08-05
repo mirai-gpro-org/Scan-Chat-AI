@@ -63,7 +63,7 @@ export interface HealthAgeResult {
 const REQUIRED: (keyof HealthAgeMarkers)[] = [
   'albumin', 'creatinine', 'glucose', 'lymph', 'mcv', 'alp', 'wbc',
 ];
-// 以下の補完定数は Wellfort 確認済 (2026-08・確定・暫定でない)。詳細: docs/health_age_caba_v5.4_spec.md
+// 以下の補完定数は Wellfort 確認済 (2026-08・確定・暫定でない)。詳細: docs/scan/health_age_caba_v5.4_spec.md
 const CRP_MEDIAN_MGDL = 0.15; // hs-CRP は任意入力。実測→NLR推定→この集団中央値で補完 (mg/dL・炎症寄与は中立)
 const RDW_MEDIAN = 13.0;      // % RDW は検査機関により無し → 中央値13.0を代用 (Wellfort確認)
 /**

@@ -26,7 +26,7 @@ export interface AnalyzeResult {
   /**
    * 推論値列を削除した「確定 scan_md」候補。
    * UI 表示用カード本文 + Supabase #2 / Elith への送信に使う。
-   * (docs/diagnostic_session_data_spec.md §3.2 の scan_md フォーマット)
+   * (docs/architecture/diagnostic_session_data_spec.md §3.2 の scan_md フォーマット)
    */
   markdownClean: string;
   /** 領域ごとに切り分けたメタデータ + 本文 (UI 表示用、markdownClean ベース) */

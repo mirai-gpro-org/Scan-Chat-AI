@@ -103,10 +103,10 @@
 ### アプリ構成 / 管理画面の所在 (重要・誤解しやすい)
 - **Scan-Chat-AI は単独アプリではなく、`www.wellfort.co.jp`(wellfort-site) 配下の診断アプリ**。
   ユーザーは `www.wellfort.co.jp` マイページのリンクから Scan-Chat-AI に遷移する
-  (`docs/wellfort_mypage_button_spec.md`: 本番 `https://scan-chat-ai.vercel.app/`、将来 `app.wellfort.co.jp`)。
+  (`docs/architecture/wellfort_mypage_button_spec.md`: 本番 `https://scan-chat-ai.vercel.app/`、将来 `app.wellfort.co.jp`)。
 - **管理者メニューも `www.wellfort.co.jp/admin`(wellfort-site) 側**。
   - **admin UI は wellfort-site に置く**。**Scan-Chat-AI は API 提供側**
-    (`https://scan-chat-ai.vercel.app/api/admin/...`)。根拠: `docs/wellfort_admin_lab_upload_spec.md`
+    (`https://scan-chat-ai.vercel.app/api/admin/...`)。根拠: `docs/lab/wellfort_admin_lab_upload_spec.md`
     L5-6/§3「実装対象=Wellfort HP 管理画面 / Scan-Chat-AI=API提供側」。
   - **認証は 2 層**:
     1. **入口(admin判定)**: wellfort-site 側で管理者かを確認する。方式は既存 `admin/users.astro`
@@ -130,19 +130,19 @@
 - 問診の進行（質問順・分岐・完了）は `InterviewEngine`（クライアント）が制御し、
   LLM は「渡された質問文の読み上げ＋回答の復唱」だけを担う。**LLM に問診順を決めさせない。**
 - AI問診＝**5セクション（嗜好品・運動・食生活・睡眠・心身）**が仕様
-  (`docs/20260331_AI参考問診票.png` / `docs/funding_application/要件定義書.md` F-3)。
+  (`docs/interview/20260331_AI参考問診票.png` / `docs/funding_application/要件定義書.md` F-3)。
   **同意設問・実施検査確認などは問診に含めない**（同意は登録/オンボーディングで取得）。
-- **詳細仕様・設計原則・アンチパターン・二重話者問題の因果は `docs/AI問診_仕様と設計原則.md` が正本。
+- **詳細仕様・設計原則・アンチパターン・二重話者問題の因果は `docs/interview/AI問診_仕様と設計原則.md` が正本。
   AI問診コードに触れる前に必読。** 責務分界（フロー/選択肢/データ=プログラム, 音声のターン/発話=LLM任せ）、
   silent 分岐・マイクゲート禁止、`f99f47e` が二重話者の起点である因果、案1(音声=LLM単独話者)への修正方針を記載。
 
 ### インフラ / 実行モデル
-- **Vercel Serverless (iad1 / US East)**。Gemini API と地理的近接 (`system_architecture_overview.md` L143/L273)。
+- **Vercel Serverless (iad1 / US East)**。Gemini API と地理的近接 (`docs/architecture/system_architecture_overview.md` L143/L273)。
 - 関数タイムアウト ~60s。大型検査表はストリーミング/分割。
-  → バッチは **1 画像 = 1 リクエスト**で処理し、クライアントが順に呼ぶ (`system_architecture_overview.md` L316)。
+  → バッチは **1 画像 = 1 リクエスト**で処理し、クライアントが順に呼ぶ (`docs/architecture/system_architecture_overview.md` L316)。
 
 ### Elith 連携 (S3 データ受け渡し)
-- 仕様は `docs/elith_s3_data_handoff_spec.md` が正:
+- 仕様は `docs/elith/elith_s3_data_handoff_spec.md` が正:
   - パス `/{prefix}user/{client_id}/date/{YYYY_MM_DD}/`
   - ファイル `{format_id}_date_{YYYY_MM_DD}_user_{client_id}.json`
   - format_id: `CancerRiskAssessmentData` / `HealthCheckupData` / `GeneticTestResultData` /
@@ -151,7 +151,7 @@
 - S3 既定: バケット `wellfort-ai-input` / prefix は用途による (`src/lib/s3.ts`)。
 
 ### 戦略正本: 検査票→標準フォーマット正準化 (2層・最優先で読む)
-- **正本: `docs/scan_canonicalization_standard_format_design.md`**。最終ゴール(正確=漏れなし/捏造なし/余剰なし なJSON→Elith→高精度診断)を
+- **正本: `docs/scan/scan_canonicalization_standard_format_design.md`**。最終ゴール(正確=漏れなし/捏造なし/余剰なし なJSON→Elith→高精度診断)を
   最上位に置き、設計思想(native multimodal・OCRパターンマッチを使わない)は**手段=従属**とする(ゴールが勝つ)。
 - **2層に分ける**: ①**読取(Perception)=native multimodal 維持**(レイアウト多様→テンプレOCR不可)。
   ②**正準化(Normalize)=業界標準「健診標準フォーマット(KMAT)」への決定論マッピング(新規)**。②は"1つの標準マスタ"が標的で
@@ -160,7 +160,7 @@
   KMAT ver5.0≒2000項目。**完全マスタは推進機構/HASTOS or クライアント/Elith 経由で入手(捏造しない)**。
 - **受け皿は実装済**: `elith-necessity-check.ts` の `requiredItemsMaster`(現 null)にサブセットを与えれば起動。
   `elith_check_phase_spec §8` の「必要項目マスタ」の正体がこの標準。`pickDeliveryName` の当て推量はマスタ照合へ置換していく。
-- **実装進捗 (テンプレート穴埋め方式)**: 計画=`docs/基本設定書_実装修正プラン.md`、基本設定=`docs/基本設定書.md §3.6`、
+- **実装進捗 (テンプレート穴埋め方式)**: 計画=`docs/scan/基本設定書_実装修正プラン.md`、基本設定=`docs/scan/基本設定書.md §3.6`、
   機能別=`docs/修正仕様書_{標準マスタ,正準化エンジン,検証と確定運用}.md`。
   - **P1 完了**: starter 標準マスタ `src/lib/standard-master.ts` (41項目・ゴールデン実在項目のみ・捏造ゼロ・
     `findByAlias` 完全一致=危険同義語 総蛋白/便潜血 は非マッチ)。
@@ -258,44 +258,44 @@
       → **上記① で `sharp` 導入し行クロップを実装 (既定off)**。VQA単機能の仮想クロップでは相関失敗を消せなかったため。
 
 ### 検査種別ごとの本番処理 (役割分担)
-根拠: `docs/elith_batch_centralization_design.md`
+根拠: `docs/elith/elith_batch_centralization_design.md`
 - 検診・人間ドック (`HealthCheckupData`) … **ユーザーがアプリでAIスキャン**
 - がんリスク (`CancerRiskAssessmentData`) / 遺伝子 (`GeneticTestResultData`) …
   **Wellfort が検査機関から手動取得 → admin バッチ (サーバ実行) で処理**
 - 血液 (`BloodTestData`) … デメカル (dl.demecal.net) から取得。自動DLは
-  `docs/demecal_auto_download_overview_spec.md` (クライアント証明書 mTLS)
+  `docs/lab/demecal_auto_download_overview_spec.md` (クライアント証明書 mTLS)
 - 生活習慣・問診 (`LifestyleQuestionnaireData`) … アプリの AI 問診
 
 ### PII / データ分離
 - `customer` スキーマ(PII) と `diagnosis` スキーマ(非PII) を **`diagnostic_user_id` のみで橋渡し**。
-  氏名・住所・生年月日を診断系/外部/S3 に載せない (`docs/data_integration_requirements.md` §1.3,
-  `docs/lab_integration_workflow.md` §1.1)。氏名OCRのみでの顧客割当確定は禁止。
+  氏名・住所・生年月日を診断系/外部/S3 に載せない (`docs/architecture/data_integration_requirements.md` §1.3,
+  `docs/lab/lab_integration_workflow.md` §1.1)。氏名OCRのみでの顧客割当確定は禁止。
 
 ## 主要ドキュメント索引
 
 | ドキュメント | 内容 |
 |---|---|
-| `docs/AI問診_仕様と設計原則.md` | **AI問診の確定仕様・設計原則（責務分界/禁止事項/二重話者問題/修正方針）。コード変更前必読** |
+| `docs/interview/AI問診_仕様と設計原則.md` | **AI問診の確定仕様・設計原則（責務分界/禁止事項/二重話者問題/修正方針）。コード変更前必読** |
 | `docs/operations/Gemini_APIキー作成手順書_Wellfort_v1.0.md` | Gemini キー発行・**Vercel 環境変数運用**・ローテーション |
-| `docs/system_architecture_overview.md` | 全体構成・**Vercel/タイムアウト**・データフロー |
-| `docs/elith_s3_data_handoff_spec.md` | **Elith S3 受け渡し仕様** (パス/命名/format_id/JSON) |
-| `docs/elith_batch_centralization_design.md` | Elith バッチ**一元化設計**(キーは Vercel・役割分担・admin バッチ) |
-| `docs/elith_assembly_wrapping_spec.md` | **納品セット アセンブリのラップ仕様(Elith向け説明)**。フォルダ/命名/健康年齢の時系列化(検査日毎・旧1件を撤回)・疑似データも同様に時系列生成・**LAiF AI疾病発症予測(Other/ai_prediction)のファイル仕様提案(§5)**・manifest不一致の確認事項 |
-| `docs/batch_scan_to_elith_usage.md` | サンプル一括スキャン→S3 バッチ手順 (`scripts/batch-scan-to-elith.mjs`) |
-| `docs/lab_data_reception_overview.md` | **4検査のデータ受取 総合仕様**(血液=リージャー/RPA・がん=プリベント/調整中・AI疾病予測=LAiF/S3 URL・遺伝子=Genoplan/RPA。方式/経路/現状/課題/次アクション) |
-| `docs/questionnaire_to_lab_csv_spec.md` | **AI問診回答→各社CSV 変換仕様(実装用)**。共通設問No→各社必要行のマスターマッピング表+各社項目リスト+生成ルール(フリー/選択/範囲/複数)+PII確認事項。元=Wellfort問診項目マトリクスExcel |
-| `docs/demecal_auto_download_overview_spec.md` | 血液検査データ自動DL (デメカル/mTLS) 概要 |
-| `docs/demecal_inquiry_email_template.md` | 検査会社への自動DL可否 照会メール雛形 |
-| `docs/subscription_management_feature_requirements.md` | サブスク契約管理 拡張 機能要件 (要件1〜4・データモデル・付録Bマトリクス) |
-| `docs/subscription_management_implementation_guide.md` | 上記の実装手順書 |
-| `docs/wellfort_admin_lab_upload_spec.md` | 管理UI: 検査結果ファイルアップロード仕様 |
-| `docs/lab_integration_workflow.md` | 検査機関→ユーザー割当ワークフロー (PII 制約) |
-| `docs/kit_progress_management.md` | 検査キット発送・進捗管理 |
-| `docs/data_integration_requirements.md` | PII 分離・連携要件 |
-| `docs/diagnostic_session_data_spec.md` | 診断セッションのデータ構造 |
-| `docs/scan_feature_requirements.md` / `docs/scan_s3_export.md` | AIスキャン機能要件 / S3書き出し |
-| `docs/health_age_caba_v5.4_spec.md` | **健康年齢(CABA v5.4)確定事項** (免責2文/WBC桁正規化/補完定数/SBP・FEV補正・Wellfort確認2026-08) |
-| `docs/scan_canonicalization_standard_format_design.md` | **戦略正本: 検査票→標準フォーマット正準化(2層戦略)**。①読取=native multimodal維持 / ②正準化=健診標準フォーマット(KMAT)への決定論マッピング新規 |
+| `docs/architecture/system_architecture_overview.md` | 全体構成・**Vercel/タイムアウト**・データフロー |
+| `docs/elith/elith_s3_data_handoff_spec.md` | **Elith S3 受け渡し仕様** (パス/命名/format_id/JSON) |
+| `docs/elith/elith_batch_centralization_design.md` | Elith バッチ**一元化設計**(キーは Vercel・役割分担・admin バッチ) |
+| `docs/elith/elith_assembly_wrapping_spec.md` | **納品セット アセンブリのラップ仕様(Elith向け説明)**。フォルダ/命名/健康年齢の時系列化(検査日毎・旧1件を撤回)・疑似データも同様に時系列生成・**LAiF AI疾病発症予測(Other/ai_prediction)のファイル仕様提案(§5)**・manifest不一致の確認事項 |
+| `docs/elith/batch_scan_to_elith_usage.md` | サンプル一括スキャン→S3 バッチ手順 (`scripts/batch-scan-to-elith.mjs`) |
+| `docs/lab/lab_data_reception_overview.md` | **4検査のデータ受取 総合仕様**(血液=リージャー/RPA・がん=プリベント/調整中・AI疾病予測=LAiF/S3 URL・遺伝子=Genoplan/RPA。方式/経路/現状/課題/次アクション) |
+| `docs/lab/questionnaire_to_lab_csv_spec.md` | **AI問診回答→各社CSV 変換仕様(実装用)**。共通設問No→各社必要行のマスターマッピング表+各社項目リスト+生成ルール(フリー/選択/範囲/複数)+PII確認事項。元=Wellfort問診項目マトリクスExcel |
+| `docs/lab/demecal_auto_download_overview_spec.md` | 血液検査データ自動DL (デメカル/mTLS) 概要 |
+| `docs/lab/demecal_inquiry_email_template.md` | 検査会社への自動DL可否 照会メール雛形 |
+| `docs/subscription/subscription_management_feature_requirements.md` | サブスク契約管理 拡張 機能要件 (要件1〜4・データモデル・付録Bマトリクス) |
+| `docs/subscription/subscription_management_implementation_guide.md` | 上記の実装手順書 |
+| `docs/lab/wellfort_admin_lab_upload_spec.md` | 管理UI: 検査結果ファイルアップロード仕様 |
+| `docs/lab/lab_integration_workflow.md` | 検査機関→ユーザー割当ワークフロー (PII 制約) |
+| `docs/lab/kit_progress_management.md` | 検査キット発送・進捗管理 |
+| `docs/architecture/data_integration_requirements.md` | PII 分離・連携要件 |
+| `docs/architecture/diagnostic_session_data_spec.md` | 診断セッションのデータ構造 |
+| `docs/scan/scan_feature_requirements.md` / `docs/scan/scan_s3_export.md` | AIスキャン機能要件 / S3書き出し |
+| `docs/scan/health_age_caba_v5.4_spec.md` | **健康年齢(CABA v5.4)確定事項** (免責2文/WBC桁正規化/補完定数/SBP・FEV補正・Wellfort確認2026-08) |
+| `docs/scan/scan_canonicalization_standard_format_design.md` | **戦略正本: 検査票→標準フォーマット正準化(2層戦略)**。①読取=native multimodal維持 / ②正準化=健診標準フォーマット(KMAT)への決定論マッピング新規 |
 
 ## コード / スタック
 - Astro v5 + TypeScript (SSR / Vercel)。UI=`.astro`、API=`src/pages/api/**.ts`、ロジック=`src/lib/`。
@@ -313,9 +313,9 @@
 - **照合(検証)のタイプ別定義** (照合器=wellfort-site admin / golden正解データ=Scan-Chat-AI docs):
   | タイプ | format_id | 取得 | 🎯値golden(決定論・画像非依存) | 🔍画像照合(LLM) | ④の照合 |
   |---|---|---|---|---|---|
-  | 健康診断(検診) | HealthCheckupData | アプリscan | ○ `scan_golden_healthcheckup_20250123.md` | ○ | — |
-  | 人間ドック | HealthCheckupData | アプリscan | ○ `scan_golden_humandock_20240924.md` | ○ | — |
-  | がんリスク | CancerRiskAssessmentData | adminバッチ | ○ `scan_golden_cancer_alapds_20251226.md`(ALA-PDS様式1) | ○ | — |
+  | 健康診断(検診) | HealthCheckupData | アプリscan | ○ `docs/scan/golden/scan_golden_healthcheckup_20250123.md` | ○ | — |
+  | 人間ドック | HealthCheckupData | アプリscan | ○ `docs/scan/golden/scan_golden_humandock_20240924.md` | ○ | — |
+  | がんリスク | CancerRiskAssessmentData | adminバッチ | ○ `docs/scan/golden/scan_golden_cancer_alapds_20251226.md`(ALA-PDS様式1) | ○ | — |
   | 遺伝子 | GeneticTestResultData | adminバッチ | 建立待ち(様式1) | ○ | — |
   | 血液 | BloodTestData | デメカルCSV | (CSV由来値で可) | **×(画像なし)** | **CSV↔JSON構造照合(決定論・Scan-Chat-AI scripts)** |
   - **🎯値golden = 画像非依存**なので全タイプで使える(正解値さえ建立すれば)。`elith-batch.astro goldenCheck` は
@@ -323,7 +323,7 @@
   - **golden は必ず元画像から人手で起こす (2026-08 確定・R2/R3)**: スキャン run の raw_markdown を"正解"にしてはならない。
     実障害(2026-08): 人間ドック golden を scan 出力から作った結果、その run の隣接行シフト/脂質混入を golden が継承し
     (LDL/HDL/TG・LDH/ALP/γ-GTP・好酸球/好塩基球 が誤り。LDL+HDL=176>TC=151 の物理矛盾を見落とし)、**正しいスキャンを
-    誤判定して改善を誤導**した(ChatGPT指摘で発覚→元画像で全項目再監査し修正、`scan_golden_humandock_20240924.md`)。
+    誤判定して改善を誤導**した(ChatGPT指摘で発覚→元画像で全項目再監査し修正、`docs/scan/golden/scan_golden_humandock_20240924.md`)。
     建立時は 推移グラフ/Friedewald(TC≒LDL+HDL+TG/5)/基準値レンジ 等でクロス検算する。
   - **🔍画像照合 = 画像がある型(検診/人間ドック/がん/遺伝子)のみ**。④血液は CSV が決定論正解源=画像照合不可 →
     **CSV↔JSON 構造照合**(全項目写像=漏れゼロ/余剰=捏造ゼロ/単位・判定コード対応)を Scan-Chat-AI 側 fixture で。

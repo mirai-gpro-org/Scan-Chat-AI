@@ -471,7 +471,7 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
   //   EX-BIRTH / EX-FATHER / EX-MOTHER / EX-WEIGHT-CHG を削除。
 
   // ※「個人情報の取り扱いについて同意します」(旧 C-CONSENT) は削除。
-  //   参考問診票 (docs/20260331_AI参考問診票.png) / 要件定義書の AI問診=5セクション
+  //   参考問診票 (docs/interview/20260331_AI参考問診票.png) / 要件定義書の AI問診=5セクション
   //   (嗜好品・運動・食生活・睡眠・心身) に同意設問は無く、心身(ストレス)で終了する。
   //   同意はアプリ登録/オンボーディングで取得する範疇であり、音声問診の設問ではない。
 ];

@@ -1,5 +1,5 @@
 /**
- * docs/diagnostic_session_data_spec.md §2.2 準拠の diagnostic_id 発番・永続化。
+ * docs/architecture/diagnostic_session_data_spec.md §2.2 準拠の diagnostic_id 発番・永続化。
  *
  * - 形式: 標準 UUID v4
  * - 発番者: Scan-Chat-AI クライアント (将来マイページ側に移譲する可能性あり)

@@ -1,7 +1,7 @@
 // src/lib/elith-synthetic.ts
 // 疑似時系列データ生成の純粋関数（決定論ジッタ + スナップショット組立）。
 // 値をゼロから捏造せず「実データ種(seed)を摂動」する方式（elith-blood-timeseries と同思想）。
-// 参照: docs/elith_synthetic_timeseries_plan_spec.md §6
+// 参照: docs/elith/elith_synthetic_timeseries_plan_spec.md §6
 
 /** measurement系 format（measurements[].value_num をジッタ）。 */
 export const MEAS_FORMATS = new Set(['BloodTestData', 'CancerRiskAssessmentData', 'HealthCheckupData']);

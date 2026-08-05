@@ -1,6 +1,6 @@
 // src/lib/elith-plan.ts
 // Elith 納品用 疑似データの「プラン定義」と 3年スケジュール展開（純粋・決定論）。
-// 参照: docs/elith_synthetic_timeseries_plan_spec.md §1-3, §7
+// 参照: docs/elith/elith_synthetic_timeseries_plan_spec.md §1-3, §7
 
 import { addMonths } from './elith-synthetic';
 

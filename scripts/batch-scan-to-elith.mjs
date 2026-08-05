@@ -15,7 +15,7 @@
  * ■ スキャンのプロンプトは src/pages/api/scan.ts の ANALYZE_SYSTEM を
  *   実行時に読み取って再利用する (二重管理を避けるため)。
  *
- * ■ 出力 (Elith 仕様: docs/elith_s3_data_handoff_spec.md)
+ * ■ 出力 (Elith 仕様: docs/elith/elith_s3_data_handoff_spec.md)
  *   パス   : {prefix}user/{client_id}/date/{YYYY_MM_DD}/
  *   JSON   : {format_id}_date_{YYYY_MM_DD}_user_{client_id}.json
  *   元画像 : {format_id}_date_{YYYY_MM_DD}_user_{client_id}.{元拡張子}   (同名・拡張子替え)

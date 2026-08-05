@@ -1,7 +1,7 @@
 // src/lib/elith-verify.ts
 // Elith「画像↔JSON 照合器」(検証機能の本体)。
 //
-// 目的 (docs/elith_check_phase_spec.md の最終ゴール):
+// 目的 (docs/elith/elith_check_phase_spec.md の最終ゴール):
 //   元画像を「正解(ground truth)」、生成JSONを「検証対象」として、
 //   ネイティブマルチモーダルで項目単位に突き合わせ、
 //   missing(取りこぼし)/misread(誤読)/extra(捏造)/duplicate(重複) と一致率を返す。

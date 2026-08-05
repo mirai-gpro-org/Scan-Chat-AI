@@ -15,7 +15,7 @@
  *   - S3 設定あり: { ok:true, configured:true, bucket, folder, uploaded:[{key,bytes,uri}], json }
  *   - S3 未設定 : { ok:false, configured:false, folder, files:[{name,bytes}], json }  ← ドライラン
  *
- * 命名/フォーマットは暫定 (scan-export-v0)。詳細は docs/scan_s3_export.md / lib/scan-export.ts。
+ * 命名/フォーマットは暫定 (scan-export-v0)。詳細は docs/scan/scan_s3_export.md / lib/scan-export.ts。
  */
 
 import type { APIRoute } from 'astro';

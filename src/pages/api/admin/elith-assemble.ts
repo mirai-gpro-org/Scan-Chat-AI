@@ -76,7 +76,7 @@ export const POST: APIRoute = async ({ request }) => {
 
   const cfg = getS3Config();
   const sourcePrefix = str(body.sourcePrefix) ?? cfg?.prefix ?? 'scan-accuracy-test/';
-  // 納品先はバケット直下 (プレフィックス無し) が仕様 (docs/elith_s3_data_handoff_spec.md §3.1:
+  // 納品先はバケット直下 (プレフィックス無し) が仕様 (docs/elith/elith_s3_data_handoff_spec.md §3.1:
   //   s3://wellfort-ai-input/user/... 「例: 無し or prod/」)。body で 'prod/' 等に上書き可。
   const deliveryPrefix = typeof body.deliveryPrefix === 'string' ? (str(body.deliveryPrefix) ?? '') : '';
   const mode = str(body.mode) ?? 'inventory';

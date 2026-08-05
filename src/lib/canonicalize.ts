@@ -1,6 +1,6 @@
 // src/lib/canonicalize.ts
 // ②正準化（Normalize）エンジン = テンプレート穴埋め方式 S1〜S3（P2）。
-// 参照: docs/基本設定書.md §3.6, docs/修正仕様書_正準化エンジン.md, docs/基本設定書_実装修正プラン.md(P2)
+// 参照: docs/scan/基本設定書.md §3.6, docs/scan/修正仕様書_正準化エンジン.md, docs/scan/基本設定書_実装修正プラン.md(P2)
 //
 // 責務（層を混ぜない）:
 //   - 入力は「①読取 + sanitizeMeasurementsForDelivery 済」の lean measurement（name/value/value_num/unit/…）。

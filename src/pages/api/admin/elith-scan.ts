@@ -2,7 +2,7 @@
  * admin バッチ: 1 画像 → AIスキャン → Elith 形式 JSON + 元画像を S3 へ。
  *
  * 「がんリスク検査・遺伝子検査」等、Wellfort が手動取得した検査結果を Elith 用に一括生成する
- * 管理機能のサーバ側 (docs/elith_batch_centralization_design.md)。
+ * 管理機能のサーバ側 (docs/elith/elith_batch_centralization_design.md)。
  * Vercel 実行モデルに合わせ **1 画像 = 1 リクエスト**。クライアント(/admin/elith-batch)が順に呼ぶ。
  * キー(GEMINI_API_KEY / AWS_*)は **サーバ環境変数**のみ (CLAUDE.md: Vercel 一元管理)。
  *

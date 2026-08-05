@@ -3,7 +3,7 @@
  *
  * スキャン (scan-export) と同じ要領で、確定した問診回答を構造化 JSON へ変換し、
  * 読みやすい Markdown と共に S3 へ書き出す。スキャンと同じ `{diagnostic_id}/`
- * フォルダに同居させる想定 (docs/diagnostic_session_data_spec.md §3.5)。
+ * フォルダに同居させる想定 (docs/architecture/diagnostic_session_data_spec.md §3.5)。
  *
  * 氏名・生年月日・性別は問診で尋ねず、顧客DBから内部取得した値 (user.*) を付与する。
  * ファイル名/フォーマットは暫定。
@@ -182,7 +182,7 @@ export function buildInterviewExportBundle(
 }
 
 // ── Elith 連携形式 (LifestyleQuestionnaireData) ────────────────────────────
-// docs/elith_s3_data_handoff_spec.md §7.3 / §3。
+// docs/elith/elith_s3_data_handoff_spec.md §7.3 / §3。
 // 現行 answers[] はそのまま。PII は氏名/生年月日を載せず subject:{sex, age} のみ。
 
 /** 生年月日(YYYY-MM-DD) と基準日から満年齢。算出不可なら null。 */

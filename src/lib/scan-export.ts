@@ -6,7 +6,7 @@
  *   md / manifest と合わせて S3 バケットへ書き出す (Elith 側のテストデータ補充)。
  *
  * 命名/フォーマットは「暫定」。Elith 側の正式仕様確定後に schema_version を bump する。
- * フォルダ/ファイル規約は docs/diagnostic_session_data_spec.md §3.5/§3.6 に準拠:
+ * フォルダ/ファイル規約は docs/architecture/diagnostic_session_data_spec.md §3.5/§3.6 に準拠:
  *
  *   {diagnostic_id}/
  *     scan-{ISO8601圧縮}.json   ← 構造化 (メイン)

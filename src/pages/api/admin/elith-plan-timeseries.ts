@@ -1,7 +1,7 @@
 /**
  * admin: プラン駆動で「2プラン×3年」の時系列疑似データを一括生成する。
  *
- * 仕様: docs/elith_synthetic_timeseries_plan_spec.md
+ * 仕様: docs/elith/elith_synthetic_timeseries_plan_spec.md
  *   - plan(executive/middle) + baseDate(D0) + years(既定3) から受診回スケジュールを展開し、
  *     各 format の occurrence を「実データ種(seed)を決定論ジッタ」して生成 (値は捏造しない)。
  *   - 各受診回の date フォルダへ format JSON を置き、最後に manifest.json(complete:true) を置く。

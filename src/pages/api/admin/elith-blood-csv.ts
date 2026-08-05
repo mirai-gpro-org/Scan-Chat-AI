@@ -2,7 +2,7 @@
  * admin バッチ: 血液検査 CSV (デメカル様式) → Elith `BloodTestData` JSON 群を S3 へ。
  *
  * 血液検査結果は CSV (構造化) で受領するため、LLM は使わず **決定論パーサ**で全行を転記する
- * (docs: elith_s3_data_handoff_spec.md §7.1 / demecal_auto_download_overview_spec.md)。
+ * (docs: docs/elith/elith_s3_data_handoff_spec.md §7.1 / docs/lab/demecal_auto_download_overview_spec.md)。
  * 1 CSV = 複数人 (行) → 1 人 = 1 `BloodTestData` JSON。CSV パースは軽量なので 1 リクエストで一括処理。
  * キー(AWS_*)は **サーバ環境変数**のみ (CLAUDE.md: Vercel 一元管理)。
  * PII (氏名/住所/生年月日等) は Elith JSON に載せない。原本 CSV は PII を含むため S3 へ置かない。
