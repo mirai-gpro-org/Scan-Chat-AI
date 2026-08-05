@@ -107,7 +107,7 @@
 
 ## 6. データモデル
 
-### 6.1 キット構成の持ち方（採用＝案A: 正規化＋版管理）
+### 6.1 キット構成の持ち方（**確定＝案A: 正規化＋版管理**・2026-08）
 キット自体（検査会社都合で変更/追加/削除が頻繁）と、プラン×キット構成（サブスク契約保護で慎重に変更）は
 ライフサイクルが別なので、**商品DB `test_products` と連携する別テーブルへ正規化し、構成は版管理**する。
 
@@ -123,7 +123,57 @@
 - プラン構成変更/新プラン → 新 `plan_compositions` 版を作成。**既存契約は旧版pinのまま不変**。
 - プラン廃止 → `is_current=false`（＋商品 `is_active=false`）。走行中サブスク契約は旧版で継続。
 
-> 他案比較: B=`test_products.features(jsonb)`埋込(手軽だがキット非正規化・版/契約保護が弱い・逆引き不可)、C=ハイブリッド(キットのみ正規化・構成jsonb)、D=コード定数(DB非連携・契約pin不可=合成/開発用のみ)。→ **整合性・双方向照会・契約版pin で案Aを採用**。
+> 他案比較: B=`test_products.features(jsonb)`埋込(手軽だがキット非正規化・版/契約保護が弱い・逆引き不可)、C=ハイブリッド(キットのみ正規化・構成jsonb)、D=コード定数(DB非連携・契約pin不可=合成/開発用のみ)。→ **整合性・双方向照会・契約版pin で案Aを確定採用**。
+
+#### DDL スケッチ（実装用・wellfort-site Supabase＝`test_products`/`subscriptions` と同一DB）
+```sql
+create table test_kits (
+  id uuid primary key default gen_random_uuid(),
+  kit_code text unique not null,
+  name text not null,
+  kind text not null check (kind in ('physical_kit','data','app')),
+  lab_company text,                 -- リージャー/プリベント/LAiF/Genoplan
+  format_id text,                   -- Elith: BloodTestData/CancerRiskAssessmentData/GeneticTestResultData/Other 等
+  is_active boolean default true,
+  sort_order int default 0,
+  created_at timestamptz default now(), updated_at timestamptz default now()
+);
+create table plan_compositions (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid not null references test_products(id),
+  version int not null,
+  per_year int not null,            -- 発送/受診 回数/年
+  interval_months int not null,     -- 4 or 6
+  effective_from date,
+  is_current boolean default true,
+  note text,
+  created_at timestamptz default now(),
+  unique (product_id, version)
+);
+create table plan_composition_items (
+  id uuid primary key default gen_random_uuid(),
+  composition_id uuid not null references plan_compositions(id) on delete cascade,
+  kit_id uuid not null references test_kits(id),
+  qty_per_year int not null,
+  ship_rule text not null check (ship_rule in ('every','first_only','none')),
+  unique (composition_id, kit_id)
+);
+alter table subscriptions add column plan_composition_id uuid references plan_compositions(id);  -- 契約時の版をpin
+```
+- インデックス: `plan_compositions(product_id, is_current)`、`plan_composition_items(kit_id)`（キット→プラン逆引き）。
+
+#### 初期データ（Excel 4プラン → 構成明細）
+`test_kits`: 遺伝子(physical_kit/Genoplan/GeneticTestResultData)・がんリスク(physical_kit/プリベント/CancerRiskAssessmentData)・血液(physical_kit/リージャー/BloodTestData)・AI疾病予測(data/LAiF/Other)・AI疾病予防(app)。
+
+| プラン(product) | per_year/間隔 | 遺伝子 | がん | 血液 | AI予測 | AI予防 |
+|---|---|---|---|---|---|---|
+| 幹部(50代以上) ¥187,000/157,300 | 3 / 4カ月 | first_only(1) | every(3) | every(3) | none(1) | none(4) |
+| 幹部(30・40代) ¥143,000/113,300 | 2 / 6カ月 | first_only(1) | every(2) | every(2) | none(1) | none(2) |
+| ミドル(50代以上) ¥90,200/60,500 | 3 / 4カ月 | first_only(1) | every(3) | — | — | none(1) |
+| ミドル(30・40代) ¥79,200/49,500 | 2 / 6カ月 | — | every(2) | — | — | none(1) |
+
+- `ship_rule`: `every`=各回発送(タカセ)、`first_only`=初回のみ発送、`none`=物理発送なし(データ/アプリ)。
+- 各 `plan_compositions` は初版 `version=1, is_current=true`。以後の改定は新 `version` を追加し既存契約は旧版pinで保護。
 
 ### 6.2 運用系テーブル（本仕様の管理対象）
 - `subscription_contract`／`subscriptions`（プラン・`plan_composition_id`・D0・状態）
@@ -145,6 +195,7 @@
 3. **AI問診 催促（確定）**: 検体返送通知時に未完なら催促。**毎日通知**、**7日超で Wellfort 管理者へワーニング**。ハードブロックしない（§3.1）。
 4. **タカセCSV様式（確定）**: **現行様式を踏襲**（スケジュール駆動でも項目・宛先は同一）。
 
+5. **キット構成データの持ち方（確定）**: **案A＝正規化＋版管理の別テーブル**（`test_kits`/`plan_compositions`/`plan_composition_items`＋`subscriptions.plan_composition_id`）。§6.1 に DDL・初期データ。
+
 ### 残・要確認
 - **AI疾病予測/予防**: 物理キット外（タカセ対象外）。AI疾病予測=年1回のデータ受領、AI疾病予防=開発中の回数/仕様（管理対象に含める時期）。
-- **キット構成データの持ち方**: `test_products.features(jsonb)` に埋めるか、別マッピング表にするか（実装時に確定）。
