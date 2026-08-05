@@ -105,12 +105,35 @@
                           └─▶ ④-3 Elith JSON 作成・S3受渡 指示
 ```
 
-## 6. データモデル（要点）
-- `subscription_contract`（プラン・D0・回数・間隔・状態）
-- `kit_shipment_schedule`（契約×回×キット×予定日×出荷状態）← §2
+## 6. データモデル
+
+### 6.1 キット構成の持ち方（採用＝案A: 正規化＋版管理）
+キット自体（検査会社都合で変更/追加/削除が頻繁）と、プラン×キット構成（サブスク契約保護で慎重に変更）は
+ライフサイクルが別なので、**商品DB `test_products` と連携する別テーブルへ正規化し、構成は版管理**する。
+
+| テーブル | 役割・主な列 |
+|---|---|
+| `test_kits`（キット/項目マスタ） | `id`/`kit_code`(UK)/`name`/`kind`('physical_kit'\|'data'\|'app')/`lab_company`(リージャー/プリベント/LAiF/Genoplan)/`format_id`(Elith)/`is_active`/`sort_order`。**キット変更・追加・削除はここで完結**。physical_kit=遺伝子・がん・血液(タカセ発送)／data=AI疾病予測(LAiF)／app=AI疾病予防 |
+| `plan_compositions`（プラン構成ヘッダ＝**版**） | `id`/`product_id`(FK→`test_products`)/`version`/`per_year`/`interval_months`/`effective_from`/`is_current`/`note`。**プラン単位で構成をバージョン管理** |
+| `plan_composition_items`（構成明細） | `id`/`composition_id`(FK)/`kit_id`(FK→`test_kits`)/`qty_per_year`/`ship_rule`('every'\|'first_only'\|'none')。遺伝子=first_only／がん・血液=every／AI予測・予防=none(発送しない) |
+| `subscriptions`（列追加） | `plan_composition_id`(FK→`plan_compositions`)。**契約時の構成【版】をpin** → プラン改定後も既存契約は当時の構成のまま（サブスク保護） |
+
+**変更シナリオ耐性**:
+- キット変更/追加/削除 → `test_kits` 1箇所（既存構成は `kit_id` 参照で属性は自動追従、差替は明細更新）。
+- プラン構成変更/新プラン → 新 `plan_compositions` 版を作成。**既存契約は旧版pinのまま不変**。
+- プラン廃止 → `is_current=false`（＋商品 `is_active=false`）。走行中サブスク契約は旧版で継続。
+
+> 他案比較: B=`test_products.features(jsonb)`埋込(手軽だがキット非正規化・版/契約保護が弱い・逆引き不可)、C=ハイブリッド(キットのみ正規化・構成jsonb)、D=コード定数(DB非連携・契約pin不可=合成/開発用のみ)。→ **整合性・双方向照会・契約版pin で案Aを採用**。
+
+### 6.2 運用系テーブル（本仕様の管理対象）
+- `subscription_contract`／`subscriptions`（プラン・`plan_composition_id`・D0・状態）
+- `kit_shipment_schedule`（契約×回×キット×予定日×出荷状態）← §2。契約→`plan_composition_id`→明細から展開。
 - `kit_lifecycle`（出荷→受取→返送→受領→Elith の各状態・日時）← §3
 - `lab_handoff`（回×検査会社×問診CSV送付・結果受領・Elith作成 の各状態）← §4
-- 既存の顧客ステータス（`instruction_sent` 等）・`warehouse_calendar` と整合。
+- 既存の顧客ステータス（`instruction_sent` 等）・`warehouse_calendar`（営業日）と整合。
+
+### 6.3 合成データ生成との整合
+`elith-plan.ts`（合成）は上記 `test_kits`／`plan_compositions`／`plan_composition_items` を正として**4プランへ拡張**（ハードコード2プランを置換）。
 
 ## 7. 実装状況
 - **実装済**: EC決済→発送指示CSV・`cron-shipping`（日次）・検査キット発送情報（パイロット）・各社受取/問診CSV/Elith の各要素仕様。
