@@ -2,7 +2,7 @@
  * admin: デメカル自動DLの状態 (last_to) を S3 で管理する。
  *
  * RPA(専用PC) が「前回取得済みの最終日 last_to」を読み、次回範囲 from=last_to+1 を決める。
- * 取り込み成功後に last_to を前進させる (docs/demecal_auto_download_overview_spec.md §4)。
+ * 取り込み成功後に last_to を前進させる (docs/lab/demecal_auto_download_overview_spec.md §4)。
  *   - GET  : { ok, last_to, updated_at, note }
  *   - POST : { last_to: "YYYY-MM-DD" } を保存 (単調前進のみ。過去日付は無視して現状維持)
  * 状態は S3 の `{prefix}state/demecal_last_to.json` に置く (鍵はサーバ側のみ)。

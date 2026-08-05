@@ -1,8 +1,8 @@
 /**
- * docs/system_architecture_overview.md → PDF 変換スクリプト
+ * docs/architecture/system_architecture_overview.md → PDF 変換スクリプト
  *
  * 実行: node scripts/build-architecture-pdf.mjs
- * 出力: docs/system_architecture_overview.pdf
+ * 出力: docs/architecture/system_architecture_overview.pdf
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -13,8 +13,8 @@ import { chromium } from 'playwright';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 
-const SOURCE = resolve(ROOT, 'docs/system_architecture_overview.md');
-const OUTPUT = resolve(ROOT, 'docs/system_architecture_overview.pdf');
+const SOURCE = resolve(ROOT, 'docs/architecture/system_architecture_overview.md');
+const OUTPUT = resolve(ROOT, 'docs/architecture/system_architecture_overview.pdf');
 
 const md = readFileSync(SOURCE, 'utf8');
 marked.setOptions({ gfm: true, breaks: false });

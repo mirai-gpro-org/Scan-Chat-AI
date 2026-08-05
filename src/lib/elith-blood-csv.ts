@@ -1,7 +1,7 @@
 /**
  * 血液検査 CSV (デメカル様式) → Elith `BloodTestData` への決定論パーサ (サーバ専用)。
  *
- * 設計 (docs: elith_s3_data_handoff_spec.md §7.1 / demecal_auto_download_overview_spec.md):
+ * 設計 (docs: docs/elith/elith_s3_data_handoff_spec.md §7.1 / docs/lab/demecal_auto_download_overview_spec.md):
  *   - CSV は「自己記述型」: 固定メタ列 + `結果項目数` + (項目名N / 項目区分N / 検査値N) の繰り返し。
  *     → 検査項目が増減・改称してもコード修正不要 (項目名をハードコードしない汎用転記)。
  *   - LLM は使わない。構造化データは決定論パースで値を完全転記する (検査値は誤り厳禁)。

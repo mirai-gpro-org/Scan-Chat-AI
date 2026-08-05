@@ -1,7 +1,7 @@
 /**
  * 撮影 → AI 解析 → 「ユーザー検証」フェーズの UI コントローラ。
  *
- * ユーザーが経るフロー (docs/scan_chat_medical_ai_proposal.pdf + 5/24 仕様確認):
+ * ユーザーが経るフロー (docs/proposals/scan_chat_medical_ai_proposal.pdf + 5/24 仕様確認):
  *   1. 撮影画像から「表全体」だけを切り出した画像を上部に表示
  *   2. 各ブロック (region) を bbox に基づいて緑/黄/赤の半透明矩形でオーバーレイ
  *   3. ブロックをタップ → そのブロックの表データをテキスト一覧表示。
@@ -10,7 +10,7 @@
  *   5. 全疑念が解消されると画像オールグリーンになり「確認して送信」が活性化
  *      → /chat に遷移 (Phase 0、データはメモリ保持)
  *
- * 永続化 (docs/diagnostic_session_data_spec.md §3.2):
+ * 永続化 (docs/architecture/diagnostic_session_data_spec.md §3.2):
  *   - Gemini 生 markdown は scan_artifacts.content に**そのまま保存されない**
  *   - 確定 scan_md = ユーザー検証 (編集 + userConfirmed) を反映した markdownClean
  *   - 現状は localStorage に diagnostic_id 単位で行状態を保存し、ページ再ロード時に復元

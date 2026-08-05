@@ -2,7 +2,7 @@
  * admin: 検診・人間ドック (HealthCheckupData) の複数画像を 1 検査へマージ。
  *
  * 1 回の複数選択 = 1 人分の 1 検査。複数シート(画像)を 1 つの JSON にマージし、
- * 元画像は全て連番で書き出す (docs/elith_batch_centralization_design.md / CLAUDE.md)。
+ * 元画像は全て連番で書き出す (docs/elith/elith_batch_centralization_design.md / CLAUDE.md)。
  * CLAUDE.md 原則「1 画像 = 1 リクエスト(60s制約)」を守り、クライアントが順に呼ぶ:
  *   - action=part     : 1 画像をスキャン → 元画像を連番で S3 保存 → 解析結果を返す(JSONは書かない)
  *   - action=finalize : 全 part の測定値をマージ → 1 つの HealthCheckupData JSON を S3 保存

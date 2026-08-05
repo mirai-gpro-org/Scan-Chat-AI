@@ -1,7 +1,7 @@
 // src/lib/elith-necessity-check.ts
 // Elith「不要項目チェック（必要要素検証）」の純粋関数。
 // Elith のアウトプットに必要な入力要素の観点で、生成JSONに不要項目/余剰フィールドが
-// 無いかを検証する（モデル精度検証ではない）。参照: docs/elith_check_phase_spec.md
+// 無いかを検証する（モデル精度検証ではない）。参照: docs/elith/elith_check_phase_spec.md
 //
 // - フィールド層: measurement に必要なキーのみか（allowlist）。マスタ不要で判定可能。
 // - 項目層: 必要項目マスタ(Elith合意)があれば「マスタ外=余剰候補 / 不足」を判定。

@@ -6,7 +6,7 @@
  *
  * - キー(GEMINI_API_KEY)は **サーバ環境変数からのみ**取得 (CLAUDE.md: Vercel 一元管理)。
  * - スキャンのプロンプト/設定は scan-prompt.ts を共用 (scan.ts と同一ロジック)。
- * - パス/命名は docs/elith_s3_data_handoff_spec.md に準拠。
+ * - パス/命名は docs/elith/elith_s3_data_handoff_spec.md に準拠。
  * - Vercel 実行モデルに合わせ **1 画像 = 1 呼び出し** (呼び出し側がループ)。
  *
  * サーバ専用 (GEMINI_API_KEY を読むため、クライアントから呼ばない)。
@@ -164,7 +164,7 @@ function stripExamComment(md: string): string {
 }
 
 // ── 計測値 (表領域 → measurements[]) ────────────────────────────
-// Elith 納品用の共通スキーマ (docs/elith_s3_data_handoff_spec.md §7.1)。
+// Elith 納品用の共通スキーマ (docs/elith/elith_s3_data_handoff_spec.md §7.1)。
 // 検査値型 (HealthCheckup / Cancer / Blood) で同じキー名を使う。
 //   - 構造化 (項目名/単位/判定の分離) は LLM が担う (スキャンは表カラムに出力済み)。
 //   - value は「数値のみ」を目標にし、単位は unit / 判定は flag に分離する。

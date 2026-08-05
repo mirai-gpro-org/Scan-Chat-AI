@@ -1,13 +1,13 @@
 // src/lib/standard-master.ts
 // ②正準化（Normalize）のデータ層 = 業界標準の検査項目マスタ（starter）。
-// 参照: docs/基本設定書.md §2.4/§3.6, docs/修正仕様書_標準マスタ.md, docs/基本設定書_実装修正プラン.md(P1)
+// 参照: docs/scan/基本設定書.md §2.4/§3.6, docs/scan/修正仕様書_標準マスタ.md, docs/scan/基本設定書_実装修正プラン.md(P1)
 //
 // 役割:
 //   - 「出力項目（標準名・単位）を先に固定した空テンプレート」の元データ（S1）。
 //   - 正準化エンジン(canonicalize・P2)と checkNecessity の requiredItemsMaster が参照する唯一のマスタ。
 //
 // ⚠️ 重要（R3・捏造ゼロ）:
-//   - starter は「代表ゴールデン検体(docs/scan_golden_healthcheckup_20250123.md)に実在する標準項目」だけを収録する。
+//   - starter は「代表ゴールデン検体(docs/scan/golden/scan_golden_healthcheckup_20250123.md)に実在する標準項目」だけを収録する。
 //     存在しない標準名を作らない。同義語は「実測の表記ゆれ」だけを登録する。
 //   - 完全マスタ(KMAT ver5.0≒2000項目 / 特定健診法定項目)は推進機構/HASTOS or クライアント/Elith から
 //     一次資料を受領して差し替える(P5)。その際も StandardItem インターフェースは不変に保つ。
@@ -53,7 +53,7 @@ export function normKey(s: string): string {
     .replace(/[\s　・（）()]/g, '');
 }
 
-// ── starter マスタ本体（すべて docs/scan_golden_healthcheckup_20250123.md に実在） ──
+// ── starter マスタ本体（すべて docs/scan/golden/scan_golden_healthcheckup_20250123.md に実在） ──
 export const STANDARD_MASTER: StandardItem[] = [
   // 身体計測
   { canonical_name: '身長', synonyms: [], unit: 'cm', category: '身体計測', source_std: 'starter' },

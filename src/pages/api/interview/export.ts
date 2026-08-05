@@ -1,7 +1,7 @@
 /**
  * AI 問診結果を Elith 連携仕様 (LifestyleQuestionnaireData) で S3 へ書き出すエンドポイント。
  *
- * 出力仕様: docs/elith_s3_data_handoff_spec.md §7.3 / §3。
+ * 出力仕様: docs/elith/elith_s3_data_handoff_spec.md §7.3 / §3。
  *   パス   : {prefix}user/{client_id}/date/{YYYY_MM_DD}/
  *   ファイル: LifestyleQuestionnaireData_date_{YYYY_MM_DD}_user_{client_id}.json
  *   PII    : 氏名/生年月日は載せず subject:{sex, age} のみ (生年月日→年齢に変換)。
