@@ -296,6 +296,7 @@
 | `docs/scan/scan_feature_requirements.md` / `docs/scan/scan_s3_export.md` | AIスキャン機能要件 / S3書き出し |
 | `docs/scan/health_age_caba_v5.4_spec.md` | **健康年齢(CABA v5.4)確定事項** (免責2文/WBC桁正規化/補完定数/SBP・FEV補正・Wellfort確認2026-08) |
 | `docs/scan/scan_canonicalization_standard_format_design.md` | **戦略正本: 検査票→標準フォーマット正準化(2層戦略)**。①読取=native multimodal維持 / ②正準化=健診標準フォーマット(KMAT)への決定論マッピング新規 |
+| `docs/ai_reviews/` | Gemini/ChatGPT へのレビュー依頼・相談ドラフト集(開発経緯の記録。確定仕様は各 spec が正本) |
 
 ## コード / スタック
 - Astro v5 + TypeScript (SSR / Vercel)。UI=`.astro`、API=`src/pages/api/**.ts`、ロジック=`src/lib/`。
