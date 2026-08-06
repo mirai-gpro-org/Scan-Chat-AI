@@ -73,12 +73,20 @@ PAD 側：ScriptOutput を「JSON をカスタムオブジェクトに変換」�
 
 PAD「If `%HasRange%` = False」→ ログに「取得なし」を書いて**正常終了**（フロー終了）。
 
-## 5. アクション [C] デメカルからDL（プレースホルダ・フェーズ2で実装）
+## 5. アクション [C] デメカルからDL（画面手順は確定済み）
 
-> フェーズ2でWellfort提供の画面情報を使って作り込む。ここでは受け渡し仕様だけ固定。
+> **画面情報は提供済み（動画・提供資料）＝確定手順あり**。`demecal_pad_operation_guide.md §2-3`
+> 「デメカルへログイン〜汎用CSV DL（Webオートメーション）」と `demecal_auto_download_overview_spec.md §2.1`
+> の手順どおりに PAD で作り込む（本節はその受け渡し仕様の要約）。
 - 入力：`%DemeId%` `%DemePw%` `%FromStr%` `%ToStr%` `%AgentCode%`
-- 使うアクション（想定）：新しいEdge/Chromeを起動 → ログイン欄に入力 → ボタン押下 → データDL→汎用CSV画面へ移動 → 代理店/日付/「正常終了のみ」/「項目見出し 出力する」設定 → 確認 → ダウンロード → 「ダウンロードを待機」→「フォルダー内のファイルを取得」で `%DlFolder%` の最新 `.csv` を `%CsvPath%` に。
+- 確定アクション（`operation_guide §2-3` 準拠）：新しいEdge/Chromeを起動 → `https://dl.demecal.net/account/login` →
+  ID欄に `%DemeId%`／PW欄に `%DemePw%` 入力 → ログイン → メニュー「データダウンロード」→「結果DL(汎用CSV)」→
+  代理店 `%AgentCode%`(Q05-0010)／販売先 `000000`／日付範囲 `%FromStr%`〜`%ToStr%`／検査結果「正常終了のみ」／
+  項目見出し「出力する」 → 確認 → ダウンロード → 「ダウンロードを待機」→「フォルダー内のファイルを取得」で
+  `%DlFolder%` の最新 `Q05-0010-000000result_*.csv` を `%CsvPath%` に。
 - 出力：`%CsvPath%`（保存された最新CSVのフルパス）
+- **残作業＝仕様不足でなく実装作業**：この確定手順に沿って PAD 実フローを組み、証明書自動選択（`setup_guide §2-4`）と
+  結合して attended で通し確認する（画面変更時はセレクタ更新）。
 
 ## 6. アクション [D] CSV取り込み＋状態前進（PowerShell）
 
