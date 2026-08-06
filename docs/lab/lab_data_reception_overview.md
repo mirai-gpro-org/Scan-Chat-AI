@@ -36,7 +36,10 @@
   `demecal_pad_operation_guide.md §2-3` に**確定手順を記載済**（ログイン→データDL→汎用CSV設定→確認→DL）。
 - **ステータス**: 自動アクセス承認済／サーバ側（変換・S3・状態管理・取込UI）実装済／DL画面手順=仕様確定済／
   ④構造照合fixture=実装済。**残＝PC側でPAD実フローを§2-3どおりに組む実装作業**（仕様不足ではない）＋先方確認（§6: 日付基準/レート制限/証明書移設）。
-- **詳細**: `docs/lab/demecal_rpa_operation_design.md`・`docs/lab/demecal_auto_download_overview_spec.md`・`demecal_pad_{flow_skeleton,operation_guide,setup_guide}.md`。
+- **進め方（技術者不在への対応・2案並行）**:
+  - **案1（即運用・技術者不要）**: attended手動DL＋admin取込。スタッフ向けクリック手順書＝`docs/lab/demecal_attended_manual_guide.md`。
+  - **案2（本命・PC/人手を排す）**: サーバ側 Playwright(mTLS) 自動DL。設計＝`docs/lab/demecal_server_playwright_design.md`（要: 証明書サーバ移設承認・Leisureのアクセス許可/テスト証明書）。最善は案0=公式データ連携(SFTP/API)をLeisureへ打診。
+- **詳細**: `docs/lab/demecal_rpa_operation_design.md`・`docs/lab/demecal_auto_download_overview_spec.md`・`demecal_pad_{flow_skeleton,operation_guide,setup_guide}.md`・`demecal_attended_manual_guide.md`・`demecal_server_playwright_design.md`。
 
 ## 2. がんリスク検査（尿・プリベント社）
 
