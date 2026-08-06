@@ -70,6 +70,16 @@
 - **上り（PDF提出）**：サーバが**Presigned POST**を発行（**ファイルサイズ上限・`Content-Type=application/pdf`・キー(quarantine/UUIDv7)を署名に固定**）。ブラウザが直接 `quarantine/` へPUT。
 - **presigned URL の位置づけ**：これは**認証の代替ではなく一時的な権限委譲**。**認証済みセッションの内部実装**として都度発行し、**人間に直接配布しない**（メールでURLを送る運用は禁止）。
 
+## 4.5 新規CSVの自動メール通知（上り・LAiF連絡先へ）
+
+- **トリガ**：Wellfort が新しい問診データCSVを上り領域（`to-laif/`）へアップロードした時。
+- **通知先**：**Wellfort 管理画面（wellfort-site admin）で登録した LAiF 連絡先メールアドレス**（複数可・変更可）。
+- **通知内容**：「新しい入力CSVが利用可能」の旨＋**ポータルへのログイン導線のみ**。
+  **メール本文に CSVデータ・ダウンロードリンク（presigned URL）・氏名等PII は載せない**（漏洩/フィッシング面を作らない）。整理番号など機微の記載も最小化（件数程度）。
+- **受信後の動線**：LAiF担当者は通知を受けてポータルにログイン→ §4「下り（CSV取得）」で取得。**常時ポーリング不要**。
+- **実装**：送信は Wellfort 側（wellfort-site admin の CSV アップロード処理契機、または S3 `to-laif/` PutObject を EventBridge で拾って送信）。宛先は admin 設定テーブルで管理（`customer` の PII とは分離）。監査ログに送信記録を残す。
+- **失敗時**：メール送信失敗はアップロード自体を失敗にしない（非同期・リトライ）。未達時は admin に警告。
+
 ## 5. URL隠蔽（ハッシュ化）の扱い＝不採用（Security Theater）
 
 - **両モデル一致：完全に Security Theater**。presigned URL 自体が推測不能な署名＋期限を持つ Capability Token であり、さらにハッシュ/独自トークンで包んでも「**最終URLを知る者は誰でもアクセス可**」という本質は変わらない。
@@ -125,7 +135,7 @@
 
 ## 12. 実装への落とし込み（役割分担）
 
-- **wellfort-site（UI＝ポータル入口）**：Partner Portal 画面／Supabase Auth（Passkey）／**Edge Middleware でIP検査**／非同期ステータス表示。（admin UI は wellfort-site の原則に整合）
+- **wellfort-site（UI＝ポータル入口）**：Partner Portal 画面／Supabase Auth（Passkey）／**Edge Middleware でIP検査**／非同期ステータス表示。**新規CSV通知の送信＋LAiF連絡先の管理画面（§4.5）**。（admin UI は wellfort-site の原則に整合）
 - **Scan-Chat-AI（API/処理）**：
   - `src/lib/s3.ts` に **Presigned POST/GET ヘルパ**（`@aws-sdk/s3-request-presigner`）＋**LAiF専用バケット env**（例 `LAIF_S3_BUCKET`）を追加（現状は単一 `AWS_S3_BUCKET`）。
   - **EventBridge Webhook 受け** API（`NO_THREATS_FOUND` 契機で `trusted/` へ移動→取込起動）。
@@ -139,6 +149,7 @@
 3. **GuardDuty非同期ラグ**の運用許容（結果反映までのタイムラグをLAiF/Wellfortが受容できるか）。
 4. **整理番号の採番元**（`questionnaire_to_lab_csv_spec.md §7-4` 未確定）。
 5. **PDF直投げ（File API）での抽出品質**が現行の画像経路と同等か（代表PDFで🎯再検証）。
+6. **新規CSV通知の宛先メールアドレス**（§4.5・複数可・個人宛/共有ML宛の別）。
 
 ## 14. 両モデルの一致点・相違点（裁定の記録）
 
