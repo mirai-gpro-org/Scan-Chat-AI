@@ -59,7 +59,8 @@
 - **フロー**: 専用バケットURLからレポートPDFを入手 → **admin バッチAIスキャン（多ページ・LLM構造化）** → `Other`（`kind:"ai_prediction"`・`lab_name:"LAiF"`）JSON → S3（Elith納品層）。
 - **データ内容**（実サンプル準拠）: 疾患ごとに **5年発症率(%)・10年発症率(%)・相対リスク比・昨年の相対リスク比**、カテゴリ（生活習慣病/循環器/悪性腫瘍/神経疾患）、リスク因子・予防策（AIアドバイス）。
 - **変換/ラップ仕様**: `docs/elith/elith_assembly_wrapping_spec.md §5`（`Other`/`ai_prediction`・命名・data.items・時系列疑似データ提案）。
-- **ステータス**: 受取方式確定。スキャン→JSON化 実装済（admin「🔮 AI疾病発症予測(LAiF)」）。**Elith 側の `Other`/`ai_prediction` 受領仕様は §5.6 で確認中**。
+- **セキュア受渡方式（設計正本）**: `docs/lab/laif_s3_secure_handoff_spec.md`（**ポータル共有型ゼロトラスト**：Passkey認証＋IP制限＋Presigned直転送＋GuardDuty検疫＋Gemini File API丸投げ＋決定論検証＋Object Lock。Gemini/ChatGPT統合）。
+- **ステータス**: 受取方式確定。スキャン→JSON化 実装済（admin「🔮 AI疾病発症予測(LAiF)」）。**Elith 側の `Other`/`ai_prediction` 受領仕様は §5.6 で確認中**。**セキュア受渡は設計確定（実装/LAiF確認は上記spec §12-13）**。
 
 ## 4. 遺伝子検査（Genoplan社）
 
