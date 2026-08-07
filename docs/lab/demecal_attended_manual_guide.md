@@ -1,5 +1,7 @@
 # デメカル血液CSV — 手動取込 運用手順書
 
+> **※本書の位置づけ**：RPA（Power Automate Desktop）構築後は、この作業は**PCが起動していれば週次で自動実行**されます（`demecal_pad_operation_guide.md §4`）。本書は **RPA構築前の運用**、および**RPA障害時のフォールバック**手順です。
+
 <div align="center">
 <svg viewBox="0 0 760 430" xmlns="http://www.w3.org/2000/svg" style="max-width:100%;height:auto;font-family:'IPAPGothic','IPAGothic',sans-serif;">
   <defs>
