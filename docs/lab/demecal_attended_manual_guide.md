@@ -38,8 +38,9 @@
   <circle cx="560" cy="226" r="16" fill="#2b6cb0"/>
   <text x="560" y="232" text-anchor="middle" fill="#fff" font-size="18" font-weight="bold">3</text>
   <text x="588" y="232" fill="#1a365d" font-size="14" font-weight="bold">管理画面に取り込む</text>
-  <text x="550" y="266" fill="#2c5282" font-size="12.5">ファイルを選んで実行</text>
-  <text x="550" y="288" fill="#2c5282" font-size="12.5">件数・最新日を確認</text>
+  <text x="550" y="262" fill="#2c5282" font-size="12.5">ファイルを選んで実行</text>
+  <text x="550" y="282" fill="#2c5282" font-size="12.5">→ Elith用JSONを</text>
+  <text x="550" y="300" fill="#2c5282" font-size="12.5">　 S3へ自動書出</text>
   <path d="M635,316 C635,388 125,388 125,316" fill="none" stroke="#f6ad55" stroke-width="2.5" stroke-dasharray="6,5" marker-end="url(#arrow)"/>
   <rect x="252" y="360" width="256" height="46" rx="8" fill="#fffaf0" stroke="#f6ad55" stroke-width="1.5"/>
   <text x="380" y="381" text-anchor="middle" fill="#744210" font-size="12.5" font-weight="bold">取り込むと開始日が自動で前進</text>
@@ -49,6 +50,7 @@
 
 > **全体像**：準備は**最初の1回だけ**。あとは**週1回、①開始日を確認 → ②CSVをDL → ③取り込む**をくり返すだけです。
 > 取り込むと次回の開始日（`last_to`）が**自動で前へ進む**ので、日付の重複・取り漏れは起きません。
+> **③で取り込めば、あとはサーバ側が自動で Elith 用 JSON を AWS S3 に書き出します**（担当者の作業は③まで。JSON化・S3アップロードは不要）。
 > RPA（自動化）を組む前でも、この手順で**今日から本番運用**できます（サーバ側の変換・S3保存・状態管理は実装済み。RPAは将来この手動クリックを省くだけ）。
 
 **関連**: 画面手順の詳細＝`demecal_auto_download_overview_spec.md §2.1`／取込API＝`elith-blood-csv`・状態管理＝`demecal-state`／RPA化＝`demecal_rpa_operation_design.md`・`demecal_server_playwright_design.md`。
@@ -99,7 +101,8 @@
 1. 管理画面の **「🩸 デメカルCSV 取り込み」** に戻る。
 2. **②で保存したCSVファイルを選択** → **「取り込み実行」**。
 3. 結果表示を確認：**取り込み件数 ＋ 最新検査日**。成功すると **`last_to` が自動で前進**（次回はその翌日から）。
-4. 取り込み後、**PCに残ったCSVファイルは削除**（PII保護。※原本CSVはサーバ/S3には保存されません。個人情報はサーバが自動で除去します）。
+   - **この取り込みだけで完了です**。取り込むと**サーバ側が自動で Elith 用の JSON（`BloodTestData`・1人=1ファイル）を AWS S3 に書き出します**（手動でのJSON化・アップロードは不要）。結果表示に**アップロード件数／保存先（S3キー）**が出ます。根拠＝`elith-blood-csv` API・`docs/elith/elith_s3_data_handoff_spec.md §7.1`。
+4. 取り込み後、**PCに残ったCSVファイルは削除**（PII保護。※原本CSVはサーバ/S3には保存されません。個人情報はサーバが自動で除去し、S3へはPII非含有のElith JSONのみ書き出します）。
 
 ---
 
