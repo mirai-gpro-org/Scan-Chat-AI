@@ -1,0 +1,159 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<style>
+  :root{--brand:#0d9488;--brand2:#22d3ee;--ink:#1e293b;--sub:#64748b;--line:#e2e8f0;--bg:#f1f5f9;}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:"IPAPGothic","IPAGothic",sans-serif;}
+  body{background:var(--bg);padding:28px;color:var(--ink);}
+  .wrap{display:flex;gap:26px;align-items:flex-start;}
+  /* phone card */
+  .card{width:400px;background:#fff;border:1px solid var(--line);border-radius:20px;padding:16px;box-shadow:0 10px 30px rgba(15,23,42,.08);}
+  .chead{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+  .chead h2{font-size:15px;font-weight:800;display:flex;gap:6px;align-items:center;}
+  .plan{background:#f1f5f9;color:#475569;font-size:11px;font-weight:600;border-radius:999px;padding:3px 10px;}
+  .zone{border-radius:14px;padding:12px;margin-bottom:12px;}
+  .zlabel{font-size:11px;font-weight:800;letter-spacing:.02em;margin-bottom:9px;display:flex;align-items:center;gap:6px;}
+  .zA{background:#f8fafc;border:1px solid var(--line);}
+  .zB{background:#fff;border:1px solid var(--line);}
+  .zC{background:#fffbeb;border:1px solid #fcd34d;}
+  .zC.done{background:#ecfdf5;border-color:#6ee7b7;}
+  /* timeline */
+  .tl{position:relative;padding-left:18px;}
+  .tl:before{content:"";position:absolute;left:5px;top:4px;bottom:4px;width:2px;background:var(--line);}
+  .tlrow{position:relative;margin-bottom:11px;}
+  .tlrow:last-child{margin-bottom:0;}
+  .dot{position:absolute;left:-16px;top:2px;width:11px;height:11px;border-radius:50%;background:#cbd5e1;border:2px solid #fff;}
+  .dot.on{background:var(--brand);box-shadow:0 0 0 3px rgba(13,148,136,.18);}
+  .tlrow .d{font-size:12px;font-weight:700;}
+  .tlrow .d small{color:var(--sub);font-weight:600;margin-left:6px;}
+  .chips{margin-top:4px;display:flex;flex-wrap:wrap;gap:5px;}
+  .chip{font-size:11px;background:#f1f5f9;border:1px solid var(--line);border-radius:999px;padding:2px 8px;}
+  .muted .d,.muted .chip{color:#94a3b8;}
+  .note{font-size:10.5px;color:var(--sub);margin-top:7px;}
+  /* active kit */
+  .kit{border:1px solid var(--line);border-radius:12px;padding:11px;margin-bottom:9px;}
+  .kit:last-child{margin-bottom:0;}
+  .krow{display:flex;align-items:center;justify-content:space-between;}
+  .kleft{display:flex;align-items:center;gap:9px;}
+  .kemoji{font-size:20px;}
+  .kname{font-size:13px;font-weight:700;}
+  .klab{font-size:10px;color:var(--sub);}
+  .kstat{font-size:11px;font-weight:700;}
+  .st-recv{color:#d97706;}.st-ship{color:#ea580c;}
+  .stepper{display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin:10px 0 6px;}
+  .seg{height:5px;border-radius:999px;background:#e2e8f0;}
+  .seg.done{background:var(--brand);}
+  .seg.cur{background:linear-gradient(90deg,var(--brand),var(--brand2));}
+  .steplabels{display:flex;justify-content:space-between;font-size:8.5px;color:#94a3b8;}
+  .meta{display:flex;justify-content:space-between;font-size:10px;color:var(--sub);margin-top:7px;}
+  .track{color:var(--brand);font-weight:700;}
+  .btn{display:block;width:100%;text-align:center;border-radius:10px;padding:9px;font-size:12.5px;font-weight:700;margin-top:10px;border:1px solid;}
+  .btn-recv{background:#fffbeb;border-color:#fcd34d;color:#92400e;}
+  .btn-ret{background:#eff6ff;border-color:#93c5fd;color:#1e40af;}
+  .cta-warn{display:flex;gap:8px;align-items:flex-start;}
+  .cta-warn .ic{font-size:16px;}
+  .cta-warn .t{font-size:12px;font-weight:700;color:#92400e;}
+  .cta-warn .s{font-size:10.5px;color:#a16207;margin-top:2px;}
+  .btn-quiz{background:linear-gradient(90deg,var(--brand),#0891b2);color:#fff;border:none;margin-top:10px;}
+  .doneline{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:800;color:#047857;}
+  .resetnote{font-size:10px;color:#059669;margin-top:5px;}
+  /* annotations */
+  .notes{width:330px;padding-top:6px;}
+  .notes h3{font-size:14px;font-weight:800;margin-bottom:12px;color:var(--ink);}
+  .ncard{background:#fff;border:1px solid var(--line);border-left:4px solid var(--brand);border-radius:10px;padding:11px 13px;margin-bottom:11px;}
+  .ncard .h{font-size:12.5px;font-weight:800;margin-bottom:4px;}
+  .ncard .b{font-size:11.5px;color:#475569;line-height:1.6;}
+  .tagA{border-left-color:#0ea5e9;}.tagB{border-left-color:#f59e0b;}.tagC{border-left-color:#10b981;}
+  .badgeA{color:#0ea5e9;}.badgeB{color:#f59e0b;}.badgeC{color:#10b981;}
+  .title{font-size:12px;color:#64748b;margin-bottom:14px;}
+</style></head>
+<body>
+<div class="title">📦 検査キット進捗 — UIイメージ案（サブスク駆動・幹部プラン例／モック）</div>
+<div class="wrap">
+  <!-- ========== PHONE CARD ========== -->
+  <div class="card">
+    <div class="chead">
+      <h2><span>📦</span><span>検査キット進捗</span></h2>
+      <span class="plan">経営層・幹部プラン</span>
+    </div>
+
+    <!-- Zone A: schedule -->
+    <div class="zone zA">
+      <div class="zlabel badgeA">🗓 これから届く予定</div>
+      <div class="tl">
+        <div class="tlrow muted">
+          <span class="dot"></span>
+          <div class="d">12月4日<small>(金)・2回目</small></div>
+          <div class="chips"><span class="chip">🎗️ がんリスク</span><span class="chip">🩸 血液</span></div>
+        </div>
+        <div class="tlrow muted">
+          <span class="dot"></span>
+          <div class="d">2027年4月4日<small>(日)・3回目</small></div>
+          <div class="chips"><span class="chip">🎗️ がんリスク</span><span class="chip">🩸 血液</span></div>
+        </div>
+      </div>
+      <div class="note">🧬 遺伝子検査は初回のみお届け（生涯1回）。次回は4カ月ごとに自動でお届けします。</div>
+    </div>
+
+    <!-- Zone B: in-progress -->
+    <div class="zone zB">
+      <div class="zlabel badgeB">🚚 進行中（初回・8月4日発送）</div>
+
+      <div class="kit">
+        <div class="krow">
+          <div class="kleft"><span class="kemoji">🩸</span><div><div class="kname">血液検査</div><div class="klab">リージャー（デメカル）</div></div></div>
+          <span class="kstat st-recv">📦 受取済</span>
+        </div>
+        <div class="stepper"><span class="seg done"></span><span class="seg done"></span><span class="seg cur"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></div>
+        <div class="steplabels"><span>準備</span><span>発送</span><span>受取</span><span>返送</span><span>受領</span><span>完了</span></div>
+        <div class="meta"><span>8月4日 発送</span><span class="track">📍 追跡 1234-5678-9012</span></div>
+        <div class="btn btn-ret">💉 検体を返送しました</div>
+      </div>
+
+      <div class="kit">
+        <div class="krow">
+          <div class="kleft"><span class="kemoji">🎗️</span><div><div class="kname">がんリスク検査</div><div class="klab">プリベント</div></div></div>
+          <span class="kstat st-ship">🚚 発送済</span>
+        </div>
+        <div class="stepper"><span class="seg done"></span><span class="seg cur"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></div>
+        <div class="steplabels"><span>準備</span><span>発送</span><span>受取</span><span>返送</span><span>受領</span><span>完了</span></div>
+        <div class="meta"><span>8月4日 発送</span><span class="track">📍 追跡 2345-6789-0123</span></div>
+        <div class="btn btn-recv">📦 受け取りました</div>
+      </div>
+    </div>
+
+    <!-- Zone C: AI interview (nudge state) -->
+    <div class="zone zC">
+      <div class="zlabel" style="color:#b45309">🤖 AI問診（血液検査に必要）</div>
+      <div class="cta-warn">
+        <span class="ic">⚠️</span>
+        <div><div class="t">検体返送の前に AI問診をお願いします（未完了）</div>
+        <div class="s">未完了の間は毎日お知らせします。7日を過ぎると担当者から連絡が入ります。</div></div>
+      </div>
+      <div class="btn btn-quiz">🎙 AI問診を始める（約5分）</div>
+    </div>
+  </div>
+
+  <!-- ========== ANNOTATIONS ========== -->
+  <div class="notes">
+    <h3>この画面のポイント</h3>
+    <div class="ncard tagA">
+      <div class="h badgeA">🗓 ゾーンA：いつ・何が届くか</div>
+      <div class="b">サブスクの出荷スケジュールを時系列表示。回ごとにキットを絵文字で明記。遺伝子＝初回のみ等のルールも反映（仕様 §2-A/§1）。</div>
+    </div>
+    <div class="ncard tagB">
+      <div class="h badgeB">🚚 ゾーンB：いま何をすべきか</div>
+      <div class="b">進行中キットを1キット=1行で表示。6ステップの現在地を強調し、「受け取りました／返送しました」を最上位CTAに。複数同送は行を分ける（仕様 §2-B）。</div>
+    </div>
+    <div class="ncard tagC">
+      <div class="h badgeC">🤖 ゾーンC：AI問診の促し→自動完了</div>
+      <div class="b">問診が要る回（血液等）だけ表示。未完了は毎日催促／7日で管理者に通知（ハードブロックはしない）。<b>完了すると自動で✅表示</b>、<b>次の回のキット発送でリセット</b>して新サイクル（仕様 §5）。</div>
+    </div>
+    <div class="ncard tagC" style="background:#ecfdf5;border-color:#6ee7b7;border-left-color:#10b981;">
+      <div class="h" style="color:#047857">✅ 完了時のゾーンC（切替後）</div>
+      <div class="b">
+        <div class="doneline">✅ AI問診 完了（8月6日）</div>
+        <div class="resetnote">次回の検査キット発送時に自動リセットされます。</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body></html>
