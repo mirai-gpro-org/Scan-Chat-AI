@@ -247,6 +247,9 @@ export const POST: APIRoute = async ({ request }) => {
   const dataFiles: { key: string; contentType: string; body: string; bytes: number }[] = [];
   const byFolder = new Map<string, { date: string; files: { format_id: string; file: string }[] }>();
   const perFormatCount: Record<string, number> = {};
+  // Other(ai_prediction) の「昨年の相対リスク比」= 前回(前年)の「相対リスク比」を引き継ぐ (§5.4)。
+  // occurrences は format ごと occIndex 昇順で並ぶため、直前 Other の 相対リスク比 を疾患名で保持する。
+  let prevOtherRR: Map<string, number> | null = null;
 
   for (const occ of occurrences) {
     const dateFolder = occ.testDate.replace(/-/g, '_');
@@ -260,6 +263,27 @@ export const POST: APIRoute = async ({ request }) => {
       srcKey: seedKey[occ.formatId],
       exportedAt,
     });
+
+    // Other(ai_prediction): 前年の相対リスク比を今回の「昨年の相対リスク比」へ引き継ぎ、
+    // 今回の相対リスク比を次回用に保存 (初回 occIndex=0 は種の値を維持=引き継がない)。
+    if (occ.formatId === 'Other') {
+      const d = (snap.obj as { data?: { items?: unknown } }).data;
+      const items = Array.isArray(d?.items) ? (d!.items as Array<Record<string, unknown>>) : [];
+      if (prevOtherRR) {
+        for (const it of items) {
+          const nm = String(it['項目名'] ?? '');
+          if (nm && prevOtherRR.has(nm)) it['昨年の相対リスク比'] = prevOtherRR.get(nm);
+        }
+      }
+      const nextMap = new Map<string, number>();
+      for (const it of items) {
+        const nm = String(it['項目名'] ?? '');
+        const rr = it['相対リスク比'];
+        if (nm && typeof rr === 'number' && Number.isFinite(rr)) nextMap.set(nm, rr);
+      }
+      prevOtherRR = nextMap;
+    }
+
     const stem = `${occ.formatId}_date_${dateFolder}_user_${clientId}`;
     const fileName = `${stem}.json`;
     const key = `${cleanPrefix}user/${clientId}/date/${dateFolder}/${fileName}`;

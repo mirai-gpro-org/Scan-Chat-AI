@@ -16,6 +16,7 @@
 
 import type { APIRoute } from 'astro';
 import { getS3Config, isS3Configured, listObjects, getObjectText, putFiles } from '../../../lib/s3';
+import { jitterAiPredictionItems } from '../../../lib/elith-synthetic';
 
 export const prerender = false;
 
@@ -253,12 +254,22 @@ export const POST: APIRoute = async ({ request }) => {
       dataOut = { ...srcData, measurements: newMeas };
       itemCount = newMeas.length;
     } else {
-      // Other (ai_prediction 等): data.payload 内の数値を再帰ジッタ。文字列/真偽/null は維持。
-      const ctr = { n: 0 };
-      const payloadOut = jitterDeep((srcData as { payload?: unknown }).payload, `${clientId}|payload|${monthsBack}`, amplitude, ctr);
-      jittered = ctr.n;
-      dataOut = { ...srcData, payload: payloadOut };
-      itemCount = jittered;
+      // Other (LAiF ai_prediction): 実納品は data.items[] (§5)。発症率%/相対リスク比のみジッタし
+      // 疾患名/アドバイス/item_count/pages は維持。旧 data.payload 形式の種は後方互換で再帰ジッタ。
+      // ※「昨年の相対リスク比」の前年引き継ぎはプラン駆動 (elith-plan-timeseries) 側で行う。
+      const itemsSrc = (srcData as { items?: unknown }).items;
+      if (Array.isArray(itemsSrc)) {
+        const j = jitterAiPredictionItems(itemsSrc, `${clientId}|items|${monthsBack}`, amplitude);
+        jittered = j.jittered;
+        dataOut = { ...srcData, items: j.items, item_count: j.items.length };
+        itemCount = j.items.length;
+      } else {
+        const ctr = { n: 0 };
+        const payloadOut = jitterDeep((srcData as { payload?: unknown }).payload, `${clientId}|payload|${monthsBack}`, amplitude, ctr);
+        jittered = ctr.n;
+        dataOut = { ...srcData, payload: payloadOut };
+        itemCount = jittered;
+      }
     }
 
     const obj = {

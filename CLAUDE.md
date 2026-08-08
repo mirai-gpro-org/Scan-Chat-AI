@@ -280,7 +280,7 @@
 | `docs/architecture/system_architecture_overview.md` | 全体構成・**Vercel/タイムアウト**・データフロー |
 | `docs/elith/elith_s3_data_handoff_spec.md` | **Elith S3 受け渡し仕様** (パス/命名/format_id/JSON) |
 | `docs/elith/elith_batch_centralization_design.md` | Elith バッチ**一元化設計**(キーは Vercel・役割分担・admin バッチ) |
-| `docs/elith/elith_assembly_wrapping_spec.md` | **納品セット アセンブリのラップ仕様(Elith向け説明)**。フォルダ/命名/健康年齢の時系列化(検査日毎・旧1件を撤回)・疑似データも同様に時系列生成・**LAiF AI疾病発症予測(Other/ai_prediction)のファイル仕様提案(§5)**・manifest不一致の確認事項 |
+| `docs/elith/elith_assembly_wrapping_spec.md` | **納品セット アセンブリのラップ仕様(Elith向け説明)**。フォルダ/命名/健康年齢の時系列化(検査日毎・旧1件を撤回)・疑似データも同様に時系列生成・**LAiF AI疾病発症予測(Other/ai_prediction)のファイル仕様=Elith承諾により確定(§5・2026-08)。合成は data.items[] の発症率%/相対リスク比のみジッタ・昨年比は前年の相対リスク比を引継ぎ(実装済)**・manifest不一致の確認事項 |
 | `docs/elith/batch_scan_to_elith_usage.md` | サンプル一括スキャン→S3 バッチ手順 (`scripts/batch-scan-to-elith.mjs`) |
 | `docs/lab/lab_data_reception_overview.md` | **4検査のデータ受取 総合仕様**(血液=リージャー/RPA・がん=プリベント/調整中・AI疾病予測=LAiF/S3 URL・遺伝子=Genoplan/RPA。方式/経路/現状/課題/次アクション) |
 | `docs/lab/questionnaire_to_lab_csv_spec.md` | **AI問診回答→各社CSV 変換仕様(実装用)**。共通設問No→各社必要行のマスターマッピング表+各社項目リスト+生成ルール(フリー/選択/範囲/複数)+PII確認事項。元=Wellfort問診項目マトリクスExcel |

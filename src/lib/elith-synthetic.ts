@@ -68,6 +68,50 @@ export function jitterDeep(v: unknown, seedBase: string, amplitude: number, ctr:
   return v;
 }
 
+/** "X%" 文字列の数値部のみ ±amplitude ジッタ (「%」記号・元の小数桁を維持)。数値でなければ原文維持。 */
+export function jitterPercentString(s: string, seedStr: string, amplitude: number): string {
+  const m = /^\s*(-?\d+(?:\.\d+)?)\s*%\s*$/.exec(s);
+  if (!m) return s;
+  const numStr = m[1];
+  const decimals = (numStr.split('.')[1] || '').length;
+  const rng = mulberry32(hashSeed(seedStr));
+  const factor = 1 + (rng() * 2 - 1) * amplitude;
+  const nn = Number(numStr) * factor;
+  const out = decimals > 0 ? nn.toFixed(decimals) : String(Math.round(nn));
+  return `${out}%`;
+}
+
+// LAiF「AI疾病発症予測」(format_id=Other / kind=ai_prediction) の item 内でジッタ対象のフィールド。
+// 疾患名(項目名)・section・アドバイス(文章) は維持 (§5.4: 数値のみ±5%・名称/文章は不変)。
+const AI_PRED_PCT_KEYS = ['5年発症率', '10年発症率'];         // "X%" 文字列
+const AI_PRED_NUM_KEYS = ['相対リスク比', '昨年の相対リスク比']; // 数値
+
+/** AI疾病発症予測 1 item を決定論ジッタ (発症率%/相対リスク比 のみ・疾患名/アドバイスは維持)。 */
+export function jitterAiPredictionItem(item: unknown, seedBase: string, amplitude: number): unknown {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+  const src = item as Record<string, unknown>;
+  const name = String(src['項目名'] ?? '');
+  const out: Record<string, unknown> = { ...src };
+  for (const k of AI_PRED_PCT_KEYS) {
+    if (typeof src[k] === 'string') out[k] = jitterPercentString(src[k] as string, `${seedBase}|${name}|${k}`, amplitude);
+  }
+  for (const k of AI_PRED_NUM_KEYS) {
+    if (typeof src[k] === 'number' && Number.isFinite(src[k] as number)) out[k] = jitterNumber(src[k] as number, `${seedBase}|${name}|${k}`, amplitude);
+  }
+  return out;
+}
+/** AI疾病発症予測 items[] を決定論ジッタ (item_count/pages 等の構造値は触らない)。 */
+export function jitterAiPredictionItems(items: unknown[], seedBase: string, amplitude: number): { items: unknown[]; jittered: number } {
+  let jittered = 0;
+  const out = items.map((it) => {
+    const before = it && typeof it === 'object' ? JSON.stringify(it) : '';
+    const after = jitterAiPredictionItem(it, seedBase, amplitude);
+    if (before && JSON.stringify(after) !== before) jittered++;
+    return after;
+  });
+  return { items: out, jittered };
+}
+
 function randomUuid(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
 }
@@ -115,10 +159,20 @@ export function buildSnapshot(params: {
     });
     dataOut = { ...srcData, measurements: newMeas };
   } else if (formatId === 'Other') {
-    const ctr = { n: 0 };
-    const payloadOut = jitterDeep((srcData as { payload?: unknown }).payload, `${seedBase}|payload`, amplitude, ctr);
-    jittered = ctr.n;
-    dataOut = { ...srcData, payload: payloadOut };
+    // LAiF AI疾病発症予測: 実納品は data.items[] (項目名/5年発症率/10年発症率/相対リスク比/昨年の相対リスク比/アドバイス)。
+    // items 内の発症率%・相対リスク比のみジッタし、疾患名/アドバイス/section/item_count/pages は維持 (§5.4)。
+    const itemsSrc = (srcData as { items?: unknown }).items;
+    if (Array.isArray(itemsSrc)) {
+      const j = jitterAiPredictionItems(itemsSrc, `${seedBase}|items`, amplitude);
+      jittered = j.jittered;
+      dataOut = { ...srcData, items: j.items, item_count: j.items.length };
+    } else {
+      // 後方互換: 旧 data.payload 形式の種は従来どおり再帰ジッタ。
+      const ctr = { n: 0 };
+      const payloadOut = jitterDeep((srcData as { payload?: unknown }).payload, `${seedBase}|payload`, amplitude, ctr);
+      jittered = ctr.n;
+      dataOut = { ...srcData, payload: payloadOut };
+    }
   } else {
     // 遺伝子等: 経年変化しない → 種の data をそのまま (ジッタ無し)。
     dataOut = { ...srcData };
