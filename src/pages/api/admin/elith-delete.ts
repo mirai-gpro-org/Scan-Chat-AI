@@ -6,6 +6,7 @@
  *   - 'genetic'        : GeneticTestResultData_*   (JSON)
  *   - 'cancer'         : CancerRiskAssessmentData_* (JSON + 画像)
  *   - 'blood'          : BloodTestData_*           (JSON)
+ *   - 'other'          : Other_*                   (LAiF AI疾病発症予測・JSON)
  *   - 'delivery'       : 納品先 (バケット直下 user/ および旧 elith-delivery/) 配下を全削除。
  * mode:
  *   - 'list'   : 削除対象の key 一覧を返す (削除しない)。
@@ -50,6 +51,7 @@ const TARGET_PREFIX: Record<string, string> = {
   'genetic': 'GeneticTestResultData_',
   'cancer': 'CancerRiskAssessmentData_',
   'blood': 'BloodTestData_',
+  'other': 'Other_', // LAiF AI疾病発症予測(Other/ai_prediction)
 };
 
 /** target に該当する削除対象 key を集める */
