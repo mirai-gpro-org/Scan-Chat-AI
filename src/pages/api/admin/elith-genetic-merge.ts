@@ -114,8 +114,10 @@ export const POST: APIRoute = async ({ request }) => {
         item_count: r.items.length,
         parsed: r.parsed,
         finish_reason: r.finishReason,
-        // 構造化に失敗(JSON化不可)した場合のみ生出力を返す (監査/再試行判断用)
-        raw: r.parsed ? undefined : r.raw.slice(0, 2000),
+        // 生出力を常に返す (読取段階の監査用=健診の raw_markdown と同等・admin でページ単位に確認/DL)。
+        // LAiF/遺伝子は Markdown 中間を持たず LLM が直接 JSON 構造化するため、この per-page 生出力が
+        // 「モデルがそのページで何をどう読んだか」を見る唯一の一次証跡。密テーブルの行ズレ切り分けに使う。
+        raw: r.raw,
       });
     } catch (err) {
       return json({ ok: false, error: 'scan failed', detail: String(err instanceof Error ? err.message : err) }, 502);
