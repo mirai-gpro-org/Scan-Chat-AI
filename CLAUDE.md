@@ -324,6 +324,7 @@
   | 人間ドック | HealthCheckupData | アプリscan | ○ `docs/scan/golden/scan_golden_humandock_20240924.md` | ○ | — |
   | がんリスク | CancerRiskAssessmentData | adminバッチ | ○ `docs/scan/golden/scan_golden_cancer_alapds_20251226.md`(ALA-PDS様式1) | ○ | — |
   | 遺伝子 | GeneticTestResultData | adminバッチ | 建立待ち(様式1) | ○ | — |
+  | AI疾病発症予測(LAiF) | Other/ai_prediction | adminバッチ(多ページPDF) | ○ `docs/scan/golden/scan_golden_ai_prediction_laif_20250818.md`(様式1・2ページ目=本人結果) | △(値中心・名前セル不可読) | — |
   | 血液 | BloodTestData | デメカルCSV | (CSV由来値で可) | **×(画像なし)** | **CSV↔JSON構造照合(決定論・Scan-Chat-AI scripts)** |
   - **🎯値golden = 画像非依存**なので全タイプで使える(正解値さえ建立すれば)。`elith-batch.astro goldenCheck` は
     `test_date` で検体切替(検診/人間ドック実装済・②③は様式1つで各1本)。
