@@ -55,8 +55,22 @@ function nonEmpty(v: unknown): boolean {
 function orderKeys(o: Record<string, unknown>): Record<string, unknown> {
   const res: Record<string, unknown> = {};
   for (const k of FIELD_ORDER) if (k in o) res[k] = o[k];
-  for (const k of Object.keys(o)) if (!(k in res)) res[k] = o[k];
+  // ネスト配列(疾患/項目詳細 等)は平坦化で消費済み。念のため出力からは落とす。
+  for (const k of Object.keys(o)) if (!(k in res) && !Array.isArray(o[k])) res[k] = o[k];
   return res;
+}
+/**
+ * ネストされた「子疾患の配列」を検出する。キー名は run 毎に揺れる (`疾患` / `項目詳細` 等) ため
+ * キー名に依存せず「項目名を持つオブジェクトの配列」を持つフィールドを探す (捏造ゼロ=構造判定のみ)。
+ */
+function nestedDiseaseArray(it: Record<string, unknown>): Record<string, unknown>[] | null {
+  for (const v of Object.values(it)) {
+    if (Array.isArray(v)) {
+      const objs = v.filter(isObj);
+      if (objs.length && objs.some((o) => nameOf(o))) return objs;
+    }
+  }
+  return null;
 }
 
 /**
@@ -71,16 +85,16 @@ export function consolidateAiPredictionItems(rawItems: unknown[]): {
   let flattened = 0;
   let droppedHeaders = 0;
 
-  // 1) 平坦化: ネスト `疾患[]` を持つ item は見出しを落とし、子を昇格 (section は親名を継承)。
+  // 1) 平坦化: ネストされた子疾患配列(キー名不問=疾患/項目詳細 等)を持つ item は
+  //    見出しを器として落とし、子を昇格 (section は親名を継承)。
   const flat: Record<string, unknown>[] = [];
   for (const it of rawItems) {
     if (!isObj(it)) continue;
-    const nested = it['疾患'];
-    if (Array.isArray(nested) && nested.some(isObj)) {
+    const nested = nestedDiseaseArray(it);
+    if (nested) {
       const parentSection =
         typeof it['section'] === 'string' && it['section'].trim() ? it['section'].trim() : nameOf(it);
       for (const child of nested) {
-        if (!isObj(child)) continue;
         const c: Record<string, unknown> = { ...child };
         if (!nonEmpty(c['section']) && parentSection) c['section'] = parentSection;
         flat.push(c);
@@ -119,7 +133,7 @@ export function consolidateAiPredictionItems(rawItems: unknown[]): {
     const adviceTexts: string[] = []; // アドバイスは異なる印字文を全て保持(漏れゼロ・重複排除)
     for (const o of occ) {
       for (const [k, v] of Object.entries(o)) {
-        if (k === '疾患') continue;
+        if (Array.isArray(v)) continue; // ネスト配列は平坦化で消費済み・値統合の対象外
         if (!nonEmpty(v)) continue;
         if (k === 'アドバイス' && typeof v === 'string') {
           const t = v.trim();
