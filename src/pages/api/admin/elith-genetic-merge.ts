@@ -12,6 +12,7 @@
 
 import type { APIRoute } from 'astro';
 import { scanGeneticPage, scanAiPredictionPage } from '../../../lib/elith-genetic';
+import { consolidateAiPredictionItems, type ConsolidateAudit } from '../../../lib/ai-prediction-consolidate';
 import { ELITH_HANDOFF_SCHEMA_VERSION, jstTodayIso } from '../../../lib/elith-export';
 import { MODELS } from '../../../lib/gemini';
 import { getS3Config, isS3Configured, putFiles } from '../../../lib/s3';
@@ -141,6 +142,17 @@ export const POST: APIRoute = async ({ request }) => {
       });
     }
 
+    // LAiF(Other) のみ: 同一疾患の重複(発症予測/アドバイス/用語解説/ネスト)を疾患単位に統合 (§5.3)。
+    //   env `SCAN_AI_PREDICTION_DEDUP=on` のときだけ発火・既定 off=挙動不変(🎯後に on 化)。
+    //   疾患名は印字どおり維持(完全一致統合のみ)・捏造ゼロ・漏れゼロ。監査は応答で返し納品 data には含めない。
+    let deliverItems: unknown[] = items;
+    let consolidation: ConsolidateAudit | null = null;
+    if (formatId === 'Other' && envKey('SCAN_AI_PREDICTION_DEDUP') === 'on') {
+      const c = consolidateAiPredictionItems(items);
+      deliverItems = c.items;
+      consolidation = c.audit;
+    }
+
     const { folder, stem } = folderOf(prefix, clientId, testDate, formatId);
     const json_key = `${folder}${stem}.json`;
     const jsonObj = {
@@ -165,12 +177,12 @@ export const POST: APIRoute = async ({ request }) => {
           : 'admin バッチ (遺伝子・AIスキャン・構造化はLLM全面委任)。項目構造はLLM判定。',
         lab_name: formatId === 'Other' ? 'LAiF' : null,
       },
-      data: { item_count: items.length, items, pages },
+      data: { item_count: deliverItems.length, items: deliverItems, pages },
     };
     const jsonBody = JSON.stringify(jsonObj, null, 2);
 
     if (!isS3Configured() || !cfg) {
-      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, item_count: items.length, format_id: formatId, preview: jsonObj });
+      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, item_count: deliverItems.length, format_id: formatId, consolidation, preview: jsonObj });
     }
     try {
       const uploaded = await putFiles([
@@ -179,8 +191,9 @@ export const POST: APIRoute = async ({ request }) => {
       return json({
         ok: true, action: 'finalize', configured: true, bucket: cfg.bucket,
         client_id: clientId, format_id: formatId, test_date: testDate,
-        page_count: parts.length, item_count: items.length, json_key,
+        page_count: parts.length, item_count: deliverItems.length, json_key,
         uri: uploaded[0]?.uri ?? null,
+        consolidation, // LAiF 統合監査 (件数/統合/競合)。null=未実施 (env off or 非Other)。納品 data には含めない。
         preview: jsonObj, // 🎯 照合用: 納品JSON(data.items)を返す(S3未設定分岐と同様)。
       });
     } catch (err) {
