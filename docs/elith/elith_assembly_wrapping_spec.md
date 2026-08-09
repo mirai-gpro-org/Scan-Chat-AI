@@ -4,7 +4,7 @@
 |---|---|
 | 目的 | 「📦 Elith 納品セット アセンブリ」および「プラン時系列生成（疑似データ）」が、**どのようにファイルをラップして S3 へ配置しているか**を、Elith 受け渡し仕様（`elith-handoff-v0.1`）に準拠して説明する。特に **健康年齢（HealthAgeData）を他検査と同様に時系列で納品する**点を明記する。 |
 | 宛先 | 株式会社 Elith 御中 ／ 作成: 株式会社ウェルフォート・UNFIX（開発） |
-| 版 | 2026-08-04 |
+| 版 | 2026-08-08（§5 LAiF AI疾病発症予測を **Elith承諾により確定**・合成の items ジッタ/昨年比引き継ぎを実装） |
 | 根拠仕様 | `docs/elith/elith_s3_data_handoff_spec.md`（正本 §3 フォルダ/命名・§6 共通エンベロープ・§7 各format・§8 一括書出し）／ `docs/elith/elith_handoff.schema.json`（JSON Schema `elith-handoff-v0.1`・format_id 7種）／ `docs/elith/elith_masking_definition.md`（除外＝PII/bbox/region/category）。 |
 | 重要な変更点 | **健康年齢を「1ユーザー1件」→「検査日毎（時系列）」に変更**（発注者判断 2026-08）。旧 §7.3.1 の「時系列は不要（2026-07）」を撤回。Elith 側の読み取りも「各 `date/` フォルダ内の `HealthAgeData_*`」を走査する形へ更新をお願いします。 |
 
@@ -126,12 +126,12 @@ user/elith-test-exec-001/
 
 ---
 
-## 5. LAiF「AI 疾病発症予測」(`Other` / `ai_prediction`) のファイル仕様【提案】
+## 5. LAiF「AI 疾病発症予測」(`Other` / `ai_prediction`) のファイル仕様【確定・Elith承諾 2026-08】
 
 Wellfort・Elith 双方で確認のとおり、**LAiF 社「AI 疾病発症予測」も PDF を AI スキャンして JSON 化し、
 S3 経由で Elith へ受け渡します**（他検査と同じ経路）。健康年齢と同様に**時系列の疑似データも生成**します。
 `elith-handoff-v0.1` に専用 format は無いため **`format_id: "Other"` / `kind: "ai_prediction"`** で納品します（スキーマ §7.4「Other=自由構造」）。
-本 §5 の `data` 構造・時系列頻度は **提案（要 Elith 確認）** です。
+本 §5 の `data` 構造・時系列頻度・`昨年の相対リスク比` 引き継ぎは **Elith 承諾済（2026-08）＝確定**。実装反映済み（§5.4）。
 
 ### 5.1 命名・配置（他検査と同一）
 ```
@@ -179,7 +179,8 @@ user/{client_id}/date/{YYYY_MM_DD}/Other_date_{YYYY_MM_DD}_user_{client_id}.json
   - ミドルプラン: プラン定義に含めない場合は 0 本（含める場合は健診と同じ 3 本）。※要 Elith/Wellfort 確定。
 - 生成方法: **実 LAiF JSON（§5.3）を種に、数値フィールド（5年発症率・10年発症率・相対リスク比）を
   ±5% の決定論ジッタ**（seed 固定＝再現可能）。**疾患名・アドバイス文は維持**。`synthetic:true` 付与・PII 非含有。
-- `昨年の相対リスク比` は **前年回の `相対リスク比` を引き継ぐ**ことで時系列として自然に表現できます（提案）。
+- `昨年の相対リスク比` は **前年回の `相対リスク比` を引き継ぐ**（時系列として自然に表現）。**確定・実装済**。
+- **実装（2026-08）**: `src/lib/elith-synthetic.ts` `jitterAiPredictionItems`（`data.items[]` の発症率%＝`jitterPercentString`／相対リスク比＝`jitterNumber` のみジッタ・疾患名/アドバイス/`item_count`/`pages` は不変）。**昨年比引き継ぎ**は `src/pages/api/admin/elith-plan-timeseries.ts`（Other occurrence を occIndex 順に処理し、前回の `相対リスク比` を疾患名一致で今回 `昨年の相対リスク比` へ。初回は種の値を維持）。旧 `data.payload` 形式の種は後方互換で従来ジッタ。
 
 ### 5.5 配置例（経営層・幹部・D0=2023-06-15）
 ```
@@ -190,10 +191,11 @@ user/elith-test-exec-001/
 ```
 → **AI疾病発症予測（Other）は各年 R1 の 3 フォルダに 1 件ずつ**（健診と同じタイミング）。
 
-### 5.6 確認のお願い（Elith 御中）
-1. `format_id:"Other"` / `kind:"ai_prediction"` で受領可能か。専用 format 追加をご希望なら仕様をご指定ください。
-2. §5.3 の `data.items` フィールド名（`5年発症率`/`10年発症率`/`相対リスク比`/`昨年の相対リスク比`/`アドバイス`）で問題ないか。
-3. 時系列頻度（年1回・健診と同回）と、ミドルプランでの有無。
+### 5.6 確認結果（Elith 承諾済・2026-08）
+1. ✅ `format_id:"Other"` / `kind:"ai_prediction"` で**受領可**（専用 format 追加は不要）。
+2. ✅ §5.3 の `data.items` フィールド名（`5年発症率`/`10年発症率`/`相対リスク比`/`昨年の相対リスク比`/`アドバイス`）で**問題なし**。
+3. ✅ 時系列頻度＝**年1回・健診と同回**で確定。ミドルプランは対象外（プラン定義に Other を含めない）。
+→ 上記承諾を受け、§5.4 の合成生成（items ジッタ・昨年比引き継ぎ）を実装済み。
 
 ---
 

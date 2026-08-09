@@ -137,6 +137,70 @@ ${measurementTable}
 }`;
 }
 
+// ── LAiF「AI疾病発症予測」(format_id=Other / data.items[]) の照合 ──
+// 健診の measurements と違い、疾患ごとの {項目名, 5年発症率, 10年発症率, 相対リスク比, 昨年の相対リスク比, アドバイス}。
+// 元PDF画像を正解に、items の疾患名・発症率%・相対リスク比が印字どおりかを採点する。
+
+/** data.items[] を採点用の軽量表に落とす。 */
+export function renderItemsForGrader(json: unknown): { text: string; count: number } {
+  const obj = (json && typeof json === 'object' ? json : {}) as Record<string, unknown>;
+  const data = (obj.data && typeof obj.data === 'object' ? obj.data : {}) as Record<string, unknown>;
+  const items: Record<string, unknown>[] = Array.isArray(data.items)
+    ? (data.items.filter((x) => x && typeof x === 'object') as Record<string, unknown>[])
+    : [];
+  const cell = (v: unknown): string => (v == null ? '' : String(v));
+  const lines = items.map((it, i) => {
+    const name = cell(it['項目名']);
+    const y5 = cell(it['5年発症率']);
+    const y10 = cell(it['10年発症率']);
+    const rr = cell(it['相対リスク比']);
+    const sec = cell(it['section']);
+    const hasAdvice = typeof it['アドバイス'] === 'string' && (it['アドバイス'] as string).trim() ? 'あり' : '';
+    return `${i + 1}\t${name}\t${y5}\t${y10}\t${rr}\t${sec}\t${hasAdvice}`;
+  });
+  const header = 'idx\t項目名\t5年発症率\t10年発症率\t相対リスク比\tsection\tアドバイス';
+  return { text: [header, ...lines].join('\n'), count: items.length };
+}
+
+const AI_PREDICTION_VERIFY_SYSTEM = `あなたは「AI疾病発症予測」検査結果レポート(LAiF)を採点する検査官です。
+渡された「画像(PDF各ページ)」が唯一の正解(ground truth)で、「抽出JSON(items)」はその画像から機械抽出した検証対象です。
+画像とJSONを疾患項目単位で突き合わせ、抽出の誤り(取りこぼし/誤読/捏造/重複)だけを厳密に指摘してください。
+医学的な良し悪しや助言はしません。抽出の正確性のみを判定します。`;
+
+function buildItemsVerifyUserText(itemsTable: string): string {
+  return `# 対象
+format_id: Other (kind: ai_prediction / LAiF「AI疾病発症予測」)
+
+# 抽出JSONの items (検証対象)
+下表は抽出JSON中の data.items を1行1疾患で表したもの(タブ区切り)。
+列: idx / 項目名(疾患名) / 5年発症率 / 10年発症率 / 相対リスク比 / section(カテゴリ) / アドバイス(有無)。
+--------
+${itemsTable}
+--------
+
+# 判定ルール (厳守)
+- **画像に印字された疾患ごとの数値のみ**を正解とする。5年発症率・10年発症率は「X%」表記、相対リスク比は倍率の数値。
+- **missing(取りこぼし)**: 画像の発症予測ページに疾患項目(発症率/相対リスク比)が印字されているのに JSON に無い項目。
+- **misread(誤読)**: JSON に項目はあるが、5年発症率 / 10年発症率 / 相対リスク比 / 項目名(疾患名) のいずれかが画像と食い違う。
+  食い違ったフィールド名を field に、image_value に画像の正しい値、json_value に JSON の値を入れる。
+- **extra(捏造)**: JSON にあるが画像に対応する疾患項目が見当たらない(カテゴリ見出し・凡例を項目化した等)。
+- **duplicate(重複)**: 同一疾患が2回以上計上(※発症予測ページとアドバイスページで同名が別itemになるのは重複ではない=別情報)。
+- カテゴリ見出し(生活習慣病/循環器疾患/悪性腫瘍/神経疾患 等)・凡例・氏名等PII は項目ではない。
+- グラウンディング: missing/misread は画像上の位置 image_bbox [ymin,xmin,ymax,xmax](0-1000正規化)を可能なら示す。
+- 軽微な表記ゆれ(全角半角・「倍」有無・%の小数桁)は指摘しない。実害のある食い違いだけ挙げる。
+
+# 出力 (JSONのみ。前後に文章やコードフェンスを付けない)
+{
+  "items_image": <画像に発症予測が印字された疾患の概算数(整数)>,
+  "match_rate": <0-100の整数。印字項目のうち JSON が正しく取れた割合>,
+  "missing":   [{"name": "疾患名", "image_value": "5年X% / 10年Y% / RR z", "image_bbox": [ymin,xmin,ymax,xmax], "note": "..."}],
+  "misread":   [{"name": "疾患名", "field": "項目名|5年発症率|10年発症率|相対リスク比", "image_value": "...", "json_value": "...", "image_bbox": [ymin,xmin,ymax,xmax], "note": "..."}],
+  "extra":     [{"name": "...", "json_value": "...", "note": "..."}],
+  "duplicate": [{"name": "...", "note": "..."}],
+  "summary": "<1-2文の総評(日本語)>"
+}`;
+}
+
 function asArray(v: unknown): Record<string, unknown>[] {
   return Array.isArray(v) ? (v.filter((x) => x && typeof x === 'object') as Record<string, unknown>[]) : [];
 }
@@ -162,17 +226,23 @@ export async function verifyScanAgainstImages(input: {
   const images = input.images.filter((im) => im && im.data && isSupportedMime(im.mime));
   if (images.length === 0) throw new Error('no supported image provided');
 
-  const { text: table, count } = renderMeasurementsForGrader(input.json);
+  // LAiF(AI疾病発症予測)は data.items[] を照合。それ以外(健診/血液/がん等)は data.measurements を照合。
+  const jdata = ((input.json && typeof input.json === 'object' ? (input.json as Record<string, unknown>).data : null) || {}) as Record<string, unknown>;
+  const isItems = input.formatId === 'Other' || (Array.isArray(jdata.items) && !Array.isArray(jdata.measurements));
+
+  const { text: table, count } = isItems ? renderItemsForGrader(input.json) : renderMeasurementsForGrader(input.json);
+  const systemText = isItems ? AI_PREDICTION_VERIFY_SYSTEM : VERIFY_SYSTEM;
+  const userText = isItems ? buildItemsVerifyUserText(table) : buildVerifyUserText(table, input.formatId);
 
   const parts = [
     ...images.map((im) => ({ inline_data: { mime_type: im.mime, data: im.data } })),
-    { text: buildVerifyUserText(table, input.formatId) + (input.hint ? `\n\n# 補足\n${input.hint}` : '') },
+    { text: userText + (input.hint ? `\n\n# 補足\n${input.hint}` : '') },
   ];
 
   const res = await callGemini(
     apiKey,
     {
-      systemInstruction: { parts: [{ text: VERIFY_SYSTEM }] },
+      systemInstruction: { parts: [{ text: systemText }] },
       contents: [{ role: 'user', parts }],
       // 採点は判断を要するので thinking はやや厚め。温度は既定(3.xでは自動除去)。
       generationConfig: { responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 4096 } },
@@ -207,8 +277,9 @@ export async function verifyScanAgainstImages(input: {
     if (REF_VALUE.test(v)) return false;
     return true;
   };
-  const missing = missingRaw.filter(isTodayFinding);
-  const misread = misreadRaw.filter(isTodayFinding);
+  // 過去列/基準列フィルタは健診(measurements)の時系列表専用。LAiF(items)には過去列が無いため適用しない。
+  const missing = isItems ? missingRaw : missingRaw.filter(isTodayFinding);
+  const misread = isItems ? misreadRaw : misreadRaw.filter(isTodayFinding);
   const filteredOut = (missingRaw.length - missing.length) + (misreadRaw.length - misread.length);
 
   const items_image = typeof parsed.items_image === 'number' && Number.isFinite(parsed.items_image)

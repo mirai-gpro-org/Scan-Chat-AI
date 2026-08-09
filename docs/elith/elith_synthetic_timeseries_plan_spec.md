@@ -116,7 +116,7 @@
 
 - **種（seed）**: 各 format の**実データ（または既存サンプル）1件**を種にする（血液で実装済みの方式）。
   - measurement系（Blood/Cancer/HealthCheckup）＝ `data.measurements[].value_num` を ±amplitude（既定5%）ジッタ。問診/非数値は維持。
-  - `Other`(ai_prediction) ＝ `data.payload` 内の数値を再帰ジッタ（疾患名・要約テキストは維持）。
+  - `Other`(ai_prediction・LAiF) ＝ **`data.items[]`** の発症率%（`5年発症率`/`10年発症率`）と相対リスク比（`相対リスク比`/`昨年の相対リスク比`）のみジッタ（**疾患名・アドバイス文・`item_count`・`pages` は維持**）。**`昨年の相対リスク比` は前年回の `相対リスク比` を引き継ぐ**。実装=`elith-synthetic.ts jitterAiPredictionItems`＋`elith-plan-timeseries.ts`（引き継ぎ）。旧 `data.payload` 形式の種は後方互換で従来ジッタ。
   - `Genetic` ＝ **1回のみ**（Y1-R1）。時系列でないので**ジッタ無しで種を1件配置**（遺伝情報は経年変化しない）。
 - **決定論**: seed = `client_id | 項目/パス | 回index`（FNV-1a→mulberry32）。`Math.random` 非使用で再現可能。
 - **基準値/flag**: 血液で導入した基準値マスタ方式（`applyBloodReference`）を Cancer/HealthCheckup にも適用可（マスタ登録がある項目のみ）。
