@@ -374,6 +374,7 @@ DIAGNOSIS_AI_CALLBACK_HMAC_SECRET=  # EF-6 の署名検証用
 ### 10.2 ペイロード設計の原則
 
 - **PII 非送付**: 氏名・住所・電話・メール・生年月日（年齢は age 換算で送付可）は含めない
+  - **例外（LAiF 上りCSV・確定 2026-08・発注者決定）**: AI疾病発症予測(LAiF)への上り入力CSVは、モデル要件に合わせ **生年月日を含めて送付する**（`docs/lab/laif_s3_secure_handoff_spec.md §0.2` / `docs/subscription/kit_lifecycle_and_handoff_management_spec.md §4.1.1`）。→ 当該CSVは PIIフリーでない個人データ扱いとし、専用ポータル（暗号化・パスキー必須・アクセス制御・監査）で保護。ID は Wellfort 採番の仮名ID(整理番号)。Elith 向けS3(本§)には従来どおり生年月日を載せない。
 - **識別子**: `diagnosis_user_id` のみ
 - **再現性**: App 側に `diagnosis_inputs` テーブルを設けて送信時のペイロードスナップショットを保管（監査・再解析用）
 
