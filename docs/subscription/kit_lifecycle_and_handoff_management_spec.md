@@ -5,6 +5,7 @@
 | 目的 | サブスク検査プランを起点に、**①タカセへの出荷指示 ②Webアプリでのキット・ライフサイクル管理（発送/受取/返送/問診促し）③進捗駆動の各社データ受渡・検査結果受領・Elith作成指示** を一元管理する仕様。 |
 | 元資料 | Wellfort 提供 Excel『商材送付タイミング一覧』（プラン×検査キット×発送タイミング）。 |
 | 版 | 2026-08-04（Draft） |
+| 上位文書 | **本書は「キット出荷・進捗・受渡・データモデル」の詳細（②③④）。EC購入→表示までの E2E 全体像は `docs/lab/lab_data_pipeline_master_spec.md`（総合仕様書）が正本。** |
 | 関連 | `docs/subscription/subscription_management_feature_requirements.md`／`docs/lab/kit_progress_management.md`（発送〜完了ライフサイクル・パイロット実装済）／`docs/lab/lab_data_reception_overview.md`（各社受取）／`docs/lab/questionnaire_to_lab_csv_spec.md`（問診→各社CSV）／`docs/elith/elith_batch_centralization_design.md`・`docs/elith/elith_assembly_wrapping_spec.md`（Elith）／wellfort-site `admin/shipping.astro`・`api/cron-shipping.ts`（現行出荷）・`docs/billing/gmo_subscription_billing_spec.md` |
 
 ---

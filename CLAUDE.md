@@ -287,7 +287,8 @@
 | `docs/elith/elith_batch_centralization_design.md` | Elith バッチ**一元化設計**(キーは Vercel・役割分担・admin バッチ) |
 | `docs/elith/elith_assembly_wrapping_spec.md` | **納品セット アセンブリのラップ仕様(Elith向け説明)**。フォルダ/命名/健康年齢の時系列化(検査日毎・旧1件を撤回)・疑似データも同様に時系列生成・**LAiF AI疾病発症予測(Other/ai_prediction)のファイル仕様=Elith承諾により確定(§5・2026-08)。合成は data.items[] の発症率%/相対リスク比のみジッタ・昨年比は前年の相対リスク比を引継ぎ(実装済)**・manifest不一致の確認事項 |
 | `docs/elith/batch_scan_to_elith_usage.md` | サンプル一括スキャン→S3 バッチ手順 (`scripts/batch-scan-to-elith.mjs`) |
-| `docs/lab/lab_data_reception_overview.md` | **4検査のデータ受取 総合仕様**(血液=リージャー/RPA・がん=プリベント/調整中・AI疾病予測=LAiF/S3 URL・遺伝子=Genoplan/RPA。方式/経路/現状/課題/次アクション) |
+| `docs/lab/lab_data_pipeline_master_spec.md` | **検査データ・パイプライン 総合仕様書(E2E正本・上位文書)**。EC購入→キット/タイミング→発送指示/進捗→AI問診/検体返送→各社受渡→受領チェック(週次)→Elithラップ/S3書出→AI診断PDF受取/表示 を6ステップで連結。詳細は(a)(b)(c)へ委譲(二重管理しない) |
+| `docs/lab/lab_data_reception_overview.md` | **4検査のデータ受取 詳細**(血液=リージャー/RPA・がん=プリベント/専用ポータル+S3を提案中・AI疾病予測=LAiF/S3 URL・遺伝子=Genoplan/RPA。方式/経路/現状/課題/次アクション)。E2E全体像は上記 master_spec が上位 |
 | `docs/lab/questionnaire_to_lab_csv_spec.md` | **AI問診回答→各社CSV 変換仕様(実装用)**。共通設問No→各社必要行のマスターマッピング表+各社項目リスト+生成ルール(フリー/選択/範囲/複数)+PII確認事項。元=Wellfort問診項目マトリクスExcel |
 | `docs/lab/demecal_auto_download_overview_spec.md` | 血液検査データ自動DL (デメカル/mTLS) 概要 |
 | `docs/lab/demecal_inquiry_email_template.md` | 検査会社への自動DL可否 照会メール雛形 |

@@ -4,7 +4,8 @@
 |---|---|
 | 目的 | Wellfort が外部検査会社から受け取る **4 検査**のデータ受取方式・経路・現状・課題を一枚に集約する。各検査は最終的に **Elith 形式 JSON（`elith-handoff-v0.1`）へ変換し S3 経由で Elith へ受け渡す**（詳細=`docs/elith/elith_s3_data_handoff_spec.md` / `docs/elith/elith_assembly_wrapping_spec.md`）。 |
 | 対象 | ①血液検査（リージャー）②がんリスク検査・尿（プリベント）③AI疾病発症予測（LAiF）④遺伝子検査（Genoplan）。※健診・人間ドックは会員がアプリでAIスキャンするため本書対象外。 |
-| 版 | 2026-08-04（Draft） |
+| 版 | 2026-08-12（Draft・プリベント提案反映） |
+| 上位文書 | **本書は「受取方式（各社別）」に特化した詳細。EC購入→キット→問診→受取→Elith→表示の E2E 全体像は `docs/lab/lab_data_pipeline_master_spec.md`（総合仕様書）が正本。** |
 | 関連 | `docs/lab/demecal_rpa_operation_design.md` / `docs/lab/demecal_auto_download_overview_spec.md`（血液RPA）、`docs/elith/elith_assembly_wrapping_spec.md`（LAiF/健康年齢のラップ）、`docs/lab/lab_integration_workflow.md`（割当・PII）、`docs/lab/kit_progress_management.md`（進捗）、`docs/lab/wellfort_admin_lab_upload_spec.md`（admin取込） |
 
 ---
@@ -14,7 +15,7 @@
 | # | 検査 | 検査会社 | 受取方式 | 取得データ | Elith format_id | 変換方法 | ステータス |
 |---|---|---|---|---|---|---|---|
 | 1 | 血液検査 | 株式会社リージャー（Leisure／デメカル DSS） | **デスクトップRPA**（Power Automate Desktop 本命 / UiPath / WinAutomation） | CSV | `BloodTestData` | **決定論パース**（CSV→JSON・LLM不使用） | 自動アクセス承認済・サーバ側実装済／PC側RPA(DL部)構築中 |
-| 2 | がんリスク検査（尿） | プリベント社（ALA-PDS） | **交渉・調整中**（現状：メール＋フォルダ共有リンクの手動運用） | PDF/報告書 | `CancerRiskAssessmentData` | **admin バッチ AIスキャン**（画像→JSON） | 受取方式を検査会社と調整中（現状は手動） |
+| 2 | がんリスク検査（尿） | プリベント社（ALA-PDS） | **専用ポータル＋AWS S3＋パスキー方式を提案中**（LAiF流用）／現状：メール＋フォルダ共有の手動 | PDF/報告書 | `CancerRiskAssessmentData` | **admin バッチ AIスキャン**（画像→JSON） | **方式を提案中（プレゼン段階）**。現状は手動 |
 | 3 | AI疾病発症予測 | LAiF社 | **AWS S3 専用バケット**（URLで受渡） | PDF | `Other`（`kind:"ai_prediction"`） | **admin バッチ AIスキャン**（多ページ・LLM構造化） | 受取方式確定・スキャン対応実装済 |
 | 4 | 遺伝子検査 | Genoplan社（ジェノプランジャパン） | **デスクトップRPA**（Power Automate Desktop / UiPath / WinAutomation） | PDF | `GeneticTestResultData` | **admin バッチ AIスキャン**（多ページ・LLM構造化） | 受取方式=RPA方針／スキャン対応実装済 |
 
@@ -44,8 +45,13 @@
 ## 2. がんリスク検査（尿・プリベント社）
 
 - **検査会社**: プリベント社（様式=ALA-PDS）。
-- **受取方式**: **検査会社と交渉・調整中**。現状は**メール＋フォルダ共有リンクによる手動運用**。
-- **現状フロー（手動・8ステップ）**:
+- **受取方式（提案中・プレゼン段階）**: **LAiF と同じ「専用ポータル＋AWS S3＋パスキー認証」方式を先方へ提案中**（確定ではない）。
+  上り（弊社→プリベント）で **問診CSV** をポータル経由で受渡し、下り（プリベント→弊社）で **報告書PDF** を専用S3で受領する双方向運用へ移行する狙い。往復メール／アクセス権未設定リンクを解消する。
+  - **提案資料**: `がんリスク検査_プリベント_データ受け渡し方式ご提案_v0.1_20260806.pdf`（冒頭フロー図＋3ページ）。
+  - **デモ画面（パスキー設定前にお試し）**: `https://wellfort.co.jp/partner-portal-preview?partner=prevent`（LAiF ポータルを流用・ダミーデータ・noindex）。
+  - **上り問診CSV（サンプル）**: `docs/lab/questionnaire_to_lab_csv_spec.md §4.2`（33項目）に準拠した仮データCSVを先方確認用に用意済。
+  - **設計正本**: LAiF の `docs/lab/laif_s3_secure_handoff_spec.md`（ゼロトラスト・多層防御）を流用。IP許可制はプリベントの固定IP有無で判断（未確認）。
+- **現状フロー（手動・8ステップ・提案が合意されるまでの暫定）**:
   1. 会員がマイページ内Webアプリで「問診への回答」を行う。
   2. Webアプリのai機能でCSVへ転記。
   3. そのファイルを格納したフォルダのリンクを、**アクセス権未設定のまま**プリベント社へメール送付。
@@ -55,10 +61,10 @@
   7. プリベント社が格納した旨をメールでウェルフォート社へ連絡。
   8. ウェルフォート社が報告書を確認し、その旨を返信して完了。
 - **変換**: 受領した報告書（PDF/画像）を **admin バッチAIスキャン** → `CancerRiskAssessmentData` JSON → S3（🎯ゴールデン照合対応済）。
-- **課題（要改善）**:
-  - リンク共有＝手動・往復メール多く、リードタイム長い。
-  - **アクセス権未設定リンクの送付**はセキュリティ/PII 面で要見直し（`docs/architecture/data_integration_requirements.md` の PII 分離方針との整合）。
-  - **自動受取（RPA or API or S3）への移行を検査会社と調整**する（他検査と同水準へ）。
+- **課題（提案で解消を狙う）**:
+  - リンク共有＝手動・往復メール多く、リードタイム長い → **専用ポータル＋S3で双方向自動化**。
+  - **アクセス権未設定リンクの送付**はセキュリティ/PII 面で要見直し（`docs/architecture/data_integration_requirements.md` の PII 分離方針との整合）→ **パスキー認証＋暗号化保管**で担保。
+  - **提案の合意取り付け**（方式・IP有無・担当者/通知先・同意前提）が次アクション。
 
 ## 3. AI疾病発症予測（LAiF社）
 
@@ -93,11 +99,11 @@
 | 検査 | 受取自動化 | 主な次アクション |
 |---|---|---|
 | 血液（リージャー） | RPA構築中 | PC側 PAD の**DL画面部**を Wellfort 提供のスクショ/録画で作り込み（フェーズ2） |
-| がんリスク（プリベント） | 手動（調整中） | **自動受取方式を検査会社と合意**（RPA/API/S3）＋**アクセス権未設定リンクの是正**（PII/セキュリティ） |
+| がんリスク（プリベント） | **専用ポータル＋S3方式を提案中**（現状は手動） | **提案の合意取り付け**（デモURL/提案PDF/サンプルCSVは用意済）＋固定IP有無・担当者/通知先・生年月日提供の同意前提を確認 |
 | AI疾病予測（LAiF） | S3 URL（確定） | Elith へ `Other`/`ai_prediction` の**受領仕様確認**（`docs/elith/elith_assembly_wrapping_spec.md §5.6`） |
 | 遺伝子（Genoplan） | RPA方針 | RPA(DL部)の構築（血液PADの枠組みを流用可） |
 
 ## 7. 確認事項
-1. **がんリスク**: 手動運用の継続可否と、自動化（RPA/API/S3）の合意時期。アクセス権未設定リンクの是正方針。
+1. **がんリスク（プリベント・提案中）**: 専用ポータル＋S3方式の合意可否。固定グローバルIPの有無（IP許可制の採否判断）。ご利用担当者／通知先。上りCSVに含める**生年月日の外部提供・同意前提**の可否。合意までの暫定手動運用の継続可否とアクセス権未設定リンクの是正。
 2. **AI疾病予測（LAiF）**: S3 専用バケットの命名/URL発行ルール、Elith の `Other`/`ai_prediction` 受領仕様。
 3. **RPA（血液・遺伝子）**: 専用PC台数・保守主体（UNFIX構築/Wellfort運用）・Pマーク運用の最終確認。
