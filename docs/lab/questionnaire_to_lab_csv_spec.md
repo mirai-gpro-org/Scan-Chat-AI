@@ -6,6 +6,7 @@
 | 対象会社 | ①血液（リージャー）②がんリスク・尿（プリベント）③AI疾病発症予測（LAiF）④遺伝子（Genoplan）。※「開発中AI疾病予防」は将来用（参考列）。 |
 | 元資料 | Wellfort 提供 Excel『問診項目マトリクス』（`マッピング_最終` シート＋各社シート `血液検査`/`がんリスク検査`/`AI疾病予測`/`追加_遺伝子検査`）を整理したもの。 |
 | 版 | 2026-08-04（Draft・実装用） |
+| 上位文書 | **本書は「AI問診→各社CSV 写像」の詳細（④-2）。EC購入→表示までの E2E 全体像は `docs/lab/lab_data_pipeline_master_spec.md`（総合仕様書）が正本。** |
 | 関連 | `docs/lab/lab_data_reception_overview.md`（受取方式・受渡経路）／`docs/interview/AI問診_仕様と設計原則.md`（問診本体）／`docs/architecture/data_integration_requirements.md`（PII分離） |
 
 ---
