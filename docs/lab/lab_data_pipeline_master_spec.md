@@ -27,6 +27,7 @@
 
 - **責務分界（横断・重要）**: **UI＝wellfort-site（admin/マイページ）／処理・鍵・API＝Scan-Chat-AI**（`CLAUDE.md`「admin UI は wellfort-site / Scan-Chat-AI は API 提供側」）。鍵は **Vercel 本番 env のみ**。
 - **PII 分離**: 外部・S3・診断系に氏名/住所は載せない。橋渡しは `client_id=diagnostic_user_id`（仮名）。**例外＝LAiF/プリベント上りCSVの生年月日**（発注者決定・ポータルで保護・(b)§6／(c)§4.1.1）。
+- **ID 体系（採番・相関・PII境界・将来の外部ID/キット物理ID連携）＝`docs/architecture/id_management_and_correlation_spec.md` が正本**（顧客ID/診断ユーザーID/契約ID/検査ID/Elith client_id を層別に整理）。
 
 ---
 
