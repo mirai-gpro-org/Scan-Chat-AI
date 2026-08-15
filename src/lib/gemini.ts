@@ -2,6 +2,7 @@
  * Gemini REST / Vision プロキシ用の薄い fetch ラッパ。
  * クライアントには公開しない（API キーが必要なため必ずサーバから呼ぶ）。
  */
+import { getScanModel, getLiveModel } from './app-config';
 
 /** env 読取 (import.meta.env → process.env の順。空文字は未設定扱い)。 */
 function env(name: string): string | undefined {
@@ -11,18 +12,18 @@ function env(name: string): string | undefined {
   return p != null && p !== '' ? p : undefined;
 }
 
-// スキャン/Live のモデルは env で差替え可能 (Vercel 環境変数)。env 反映は再デプロイ要 (コード変更は不要)。
-//  - スキャン既定は gemini-3.1-flash-lite (軽量・安定)。精度を上げるなら
-//    GEMINI_SCAN_MODEL=gemini-3.5-flash (GA・正式ID)。ただし混雑時に 503(model overloaded) が出やすく、
-//    バッチ全滅の実績あり (2026-07) → 常用の既定は 3.1-flash-lite に据え置き。Tier1未開通/不具合時は gemini-2.5-flash。
+// スキャン/Live のモデルは **app_config (DB) で管理** (env でない・admin モーダルで即時切替)。
+//  - スキャン既定は gemini-3.1-flash-lite (軽量・安定)。3.5-flash-lite=GA(2026-07)。3.5-flash は
+//    混雑時 503(model overloaded) の実績(2026-07)。Tier1未開通/不具合時は gemini-2.5-flash。
 //    ※ 末尾-preview無しの gemini-3-flash は Gemini API に無い (公式: Stable=gemini-3.5-flash / Preview=gemini-3-flash-preview)。
-//  - Live は REST 非対応の専用プレビュー。GEMINI_LIVE_MODEL で更新に追従。
+//  - Live は REST 非対応の専用プレビュー。
+// getter で app_config の現在値を都度参照する (呼出側 `MODELS.scan` は不変。要 refreshConfig 済み)。
 export const MODELS = {
   // REST generateContent (画像解析・テキスト応答)
-  scan: env('GEMINI_SCAN_MODEL') || 'gemini-3.1-flash-lite',
+  get scan(): string { return getScanModel(); },
   // Live API 専用 (WebSocket / audio-to-audio)。REST には渡さないこと
-  liveChat: env('GEMINI_LIVE_MODEL') || 'gemini-3.1-flash-live-preview',
-} as const;
+  get liveChat(): string { return getLiveModel(); },
+};
 
 /** モデルが Gemini 3 系 (3.x) か。生成設定の互換差 (thinkingLevel / 温度既定) の分岐に使う。 */
 export function isGemini3Model(model: string): boolean {

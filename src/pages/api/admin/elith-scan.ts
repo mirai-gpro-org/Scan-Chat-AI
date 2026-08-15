@@ -27,6 +27,7 @@
 
 import type { APIRoute } from 'astro';
 import { buildElithScanBundle, isElithFormatId, ELITH_FORMAT_IDS, canonicalizeEnabled } from '../../../lib/elith-export';
+import { refreshConfig } from '../../../lib/app-config';
 import { getS3Config, isS3Configured, putFiles } from '../../../lib/s3';
 import { checkNecessity } from '../../../lib/elith-necessity-check';
 import { masterItemNames } from '../../../lib/standard-master';
@@ -76,6 +77,7 @@ function randomUuid(): string {
 }
 
 export const POST: APIRoute = async ({ request }) => {
+  await refreshConfig(); // 運用パラメータ(app_config)を最新化してから処理
   if (!authorized(request)) {
     return json({ ok: false, error: 'unauthorized', detail: 'Invalid API key' }, 401);
   }

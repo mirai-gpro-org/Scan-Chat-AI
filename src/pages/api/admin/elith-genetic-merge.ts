@@ -14,6 +14,7 @@ import type { APIRoute } from 'astro';
 import { scanGeneticPage, scanAiPredictionPage } from '../../../lib/elith-genetic';
 import { consolidateAiPredictionItems, type ConsolidateAudit } from '../../../lib/ai-prediction-consolidate';
 import { ELITH_HANDOFF_SCHEMA_VERSION, jstTodayIso } from '../../../lib/elith-export';
+import { refreshConfig, cfgBool } from '../../../lib/app-config';
 import { MODELS } from '../../../lib/gemini';
 import { getS3Config, isS3Configured, putFiles } from '../../../lib/s3';
 
@@ -79,6 +80,7 @@ export const POST: APIRoute = async ({ request }) => {
   if (!authorized(request)) {
     return json({ ok: false, error: 'unauthorized', detail: 'Invalid API key' }, 401);
   }
+  await refreshConfig(); // 運用パラメータ(app_config)を最新化してから処理
   let body: Body;
   try {
     body = (await request.json()) as Body;
@@ -145,11 +147,11 @@ export const POST: APIRoute = async ({ request }) => {
     }
 
     // LAiF(Other) のみ: 同一疾患の重複(発症予測/アドバイス/用語解説/ネスト)を疾患単位に統合 (§5.3)。
-    //   env `SCAN_AI_PREDICTION_DEDUP=on` のときだけ発火・既定 off=挙動不変(🎯後に on 化)。
+    //   app_config `scan.ai_prediction_dedup=on` のときだけ発火・既定 off=挙動不変(🎯後に on 化)。
     //   疾患名は印字どおり維持(完全一致統合のみ)・捏造ゼロ・漏れゼロ。監査は応答で返し納品 data には含めない。
     let deliverItems: unknown[] = items;
     let consolidation: ConsolidateAudit | null = null;
-    if (formatId === 'Other' && envKey('SCAN_AI_PREDICTION_DEDUP') === 'on') {
+    if (formatId === 'Other' && cfgBool('scan.ai_prediction_dedup')) {
       const c = consolidateAiPredictionItems(items);
       deliverItems = c.items;
       consolidation = c.audit;
