@@ -323,7 +323,7 @@
   | タイプ | format_id | 取得 | 🎯値golden(決定論・画像非依存) | 🔍画像照合(LLM) | ④の照合 |
   |---|---|---|---|---|---|
   | 健康診断(検診) | HealthCheckupData | アプリscan | ○ `docs/scan/golden/scan_golden_healthcheckup_20250123.md` | ○ | — |
-  | 人間ドック | HealthCheckupData | アプリscan | ○ `docs/scan/golden/scan_golden_humandock_20240924.md` | ○ | — |
+  | 人間ドック | HealthCheckupData | アプリscan | ○ `docs/scan/golden/scan_golden_humandock_20240924.md`／`…_20250217.md`(湘南メディカル個人表様式・未実施多数=定性番人) | ○ | — |
   | がんリスク | CancerRiskAssessmentData | adminバッチ | ○ `docs/scan/golden/scan_golden_cancer_alapds_20251226.md`(ALA-PDS様式1) | ○ | — |
   | 遺伝子 | GeneticTestResultData | adminバッチ | 建立待ち(様式1) | ○ | — |
   | AI疾病発症予測(LAiF) | Other/ai_prediction | adminバッチ(多ページPDF) | ○ `docs/scan/golden/scan_golden_ai_prediction_laif_20250818.md`(様式1・2ページ目=本人結果) | △(値中心・名前セル不可読) | — |
