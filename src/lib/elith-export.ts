@@ -83,6 +83,16 @@ export function scanOutputFormat(): 'json' | 'markdown' {
 export function boundaryRecheckEnabled(): boolean {
   return envOn('SCAN_BOUNDARY_RECHECK');
 }
+// ---- ①捏造ゲート (False-Value 抑制・決定論・docs/scan/修正仕様書_捏造ゲート.md) ----
+// すべて既定 off = 挙動不変。捏造ゼロ・主パス不変。🎯(test_date=2025-02-17)回帰ゼロで on 化。
+/** G1: 未実施ブロック(尿ディップ/検便)の定性(-)充填を salvage/VQA 両経路で抑止。 */
+export function fabGateUnperformed(): boolean { return envOn('SCAN_FABGATE_UNPERFORMED'); }
+/** G2: 基準吸い上げ(未実施の身体計測で value==片側基準閾値)をドロップ。 */
+export function fabGateRefBleed(): boolean { return envOn('SCAN_FABGATE_REFBLEED'); }
+/** G3: 参考資料/基準値表の行(レンジ値 A〜B / 未設定 / 男性・女性・基準 等の名)をドロップ。 */
+export function fabGateRefTable(): boolean { return envOn('SCAN_FABGATE_REFTABLE'); }
+/** G4: 隣接漏れ(体脂肪率==BMI値)。既定off。偶然一致し得るため on は明示指定時のみ(anomalies 監査へ)。 */
+export function fabGateAdjacent(): boolean { return envOn('SCAN_FABGATE_ADJACENT'); }
 /**
  * ②正準化（標準マスタへの名寄せ/単位正準化・テンプレート穴埋め）を有効にするか。
  * env `SCAN_CANONICALIZE=on` で有効（既定 off）。off の間は挙動不変（現行と完全同一）。
@@ -401,11 +411,60 @@ export function salvageQualitativeResult(el: Record<string, unknown>): Record<st
   }
   return el;
 }
+// ---- ①捏造ゲート 判定ヘルパ (決定論・docs/scan/修正仕様書_捏造ゲート.md) ----
+// G2: 未実施の身体計測で「value==自分の片側基準閾値」= 基準吸い上げ。誤ドロップ回避のため
+//     未実施になりやすい身体計測項目に限定 (HbA1c 等が閾値ちょうどの実値でも落とさない)。
+const REFBLEED_NAMES = /^(腹囲|内臓脂肪面積|体脂肪率|標準体重比)$/;
+function isRefBleed(m: Record<string, unknown>): boolean {
+  const name = typeof m.name === 'string' ? m.name.trim() : '';
+  if (!REFBLEED_NAMES.test(name)) return false;
+  const vn = typeof m.value_num === 'number' && Number.isFinite(m.value_num) ? m.value_num : null;
+  if (vn == null) return false;
+  for (const rk of ['ref_high', 'ref_low'] as const) {
+    const rs = typeof m[rk] === 'string' ? (m[rk] as string) : '';
+    const mt = rs.match(/(\d+(?:\.\d+)?)/);
+    if (mt && Number(mt[1]) === vn) return true; // value が基準閾値と厳密一致
+  }
+  return false;
+}
+// G3: 参考資料/基準値表の行。value がレンジ(A〜B)/未設定 のみ、または name が基準表見出し語。
+//     「X以下/X未満」等の片側は実結果(例 ピロリ抗体濃度 3.0未満)があり得るため対象にしない。
+const REFTABLE_NAMES = /^(男性|女性|基準|基準値|年齢|新|従来)$/;
+const REFTABLE_RANGE_VALUE = /^\s*\d+(?:\.\d+)?\s*[〜~]\s*\d+(?:\.\d+)?\s*$/;
+function isRefTableRow(el: Record<string, unknown>): boolean {
+  const name = typeof el.name === 'string' ? el.name.trim() : '';
+  if (REFTABLE_NAMES.test(name)) return true;
+  const base = typeof el.inferred === 'string' ? el.inferred : el.value;
+  const v = typeof base === 'string' ? base.trim() : '';
+  return REFTABLE_RANGE_VALUE.test(v) || /^\s*未設定\s*$/.test(v);
+}
+// G1: 未実施ブロック文脈。尿=比重/pH に native 数値があれば実施、便潜血=native 定性結果があれば実施。
+export function computeFabCtx(list: Array<Record<string, unknown>>): { urineUnperformed: boolean; fecalUnperformed: boolean; bmiNum: number | null } {
+  let urineAnchor = false, fecalNative = false, bmiNum: number | null = null;
+  for (const el of list) {
+    if (!el || typeof el !== 'object') continue;
+    const name = typeof el.name === 'string' ? el.name : '';
+    const base = typeof el.inferred === 'string' ? el.inferred : el.value;
+    const v = cleanDeliveryValue(base);
+    if (/比重/.test(name) || /pH/i.test(name)) { if (v != null && /^\d/.test(v)) urineAnchor = true; }
+    if (/便潜血/.test(name) && v != null && QUAL_RESULT_TOKEN.test(v)) fecalNative = true;
+    if (/^(BMI|体格指数)/.test(name)) { const n = toValueNum(v); if (n != null) bmiNum = n; }
+  }
+  return { urineUnperformed: !urineAnchor, fecalUnperformed: !fecalNative, bmiNum };
+}
+// G1: この行の salvage を抑止すべきか (未実施ブロックの尿定性/便潜血)。
+function suppressSalvage(el: Record<string, unknown>, ctx: { urineUnperformed: boolean; fecalUnperformed: boolean }): boolean {
+  const name = typeof el.name === 'string' ? el.name.trim() : '';
+  if (/便潜血/.test(name)) return ctx.fecalUnperformed;
+  if (/^(?:尿蛋白|尿潜血|尿糖|蛋白|潜血)$/.test(name)) return ctx.urineUnperformed;
+  return false;
+}
 /**
  * measurements[] を納品形へ正規化 (全書き出し経路共通)。
  *  0) 定性結果の列取り違えサルベージ (便潜血系のみ)
  *  1) lean 化 (↑↓→flag・value_num 数値化)   2) 未測定(値なし)除外
  *  3) 総合判定(A/B/C)欄 除外              4) 妥当性ガードで壊れた値を除外 (anomalies)
+ *  ①捏造ゲート: G1 未実施salvage抑止 / G2 基準吸い上げ / G3 参考資料行 / G4 隣接漏れ (env で個別 on)
  */
 export function sanitizeMeasurementsForDelivery(list: unknown): {
   kept: Record<string, unknown>[];
@@ -414,9 +473,20 @@ export function sanitizeMeasurementsForDelivery(list: unknown): {
   const kept: Record<string, unknown>[] = [];
   const anomalies: MeasurementAnomaly[] = [];
   if (!Array.isArray(list)) return { kept, anomalies };
+  // ①捏造ゲート: env on のときだけ発火 (off=挙動不変)。
+  const gUnperf = fabGateUnperformed(), gRefBleed = fabGateRefBleed(), gRefTable = fabGateRefTable(), gAdjacent = fabGateAdjacent();
+  const fabCtx = (gUnperf || gAdjacent)
+    ? computeFabCtx(list as Array<Record<string, unknown>>)
+    : { urineUnperformed: false, fecalUnperformed: false, bmiNum: null };
   for (const el0 of list as Array<Record<string, unknown>>) {
     if (!el0 || typeof el0 !== 'object') continue;
-    const el = salvageQualitativeResult(el0);
+    // G3: 参考資料/基準値表の行を除外 (レンジ値 A〜B / 未設定 / 男性・女性・基準 等の名)。
+    if (gRefTable && isRefTableRow(el0)) {
+      anomalies.push({ name: typeof el0.name === 'string' ? el0.name : null, value: typeof el0.value === 'string' ? el0.value : null, value_num: null, unit: null, reason: 'ref_table_row（基準値表/参考資料・G3）' });
+      continue;
+    }
+    // G1: 未実施ブロックの尿定性/便潜血は salvage を抑止 (基準列(-)を value へ移送しない=空を保つ)。
+    const el = (gUnperf && suppressSalvage(el0, fabCtx)) ? el0 : salvageQualitativeResult(el0);
     const m = leanMeasurement(el);
     if (m.value == null && m.value_num == null) continue; // 未測定(値なし)は納品しない
     // 区切り記号のみの値(「-/-」「/」等=未実施の②③血圧等)は測定値でない。定性「(-)」等は括弧付きで除外しない。
@@ -435,6 +505,16 @@ export function sanitizeMeasurementsForDelivery(list: unknown): {
         reason,
       });
       continue; // 壊れた値は納品しない
+    }
+    // G2: 基準吸い上げ (未実施の身体計測で value==片側基準閾値) をドロップ。
+    if (gRefBleed && isRefBleed(m)) {
+      anomalies.push({ name: (m.name as string | null) ?? null, value: (m.value as string | null) ?? null, value_num: (m.value_num as number | null) ?? null, unit: (m.unit as string | null) ?? null, reason: 'ref_bleed（基準吸い上げ・G2）' });
+      continue;
+    }
+    // G4: 体脂肪率==BMI値 の隣接漏れ疑い (既定off・偶然一致し得るため明示on時のみ監査ドロップ)。
+    if (gAdjacent && /体脂肪率/.test(typeof m.name === 'string' ? m.name : '') && typeof m.value_num === 'number' && fabCtx.bmiNum != null && m.value_num === fabCtx.bmiNum) {
+      anomalies.push({ name: (m.name as string | null) ?? null, value: (m.value as string | null) ?? null, value_num: (m.value_num as number | null) ?? null, unit: (m.unit as string | null) ?? null, reason: 'adjacent_leak_suspect（BMI値と一致・G4）' });
+      continue;
     }
     kept.push(m);
   }
@@ -771,6 +851,14 @@ async function boundaryRecheck(
   const out = measurements.slice();
   const idxOfAny = (names: string[]): number =>
     out.findIndex((m) => names.some((n) => normNameKey(m.name || '') === normNameKey(n)));
+  // ①捏造ゲート G1: 未実施ブロック(尿ディップ/検便)なら定性(-)の VQA 充填を抑止する。
+  const unperfCtx = fabGateUnperformed() ? computeFabCtx(measurements as unknown as Array<Record<string, unknown>>) : null;
+  const isUnperformedFill = (names: string[]): boolean => {
+    if (!unperfCtx) return false;
+    if (names.some((n) => /便潜血/.test(n))) return unperfCtx.fecalUnperformed;
+    if (names.some((n) => /^(?:尿糖|蛋白|尿蛋白|潜血|尿潜血)$/.test(n))) return unperfCtx.urineUnperformed;
+    return false;
+  };
 
   for (const cand of allCands) {
     const vqa = vqaByLabel.get(cand.label);
@@ -778,6 +866,11 @@ async function boundaryRecheck(
 
     if (cand.kind === 'fill') {
       const reason: VqaAuditEntry['reason'] = before == null ? 'missing_detection' : 'unexpected_token';
+      // G1: 未実施ブロックの空欄は充填しない (基準列/前回列の(-)を today に入れる捏造を防ぐ)。
+      if (before == null && isUnperformedFill(cand.names)) {
+        audit.push({ name: cand.names[0], reason, before, vqa: 'fabgate:unperformed_block', action: 'left_unresolved' });
+        continue;
+      }
       const rawv0 = !vqa || vqa.present === false ? '' : typeof vqa.value === 'string' ? vqa.value.trim() : '';
       // 素のサイン/ダッシュ (-/−/＋/全角) を括弧付き定性トークンへ正規化 (present:false=空 は rawv0='' で対象外)。
       const rawv = normalizeQualToken(rawv0);
