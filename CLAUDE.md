@@ -188,6 +188,14 @@
     実装=`src/lib/elith-genetic.ts` `AI_PREDICTION_USER`。正本=`docs/elith/elith_assembly_wrapping_spec.md §5.6`。
     後段統合(`ai-prediction-consolidate.ts`・env `SCAN_AI_PREDICTION_DEDUP`)と直交併用。固定様式の改訂検知は今後の課題。
 
+### 捏造ゲート (False-Value 抑制・決定論・仕様着手2026-08)
+- **正本: `docs/scan/修正仕様書_捏造ゲート.md`**。人間ドックgolden(2025-02-17)で顕在化した False-Value 8件
+  (尿定性/便潜血の未実施(-)充填・腹囲=基準吸い上げ・B3基準値表の男性/女性項目化) を決定論で抑制する仕様。
+  4ゲート (G1未実施ブロック抑制[env `SCAN_FABGATE_UNPERFORMED`・比重/pH アンカーで尿未実施判定]・
+  G2基準吸い上げ[`SCAN_FABGATE_REFBLEED`・value==片側基準閾値をドロップ]・G3参考資料行[`SCAN_FABGATE_REFTABLE`・
+  レンジ値/男性女性名をドロップ]・G4隣接漏れ[`SCAN_FABGATE_ADJACENT`・監査のみ])。全て `sanitizeMeasurementsForDelivery`
+  集約・env off=挙動不変・捏造ゼロ・🎯(test_date=2025-02-17)回帰ゼロで on化。**現状=仕様(未実装)**。
+
 ### スキャン読取の共通ルール (検査票 → JSON)
 - **時系列列は「今回」のみ採用**: 検査票に「今回/前回/前々回」や受診日付きの複数回分が
   並ぶ場合、**"今回"(最新回) の値だけを採用し、前回・前々回以前は捨てる**。今回が空欄なら
