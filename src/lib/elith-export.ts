@@ -31,6 +31,7 @@ import { dedupObservations, dedupAudit, semanticKey, type DedupAudit } from './o
 import { normalizeCancerRisk } from './cancer-risk-fix';
 import { isHighRisk, evidenceVerdict, emitDecision } from './perception-repair';
 import { findByAlias, normKey as stdNormKey } from './standard-master';
+import { cfg, cfgBool } from './app-config';
 import type { S3PutFile } from './s3';
 
 export const ELITH_HANDOFF_SCHEMA_VERSION = 'elith-handoff-v0.1';
@@ -56,73 +57,52 @@ function env(name: string): string | undefined {
   const fromProc = typeof process !== 'undefined' ? process.env?.[name] : undefined;
   return fromProc != null && fromProc !== '' ? fromProc : undefined;
 }
-/** on 系フラグの寛容判定 (on/true/1/yes・前後空白/大文字小文字を許容)。厳密 === 'on' だと ON/true 等で不発になるため統一。 */
-function envOn(name: string): boolean {
-  const v = env(name);
-  return v != null && ['on', 'true', '1', 'yes'].includes(v.trim().toLowerCase());
-}
 export function getGeminiApiKey(): string | undefined {
   return env('GEMINI_API_KEY');
 }
 export function isGeminiConfigured(): boolean {
   return !!getGeminiApiKey();
 }
-/**
- * スキャン出力形式。'json' で responseSchema 構造化出力、既定 'markdown' で従来の GFM 表経路。
- * env `SCAN_OUTPUT_FORMAT=json` で切替 (Vercel・再デプロイ要)。未検証のうちは既定 markdown のまま
- * にしておき、代表ページで 🎯 ゴールデン照合の回帰ゼロを確認してから json へ寄せる (Phase 2)。
- */
+// ---- 運用パラメータ (app_config・env でなく DB 管理・src/lib/app-config.ts) ----
+// 秘匿でない運用フラグは全て app_config に集約。ここは薄いアクセサ (呼出側は不変)。
+// 事前に API ハンドラ入口で refreshConfig() 済みが前提 (未実行でも既定=確定運用の挙動)。
+/** スキャン出力形式。'json'=responseSchema 構造化 / 既定 'markdown'=GFM 表経路。 */
 export function scanOutputFormat(): 'json' | 'markdown' {
-  return env('SCAN_OUTPUT_FORMAT') === 'json' ? 'json' : 'markdown';
+  return cfg('scan.output_format') === 'json' ? 'json' : 'markdown';
 }
-/**
- * 境界定性項目の2パス再読 (Phase 1) を有効にするか。env `SCAN_BOUNDARY_RECHECK=on` で有効 (既定 off)。
- * 一次パスで空だった境界項目 (尿蛋白/尿潜血/尿糖/免疫便潜血/K-W) だけを、その画像へ軽量再読し
- * ギャップ埋めする (既存値は上書きしない)。numeric は触らない。🎯 回帰ゼロ確認後に常用する想定。
- */
+/** 境界定性項目の2パス再読 (VQA)。空だった定性 (尿蛋白/潜血/糖/便潜血/K-W) を軽量再読・充填。numeric不変。 */
 export function boundaryRecheckEnabled(): boolean {
-  return envOn('SCAN_BOUNDARY_RECHECK');
+  return cfgBool('scan.boundary_recheck');
 }
 // ---- ①捏造ゲート (False-Value 抑制・決定論・docs/scan/修正仕様書_捏造ゲート.md) ----
-// すべて既定 off = 挙動不変。捏造ゼロ・主パス不変。🎯(test_date=2025-02-17)回帰ゼロで on 化。
+// 捏造ゼロ・主パス不変。🎯(test_date=2025-02-17)回帰ゼロで on 化。切替は admin(app_config)。
 /** G1: 未実施ブロック(尿ディップ/検便)の定性(-)充填を salvage/VQA 両経路で抑止。 */
-export function fabGateUnperformed(): boolean { return envOn('SCAN_FABGATE_UNPERFORMED'); }
+export function fabGateUnperformed(): boolean { return cfgBool('fabgate.unperformed'); }
 /** G2: 基準吸い上げ(未実施の身体計測で value==片側基準閾値)をドロップ。 */
-export function fabGateRefBleed(): boolean { return envOn('SCAN_FABGATE_REFBLEED'); }
+export function fabGateRefBleed(): boolean { return cfgBool('fabgate.refbleed'); }
 /** G3: 参考資料/基準値表の行(レンジ値 A〜B / 未設定 / 男性・女性・基準 等の名)をドロップ。 */
-export function fabGateRefTable(): boolean { return envOn('SCAN_FABGATE_REFTABLE'); }
-/** G4: 隣接漏れ(体脂肪率==BMI値)。既定off。偶然一致し得るため on は明示指定時のみ(anomalies 監査へ)。 */
-export function fabGateAdjacent(): boolean { return envOn('SCAN_FABGATE_ADJACENT'); }
-/**
- * ②正準化（標準マスタへの名寄せ/単位正準化・テンプレート穴埋め）を有効にするか。
- * env `SCAN_CANONICALIZE=on` で有効（既定 off）。off の間は挙動不変（現行と完全同一）。
- * 🎯 ゴールデンで numeric 全一致・False-Value 0・名寄せ Missing 減 を確認してから on にする（P2/P4）。
- * 実装: `canonicalize()`（src/lib/canonicalize.ts）。読取値(numeric)は変えない・非ヒットは元名のまま。
- */
+export function fabGateRefTable(): boolean { return cfgBool('fabgate.reftable'); }
+/** G4: 隣接漏れ(体脂肪率==BMI値)。偶然一致し得るため明示on時のみ(anomalies 監査へ)。 */
+export function fabGateAdjacent(): boolean { return cfgBool('fabgate.adjacent'); }
+/** ②正準化(標準マスタへの名寄せ/単位正準化)。読取値(numeric)は変えない・非ヒットは元名のまま。 */
 export function canonicalizeEnabled(): boolean {
-  return envOn('SCAN_CANONICALIZE');
+  return cfgBool('scan.canonicalize');
 }
-/**
- * ①読取後段の決定論 dedup（課題C 別名重複の統合／課題B 同名別値の競合検知）を有効にするか。
- * env `SCAN_OBS_DEDUP=on` で有効（既定 off）。off の間は挙動不変。
- * 同一概念・同一値のみ統合し、同一概念・別値は統合せず competition として監査に残す（自動採用しない）。
- * 実装: `dedupObservations()`（src/lib/observation-dedup.ts）。numeric は変えない・値の採否はしない。
- * 🎯 ゴールデンで numeric 全一致・別名重複減・実施済の非統合 を確認してから on（P-perc）。
- */
+/** ①読取後段の決定論 dedup(別名重複統合/同名別値の競合検知)。同値のみ統合・別値は自動採用しない。 */
 export function obsDedupEnabled(): boolean {
-  return envOn('SCAN_OBS_DEDUP');
+  return cfgBool('scan.obs_dedup');
 }
-/** Phase 2-2: 基準レンジ再割当（scramble 修正）。SCAN_SCRAMBLE_FIX=on のときだけ。既定 off。 */
+/** Phase 2-2: 基準レンジ再割当(scramble 修正)。 */
 export function scrambleFixEnabled(): boolean {
-  return envOn('SCAN_SCRAMBLE_FIX');
+  return cfgBool('scan.scramble_fix');
 }
-/** Phase 2-2: 眼科 collapsed-row 付け替え（右眼/左眼→種別）。SCAN_EYE_RESOLVE=on のときだけ。既定 off。 */
+/** Phase 2-2: 眼科 collapsed-row 付け替え(右眼/左眼→種別)。 */
 export function scanEyeResolveEnabled(): boolean {
-  return envOn('SCAN_EYE_RESOLVE');
+  return cfgBool('scan.eye_resolve');
 }
-/** Phase 2-2: 脂質 LDL↔TG 入替の物理制約修正。SCAN_LIPID_FIX=on のときだけ。既定 off。 */
+/** Phase 2-2: 脂質 LDL↔TG 入替の物理制約修正。 */
 export function scanLipidFixEnabled(): boolean {
-  return envOn('SCAN_LIPID_FIX');
+  return cfgBool('scan.lipid_fix');
 }
 
 // ── MIME / 拡張子 ───────────────────────────────────────────────
@@ -925,7 +905,7 @@ async function boundaryRecheck(
 //   (=ページ全体の"今回列は空"バイアス/過去列の引力を物理的に排除。ReaderとRepairの失敗モードを非相関化)。
 // 安全設計: sharp は遅延 import + 全 try/catch。失敗時は一切変更しない(フォールバック=現挙動)。既定 off。
 export function rowCropEnabled(): boolean {
-  return envOn('SCAN_VQA_ROWCROP');
+  return cfgBool('scan.vqa_rowcrop');
 }
 const ROWCROP_LOCATE_SYSTEM = `あなたは健診結果表の座標特定器です。指定された行と、表の列見出し行の位置だけを答えます。`;
 function buildRowLocateUser(label: string): string {
@@ -1050,7 +1030,7 @@ async function rowCropLeakRescue(
 // 安全設計: Gemini/sharp は全 try/catch。失敗時は一切変更しない(フォールバック=現挙動)。主パス不変。
 // ※ occupied のCV検出・残留証拠監査・列信頼度の精密化は Vercel🎯 での調整対象 (実装修正プラン §3.1 P-perc-3)。
 export function perceptionRepairEnabled(): boolean {
-  return envOn('SCAN_PERCEPTION_REPAIR');
+  return cfgBool('scan.perception_repair');
 }
 const INVENTORY_SYSTEM = `あなたは健診結果表の棚卸し器です。画像に印字された検査項目のうち「今回(最新回)列に値・記号が入っている」項目名だけを列挙します。値は読まず、項目名だけを返します。推測禁止。`;
 function buildInventoryUser(): string {

@@ -30,6 +30,7 @@ import {
   type HealthAgeRecord,
 } from '../../../lib/elith-assemble';
 import { getServerSupabase } from '../../../lib/supabase';
+import { refreshConfig } from '../../../lib/app-config';
 
 export const prerender = false;
 
@@ -61,6 +62,7 @@ interface Body {
 }
 
 export const POST: APIRoute = async ({ request }) => {
+  await refreshConfig(); // 運用パラメータ(app_config)を最新化してから処理
   if (!authorized(request)) {
     return json({ ok: false, error: 'unauthorized', detail: 'Invalid API key' }, 401);
   }

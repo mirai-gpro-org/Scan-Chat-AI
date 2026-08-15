@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { GoogleGenAI } from '@google/genai';
 import { MODELS } from '../../lib/gemini';
+import { refreshConfig } from '../../lib/app-config';
 import { buildUserContextForChat, getCustomerProfile, getAppliedExamLabels } from '../../lib/chat-context';
 
 export const prerender = false;
@@ -14,6 +15,7 @@ export const prerender = false;
  * クライアント側で system instruction の先頭に prepend する想定。
  */
 export const POST: APIRoute = async ({ request }) => {
+  await refreshConfig(); // 運用パラメータ(app_config)を最新化してから処理
   const apiKey = import.meta.env.GEMINI_API_KEY;
   if (!apiKey) {
     return json({ error: 'GEMINI_API_KEY is not configured' }, 500);
