@@ -5,7 +5,15 @@
 | 目的 | クライアント特別依頼(2026-08): 人間ドック個人表の血液値を**新しい血液検査報告書(採取2026-06-08)で上書き(血液優先)**した HealthCheckupData を作り、**健康年齢(CABA)を算出**、**HealthCheckupData ＋ HealthAgeData の2ファイルだけ**を**時系列生成なし**でラップして Elith(S3) へ渡す。 |
 | 位置づけ | **この1検体のみの暫定運用**。恒久機能(track③ 血液優先マージ)の正式実装は別途(`docs/scan/scan_canonicalization_standard_format_design.md`/③)。 |
 | 実行環境 | 鍵は Vercel 本番 env のみ → **スキャン/健康年齢/assemble は admin(wellfort-site→Scan-Chat-AI API) で実行**。統合スクリプトのみローカルNode。 |
-| 前提決定(発注者) | 納品HCの血液値＝**新血液で上書き(確定)**。時系列＝**生成しない(確定)**。納品セット＝**HC＋HealthAgeの2つのみ(確定)**。 |
+| 前提決定(発注者) | 納品HCの血液値＝**新血液で上書き(確定)**。時系列＝**生成しない(確定)**。納品セット＝**HC＋HealthAgeの2つのみ(確定)**。識別番号＝**手動指定の固定ID(下記)**。 |
+
+## ★ 識別番号(client_id) — 今回は手動固定
+- **今回の client_id ＝ `20250217-0000-0000-0000-000000000001`**（手動指定・非PIIの仮名ID）。
+  - 通常のテストは自動採番だが、今回は指定値で実行する（発注者要望）。
+  - **UUID形式で指定すること(必須)**：健康年齢の保存先 `diagnosis.health_age_scores.diagnostic_user_id` は **uuid型**のため、`test-…` 形式では **health-age(④) の保存が失敗**する。上記は有効なUUID形式（16進・8-4-4-4-12）。
+  - 先頭が受診日 `2025-02-17`・末尾 `0001`＝S3一覧で識別しやすい。氏名/生年月日は含まない。
+  - **admin では「テスト用IDを自動採番(test-…)」を使わず、「固定ID」入力にこの値を入れる**（`elith-batch` の client_id 指定欄）。
+  - ①スキャン・④health-age(`diagnosticUserId`)・⑤assemble(対象client)・S3パス は**すべてこの同一IDで統一**する。
 
 ---
 
@@ -19,8 +27,9 @@
 **重要:** 時系列/疑似データは `elith-plan-timeseries` / `elith-blood-timeseries` が担う**別ステップ**。本件では**それらを実行しない**＝ `assemble` のみで単発(実データ)納品になる。
 
 ## 1. スキャン(admin「Elith バッチ生成」)
+※ client_id は「自動採番」ではなく**「固定ID」に `20250217-0000-0000-0000-000000000001` を入力**して実行する（②③④⑤ 全て同一）。
 1-a. **人間ドック個人表(1)(2)** を format_id=**HealthCheckupData** でスキャン → S3。
-   → 例 `…/date/2025_02_17/HealthCheckupData_date_2025_02_17_user_{cid}.json`（＝**base**）。S3キーを控える。
+   → `…/date/2025_02_17/HealthCheckupData_date_2025_02_17_user_20250217-0000-0000-0000-000000000001.json`（＝**base**）。S3キーを控える。
 1-b. **検査報告書(2026-06-08)** を format_id=**HealthCheckupData** としてスキャン → S3（＝**override/新血液**）。S3キーを控える。
    ※検査報告書は血液・生化学・ホルモン・腫瘍マーカー。CABAに必要な **HbA1c/空腹時血糖/アルブミン は含まれない**ことがある（→ 統合で個人表側から補完される）。
 
@@ -44,7 +53,8 @@ node scripts/merge-hc-bloodpriority.mjs <base_人間ドックHC.json> <override_
 
 ## 4. 健康年齢(CABA)算出(admin `/api/admin/health-age`)
 4-a. `mode=check`：**統合HC**（sourceKey=③で配置したキー）で必須マーカー充足を確認（`computable:true`か、`missing`に糖代謝等が無いか）。
-4-b. `mode=run`：`sourceKey=統合HCキー` / `diagnosticUserId={cid}` / `age`(実年齢) / `sex` / `testDate`(3の日付) を指定 → CABA算出、`diagnosis.health_age_scores` に保存。
+4-b. `mode=run`：`sourceKey=統合HCキー` / `diagnosticUserId=20250217-0000-0000-0000-000000000001` / `age`(実年齢) / `sex` / `testDate`(3の日付) を指定 → CABA算出、`diagnosis.health_age_scores` に保存。
+   ※ `diagnosticUserId` は**必ず上記UUID**（uuid型カラムのため `test-…` は保存エラー）。
    - **source_ref=統合HCキー** になる → 次の assemble が HealthAgeData を**この統合HCに紐付け**て納品に足す（＝新血液でCABA・納品HCと一貫）。
 
 ## 5. 単発ラップ納品(admin `/api/admin/elith-assemble`)
