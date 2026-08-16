@@ -43,9 +43,22 @@ function measOf(obj) {
 }
 
 function main() {
-  const [basePath, ovPath, outArg] = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+  // --synth-lymph[=VALUE]: 【例外運用のみ】健康年齢 必須マーカー「リンパ球比率」が両ソースに実測なしの検体で、
+  //   AI診断疎通のため注記付き合成値を1行だけ追加する (捏造ゼロ原則への"記録された一件限りの例外")。
+  //   既定運用では使わない。使用時は状況報告書を納品記録に添付すること。VALUE 省略時=34.0(正常域中央付近の中立値)。
+  let synthLymph = null;
+  const flags = new Set();
+  const pos = [];
+  for (const a of argv) {
+    const m = /^--synth-lymph(?:=(.+))?$/.exec(a);
+    if (m) { synthLymph = m[1] != null && m[1] !== '' ? m[1] : '34.0'; continue; }
+    if (a.startsWith('--')) { flags.add(a); continue; }
+    pos.push(a);
+  }
+  const [basePath, ovPath, outArg] = pos;
   if (!basePath || !ovPath) {
-    console.error('usage: node scripts/merge-hc-bloodpriority.mjs <base_人間ドックHC.json> <override_新血液HC.json> [out.json]');
+    console.error('usage: node scripts/merge-hc-bloodpriority.mjs <base_人間ドックHC.json> <override_新血液HC.json> [out.json] [--synth-lymph[=34.0]]');
     process.exit(2);
   }
   const baseObj = JSON.parse(readFileSync(basePath, 'utf8'));
@@ -88,6 +101,24 @@ function main() {
     }
   }
 
+  // 【例外運用】--synth-lymph: リンパ球(比率)が統合後にも存在しない場合のみ、注記付きで1行合成追加。
+  //   既存の「リンパ」行がある(実測 or 既に補完済)なら追加しない=重複/二重補完を防ぐ。捏造の明示ラベル必須。
+  audit.synth = [];
+  if (synthLymph != null) {
+    const hasLymph = merged.some((m) => /リンパ/.test(rawKey(m && m.name)));
+    if (hasLymph) {
+      console.error('※--synth-lymph 指定だが、統合後に既にリンパ球行が存在するため追加しない (実測優先)。');
+    } else {
+      const row = {
+        name: 'リンパ球比率', value: String(synthLymph), unit: '%', ref_low: '20', ref_high: '51',
+        note: '※テスト用合成値・実測なし（白血球分画未実施のため健康年齢算出用に例外補完）',
+        synthetic: true,
+      };
+      merged.push(row);
+      audit.synth.push({ name: row.name, value: row.value });
+    }
+  }
+
   const outObj = { ...baseObj, data: { ...(baseObj.data || {}), measurements: merged } };
   const outPath = outArg || basePath.replace(/\.json$/i, '') + '.merged.json';
   writeFileSync(outPath, JSON.stringify(outObj, null, 2), 'utf8');
@@ -101,6 +132,10 @@ function main() {
   audit.added.forEach((d) => console.error(`  ＋${d.name}: ${d.value}`));
   console.error(`除外(メソッド名/参考値): ${audit.skipped_deny.length}${audit.skipped_deny.length ? ' [' + audit.skipped_deny.join(', ') + ']' : ''}`);
   console.error(`除外(値なし)      : ${audit.skipped_empty.length}`);
+  if (audit.synth.length) {
+    console.error(`★合成補完(例外/捏造ラベル): ${audit.synth.length}`);
+    audit.synth.forEach((d) => console.error(`  ⚠${d.name}: ${d.value} (合成・実測なし。状況報告書を添付のこと)`));
+  }
   console.error(`統合後 measurements: ${merged.length}`);
   console.error(`出力: ${outPath}`);
   console.error('※統合HCの measurements を目視確認のこと (1件運用)。最終整形は納品パイプラインが実施。');
