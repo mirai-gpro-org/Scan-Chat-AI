@@ -88,10 +88,17 @@ node scripts/merge-hc-bloodpriority.mjs <base_人間ドックHC.json> <override_
    ※ `diagnosticUserId` は**必ず上記UUID**（uuid型カラムのため `test-…` は保存エラー）。
    - **source_ref=統合HCキー** になる → 次の assemble が HealthAgeData を**この統合HCに紐付け**て納品に足す（＝新血液でCABA・納品HCと一貫）。
 
-## 5. 単発ラップ納品(admin `/api/admin/elith-assemble`)
-5-a. `mode=inventory` で該当 client の在庫確認（HealthCheckupData 1件 ＋ HealthAgeData 見込み1件）。
-5-b. `mode=assemble` を該当 client で実行 → 納品prefixへ **HealthCheckupData ＋ HealthAgeData の2ファイル**を書き出し。
-5-c. **`elith-plan-timeseries` / `elith-blood-timeseries` は実行しない**（＝時系列/疑似データを作らない）。
+## 5. 単発ラップ納品(admin elith-batch 画面「単発納品(1件・手動指定)」)
+> ⚠️ **自動assemble(人数指定)は使わない**: 自動は「5種(HC/血液/がん/遺伝子/問診)が揃うユーザー」しか対象にしない
+> (`elith-assemble.ts` `want=min(count, maxCompleteUsers)`)。本件は HealthCheckupData のみ=自動では 0 件になる。
+> → **admin 画面下部の「単発納品(1件・手動指定)」= `manualMapping`** を使う。
+5-a. **納品 client_id** に固定ID(またはhealth-ageで使ったdiagnostic_user_id) を入力。
+5-b. **HealthCheckupData S3キー** に ④で使った統合HCキー(source_ref と同一)を入力。
+5-c. 「単発納品(HC+健康年齢のみ)」を実行 → 納品先 `user/{client_id}/date/{HCの日付}/` へ
+   **HealthCheckupData ＋ HealthAgeData の2ファイル**のみを書き出す。
+   - HealthAgeData は **health_age_scores の source_ref が このHCキーに一致**するとき自動付与される(④の sourceKey と同一にすること)。
+   - **時系列・他フォーマットは生成しない**(`elith-plan-timeseries` / `elith-blood-timeseries` は実行しない)。
+   - client_id は納品時に指定値へ書き換わる(HC/HealthAge 両方)。source_ref 一致さえ取れれば diagnostic_user_id と納品 client_id は別でも紐付く。
 
 ## 6. 最終確認
 - 納品prefix `user/{client_id}/date/{YYYY_MM_DD}/` に **HealthCheckupData と HealthAgeData の2ファイルのみ**。
