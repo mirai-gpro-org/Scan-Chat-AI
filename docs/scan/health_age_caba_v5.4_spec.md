@@ -49,3 +49,13 @@ Wellfort への確認依頼（2026-08-03）に対し、以下の回答を受領�
 - **補完前提（欠けても算出可）**: `rdw`(13.0) ／ `crp`(NLR or 0.15) ／ `sbp`・`fev1fvc`・`neut`（任意）。
 - 補完した項目は結果の `imputed_markers` に載せ、カードに「参考値」バッジ＋注記を表示。
 - 最終クランプ 18–95 歳。BMI は v5.4 では計算に使わず参考表示のみ。
+
+## 算出不能（必須マーカー不足）の扱い（確定・2026-08）
+- ハード必須が欠けると `computeHealthAge` は `biological_age:null / delta:null / ok:false` を返す（`missing_required` に欠落項目）。
+- **算出不能は保存しない**: `mode=run`（`api/admin/health-age.ts`）は `result.ok=false` のとき `health_age_scores` へ **upsert しない**
+  （応答 `save_skipped:true`）。→ null 行を残さない。既存の妥当スコアも null で上書きしない。
+- **算出不能は納品しない**: assemble（`elith-assemble.ts`）は `biological_age==null` の回の **HealthAgeData を書き出さない**
+  （`health_age:null` のファイルを Elith へ渡さない＝"載せない"原則・捏造ゼロ）。
+- 実障害（2026-08）: `elith-test-002`（2025-01-23）で必須マーカー不足のまま null スコアが保存・納品され、
+  `health_age:null` の HealthAgeData が Elith へ渡り問い合わせが発生 → 上記2ガードで是正。
+  **既に S3 にある null ファイルは assemble では消えない（別キーを書かないだけ）ため、古い null ファイルは手動削除（admin `elith-delete`）が必要**。

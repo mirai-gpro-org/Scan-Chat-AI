@@ -180,7 +180,13 @@ export const POST: APIRoute = async ({ request }) => {
     const sb = getServerSupabase();
     let saved = false;
     let saveError: string | null = null;
-    if (sb) {
+    let saveSkipped = false;
+    if (!result.ok) {
+      // 算出不能(必須マーカー不足=biological_age null)は保存しない。
+      // null 行が health_age_scores に残り assemble で null の HealthAgeData を生む事故を防ぐ
+      // (捏造ゼロ・"載せない"原則)。既存の妥当スコアがある場合も null で上書きしない。
+      saveSkipped = true;
+    } else if (sb) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const tbl = (sb.schema('diagnosis') as any).from('health_age_scores');
@@ -223,6 +229,7 @@ export const POST: APIRoute = async ({ request }) => {
       imputed_markers: result.imputed_markers,
       normalized_markers: normalized,
       saved,
+      save_skipped: saveSkipped, // true=算出不能のため保存せず(null行を作らない)
       save_error: saveError,
     });
   }
