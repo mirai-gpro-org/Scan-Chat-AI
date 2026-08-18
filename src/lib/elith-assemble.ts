@@ -467,7 +467,10 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
         const sm = seriesByFormat.get(f);
         const series = sm ? (sm.get(item.clientId ?? '(unknown)') ?? [item]) : [item];
         for (const s of series) {
-          if (!opts.healthAgeByRef![s.key]) continue; // その回のスコアが無ければ載せない
+          const haRec = opts.healthAgeByRef![s.key];
+          // その回のスコアが無い、または算出不能(biological_age=null=必須マーカー不足)は載せない。
+          // 後者は health_age:null の HealthAgeData を Elith へ渡さないため(捏造ゼロ・"載せない"原則)。
+          if (!haRec || haRec.biological_age == null) continue;
           const bd = /^\d{4}_\d{2}_\d{2}$/.test(s.date) ? s.date : bundleDate;
           if (overwrite || !byDate.has(bd)) byDate.set(bd, s.key);
         }

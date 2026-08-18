@@ -187,6 +187,7 @@ export const POST: APIRoute = async ({ request }) => {
     //   ・実測が既に在るキーは絶対に上書きしない (合成は"不足"のみ)。
     //   ・注入は健康年齢の計算だけに効く。元 JSON / 納品HC は変更しない (HCは実測のまま=捏造をHCに入れない)。
     //   ・synthetic_markers として応答・inputs に必ず残す (トレーサビリティ)。状況報告書の添付が前提。
+    //   ・ハードゲート(下記)より前に適用する → 合成で不足を埋めた検体は算出可(computable)になりゲートを通す。
     const synthReq = parseSyntheticMarkers(body.syntheticMarkers);
     const synthApplied: Record<string, number> = {};
     for (const [k, v] of Object.entries(synthReq)) {
@@ -194,6 +195,23 @@ export const POST: APIRoute = async ({ request }) => {
         (normalized as Record<string, number>)[k] = v;
         synthApplied[k] = v;
       }
+    }
+
+    // 適合チェック(ハードゲート): 必須マーカーが揃っていなければ算出しない。
+    // mode=check(✅/⚠️) と同一の requiredCoverage を run でも強制し、算出不能(=health_age null)を
+    // そもそも作らせない。UI の適合チェックは助言表示だが、run はこのゲートで実行を止める。
+    // ※合成補完(上)の後に判定するので、正規の例外運用(synthetic)で埋めた検体はここを通過する。
+    const coverage = requiredCoverage(normalized);
+    if (!coverage.computable) {
+      return json({
+        ok: false,
+        error: 'not_computable',
+        detail: `必須マーカー不足のため算出不能: ${coverage.missing.join(', ')}。適合チェック(mode=check)で⚠️の検体は算出できません。`,
+        mode: 'run',
+        computable: false,
+        missing_required: coverage.missing,
+        present_markers: coverage.present,
+      }, 422);
     }
 
     const markers: HealthAgeMarkers = { ...normalized, age, sex };
@@ -216,7 +234,13 @@ export const POST: APIRoute = async ({ request }) => {
     const sb = getServerSupabase();
     let saved = false;
     let saveError: string | null = null;
-    if (sb) {
+    let saveSkipped = false;
+    if (!result.ok) {
+      // 算出不能(必須マーカー不足=biological_age null)は保存しない。
+      // null 行が health_age_scores に残り assemble で null の HealthAgeData を生む事故を防ぐ
+      // (捏造ゼロ・"載せない"原則)。既存の妥当スコアがある場合も null で上書きしない。
+      saveSkipped = true;
+    } else if (sb) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const tbl = (sb.schema('diagnosis') as any).from('health_age_scores');
@@ -260,6 +284,7 @@ export const POST: APIRoute = async ({ request }) => {
       synthetic_markers: synthApplied,
       normalized_markers: normalized,
       saved,
+      save_skipped: saveSkipped, // true=算出不能のため保存せず(null行を作らない)
       save_error: saveError,
     });
   }
