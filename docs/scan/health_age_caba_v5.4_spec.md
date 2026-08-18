@@ -52,10 +52,13 @@ Wellfort への確認依頼（2026-08-03）に対し、以下の回答を受領�
 
 ## 算出不能（必須マーカー不足）の扱い（確定・2026-08）
 - ハード必須が欠けると `computeHealthAge` は `biological_age:null / delta:null / ok:false` を返す（`missing_required` に欠落項目）。
-- **算出不能は保存しない**: `mode=run`（`api/admin/health-age.ts`）は `result.ok=false` のとき `health_age_scores` へ **upsert しない**
-  （応答 `save_skipped:true`）。→ null 行を残さない。既存の妥当スコアも null で上書きしない。
-- **算出不能は納品しない**: assemble（`elith-assemble.ts`）は `biological_age==null` の回の **HealthAgeData を書き出さない**
-  （`health_age:null` のファイルを Elith へ渡さない＝"載せない"原則・捏造ゼロ）。
-- 実障害（2026-08）: `elith-test-002`（2025-01-23）で必須マーカー不足のまま null スコアが保存・納品され、
-  `health_age:null` の HealthAgeData が Elith へ渡り問い合わせが発生 → 上記2ガードで是正。
+- **算出前にハードゲート（＝適合チェックを run でも強制）**: `mode=run`（`api/admin/health-age.ts`）は算出の**前に** `requiredCoverage(normalized)` を実行し、
+  `computable=false`（必須不足）なら **422 `not_computable`（`missing_required` 付き）で算出せず終了**する。
+  → **算出不能な入力からは health_age を作らせない**（＝null は構造的に生じない）。`mode=check` の ✅/⚠️ と同一判定（同じ `requiredCoverage`・同じ `normalizeMarkers`）。
+  - 補足: **適合チェック（`mode=check`）は lymph を含む全必須を見る**（CRP/RDW は補完前提で対象外）。従来 `mode=check` は ✅/⚠️ の**表示のみ**で
+    `mode=run` を止めていなかった（⚠️でも算出実行可能）。本ゲートで run 側にも同じ判定を効かせた。
+- **算出不能は納品しない（防御多重化）**: assemble（`elith-assemble.ts`）は `biological_age==null` の回の **HealthAgeData を書き出さない**
+  （万一 null 行が既存でも `health_age:null` を Elith へ渡さない＝"載せない"原則・捏造ゼロ）。
+- 実障害（2026-08）: `elith-test-002`（2025-01-23）で必須マーカー不足（適合チェックなら⚠️）のまま `mode=run` が実行され、
+  `health_age:null` の HealthAgeData が Elith へ渡り問い合わせが発生 → run ハードゲート＋assemble ガードで是正。
   **既に S3 にある null ファイルは assemble では消えない（別キーを書かないだけ）ため、古い null ファイルは手動削除（admin `elith-delete`）が必要**。

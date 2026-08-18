@@ -161,6 +161,23 @@ export const POST: APIRoute = async ({ request }) => {
     }
 
     const normalized = normalizeMarkers(measurements);
+
+    // 適合チェック(ハードゲート): 必須マーカーが揃っていなければ算出しない。
+    // mode=check(✅/⚠️) と同一の requiredCoverage を run でも強制し、算出不能(=health_age null)を
+    // そもそも作らせない。UI の適合チェックは助言表示だが、run はこのゲートで実行を止める。
+    const coverage = requiredCoverage(normalized);
+    if (!coverage.computable) {
+      return json({
+        ok: false,
+        error: 'not_computable',
+        detail: `必須マーカー不足のため算出不能: ${coverage.missing.join(', ')}。適合チェック(mode=check)で⚠️の検体は算出できません。`,
+        mode: 'run',
+        computable: false,
+        missing_required: coverage.missing,
+        present_markers: coverage.present,
+      }, 422);
+    }
+
     const markers: HealthAgeMarkers = { ...normalized, age, sex };
     const result = computeHealthAge(markers);
 
