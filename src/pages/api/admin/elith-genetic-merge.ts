@@ -12,7 +12,9 @@
 
 import type { APIRoute } from 'astro';
 import { scanGeneticPage, scanAiPredictionPage } from '../../../lib/elith-genetic';
+import { consolidateAiPredictionItems, type ConsolidateAudit } from '../../../lib/ai-prediction-consolidate';
 import { ELITH_HANDOFF_SCHEMA_VERSION, jstTodayIso } from '../../../lib/elith-export';
+import { refreshConfig, cfgBool } from '../../../lib/app-config';
 import { MODELS } from '../../../lib/gemini';
 import { getS3Config, isS3Configured, putFiles } from '../../../lib/s3';
 
@@ -78,6 +80,7 @@ export const POST: APIRoute = async ({ request }) => {
   if (!authorized(request)) {
     return json({ ok: false, error: 'unauthorized', detail: 'Invalid API key' }, 401);
   }
+  await refreshConfig(); // 運用パラメータ(app_config)を最新化してから処理
   let body: Body;
   try {
     body = (await request.json()) as Body;
@@ -113,8 +116,10 @@ export const POST: APIRoute = async ({ request }) => {
         item_count: r.items.length,
         parsed: r.parsed,
         finish_reason: r.finishReason,
-        // 構造化に失敗(JSON化不可)した場合のみ生出力を返す (監査/再試行判断用)
-        raw: r.parsed ? undefined : r.raw.slice(0, 2000),
+        // 生出力を常に返す (読取段階の監査用=健診の raw_markdown と同等・admin でページ単位に確認/DL)。
+        // LAiF/遺伝子は Markdown 中間を持たず LLM が直接 JSON 構造化するため、この per-page 生出力が
+        // 「モデルがそのページで何をどう読んだか」を見る唯一の一次証跡。密テーブルの行ズレ切り分けに使う。
+        raw: r.raw,
       });
     } catch (err) {
       return json({ ok: false, error: 'scan failed', detail: String(err instanceof Error ? err.message : err) }, 502);
@@ -141,6 +146,17 @@ export const POST: APIRoute = async ({ request }) => {
       });
     }
 
+    // LAiF(Other) のみ: 同一疾患の重複(発症予測/アドバイス/用語解説/ネスト)を疾患単位に統合 (§5.3)。
+    //   app_config `scan.ai_prediction_dedup=on` のときだけ発火・既定 off=挙動不変(🎯後に on 化)。
+    //   疾患名は印字どおり維持(完全一致統合のみ)・捏造ゼロ・漏れゼロ。監査は応答で返し納品 data には含めない。
+    let deliverItems: unknown[] = items;
+    let consolidation: ConsolidateAudit | null = null;
+    if (formatId === 'Other' && cfgBool('scan.ai_prediction_dedup')) {
+      const c = consolidateAiPredictionItems(items);
+      deliverItems = c.items;
+      consolidation = c.audit;
+    }
+
     const { folder, stem } = folderOf(prefix, clientId, testDate, formatId);
     const json_key = `${folder}${stem}.json`;
     const jsonObj = {
@@ -165,12 +181,12 @@ export const POST: APIRoute = async ({ request }) => {
           : 'admin バッチ (遺伝子・AIスキャン・構造化はLLM全面委任)。項目構造はLLM判定。',
         lab_name: formatId === 'Other' ? 'LAiF' : null,
       },
-      data: { item_count: items.length, items, pages },
+      data: { item_count: deliverItems.length, items: deliverItems, pages },
     };
     const jsonBody = JSON.stringify(jsonObj, null, 2);
 
     if (!isS3Configured() || !cfg) {
-      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, item_count: items.length, format_id: formatId, preview: jsonObj });
+      return json({ ok: false, configured: false, reason: 's3_not_configured', json_key, item_count: deliverItems.length, format_id: formatId, consolidation, preview: jsonObj });
     }
     try {
       const uploaded = await putFiles([
@@ -179,8 +195,9 @@ export const POST: APIRoute = async ({ request }) => {
       return json({
         ok: true, action: 'finalize', configured: true, bucket: cfg.bucket,
         client_id: clientId, format_id: formatId, test_date: testDate,
-        page_count: parts.length, item_count: items.length, json_key,
+        page_count: parts.length, item_count: deliverItems.length, json_key,
         uri: uploaded[0]?.uri ?? null,
+        consolidation, // LAiF 統合監査 (件数/統合/競合)。null=未実施 (env off or 非Other)。納品 data には含めない。
         preview: jsonObj, // 🎯 照合用: 納品JSON(data.items)を返す(S3未設定分岐と同様)。
       });
     } catch (err) {

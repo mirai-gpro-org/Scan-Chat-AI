@@ -55,6 +55,22 @@ interface Body {
   age?: unknown;
   sex?: unknown;
   testDate?: unknown;
+  syntheticMarkers?: unknown; // 【例外運用】不足必須マーカーの手動合成補完 {lymph:34,...}。計算のみに注入・記録。
+}
+
+// 合成補完を許可するマーカーキー (HealthAgeMarkers の数値項目のみ)。
+const SYNTH_ALLOW = new Set([
+  'albumin', 'creatinine', 'glucose', 'crp', 'lymph', 'mcv', 'rdw', 'alp', 'wbc', 'neut', 'sbp', 'fev1fvc', 'bmi',
+]);
+function parseSyntheticMarkers(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!SYNTH_ALLOW.has(k)) continue;
+    const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
+    if (Number.isFinite(n)) out[k] = n;
+  }
+  return out;
 }
 
 export const POST: APIRoute = async ({ request }) => {
@@ -110,6 +126,8 @@ export const POST: APIRoute = async ({ request }) => {
       .filter((o) => o.key.endsWith('.json') && basename(o.key).startsWith('HealthCheckupData_'))
       .sort((a, b) => b.key.localeCompare(a.key))
       .slice(0, 40); // 時間制約: 先頭40件まで判定
+    // check でも合成補完を考慮 (run 前に ✅ を確認できるように)。実測は上書きしない。
+    const synthCheck = parseSyntheticMarkers(body.syntheticMarkers);
     const files = [];
     for (const o of jsons) {
       const m = /_date_(\d{4}_\d{2}_\d{2})_user_(.+)\.json$/.exec(basename(o.key));
@@ -120,6 +138,9 @@ export const POST: APIRoute = async ({ request }) => {
         const data = (obj.data ?? {}) as Record<string, unknown>;
         const measurements: RawItem[] = Array.isArray(data.measurements) ? (data.measurements as RawItem[]) : [];
         const norm = normalizeMarkers(measurements);
+        for (const [k, v] of Object.entries(synthCheck)) {
+          if ((norm as Record<string, unknown>)[k] == null) (norm as Record<string, number>)[k] = v;
+        }
         cov = requiredCoverage(norm);
         hasCrp = norm.crp != null;
       } catch { /* skip parse errors → computable:false */ }
@@ -162,9 +183,24 @@ export const POST: APIRoute = async ({ request }) => {
 
     const normalized = normalizeMarkers(measurements);
 
+    // 【例外運用・記録付き】不足必須マーカーの手動合成補完。
+    //   ・実測が既に在るキーは絶対に上書きしない (合成は"不足"のみ)。
+    //   ・注入は健康年齢の計算だけに効く。元 JSON / 納品HC は変更しない (HCは実測のまま=捏造をHCに入れない)。
+    //   ・synthetic_markers として応答・inputs に必ず残す (トレーサビリティ)。状況報告書の添付が前提。
+    //   ・ハードゲート(下記)より前に適用する → 合成で不足を埋めた検体は算出可(computable)になりゲートを通す。
+    const synthReq = parseSyntheticMarkers(body.syntheticMarkers);
+    const synthApplied: Record<string, number> = {};
+    for (const [k, v] of Object.entries(synthReq)) {
+      if ((normalized as Record<string, unknown>)[k] == null) {
+        (normalized as Record<string, number>)[k] = v;
+        synthApplied[k] = v;
+      }
+    }
+
     // 適合チェック(ハードゲート): 必須マーカーが揃っていなければ算出しない。
     // mode=check(✅/⚠️) と同一の requiredCoverage を run でも強制し、算出不能(=health_age null)を
     // そもそも作らせない。UI の適合チェックは助言表示だが、run はこのゲートで実行を止める。
+    // ※合成補完(上)の後に判定するので、正規の例外運用(synthetic)で埋めた検体はここを通過する。
     const coverage = requiredCoverage(normalized);
     if (!coverage.computable) {
       return json({
@@ -191,6 +227,7 @@ export const POST: APIRoute = async ({ request }) => {
       missing_required: result.missing_required,
       source_ref: sourceKey,
       adjustments: result.adjustments,
+      synthetic_markers: synthApplied, // 例外運用: 手動合成補完した不足マーカー (空={}=なし)
     };
 
     // 保存 (service_role, RLS バイパス)。型未生成テーブルのため any 経由。
@@ -244,6 +281,7 @@ export const POST: APIRoute = async ({ request }) => {
       missing_required: result.missing_required,
       used_markers: result.used_markers,
       imputed_markers: result.imputed_markers,
+      synthetic_markers: synthApplied,
       normalized_markers: normalized,
       saved,
       save_skipped: saveSkipped, // true=算出不能のため保存せず(null行を作らない)

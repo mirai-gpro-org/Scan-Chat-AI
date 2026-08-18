@@ -31,6 +31,7 @@ import { resolveEyeCollapsed } from '../../../lib/collapsed-row';
 import { fixLipidSwap } from '../../../lib/lipid-fix';
 import { masterItemNames } from '../../../lib/standard-master';
 import { MODELS } from '../../../lib/gemini';
+import { refreshConfig } from '../../../lib/app-config';
 import { getS3Config, isS3Configured, putFiles, type S3PutFile } from '../../../lib/s3';
 import { checkNecessity } from '../../../lib/elith-necessity-check';
 
@@ -84,6 +85,7 @@ interface Body {
 }
 
 export const POST: APIRoute = async ({ request }) => {
+  await refreshConfig(); // 運用パラメータ(app_config)を最新化してから処理
   if (!authorized(request)) {
     return json({ ok: false, error: 'unauthorized', detail: 'Invalid API key' }, 401);
   }

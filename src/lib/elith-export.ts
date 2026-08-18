@@ -31,6 +31,7 @@ import { dedupObservations, dedupAudit, semanticKey, type DedupAudit } from './o
 import { normalizeCancerRisk } from './cancer-risk-fix';
 import { isHighRisk, evidenceVerdict, emitDecision } from './perception-repair';
 import { findByAlias, normKey as stdNormKey } from './standard-master';
+import { cfg, cfgBool } from './app-config';
 import type { S3PutFile } from './s3';
 
 export const ELITH_HANDOFF_SCHEMA_VERSION = 'elith-handoff-v0.1';
@@ -56,63 +57,52 @@ function env(name: string): string | undefined {
   const fromProc = typeof process !== 'undefined' ? process.env?.[name] : undefined;
   return fromProc != null && fromProc !== '' ? fromProc : undefined;
 }
-/** on 系フラグの寛容判定 (on/true/1/yes・前後空白/大文字小文字を許容)。厳密 === 'on' だと ON/true 等で不発になるため統一。 */
-function envOn(name: string): boolean {
-  const v = env(name);
-  return v != null && ['on', 'true', '1', 'yes'].includes(v.trim().toLowerCase());
-}
 export function getGeminiApiKey(): string | undefined {
   return env('GEMINI_API_KEY');
 }
 export function isGeminiConfigured(): boolean {
   return !!getGeminiApiKey();
 }
-/**
- * スキャン出力形式。'json' で responseSchema 構造化出力、既定 'markdown' で従来の GFM 表経路。
- * env `SCAN_OUTPUT_FORMAT=json` で切替 (Vercel・再デプロイ要)。未検証のうちは既定 markdown のまま
- * にしておき、代表ページで 🎯 ゴールデン照合の回帰ゼロを確認してから json へ寄せる (Phase 2)。
- */
+// ---- 運用パラメータ (app_config・env でなく DB 管理・src/lib/app-config.ts) ----
+// 秘匿でない運用フラグは全て app_config に集約。ここは薄いアクセサ (呼出側は不変)。
+// 事前に API ハンドラ入口で refreshConfig() 済みが前提 (未実行でも既定=確定運用の挙動)。
+/** スキャン出力形式。'json'=responseSchema 構造化 / 既定 'markdown'=GFM 表経路。 */
 export function scanOutputFormat(): 'json' | 'markdown' {
-  return env('SCAN_OUTPUT_FORMAT') === 'json' ? 'json' : 'markdown';
+  return cfg('scan.output_format') === 'json' ? 'json' : 'markdown';
 }
-/**
- * 境界定性項目の2パス再読 (Phase 1) を有効にするか。env `SCAN_BOUNDARY_RECHECK=on` で有効 (既定 off)。
- * 一次パスで空だった境界項目 (尿蛋白/尿潜血/尿糖/免疫便潜血/K-W) だけを、その画像へ軽量再読し
- * ギャップ埋めする (既存値は上書きしない)。numeric は触らない。🎯 回帰ゼロ確認後に常用する想定。
- */
+/** 境界定性項目の2パス再読 (VQA)。空だった定性 (尿蛋白/潜血/糖/便潜血/K-W) を軽量再読・充填。numeric不変。 */
 export function boundaryRecheckEnabled(): boolean {
-  return envOn('SCAN_BOUNDARY_RECHECK');
+  return cfgBool('scan.boundary_recheck');
 }
-/**
- * ②正準化（標準マスタへの名寄せ/単位正準化・テンプレート穴埋め）を有効にするか。
- * env `SCAN_CANONICALIZE=on` で有効（既定 off）。off の間は挙動不変（現行と完全同一）。
- * 🎯 ゴールデンで numeric 全一致・False-Value 0・名寄せ Missing 減 を確認してから on にする（P2/P4）。
- * 実装: `canonicalize()`（src/lib/canonicalize.ts）。読取値(numeric)は変えない・非ヒットは元名のまま。
- */
+// ---- ①捏造ゲート (False-Value 抑制・決定論・docs/scan/修正仕様書_捏造ゲート.md) ----
+// 捏造ゼロ・主パス不変。🎯(test_date=2025-02-17)回帰ゼロで on 化。切替は admin(app_config)。
+/** G1: 未実施ブロック(尿ディップ/検便)の定性(-)充填を salvage/VQA 両経路で抑止。 */
+export function fabGateUnperformed(): boolean { return cfgBool('fabgate.unperformed'); }
+/** G2: 基準吸い上げ(未実施の身体計測で value==片側基準閾値)をドロップ。 */
+export function fabGateRefBleed(): boolean { return cfgBool('fabgate.refbleed'); }
+/** G3: 参考資料/基準値表の行(レンジ値 A〜B / 未設定 / 男性・女性・基準 等の名)をドロップ。 */
+export function fabGateRefTable(): boolean { return cfgBool('fabgate.reftable'); }
+/** G4: 隣接漏れ(体脂肪率==BMI値)。偶然一致し得るため明示on時のみ(anomalies 監査へ)。 */
+export function fabGateAdjacent(): boolean { return cfgBool('fabgate.adjacent'); }
+/** ②正準化(標準マスタへの名寄せ/単位正準化)。読取値(numeric)は変えない・非ヒットは元名のまま。 */
 export function canonicalizeEnabled(): boolean {
-  return envOn('SCAN_CANONICALIZE');
+  return cfgBool('scan.canonicalize');
 }
-/**
- * ①読取後段の決定論 dedup（課題C 別名重複の統合／課題B 同名別値の競合検知）を有効にするか。
- * env `SCAN_OBS_DEDUP=on` で有効（既定 off）。off の間は挙動不変。
- * 同一概念・同一値のみ統合し、同一概念・別値は統合せず competition として監査に残す（自動採用しない）。
- * 実装: `dedupObservations()`（src/lib/observation-dedup.ts）。numeric は変えない・値の採否はしない。
- * 🎯 ゴールデンで numeric 全一致・別名重複減・実施済の非統合 を確認してから on（P-perc）。
- */
+/** ①読取後段の決定論 dedup(別名重複統合/同名別値の競合検知)。同値のみ統合・別値は自動採用しない。 */
 export function obsDedupEnabled(): boolean {
-  return envOn('SCAN_OBS_DEDUP');
+  return cfgBool('scan.obs_dedup');
 }
-/** Phase 2-2: 基準レンジ再割当（scramble 修正）。SCAN_SCRAMBLE_FIX=on のときだけ。既定 off。 */
+/** Phase 2-2: 基準レンジ再割当(scramble 修正)。 */
 export function scrambleFixEnabled(): boolean {
-  return envOn('SCAN_SCRAMBLE_FIX');
+  return cfgBool('scan.scramble_fix');
 }
-/** Phase 2-2: 眼科 collapsed-row 付け替え（右眼/左眼→種別）。SCAN_EYE_RESOLVE=on のときだけ。既定 off。 */
+/** Phase 2-2: 眼科 collapsed-row 付け替え(右眼/左眼→種別)。 */
 export function scanEyeResolveEnabled(): boolean {
-  return envOn('SCAN_EYE_RESOLVE');
+  return cfgBool('scan.eye_resolve');
 }
-/** Phase 2-2: 脂質 LDL↔TG 入替の物理制約修正。SCAN_LIPID_FIX=on のときだけ。既定 off。 */
+/** Phase 2-2: 脂質 LDL↔TG 入替の物理制約修正。 */
 export function scanLipidFixEnabled(): boolean {
-  return envOn('SCAN_LIPID_FIX');
+  return cfgBool('scan.lipid_fix');
 }
 
 // ── MIME / 拡張子 ───────────────────────────────────────────────
@@ -401,11 +391,60 @@ export function salvageQualitativeResult(el: Record<string, unknown>): Record<st
   }
   return el;
 }
+// ---- ①捏造ゲート 判定ヘルパ (決定論・docs/scan/修正仕様書_捏造ゲート.md) ----
+// G2: 未実施の身体計測で「value==自分の片側基準閾値」= 基準吸い上げ。誤ドロップ回避のため
+//     未実施になりやすい身体計測項目に限定 (HbA1c 等が閾値ちょうどの実値でも落とさない)。
+const REFBLEED_NAMES = /^(腹囲|内臓脂肪面積|体脂肪率|標準体重比)$/;
+function isRefBleed(m: Record<string, unknown>): boolean {
+  const name = typeof m.name === 'string' ? m.name.trim() : '';
+  if (!REFBLEED_NAMES.test(name)) return false;
+  const vn = typeof m.value_num === 'number' && Number.isFinite(m.value_num) ? m.value_num : null;
+  if (vn == null) return false;
+  for (const rk of ['ref_high', 'ref_low'] as const) {
+    const rs = typeof m[rk] === 'string' ? (m[rk] as string) : '';
+    const mt = rs.match(/(\d+(?:\.\d+)?)/);
+    if (mt && Number(mt[1]) === vn) return true; // value が基準閾値と厳密一致
+  }
+  return false;
+}
+// G3: 参考資料/基準値表の行。value がレンジ(A〜B)/未設定 のみ、または name が基準表見出し語。
+//     「X以下/X未満」等の片側は実結果(例 ピロリ抗体濃度 3.0未満)があり得るため対象にしない。
+const REFTABLE_NAMES = /^(男性|女性|基準|基準値|年齢|新|従来)$/;
+const REFTABLE_RANGE_VALUE = /^\s*\d+(?:\.\d+)?\s*[〜~]\s*\d+(?:\.\d+)?\s*$/;
+function isRefTableRow(el: Record<string, unknown>): boolean {
+  const name = typeof el.name === 'string' ? el.name.trim() : '';
+  if (REFTABLE_NAMES.test(name)) return true;
+  const base = typeof el.inferred === 'string' ? el.inferred : el.value;
+  const v = typeof base === 'string' ? base.trim() : '';
+  return REFTABLE_RANGE_VALUE.test(v) || /^\s*未設定\s*$/.test(v);
+}
+// G1: 未実施ブロック文脈。尿=比重/pH に native 数値があれば実施、便潜血=native 定性結果があれば実施。
+export function computeFabCtx(list: Array<Record<string, unknown>>): { urineUnperformed: boolean; fecalUnperformed: boolean; bmiNum: number | null } {
+  let urineAnchor = false, fecalNative = false, bmiNum: number | null = null;
+  for (const el of list) {
+    if (!el || typeof el !== 'object') continue;
+    const name = typeof el.name === 'string' ? el.name : '';
+    const base = typeof el.inferred === 'string' ? el.inferred : el.value;
+    const v = cleanDeliveryValue(base);
+    if (/比重/.test(name) || /pH/i.test(name)) { if (v != null && /^\d/.test(v)) urineAnchor = true; }
+    if (/便潜血/.test(name) && v != null && QUAL_RESULT_TOKEN.test(v)) fecalNative = true;
+    if (/^(BMI|体格指数)/.test(name)) { const n = toValueNum(v); if (n != null) bmiNum = n; }
+  }
+  return { urineUnperformed: !urineAnchor, fecalUnperformed: !fecalNative, bmiNum };
+}
+// G1: この行の salvage を抑止すべきか (未実施ブロックの尿定性/便潜血)。
+function suppressSalvage(el: Record<string, unknown>, ctx: { urineUnperformed: boolean; fecalUnperformed: boolean }): boolean {
+  const name = typeof el.name === 'string' ? el.name.trim() : '';
+  if (/便潜血/.test(name)) return ctx.fecalUnperformed;
+  if (/^(?:尿蛋白|尿潜血|尿糖|蛋白|潜血)$/.test(name)) return ctx.urineUnperformed;
+  return false;
+}
 /**
  * measurements[] を納品形へ正規化 (全書き出し経路共通)。
  *  0) 定性結果の列取り違えサルベージ (便潜血系のみ)
  *  1) lean 化 (↑↓→flag・value_num 数値化)   2) 未測定(値なし)除外
  *  3) 総合判定(A/B/C)欄 除外              4) 妥当性ガードで壊れた値を除外 (anomalies)
+ *  ①捏造ゲート: G1 未実施salvage抑止 / G2 基準吸い上げ / G3 参考資料行 / G4 隣接漏れ (env で個別 on)
  */
 export function sanitizeMeasurementsForDelivery(list: unknown): {
   kept: Record<string, unknown>[];
@@ -414,9 +453,20 @@ export function sanitizeMeasurementsForDelivery(list: unknown): {
   const kept: Record<string, unknown>[] = [];
   const anomalies: MeasurementAnomaly[] = [];
   if (!Array.isArray(list)) return { kept, anomalies };
+  // ①捏造ゲート: env on のときだけ発火 (off=挙動不変)。
+  const gUnperf = fabGateUnperformed(), gRefBleed = fabGateRefBleed(), gRefTable = fabGateRefTable(), gAdjacent = fabGateAdjacent();
+  const fabCtx = (gUnperf || gAdjacent)
+    ? computeFabCtx(list as Array<Record<string, unknown>>)
+    : { urineUnperformed: false, fecalUnperformed: false, bmiNum: null };
   for (const el0 of list as Array<Record<string, unknown>>) {
     if (!el0 || typeof el0 !== 'object') continue;
-    const el = salvageQualitativeResult(el0);
+    // G3: 参考資料/基準値表の行を除外 (レンジ値 A〜B / 未設定 / 男性・女性・基準 等の名)。
+    if (gRefTable && isRefTableRow(el0)) {
+      anomalies.push({ name: typeof el0.name === 'string' ? el0.name : null, value: typeof el0.value === 'string' ? el0.value : null, value_num: null, unit: null, reason: 'ref_table_row（基準値表/参考資料・G3）' });
+      continue;
+    }
+    // G1: 未実施ブロックの尿定性/便潜血は salvage を抑止 (基準列(-)を value へ移送しない=空を保つ)。
+    const el = (gUnperf && suppressSalvage(el0, fabCtx)) ? el0 : salvageQualitativeResult(el0);
     const m = leanMeasurement(el);
     if (m.value == null && m.value_num == null) continue; // 未測定(値なし)は納品しない
     // 区切り記号のみの値(「-/-」「/」等=未実施の②③血圧等)は測定値でない。定性「(-)」等は括弧付きで除外しない。
@@ -435,6 +485,16 @@ export function sanitizeMeasurementsForDelivery(list: unknown): {
         reason,
       });
       continue; // 壊れた値は納品しない
+    }
+    // G2: 基準吸い上げ (未実施の身体計測で value==片側基準閾値) をドロップ。
+    if (gRefBleed && isRefBleed(m)) {
+      anomalies.push({ name: (m.name as string | null) ?? null, value: (m.value as string | null) ?? null, value_num: (m.value_num as number | null) ?? null, unit: (m.unit as string | null) ?? null, reason: 'ref_bleed（基準吸い上げ・G2）' });
+      continue;
+    }
+    // G4: 体脂肪率==BMI値 の隣接漏れ疑い (既定off・偶然一致し得るため明示on時のみ監査ドロップ)。
+    if (gAdjacent && /体脂肪率/.test(typeof m.name === 'string' ? m.name : '') && typeof m.value_num === 'number' && fabCtx.bmiNum != null && m.value_num === fabCtx.bmiNum) {
+      anomalies.push({ name: (m.name as string | null) ?? null, value: (m.value as string | null) ?? null, value_num: (m.value_num as number | null) ?? null, unit: (m.unit as string | null) ?? null, reason: 'adjacent_leak_suspect（BMI値と一致・G4）' });
+      continue;
     }
     kept.push(m);
   }
@@ -771,6 +831,14 @@ async function boundaryRecheck(
   const out = measurements.slice();
   const idxOfAny = (names: string[]): number =>
     out.findIndex((m) => names.some((n) => normNameKey(m.name || '') === normNameKey(n)));
+  // ①捏造ゲート G1: 未実施ブロック(尿ディップ/検便)なら定性(-)の VQA 充填を抑止する。
+  const unperfCtx = fabGateUnperformed() ? computeFabCtx(measurements as unknown as Array<Record<string, unknown>>) : null;
+  const isUnperformedFill = (names: string[]): boolean => {
+    if (!unperfCtx) return false;
+    if (names.some((n) => /便潜血/.test(n))) return unperfCtx.fecalUnperformed;
+    if (names.some((n) => /^(?:尿糖|蛋白|尿蛋白|潜血|尿潜血)$/.test(n))) return unperfCtx.urineUnperformed;
+    return false;
+  };
 
   for (const cand of allCands) {
     const vqa = vqaByLabel.get(cand.label);
@@ -778,6 +846,11 @@ async function boundaryRecheck(
 
     if (cand.kind === 'fill') {
       const reason: VqaAuditEntry['reason'] = before == null ? 'missing_detection' : 'unexpected_token';
+      // G1: 未実施ブロックの空欄は充填しない (基準列/前回列の(-)を today に入れる捏造を防ぐ)。
+      if (before == null && isUnperformedFill(cand.names)) {
+        audit.push({ name: cand.names[0], reason, before, vqa: 'fabgate:unperformed_block', action: 'left_unresolved' });
+        continue;
+      }
       const rawv0 = !vqa || vqa.present === false ? '' : typeof vqa.value === 'string' ? vqa.value.trim() : '';
       // 素のサイン/ダッシュ (-/−/＋/全角) を括弧付き定性トークンへ正規化 (present:false=空 は rawv0='' で対象外)。
       const rawv = normalizeQualToken(rawv0);
@@ -832,7 +905,7 @@ async function boundaryRecheck(
 //   (=ページ全体の"今回列は空"バイアス/過去列の引力を物理的に排除。ReaderとRepairの失敗モードを非相関化)。
 // 安全設計: sharp は遅延 import + 全 try/catch。失敗時は一切変更しない(フォールバック=現挙動)。既定 off。
 export function rowCropEnabled(): boolean {
-  return envOn('SCAN_VQA_ROWCROP');
+  return cfgBool('scan.vqa_rowcrop');
 }
 const ROWCROP_LOCATE_SYSTEM = `あなたは健診結果表の座標特定器です。指定された行と、表の列見出し行の位置だけを答えます。`;
 function buildRowLocateUser(label: string): string {
@@ -957,7 +1030,7 @@ async function rowCropLeakRescue(
 // 安全設計: Gemini/sharp は全 try/catch。失敗時は一切変更しない(フォールバック=現挙動)。主パス不変。
 // ※ occupied のCV検出・残留証拠監査・列信頼度の精密化は Vercel🎯 での調整対象 (実装修正プラン §3.1 P-perc-3)。
 export function perceptionRepairEnabled(): boolean {
-  return envOn('SCAN_PERCEPTION_REPAIR');
+  return cfgBool('scan.perception_repair');
 }
 const INVENTORY_SYSTEM = `あなたは健診結果表の棚卸し器です。画像に印字された検査項目のうち「今回(最新回)列に値・記号が入っている」項目名だけを列挙します。値は読まず、項目名だけを返します。推測禁止。`;
 function buildInventoryUser(): string {

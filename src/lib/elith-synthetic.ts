@@ -124,7 +124,10 @@ export interface Snapshot {
 /**
  * 種(src)から 1 スナップショットを組み立てる。
  *   - measurement系: data.measurements[].value_num をジッタ (問診/非数値は維持)。
- *   - Other: data.payload 内の数値を再帰ジッタ。
+ *   - Other(LAiF AI疾病発症予測): data.items[] の 5年/10年発症率(%)・相対リスク比 のみジッタ。
+ *     疾患名・section・アドバイス・item_count構造は維持。値の無い疾患(子宮頸/乳がん等)は不変。
+ *     昨年の相対リスク比の前年引き継ぎは呼び出し側(elith-plan-timeseries)で疾患名一致により付与。
+ *     (旧 data.payload 形式の種は後方互換で再帰ジッタ)。
  *   - それ以外(遺伝子等): data はそのまま (経年変化しない・ジッタ無し)。
  * client_id / test_date を上書きし、synthetic マーカーを付与する。
  */

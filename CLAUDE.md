@@ -182,6 +182,19 @@
     **残る精密化はVercel🎯で調整**: 純CV occupied検出・残留証拠監査・current_column_confidence・跨リクエストの client リトライループ。VQA/CVの効き(漏れ検知率/誤ドロップ/503/60s)はローカル不可(キー無)=決定論部とastro checkのみ検証。**on化は人間ドックゴールデン(FT3欠落・推移グラフ)での🎯回帰ゼロ確認後** (`SCAN_VQA_ROWCROP` と同運用)。
   - **「必ず入れる」の実行形 (発注者裁定2026-08)**: 漏れなし(§1.1絶対)=**サイレント脱落ゼロ＋自動リトライラダーで読み切り(人手ゼロ)**。読めないインクに値を出す=捏造なので不可。終端は自動停止でなく**自動継続の状態機械** `ATTEMPT_1→2→3→EXHAUSTED_UNRESOLVED`(未解決+証拠を永続化し次リクエストへ・1画像=1reqは分割規則で再試行を禁じない)。EXHAUSTED_UNRESOLVED は通常納品しない・捏造しない・黙って消さない。**保証=サイレント脱落ゼロ / 非保証=常に完全JSON(確率モデル単体で数学的に不可)**。
 - **却下再掲**: 様式別プロンプト/テンプレOCR=却下 / 主パス規則強化=numeric回帰で不採用 / モデル3.5格上げ=md段階で lite 超えず不採用。
+  - **例外(確定 2026-08・発注者判断)= LAiF「AI疾病発症予測」は様式特化プロンプトを採用**。却下理由は「多機関=様式可変」だが
+    **LAiF は単一ベンダー・固定様式**で当てはまらず、ゴール(正確)優先で採用。狙い=発症予測テーブル(密表)の行ズレ/空行捏造/
+    入れ子ゆれ抑制(行単位読取・疾患名ある行のみ項目化・フラット固定キー・疾患名は印字どおり)。
+    実装=`src/lib/elith-genetic.ts` `AI_PREDICTION_USER`。正本=`docs/elith/elith_assembly_wrapping_spec.md §5.6`。
+    後段統合(`ai-prediction-consolidate.ts`・env `SCAN_AI_PREDICTION_DEDUP`)と直交併用。固定様式の改訂検知は今後の課題。
+
+### 捏造ゲート (False-Value 抑制・決定論・仕様着手2026-08)
+- **正本: `docs/scan/修正仕様書_捏造ゲート.md`**。人間ドックgolden(2025-02-17)で顕在化した False-Value 8件
+  (尿定性/便潜血の未実施(-)充填・腹囲=基準吸い上げ・B3基準値表の男性/女性項目化) を決定論で抑制する仕様。
+  4ゲート (G1未実施ブロック抑制[env `SCAN_FABGATE_UNPERFORMED`・比重/pH アンカーで尿未実施判定]・
+  G2基準吸い上げ[`SCAN_FABGATE_REFBLEED`・value==片側基準閾値をドロップ]・G3参考資料行[`SCAN_FABGATE_REFTABLE`・
+  レンジ値/男性女性名をドロップ]・G4隣接漏れ[`SCAN_FABGATE_ADJACENT`・監査のみ])。全て `sanitizeMeasurementsForDelivery`
+  集約・env off=挙動不変・捏造ゼロ・🎯(test_date=2025-02-17)回帰ゼロで on化。**現状=仕様(未実装)**。
 
 ### スキャン読取の共通ルール (検査票 → JSON)
 - **時系列列は「今回」のみ採用**: 検査票に「今回/前回/前々回」や受診日付きの複数回分が
@@ -282,17 +295,19 @@
 | `docs/elith/elith_batch_centralization_design.md` | Elith バッチ**一元化設計**(キーは Vercel・役割分担・admin バッチ) |
 | `docs/elith/elith_assembly_wrapping_spec.md` | **納品セット アセンブリのラップ仕様(Elith向け説明)**。フォルダ/命名/健康年齢の時系列化(検査日毎・旧1件を撤回)・疑似データも同様に時系列生成・**LAiF AI疾病発症予測(Other/ai_prediction)のファイル仕様=Elith承諾により確定(§5・2026-08)。合成は data.items[] の発症率%/相対リスク比のみジッタ・昨年比は前年の相対リスク比を引継ぎ(実装済)**・manifest不一致の確認事項 |
 | `docs/elith/batch_scan_to_elith_usage.md` | サンプル一括スキャン→S3 バッチ手順 (`scripts/batch-scan-to-elith.mjs`) |
-| `docs/lab/lab_data_reception_overview.md` | **4検査のデータ受取 総合仕様**(血液=リージャー/RPA・がん=プリベント/調整中・AI疾病予測=LAiF/S3 URL・遺伝子=Genoplan/RPA。方式/経路/現状/課題/次アクション) |
+| `docs/lab/lab_data_pipeline_master_spec.md` | **検査データ・パイプライン 総合仕様書(E2E正本・上位文書)**。EC購入→キット/タイミング→発送指示/進捗→AI問診/検体返送→各社受渡→受領チェック(週次)→Elithラップ/S3書出→AI診断PDF受取/表示 を6ステップで連結。詳細は(a)(b)(c)へ委譲(二重管理しない) |
+| `docs/lab/lab_data_reception_overview.md` | **4検査のデータ受取 詳細**(血液=リージャー/RPA・がん=プリベント/専用ポータル+S3を提案中・AI疾病予測=LAiF/S3 URL・遺伝子=Genoplan/RPA。方式/経路/現状/課題/次アクション)。E2E全体像は上記 master_spec が上位 |
 | `docs/lab/questionnaire_to_lab_csv_spec.md` | **AI問診回答→各社CSV 変換仕様(実装用)**。共通設問No→各社必要行のマスターマッピング表+各社項目リスト+生成ルール(フリー/選択/範囲/複数)+PII確認事項。元=Wellfort問診項目マトリクスExcel |
 | `docs/lab/demecal_auto_download_overview_spec.md` | 血液検査データ自動DL (デメカル/mTLS) 概要 |
 | `docs/lab/demecal_inquiry_email_template.md` | 検査会社への自動DL可否 照会メール雛形 |
 | `docs/subscription/subscription_management_feature_requirements.md` | サブスク契約管理 拡張 機能要件 (要件1〜4・データモデル・付録Bマトリクス) |
 | `docs/subscription/subscription_management_implementation_guide.md` | 上記の実装手順書 |
-| `docs/subscription/kit_lifecycle_and_handoff_management_spec.md` | **検査キット 出荷・進捗・データ受渡 統合管理仕様(サブスク駆動)**。プラン×キット×発送タイミング/タカセ定期出荷/ライフサイクル状態機械+AI問診促し/進捗駆動の各社受渡・Elith作成指示 |
+| `docs/subscription/kit_lifecycle_and_handoff_management_spec.md` | **検査キット 出荷・進捗・データ受渡 統合管理仕様(サブスク駆動)**。プラン×キット×発送タイミング/タカセ定期出荷/ライフサイクル状態機械+AI問診促し/進捗駆動の各社受渡・Elith作成指示。**§4.1.1=LAiF上りCSV(AI疾病発症予測 入力フォーム 約158項目)の写像仕様＋生成フロー**(健診スキャン+AI問診+基本情報を集約=スキャンフローに足さない別export・整理番号/生年月日は要確認) |
 | `docs/lab/wellfort_admin_lab_upload_spec.md` | 管理UI: 検査結果ファイルアップロード仕様 |
 | `docs/lab/lab_integration_workflow.md` | 検査機関→ユーザー割当ワークフロー (PII 制約) |
 | `docs/lab/kit_progress_management.md` | 検査キット発送・進捗管理 |
 | `docs/architecture/data_integration_requirements.md` | PII 分離・連携要件 |
+| `docs/architecture/id_management_and_correlation_spec.md` | **ID体系の正本**(顧客ID/診断ユーザーID=diagnostic_user_id/注文/契約/出荷/検査/各社上りID/Elith client_id を層別整理・採番=現状全てWellfort・相関マップ・PII境界・**将来の各社独自ID/キット物理ID(POS/バーコード)連携=受け皿カラム`lab_tests.external_test_id`/`external_barcode`実在**) |
 | `docs/architecture/diagnostic_session_data_spec.md` | 診断セッションのデータ構造 |
 | `docs/scan/scan_feature_requirements.md` / `docs/scan/scan_s3_export.md` | AIスキャン機能要件 / S3書き出し |
 | `docs/scan/health_age_caba_v5.4_spec.md` | **健康年齢(CABA v5.4)確定事項** (免責2文/WBC桁正規化/補完定数/SBP・FEV補正・Wellfort確認2026-08) |
@@ -316,9 +331,10 @@
   | タイプ | format_id | 取得 | 🎯値golden(決定論・画像非依存) | 🔍画像照合(LLM) | ④の照合 |
   |---|---|---|---|---|---|
   | 健康診断(検診) | HealthCheckupData | アプリscan | ○ `docs/scan/golden/scan_golden_healthcheckup_20250123.md` | ○ | — |
-  | 人間ドック | HealthCheckupData | アプリscan | ○ `docs/scan/golden/scan_golden_humandock_20240924.md` | ○ | — |
+  | 人間ドック | HealthCheckupData | アプリscan | ○ `docs/scan/golden/scan_golden_humandock_20240924.md`／`…_20250217.md`(湘南メディカル個人表様式・未実施多数=定性番人) | ○ | — |
   | がんリスク | CancerRiskAssessmentData | adminバッチ | ○ `docs/scan/golden/scan_golden_cancer_alapds_20251226.md`(ALA-PDS様式1) | ○ | — |
   | 遺伝子 | GeneticTestResultData | adminバッチ | 建立待ち(様式1) | ○ | — |
+  | AI疾病発症予測(LAiF) | Other/ai_prediction | adminバッチ(多ページPDF) | ○ `docs/scan/golden/scan_golden_ai_prediction_laif_20250818.md`(様式1・2ページ目=本人結果) | △(値中心・名前セル不可読) | — |
   | 血液 | BloodTestData | デメカルCSV | (CSV由来値で可) | **×(画像なし)** | **CSV↔JSON構造照合(決定論・Scan-Chat-AI scripts)** |
   - **🎯値golden = 画像非依存**なので全タイプで使える(正解値さえ建立すれば)。`elith-batch.astro goldenCheck` は
     `test_date` で検体切替(検診/人間ドック実装済・②③は様式1つで各1本)。

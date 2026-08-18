@@ -5,6 +5,7 @@
 | 目的 | サブスク検査プランを起点に、**①タカセへの出荷指示 ②Webアプリでのキット・ライフサイクル管理（発送/受取/返送/問診促し）③進捗駆動の各社データ受渡・検査結果受領・Elith作成指示** を一元管理する仕様。 |
 | 元資料 | Wellfort 提供 Excel『商材送付タイミング一覧』（プラン×検査キット×発送タイミング）。 |
 | 版 | 2026-08-04（Draft） |
+| 上位文書 | **本書は「キット出荷・進捗・受渡・データモデル」の詳細（②③④）。EC購入→表示までの E2E 全体像は `docs/lab/lab_data_pipeline_master_spec.md`（総合仕様書）が正本。** |
 | 関連 | `docs/subscription/subscription_management_feature_requirements.md`／`docs/lab/kit_progress_management.md`（発送〜完了ライフサイクル・パイロット実装済）／`docs/lab/lab_data_reception_overview.md`（各社受取）／`docs/lab/questionnaire_to_lab_csv_spec.md`（問診→各社CSV）／`docs/elith/elith_batch_centralization_design.md`・`docs/elith/elith_assembly_wrapping_spec.md`（Elith）／wellfort-site `admin/shipping.astro`・`api/cron-shipping.ts`（現行出荷）・`docs/billing/gmo_subscription_billing_spec.md` |
 
 ---
@@ -81,6 +82,38 @@
 ### 4.1 問診データ → 検査会社へ受渡
 - 対象回の検査に応じ、**AI問診回答→各社CSV**（`docs/lab/questionnaire_to_lab_csv_spec.md`）を生成し受渡（受渡経路は `docs/lab/lab_data_reception_overview.md`）。
 - トリガ: §3.1「検体返送」前（問診完了済み）／がんリスク等は検体と同送の運用に合わせる。
+
+#### 4.1.1 LAiF 上りCSV（AI疾病発症予測 入力フォーム）生成 — 写像仕様とフロー【2026-08 追加】
+
+> **位置づけ（責務分離・重要）**: LAiF の上り入力フォーム（`input_format_new_202312.xlsx`＝No.0〜157・約158項目）は、
+> **健診/人間ドックのAIスキャン結果（HealthCheckupData）＋ AI問診 ＋ 基本情報 を "1人分" に集約して写像**するもの。
+> **検査票スキャン（読取）フローには足さない**。スキャンは HealthCheckupData（材料）を作る役、LAiF上りCSVは
+> その材料＋問診＋基本情報を集約する**別の"上りexport"ステップ**（Elith納品アセンブリと同じ「集約・書き出し」層）。
+
+**(A) データ源マッピング（3系統）**
+
+| フォーム区分 | No | 主な取得元 | 備考 |
+|---|---|---|---|
+| 基本情報 | 0–8 | 識別番号=**整理番号（Wellfort採番の仮名ID・確定）**／性別・生年月日=**customer**／受診日・身長・体重・BMI・腹囲=**健診スキャン** | **生年月日は渡す（確定・発注者決定）**→CSVは個人データ扱い |
+| 既往歴・服薬・手術・輸血 | 9–24 | **AI問診**（既往/服薬設問）＋（あれば）健診票の既往欄 | 有/無・部位コメント等 |
+| 問診情報（喫煙/飲酒/体重変化/運動/食事/睡眠/改善意思） | 25–61 | **AI問診**（`LifestyleQuestionnaireData`） | Y/N・選択肢を LAiF 記法へ |
+| 健診情報（血圧・脈・眼圧・視力・聴力・K-W・眼底・エコー所見・CAVI/ABI・尿定性・血算・生化学・腫瘍マーカー 等） | 62–157 | **健診・人間ドックスキャン（HealthCheckupData measurements）が主**（血液=デメカルも源） | 大半が既存スキャン抽出項目に一致 |
+
+**(B) 写像の原則（決定論・捏造ゼロ）**
+- **既存の正準化語彙で対応付け**（`canonicalize.ts`/標準マスタと同じ名寄せ・単位・定性正規化）。項目名は LAiF フォームの固定キーに合わせる。
+- **定性**（尿蛋白/尿糖/尿潜血/ケトン/便潜血/HBs/HCV/RPR 等）は LAiF 記法 `(ー)/(±)/(1＋)…`・`(ー)/(＋)` へ正規化。K-W/Scheie は群/度の記法へ。
+- **値の無い項目は空**（前回値の繰り上げ・推定で埋めない＝捏造ゼロ）。左右別（眼圧/視力/聴力/CAVI/ABI/K-W）はフォームの右左キーへ。
+- 写像表の**正本＝`docs/lab/questionnaire_to_lab_csv_spec.md`**（LAiF 列を全158項目ぶん確定していく）＋ 本フォーム原本。
+
+**(C) 生成・受渡フロー（進捗駆動）**
+1. §4.3 の「その回の**健診結果＋AI問診が揃った**」判定と同期して **LAiF上りCSVを生成**（集約＝Scan-Chat-AI API／指示UI＝wellfort-site admin）。
+2. S3 の上り領域 `to-laif/` へ CSV 書き出し（**整理番号でひも付け**・氏名等は載せない）。
+3. `laif_s3_secure_handoff_spec §4.5` の**自動メール通知**（登録3宛先）→ LAiF がポータルから取得（`§0.3` デモ画面あり）。
+
+**(D) 確定事項・残（`laif_s3_secure_handoff_spec §0.2` と同一）**
+- **整理番号（識別番号 No.0）＝Wellfort採番の仮名ID（確定 2026-08）**。LAiF自社連番は使わない（突合はWellfort整理番号）。
+- **生年月日（No.3）＝渡す（確定 2026-08・発注者決定）**。→ 上りCSVは**生年月日を含む個人データ**（PIIフリーでない）＝`data_integration_requirements` の外部非送付ルールへのLAiF向け明示的例外。ポータルで保護。**残=同意範囲の確認（運用）**。
+- **問診由来項目の充足（残）**：既往歴/服薬(9–24)・生活習慣(25–61) は AI問診の設問網羅性に依存（不足設問は問診票側で補完）。
 
 ### 4.2 検査結果 受領タイミング管理
 - 各社の受領方式（血液=リージャー/RPA・がん=プリベント/調整中・AI予測=LAiF/S3・遺伝子=Genoplan/RPA）ごとに**受領予定と実績を管理**（`lab_data_reception_overview`）。
