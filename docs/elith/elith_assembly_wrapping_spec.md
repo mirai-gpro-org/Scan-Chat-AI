@@ -45,6 +45,25 @@ s3://{bucket}/user/{client_id}/date/{YYYY_MM_DD}/
 `format_id` / `schema_version`（`elith-handoff-v0.1`）/ `client_id` / `test_date` / `exported_at` / `subject` / `source` / `data`。
 **除外**（`docs/elith/elith_masking_definition.md`）: 氏名・住所・生年月日等の PII、版面座標(bbox)、見出し(region)、区分(category)。
 
+### 2.1 `subject`（性別・年齢）の充填 ― 案B（全ファイル充填・確定 2026-08）
+
+**背景（従来の実態）**: `subject.sex/age` は format により入っていたり空だったりで不統一でした。
+スキャン取得のデータ（検診/がん/遺伝子/新様式の血液）は**顧客の性別・生年月日（PII）を持たない**ため
+`subject: {sex:null, age:null}` で出力され、実値が入るのは AI問診（`LifestyleQuestionnaireData`）と健康年齢のみでした。
+
+**確定（案B・発注者判断）**: **納品セット作成（assemble）時に、全ファイルの `subject.sex/age` を顧客DBから充填**します。
+- **大元**＝顧客DB `customer.customer_profiles`（`diagnostic_user_id` で紐付け）の **`sex` と `date_of_birth`**。
+- **年齢＝顧客の生年月日 × そのファイルの `test_date`** で算出（各回の受診時点の満年齢）。
+- **生年月日そのものは出力しない**（PII非送付＝§6/masking の原則不変。JSON に載るのは**年齢と性別のみ**）。
+- **紐付けキー**＝納品元の `client_id`（＝本番は `diagnostic_user_id`）。**該当顧客が無い（テストID等）/顧客未登録なら `subject` は変更しない**（既存値保持＝捏造しない）。
+- 実装: `src/lib/elith-assemble.ts`（`SubjectInfo`/`applySubject`/`ageAt`・`AssembleOptions.resolveSubject`）、
+  `src/pages/api/admin/elith-assemble.ts`（`resolveSubject`＝`customer_profiles` 照会・best-effort＋cache）。
+- **切替**: `resolveSubject` を渡さなければ従来挙動（充填なし）。案A（1ファイル集約）採用時はこれで無効化できる。
+- **健康年齢（HealthAgeData）**: `subject.age` も同じく生年月日×`test_date`で充填（無ければ算出時の実年齢にフォールバック）。
+  `data.actual_age`（delta の基準）は算出入力の実年齢のまま。
+
+> ※ 本項は「性別・年齢を**どの JSON に持たせるか**」の Elith 確認（2026-08）を受けた実装。Elith が「1ファイルから読む（案A）」を選ぶ場合は `resolveSubject` 無効化で対応。
+
 ---
 
 ## 3. 健康年齢（HealthAgeData）のラップ ― 【今回の主眼】
