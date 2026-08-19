@@ -28,6 +28,7 @@ import {
   assembleElithDeliverySet,
   DELIVERY_FORMAT_IDS,
   type HealthAgeRecord,
+  type SubjectInfo,
 } from '../../../lib/elith-assemble';
 import { getServerSupabase } from '../../../lib/supabase';
 import { refreshConfig } from '../../../lib/app-config';
@@ -144,6 +145,7 @@ export const POST: APIRoute = async ({ request }) => {
       idPrefix: str(body.idPrefix) ?? 'elith-test',
       bundleDate,
       healthAgeByRef,
+      resolveSubject, // 案B: 全ファイルの subject.sex/age を顧客DB由来で充填 (年齢=生年月日×test_date)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       manualMapping: manualMapping as any,
     });
@@ -183,6 +185,46 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ ok: false, error: 'assemble failed', detail: String(err instanceof Error ? err.message : err) }, 502);
   }
 };
+
+/** customer.sex 表記 (男/女/M/F/male/female/男性/女性) を 'male'|'female'|null に正規化。 */
+function normSexStrict(v: unknown): 'male' | 'female' | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim().toLowerCase();
+  if (s === 'm' || s === 'male' || s === '男' || s === '男性') return 'male';
+  if (s === 'f' || s === 'female' || s === '女' || s === '女性') return 'female';
+  return null;
+}
+
+/**
+ * 案B: clientId(=diagnostic_user_id) → 被験者情報(sex, 生年月日) を customer schema から解決。
+ * 顧客DBの生年月日は assemble 側で「年齢」に変換して出力し、DOB自体は納品JSONに載せない (PII非送付)。
+ * best-effort + キャッシュ (同一 clientId の重複照会回避)。該当なし/未設定は null。
+ */
+const _subjectCache = new Map<string, SubjectInfo | null>();
+async function resolveSubject(diagnosticUserId: string): Promise<SubjectInfo | null> {
+  if (!diagnosticUserId) return null;
+  if (_subjectCache.has(diagnosticUserId)) return _subjectCache.get(diagnosticUserId) ?? null;
+  let info: SubjectInfo | null = null;
+  try {
+    const sb = getServerSupabase();
+    if (sb) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data } = await (sb.schema('customer') as any)
+        .from('customer_profiles')
+        .select('date_of_birth, sex')
+        .eq('diagnostic_user_id', diagnosticUserId)
+        .maybeSingle();
+      if (data) {
+        const dob = typeof data.date_of_birth === 'string' ? data.date_of_birth.slice(0, 10) : null;
+        info = { sex: normSexStrict(data.sex), dateOfBirth: /^\d{4}-\d{2}-\d{2}$/.test(dob ?? '') ? dob : null };
+      }
+    }
+  } catch {
+    /* customer schema 未設定/権限無し等は subject 非充填で継続 (best-effort) */
+  }
+  _subjectCache.set(diagnosticUserId, info);
+  return info;
+}
 
 /** health_age_scores を source_ref → 最新スコア の Map にする (assemble の突合用)。 */
 async function fetchHealthAgeByRef(): Promise<Record<string, HealthAgeRecord>> {
