@@ -193,7 +193,7 @@ async function fetchHealthAgeByRef(): Promise<Record<string, HealthAgeRecord>> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tbl = (sb.schema('diagnosis') as any).from('health_age_scores');
     const { data, error } = await tbl
-      .select('source_ref, biological_age, chronological_age, test_date, computed_at, delta, model_version')
+      .select('source_ref, biological_age, chronological_age, test_date, computed_at, delta, model_version, inputs')
       .not('source_ref', 'is', null)
       .order('computed_at', { ascending: false });
     if (error || !Array.isArray(data)) return out;
@@ -202,9 +202,15 @@ async function fetchHealthAgeByRef(): Promise<Record<string, HealthAgeRecord>> {
       const ref = typeof r.source_ref === 'string' ? r.source_ref : null;
       if (!ref || out[ref]) continue;
       const numOrNull = (v: unknown): number | null => (typeof v === 'number' ? v : v == null ? null : Number(v));
+      // sex は inputs.markers.sex に保存済 (mode=run)。'male'/'female' のみ採用、他は null。
+      const inputs = (r.inputs && typeof r.inputs === 'object') ? (r.inputs as Record<string, unknown>) : null;
+      const markers = (inputs && typeof inputs.markers === 'object') ? (inputs.markers as Record<string, unknown>) : null;
+      const sexRaw = markers ? markers.sex : null;
+      const sex: 'male' | 'female' | null = sexRaw === 'male' || sexRaw === 'female' ? sexRaw : null;
       out[ref] = {
         biological_age: numOrNull(r.biological_age),
         chronological_age: numOrNull(r.chronological_age),
+        sex,
         test_date: typeof r.test_date === 'string' ? r.test_date : null,
         computed_at: typeof r.computed_at === 'string' ? r.computed_at : null,
         delta: numOrNull(r.delta),

@@ -145,6 +145,7 @@ export async function inventoryElithSource(sourcePrefix: string): Promise<Invent
 export interface HealthAgeRecord {
   biological_age: number | null;   // 健康年齢
   chronological_age: number | null; // 実年齢
+  sex: 'male' | 'female' | null;   // 性別 (inputs.markers.sex 由来。subject.sex に載せる)
   test_date: string | null;        // 元データ取得日
   computed_at: string | null;      // 算出日時
   delta: number | null;            // biological - chronological
@@ -235,7 +236,7 @@ function buildHealthAgeJson(userId: string, bundleDate: string, rec: HealthAgeRe
     diagnostic_id: randomUuid(),
     test_date: testDate,
     exported_at: new Date().toISOString(),
-    subject: { sex: null, age: rec.chronological_age }, // 実年齢は subject.age にも保持 (他ファイル準拠)
+    subject: { sex: rec.sex ?? null, age: rec.chronological_age }, // sex=算出時の性別 (inputs.markers.sex) / 実年齢は age にも保持
     source: {
       origin: 'scan-chat-ai',
       app: 'scan-chat-ai',
