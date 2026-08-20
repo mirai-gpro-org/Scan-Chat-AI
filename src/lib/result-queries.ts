@@ -14,7 +14,7 @@ import { getServerSupabase } from './supabase';
 import { getOriginalSignedUrl } from './originals-storage';
 import type { TestArtifact, DiagnosisResult } from '../types/supabase';
 import { findSection, type ElithSection } from './elith-parser';
-import { getElithSampleFor } from './elith-samples';
+import { demoArtifacts, demoFallbackEnabled } from './demo-data';
 
 export interface ResultData {
   artifact: TestArtifact;
@@ -72,6 +72,10 @@ const HIGHLIGHT_NAMES = [
 export async function loadResult(
   artifactId: string,
 ): Promise<ResultData | { error: string }> {
+  // デモ層 (demo-data.ts) の検査履歴から来た id。DB には存在しないので
+  // ここで組み立てて返す。これが無いと検査履歴のリンクがエラー画面になる。
+  if (artifactId.startsWith('demo-art-')) return demoResult(artifactId);
+
   if (!/^[0-9a-f-]{36}$/i.test(artifactId)) {
     return { error: '不正な検査 ID です。' };
   }
@@ -99,17 +103,16 @@ export async function loadResult(
     .limit(1)
     .maybeSingle();
 
-  // **実データが最優先**。diagnosis_results に本文があればそれを表示し、
-  // 空のときだけ検査種別ごとの専用サンプル Elith へフォールバックする
-  // (原本 PDF の resolveOriginal と同じ優先順位に揃えた。以前はサンプルが
-  //  常に勝っており、実データを入れても表示が変わらなかった)。
-  // 本番では artifact ごとの個別 diagnosis_results に紐付ける。
-  const realSections = Array.isArray(latestResult?.report)
-    ? (latestResult!.report as unknown as ElithSection[])
-    : [];
-  const sections: ElithSection[] = realSections.length > 0
-    ? realSections
-    : (getElithSampleFor(artifact.test_type) ?? []);
+  /*
+   * この画面は「この検査 1 件」を見る場所なので、**その検査の原本 (PDF/CSV) を主役にする**。
+   *
+   * Elith の AI 診断結果 (diagnosis_results) は **アカウント単位** の成果物で、
+   * artifact とは紐付いていない (Phase 1.0 で直接の関連が無い)。ここに載せると
+   * 検査履歴のどれを開いても同じ AI 診断レポートが出てしまうため、載せない。
+   * AI 診断結果は /report が正。検査種別ごとの読み物サンプル (elith-samples) も
+   * 「この検査の結果」ではないので同様に出さない。
+   */
+  const sections: ElithSection[] = [];
 
   const summarySection = findSection(sections, 'アブストラクト');
   const highlightSections = HIGHLIGHT_NAMES
@@ -179,4 +182,27 @@ async function resolveOriginal(
   } catch {
     return null;
   }
+}
+
+/**
+ * デモ層の検査 1 件。原本はまだ無いので検査種別のサンプル PDF を出す。
+ * AI 診断レポートは載せない (実データ経路と同じ扱い — /report が正)。
+ */
+function demoResult(artifactId: string): ResultData | { error: string } {
+  if (!demoFallbackEnabled()) return { error: '検査結果が見つかりません。' };
+  const artifact = demoArtifacts('').find((a) => a.id === artifactId);
+  if (!artifact) return { error: '検査結果が見つかりません。' };
+  const samplePdf = SAMPLE_PDF_MAP[artifact.test_type] ?? null;
+  return {
+    artifact,
+    latestResult: null,
+    sections: [],
+    summarySection: null,
+    highlightSections: [],
+    fullSections: [],
+    isThreeMode: false,
+    samplePdfUrl: samplePdf?.url ?? null,
+    samplePdfLabel: samplePdf ? `${samplePdf.label}（サンプル）` : null,
+    isOriginal: false,
+  };
 }

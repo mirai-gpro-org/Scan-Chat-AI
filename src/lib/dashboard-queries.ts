@@ -9,7 +9,7 @@
 import type { AppIconName } from '../components/AppIcon.astro';
 import { getServerSupabase, isBridgeConfigured } from './supabase';
 import { loadBridgeBundle, type CustomerBundle } from './bridge-queries';
-import { buildDemoDashboard, demoFallbackEnabled, demoMetricTrend } from './demo-data';
+import { buildDemoDashboard, demoFallbackEnabled, demoMetricTrend, demoShipments } from './demo-data';
 import type {
   AppUser,
   CustomerProfile,
@@ -57,6 +57,14 @@ export interface DashboardData {
   shipments: (KitShipment & { lab_name: string | null })[];
   /** active subscription (なければ null) */
   subscription: (Subscription & { plan_name: string | null }) | null;
+  /**
+   * kit_shipments をどこから取ったか (テストフェーズの切り分け用)。
+   *   bridge   … 本番構成。HP/EC 側 (#1) の app_bridge から取得
+   *   customer … dev 構成。この DB の customer.kit_shipments から取得
+   *   demo     … 上記が 0 件だったので demo-data のダミーを表示
+   * `?debug=bridge` を付けたときだけ画面に出す。
+   */
+  shipmentSource: 'bridge' | 'customer' | 'demo';
 }
 
 /** 認証未連携の dev profile で ?u= が無い時に使うデフォルトユーザー (真鍋 慶次郎)。 */
@@ -147,13 +155,30 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
 
     // 顧客/プラン/キットは app_bridge (本番) もしくは customer モック (dev) から取得。
     // デモ表示中は結果元 (resultUid) に揃える。
-    const bundle = isBridgeConfigured()
+    const usingBridge = isBridgeConfigured();
+    const bundle = usingBridge
       ? await loadBridgeBundle(resultUid)
       : await loadMockCustomerBundle(sb, resultUid);
     // バンドル取得失敗時も画面は成立させる (顧客/プランは空扱い)
     const safeBundle: CustomerBundle = 'error' in bundle
       ? { customer: null, shipments: [], subscription: null }
       : bundle;
+
+    /*
+     * キット進捗のフォールバック (テストフェーズ)。
+     *
+     * shipments が 0 件になる経路が複数ある:
+     *   - 本番構成 (app_bridge) では customer.kit_shipments を見ないので、
+     *     この DB に seed_kit_demo.sql を流しても出ない
+     *   - 表示中のユーザーに customer_profiles が無い / 別 customer_id
+     * どれであっても「進捗が何も出ない」画面はクライアントの UI 確認にならないため、
+     * 0 件のときだけダミーへ落とす。実データが 1 件でもあればそちらが優先。
+     */
+    let shipmentSource: DashboardData['shipmentSource'] = usingBridge ? 'bridge' : 'customer';
+    if (demoFallbackEnabled() && safeBundle.shipments.length === 0) {
+      safeBundle.shipments = demoShipments(resultUid);
+      shipmentSource = 'demo';
+    }
 
     return {
       diagnosticUserId: uid,
@@ -165,6 +190,7 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
       latestResult,
       elithSections,
       shipments: safeBundle.shipments,
+      shipmentSource,
       subscription: safeBundle.subscription,
     };
   } catch (e) {

@@ -97,8 +97,8 @@ const pdfSrcWithPage = data?.samplePdfUrl
           </div>
         )}
 
-        {/* 3-モードタブ (single なら非表示) */}
-        {data.isThreeMode && (
+        {/* 3-モードタブ (本文が無い / single なら非表示) */}
+        {data.isThreeMode && data.sections.length > 0 && (
           <nav class="mt-4 inline-flex w-full rounded-full bg-slate-100 p-1" role="tablist" aria-label="表示モード">
             <a
               href={linkFor('summary')}
@@ -143,7 +143,23 @@ const pdfSrcWithPage = data?.samplePdfUrl
           </section>
         )}
 
-        {/* Elith JSON 未生成だが PDF はある → PDF を主表示 */}
+        {/*
+          AI 診断結果 (アカウント単位) への導線。
+          この画面は検査 1 件の原本を見せる場所なので、レポート本体は /report に置く。
+        */}
+        <a
+          href={u ? `/report?u=${encodeURIComponent(u)}` : '/report'}
+          class="flex min-h-touch items-center gap-3 rounded-2xl border border-brand-200 bg-brand-50 px-4 py-3 text-slate-800 transition hover:border-brand-400 hover:bg-brand-100"
+        >
+          <AppIcon name="report" size={24} class="shrink-0 text-brand-700" />
+          <span class="flex min-w-0 flex-col">
+            <span class="text-base font-semibold text-navy-800">AI 診断結果を見る</span>
+            <span class="text-sm text-slate-700">検査全体をまとめた Elith のレポート</span>
+          </span>
+          <AppIcon name="next" size={20} class="ml-auto shrink-0 text-brand-700" />
+        </a>
+
+        {/* 原本 (PDF) を主表示 */}
         {data.sections.length === 0 && data.samplePdfUrl && (
           <section class="card">
             <header class="mb-2 flex items-center justify-between gap-2">
@@ -159,8 +175,10 @@ const pdfSrcWithPage = data?.samplePdfUrl
               style="height: clamp(420px, 70vh, 800px);"
               loading="lazy"
             ></iframe>
-            <p class="mt-2 text-xs text-slate-500">
-              ※ AI 解析サマリーは現在準備中です。原本 PDF を直接ご確認ください。
+            <p class="mt-2 text-sm text-slate-600">
+              {data.isOriginal
+                ? 'この検査の原本です。'
+                : 'この検査の原本がまだ届いていないため、同じ検査種別のサンプルを表示しています。'}
             </p>
           </section>
         )}
