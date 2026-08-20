@@ -132,6 +132,7 @@ const UNAVAILABLE_STEPS = new Set([5, 6]);
                         </span>
                       </header>
 
+                      <div class="lg:grid lg:grid-cols-[minmax(0,1fr)_18rem] lg:gap-8">
                       {/* 6 段階のタイムライン。到達済み / 現在地 / 未到達 / 未取得 を形でも区別する。 */}
                       <ol class="flex flex-col gap-0">
                         {SHIPMENT_STAGES.map((st, i) => {
@@ -174,26 +175,36 @@ const UNAVAILABLE_STEPS = new Set([5, 6]);
                         })}
                       </ol>
 
-                      {s.tracking_no && (
-                        <p class="mt-1 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-4 text-base">
-                          <AppIcon name="location" size={18} class="text-slate-600" />
-                          <span class="text-slate-700">お問い合わせ番号</span>
-                          <span class="tnum font-medium text-slate-900">{s.tracking_no}</span>
-                          {s.carrier_tracking_url ? (
-                            <a
-                              href={s.carrier_tracking_url}
-                              target="_blank"
-                              rel="noopener"
-                              class="inline-flex min-h-touch items-center gap-1 font-medium text-brand-700 hover:underline"
-                            >
-                              配送状況を見る
-                              <AppIcon name="external" size={16} />
-                            </a>
-                          ) : (
-                            <span class="text-sm text-slate-600">（配送業者の追跡リンクは未連携です）</span>
-                          )}
-                        </p>
-                      )}
+                      {/* 配送メタ。PC では右カラム、モバイルではタイムラインの下。 */}
+                      <div class="lg:pt-1">
+                        {s.tracking_no ? (
+                          <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                            <p class="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                              <AppIcon name="location" size={16} />お問い合わせ番号
+                            </p>
+                            <p class="tnum mt-1 text-base font-medium text-slate-900">{s.tracking_no}</p>
+                            {s.carrier && <p class="mt-0.5 text-sm text-slate-600">{s.carrier}</p>}
+                            {s.carrier_tracking_url ? (
+                              <a
+                                href={s.carrier_tracking_url}
+                                target="_blank"
+                                rel="noopener"
+                                class="mt-2 inline-flex min-h-touch items-center gap-1.5 text-base font-medium text-brand-700 hover:underline"
+                              >
+                                配送状況を見る
+                                <AppIcon name="external" size={16} />
+                              </a>
+                            ) : (
+                              <p class="mt-2 text-sm text-slate-600">配送業者の追跡リンクは未連携です。</p>
+                            )}
+                          </div>
+                        ) : (
+                          <p class="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-600">
+                            発送後にお問い合わせ番号を表示します。
+                          </p>
+                        )}
+                      </div>
+                      </div>
                     </article>
                   );
                 })}

@@ -22,12 +22,12 @@ const active = shipments.filter((s) => !s.lab_completed_at).slice(0, 2);
 ---
 
 <section class="card">
-  <header class="mb-3 flex items-center justify-between">
-    <h2 class="flex items-center gap-2 text-base font-bold text-navy-800">
-      <AppIcon name="kit" size={20} class="text-brand-700" /><span>検査キットの進捗</span>
+  <header class="mb-3 flex flex-wrap items-center justify-between gap-2">
+    <h2 class="flex shrink-0 items-center gap-2 text-base font-bold text-navy-800">
+      <AppIcon name="kit" size={20} class="text-brand-700" /><span class="whitespace-nowrap">検査キットの進捗</span>
     </h2>
     {planName && (
-      <span class="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-medium text-slate-700">
+      <span class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
         {planName}
       </span>
     )}

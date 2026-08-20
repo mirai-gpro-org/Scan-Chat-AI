@@ -15,6 +15,7 @@
  */
 
 import { getServerSupabase } from './supabase';
+import { demoFallbackEnabled, demoMetricTrend } from './demo-data';
 import type { MetricTrendPoint, MetricTrendSeries } from './dashboard-queries';
 
 /** 1 項目の検査値。値・単位・基準値・判定はすべて検査票由来をそのまま持つ。 */
@@ -97,12 +98,46 @@ export const DEFAULT_TREND_ITEMS = [
   'eGFR',
 ] as const;
 
-/** 直近 1 回分の検査値を取得する。無ければ null。 */
+/**
+ * テストフェーズ用のフォールバック。
+ * demo-data.ts と同じ方針で、**実データが無いときだけ**サンプルを返す
+ * (env PUBLIC_DEMO_FALLBACK=false で無効化)。総合テストで env を落とすと消える。
+ */
+function demoLatest(): LatestMeasurements {
+  const series = demoMetricTrend();
+  const items: MeasurementItem[] = series.map((s) => {
+    const last = s.points[s.points.length - 1];
+    const high = s.referenceUpper ?? null;
+    return {
+      name: s.label,
+      canonicalName: s.label,
+      value: last.raw,
+      valueNum: last.value,
+      unit: s.unit,
+      refLow: null,
+      refHigh: high == null ? null : String(high),
+      refLowNum: null,
+      refHighNum: high,
+      flag: high != null && last.value > high ? 'H' : null,
+      assessment: null,
+    };
+  });
+  const flagged = items.filter((i) => i.flag != null);
+  return {
+    artifactId: 'demo',
+    testType: 'blood',
+    testDate: series[0]?.points.at(-1)?.date ?? null,
+    items: [...flagged, ...items.filter((i) => i.flag == null)],
+    flaggedCount: flagged.length,
+  };
+}
+
+/** 直近 1 回分の検査値を取得する。無ければ null (テストフェーズはデモへ)。 */
 export async function getLatestMeasurements(
   diagnosticUserId: string,
 ): Promise<LatestMeasurements | null> {
   const sb = getServerSupabase();
-  if (!sb) return null;
+  if (!sb) return demoFallbackEnabled() ? demoLatest() : null;
   try {
     // 最新の test_date を持つ 1 検査分だけを取る。
     const { data, error } = await sb
@@ -117,7 +152,7 @@ export async function getLatestMeasurements(
       .limit(400);
 
     const rows = (data ?? []) as unknown as Row[];
-    if (error || rows.length === 0) return null;
+    if (error || rows.length === 0) return demoFallbackEnabled() ? demoLatest() : null;
 
     const newest = rows[0];
     const same = rows.filter(
@@ -137,7 +172,7 @@ export async function getLatestMeasurements(
       flaggedCount: flagged.length,
     };
   } catch {
-    return null;
+    return demoFallbackEnabled() ? demoLatest() : null;
   }
 }
 
@@ -151,7 +186,9 @@ export async function getMeasurementTrend(
   maxPoints = 12,
 ): Promise<MetricTrendSeries[]> {
   const sb = getServerSupabase();
-  if (!sb || canonicalNames.length === 0) return [];
+  // 旧 getMetricTrend が持っていたデモフォールバックを踏襲する
+  // (テストフェーズでクライアントに推移グラフを見てもらうために必要)。
+  if (!sb || canonicalNames.length === 0) return demoFallbackEnabled() ? demoMetricTrend() : [];
   try {
     const { data, error } = await sb
       .schema('diagnosis')
@@ -166,7 +203,7 @@ export async function getMeasurementTrend(
       .limit(600);
 
     const rows = (data ?? []) as unknown as Row[];
-    if (error || rows.length === 0) return [];
+    if (error || rows.length === 0) return demoFallbackEnabled() ? demoMetricTrend() : [];
 
     const byName = new Map<string, Row[]>();
     for (const r of rows) {
@@ -206,8 +243,9 @@ export async function getMeasurementTrend(
         points,
       });
     }
+    if (out.length === 0 && demoFallbackEnabled()) return demoMetricTrend();
     return out;
   } catch {
-    return [];
+    return demoFallbackEnabled() ? demoMetricTrend() : [];
   }
 }

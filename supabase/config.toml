@@ -23,7 +23,7 @@ enabled = false
 enabled = true
 # seed.sql (顧客/検査) → seed_notices.sql (お知らせ) → seed_measurements.sql (検査値) の順に適用。
 # seed_measurements.sql は seed.sql が作った artifact を日付で突合するため、必ず後に置く。
-sql_paths = ["./seed.sql", "./seed_notices.sql", "./seed_measurements.sql"]
+sql_paths = ["./seed.sql", "./seed_notices.sql", "./seed_measurements.sql", "./seed_kit_demo.sql"]
 
 [studio]
 enabled = true

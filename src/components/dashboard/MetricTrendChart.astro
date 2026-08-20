@@ -3,15 +3,14 @@ import AppIcon from '../AppIcon.astro';
 import type { MetricTrendSeries } from '../../lib/dashboard-queries';
 
 /**
- * 検査値の推移グラフ。
+ * 検査値の推移グラフ。カードをクリック (Enter/Space) で拡大モーダルを開く。
  *
  * 【原則】アプリは独自に分析・解釈しない。
- *   ここで描くのは (1) 検査票の実測値 (2) 検査票由来の基準帯 (3) 検査機関が付けた flag のみ。
- *   助言文・傾向コメントは生成しない (旧 commentFor() は削除した)。
+ *   描くのは (1) 検査票の実測値 (2) 検査票由来の基準帯 (3) 検査機関が付けた flag のみ。
+ *   助言文・傾向コメントは生成しない (旧 commentFor() は削除済み)。
  *
  * 「前回比」は直前の測定値との差であり、arithmetic であって判定ではない。
- *   ※ 旧実装は最初と最新の差 (last - first) を「差」として出していた。表記と計算が
- *     食い違っていたため、直前の点との差に修正した。
+ *   ※ 旧実装は最初と最新の差 (last - first) を出していたため、直前の点との差に修正した。
  */
 
 interface Props {
@@ -20,60 +19,78 @@ interface Props {
 }
 const { series, title = '検査値の推移' } = Astro.props as Props;
 
-const W = 320;
-const H = 116;
-const PAD_L = 40;
-const PAD_R = 12;
-const PAD_T = 14;
-const PAD_B = 26;
+// ミニチャート / 拡大チャートの座標系
+const W = 320, H = 116, PAD_L = 40, PAD_R = 12, PAD_T = 14, PAD_B = 26;
+const MW = 760, MH = 380, ML = 64, MR = 28, MT = 28, MB = 46;
 
-function jpDate(iso: string): string {
+const jpDate = (iso: string): string => {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
-}
-function shortDate(iso: string): string {
+  const w = ['日', '月', '火', '水', '木', '金', '土'][d.getDay()];
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 (${w})`;
+};
+const shortDate = (iso: string): string => {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return `${d.getMonth() + 1}/${d.getDate()}`;
-}
+};
+const ymd = (iso: string): string => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+};
 
-/** 1 系列分の描画データ (座標・基準帯・前回比) を組み立てる。 */
 function build(s: MetricTrendSeries) {
   const vals = s.points.map((p) => p.value);
   const refs = [s.referenceUpper, s.referenceLower].filter((v): v is number => v != null);
   const lo0 = Math.min(...vals, ...refs);
   const hi0 = Math.max(...vals, ...refs);
-  const pad = (hi0 - lo0 || Math.abs(hi0) || 1) * 0.18;
-  const lo = lo0 - pad;
-  const hi = hi0 + pad;
+  const span = hi0 - lo0 || Math.abs(hi0) || 1;
+  const lo = lo0 - span * 0.18;
+  const hi = hi0 + span * 0.18;
 
-  const x = (i: number) =>
-    s.points.length === 1
-      ? PAD_L + (W - PAD_L - PAD_R) / 2
-      : PAD_L + (i * (W - PAD_L - PAD_R)) / (s.points.length - 1);
-  const y = (v: number) => PAD_T + ((hi - v) / (hi - lo || 1)) * (H - PAD_T - PAD_B);
+  const decimals = Math.max(...s.points.map((p) => String(p.raw).split('.')[1]?.length ?? 0), 0);
+  const single = s.points.length === 1;
 
-  const pts = s.points.map((p, i) => ({ ...p, x: x(i), y: y(p.value) }));
-  const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+  const mk = (w: number, h: number, pl: number, pr: number, pt: number, pb: number) => {
+    const x = (i: number) => (single ? pl + (w - pl - pr) / 2 : pl + (i * (w - pl - pr)) / (s.points.length - 1));
+    const y = (v: number) => pt + ((hi - v) / (hi - lo || 1)) * (h - pt - pb);
+    const pts = s.points.map((p, i) => ({ ...p, x: x(i), y: y(p.value) }));
+    const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+    const top = s.referenceUpper != null ? y(s.referenceUpper) : pt;
+    const bottom = s.referenceLower != null ? y(s.referenceLower) : h - pb;
+    return { pts, path, top, bottom, y };
+  };
 
-  // 基準帯 (上限/下限が分かる範囲で塗る)
-  const bandTop = s.referenceUpper != null ? y(s.referenceUpper) : PAD_T;
-  const bandBottom = s.referenceLower != null ? y(s.referenceLower) : H - PAD_B;
-  const hasBand = s.referenceUpper != null || s.referenceLower != null;
+  const mini = mk(W, H, PAD_L, PAD_R, PAD_T, PAD_B);
+  const big = mk(MW, MH, ML, MR, MT, MB);
+
+  // 拡大表示の Y 軸目盛 (5 本)
+  const ticks = Array.from({ length: 5 }, (_, i) => {
+    const val = lo + ((hi - lo) * i) / 4;
+    return { val, ty: big.y(val) };
+  });
 
   const last = s.points[s.points.length - 1];
   const prev = s.points.length >= 2 ? s.points[s.points.length - 2] : null;
   const diff = prev ? last.value - prev.value : null;
-  const decimals = Math.max(
-    ...s.points.map((p) => (String(p.raw).split('.')[1]?.length ?? 0)),
-    0,
-  );
+  const hasBand = s.referenceUpper != null || s.referenceLower != null;
 
-  return { pts, path, bandTop, bandBottom, hasBand, last, prev, diff, decimals, lo, hi };
+  const rows = s.points.map((p, i) => {
+    const before = i > 0 ? s.points[i - 1] : null;
+    return { ...p, delta: before ? p.value - before.value : null };
+  });
+
+  return { mini, big, ticks, last, diff, decimals, hasBand, lo, hi, rows };
 }
 
-const charts = series.filter((s) => s.points.length > 0).map((s) => ({ s, d: build(s) }));
+const charts = series.filter((s) => s.points.length > 0).map((s, i) => ({ s, d: build(s), i }));
+const refLabel = (s: MetricTrendSeries): string => {
+  if (s.referenceLower != null && s.referenceUpper != null) return `${s.referenceLower}〜${s.referenceUpper}`;
+  if (s.referenceUpper != null) return `〜${s.referenceUpper}`;
+  if (s.referenceLower != null) return `${s.referenceLower} 以上`;
+  return '—';
+};
 ---
 
 <section class="card">
@@ -82,7 +99,7 @@ const charts = series.filter((s) => s.points.length > 0).map((s) => ({ s, d: bui
     <span>{title}</span>
   </h2>
   <p class="mb-4 text-sm text-slate-600">
-    検査票に記載された実測値と基準値をそのまま表示しています。
+    検査票に記載された実測値と基準値をそのまま表示しています。カードを選ぶと拡大表示します。
   </p>
 
   {charts.length === 0 ? (
@@ -90,125 +107,246 @@ const charts = series.filter((s) => s.points.length > 0).map((s) => ({ s, d: bui
       推移を表示できる検査値がまだありません。検査が 2 回以上完了すると表示されます。
     </p>
   ) : (
-    <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
-      {charts.map(({ s, d }) => (
-        <figure class="rounded-xl border border-slate-200 bg-white p-4">
-          <figcaption class="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <span class="text-base font-semibold text-navy-800">{s.label}</span>
+    <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-3">
+      {charts.map(({ s, d, i }) => (
+        <button
+          type="button"
+          data-trend-open={String(i)}
+          class="group flex w-full flex-col rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:border-brand-500 hover:bg-brand-50/40"
+          aria-haspopup="dialog"
+        >
+          <span class="mb-2 flex w-full flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <span class="flex items-center gap-1.5 text-base font-semibold text-navy-800">
+              {s.label}
+              <span class="text-brand-700 opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100">
+                <AppIcon name="search" size={16} />
+              </span>
+            </span>
             <span class="flex items-baseline gap-1.5">
               <span class="tnum text-2xl font-bold text-slate-900">{d.last.raw}</span>
               {s.unit && <span class="text-sm text-slate-600">{s.unit}</span>}
             </span>
-          </figcaption>
+          </span>
 
-          <div class="mb-2 flex flex-wrap items-center gap-2">
-            {d.last.flag === 'H' && (
+          <span class="mb-2 flex w-full flex-wrap items-center gap-2">
+            {d.last.flag && (
               <span class="status-pill status-watch">
-                <AppIcon name="watch" size={14} />基準値より高い
-              </span>
-            )}
-            {d.last.flag === 'L' && (
-              <span class="status-pill status-watch">
-                <AppIcon name="watch" size={14} />基準値より低い
-              </span>
-            )}
-            {d.last.flag == null && (
-              <span class="status-pill status-ok">
-                <AppIcon name="ok" size={14} />基準値内
+                <AppIcon name="watch" size={14} />
+                {d.last.flag === 'H' ? '基準値より高い' : '基準値より低い'}
               </span>
             )}
             {d.diff != null && (
               <span class="tnum inline-flex items-center gap-1 text-sm text-slate-600">
-                <AppIcon
-                  name={d.diff > 0 ? 'up' : d.diff < 0 ? 'down' : 'flat'}
-                  size={14}
-                />
+                <AppIcon name={d.diff > 0 ? 'up' : d.diff < 0 ? 'down' : 'flat'} size={14} />
                 前回比 {d.diff > 0 ? '+' : ''}{d.diff.toFixed(d.decimals)}
               </span>
             )}
-          </div>
+          </span>
 
-          <svg
-            viewBox={`0 0 ${W} ${H}`}
-            class="h-auto w-full"
-            role="img"
-            aria-label={`${s.label} の推移。最新 ${d.last.raw}${s.unit}（${jpDate(d.last.date)}）`}
-          >
+          <svg viewBox={`0 0 ${W} ${H}`} class="h-auto w-full" role="img"
+               aria-label={`${s.label} の推移。最新 ${d.last.raw}${s.unit}（${jpDate(d.last.date)}）`}>
             {d.hasBand && (
-              <rect
-                x={PAD_L} y={d.bandTop}
-                width={W - PAD_L - PAD_R}
-                height={Math.max(0, d.bandBottom - d.bandTop)}
-                class="fill-status-ok-bg"
-              />
+              <rect x={PAD_L} y={d.mini.top} width={W - PAD_L - PAD_R}
+                    height={Math.max(0, d.mini.bottom - d.mini.top)} class="fill-status-ok-bg" />
             )}
             {s.referenceUpper != null && (
-              <line
-                x1={PAD_L} x2={W - PAD_R} y1={d.bandTop} y2={d.bandTop}
-                class="stroke-status-ok" stroke-width="1" stroke-dasharray="4 3"
-              />
+              <line x1={PAD_L} x2={W - PAD_R} y1={d.mini.top} y2={d.mini.top}
+                    class="stroke-status-ok" stroke-width="1" stroke-dasharray="4 3" />
             )}
             {s.referenceLower != null && (
-              <line
-                x1={PAD_L} x2={W - PAD_R} y1={d.bandBottom} y2={d.bandBottom}
-                class="stroke-status-ok" stroke-width="1" stroke-dasharray="4 3"
-              />
+              <line x1={PAD_L} x2={W - PAD_R} y1={d.mini.bottom} y2={d.mini.bottom}
+                    class="stroke-status-ok" stroke-width="1" stroke-dasharray="4 3" />
             )}
-
             <line x1={PAD_L} x2={W - PAD_R} y1={H - PAD_B} y2={H - PAD_B} class="stroke-slate-200" stroke-width="1" />
-
-            <path d={d.path} fill="none" class="stroke-brand-600" stroke-width="2"
+            <path d={d.mini.path} fill="none" class="stroke-brand-600" stroke-width="2"
                   stroke-linecap="round" stroke-linejoin="round" />
-
-            {d.pts.map((p, i) => (
-              <>
-                <circle
-                  cx={p.x} cy={p.y} r={i === d.pts.length - 1 ? 4.5 : 3}
-                  class={p.flag ? 'fill-status-watch' : 'fill-brand-600'}
-                />
-                {i === d.pts.length - 1 && (
-                  <circle cx={p.x} cy={p.y} r="7.5" fill="none" class="stroke-brand-600" stroke-width="1.5" />
-                )}
-              </>
+            {d.mini.pts.map((p, k) => (
+              <circle cx={p.x} cy={p.y} r={k === d.mini.pts.length - 1 ? 4.5 : 3}
+                      class={p.flag ? 'fill-status-watch' : 'fill-brand-600'} />
             ))}
-
-            {[d.pts[0], d.pts[d.pts.length - 1]].map((p, i) =>
-              d.pts.length > 1 || i === 0 ? (
-                <text
-                  x={p.x} y={H - PAD_B + 15}
-                  text-anchor={i === 0 ? 'start' : 'end'}
-                  class="fill-slate-600"
-                  style="font-size:11px"
-                >{shortDate(p.date)}</text>
-              ) : null,
-            )}
-
-            {[
-              { v: d.hi, y: PAD_T },
-              { v: d.lo, y: H - PAD_B },
-            ].map((t) => (
-              <text
-                x={PAD_L - 6} y={t.y + 4} text-anchor="end"
-                class="fill-slate-500" style="font-size:11px"
-              >{t.v.toFixed(d.decimals)}</text>
-            ))}
+            <text x={d.mini.pts[0].x} y={H - PAD_B + 15} text-anchor="start"
+                  class="fill-slate-600" style="font-size:11px">{shortDate(d.mini.pts[0].date)}</text>
+            <text x={d.mini.pts[d.mini.pts.length - 1].x} y={H - PAD_B + 15} text-anchor="end"
+                  class="fill-slate-600" style="font-size:11px">{shortDate(d.last.date)}</text>
+            <text x={PAD_L - 6} y={PAD_T + 4} text-anchor="end" class="fill-slate-500"
+                  style="font-size:11px">{d.hi.toFixed(d.decimals)}</text>
+            <text x={PAD_L - 6} y={H - PAD_B + 4} text-anchor="end" class="fill-slate-500"
+                  style="font-size:11px">{d.lo.toFixed(d.decimals)}</text>
           </svg>
 
-          <p class="mt-1 text-sm text-slate-600">
-            {jpDate(d.pts[0].date)} 〜 {jpDate(d.last.date)} ・ {d.pts.length} 回
-            {(s.referenceLower != null || s.referenceUpper != null) && (
-              <>
-                {' ／ 基準値 '}
-                <span class="tnum">
-                  {s.referenceLower != null ? s.referenceLower : ''}
-                  {s.referenceLower != null && s.referenceUpper != null ? '〜' : ''}
-                  {s.referenceUpper != null ? s.referenceUpper : ' 以上'}
-                </span>
-              </>
-            )}
-          </p>
-        </figure>
+          <span class="mt-1 text-sm text-slate-600">
+            {ymd(d.mini.pts[0].date)} 〜 {ymd(d.last.date)} ・ {s.points.length} 回
+            {d.hasBand && <> ／ 基準値 <span class="tnum">{refLabel(s)}</span></>}
+          </span>
+        </button>
       ))}
     </div>
   )}
 </section>
+
+{/* ── 拡大モーダル ─────────────────────────────────────────────── */}
+{charts.map(({ s, d, i }) => (
+  <div
+    id={`trend-modal-${i}`}
+    data-trend-modal
+    hidden
+    class="fixed inset-0 z-50 flex items-end justify-center sm:items-center"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby={`trend-modal-title-${i}`}
+  >
+    <div data-trend-close class="sheet-backdrop"></div>
+    <div class="relative z-10 mx-auto max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-t-3xl border border-slate-200 bg-white sm:rounded-2xl">
+      <header class="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3">
+        <h2 id={`trend-modal-title-${i}`} class="flex items-baseline gap-2 text-lg font-bold text-navy-800">
+          <span>{s.label} の推移</span>
+          {s.unit && <span class="text-sm font-normal text-slate-600">単位 {s.unit}</span>}
+        </h2>
+        <button type="button" data-trend-close
+                class="grid h-11 w-11 place-items-center rounded-full text-slate-700 transition hover:bg-slate-100">
+          <AppIcon name="close" size={22} label="閉じる" />
+        </button>
+      </header>
+
+      <div class="space-y-5 px-5 py-4">
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="tnum text-4xl font-bold text-slate-900">{d.last.raw}</span>
+          {s.unit && <span class="text-base text-slate-600">{s.unit}</span>}
+          {d.last.flag && (
+            <span class="status-pill status-watch">
+              <AppIcon name="watch" size={14} />
+              {d.last.flag === 'H' ? '基準値より高い' : '基準値より低い'}
+            </span>
+          )}
+          {d.diff != null && (
+            <span class="tnum inline-flex items-center gap-1 text-base text-slate-700">
+              <AppIcon name={d.diff > 0 ? 'up' : d.diff < 0 ? 'down' : 'flat'} size={16} />
+              前回比 {d.diff > 0 ? '+' : ''}{d.diff.toFixed(d.decimals)} {s.unit}
+            </span>
+          )}
+          <span class="text-sm text-slate-600">最新 {jpDate(d.last.date)}</span>
+        </div>
+
+        <div class="rounded-xl border border-slate-200 bg-white p-4">
+          <svg viewBox={`0 0 ${MW} ${MH}`} preserveAspectRatio="xMidYMid meet" class="w-full"
+               style="height: clamp(280px, 52vh, 520px)" role="img"
+               aria-label={`${s.label} の推移 (拡大)`}>
+            {d.hasBand && (
+              <rect x={ML} y={d.big.top} width={MW - ML - MR}
+                    height={Math.max(0, d.big.bottom - d.big.top)} class="fill-status-ok-bg" />
+            )}
+            {d.ticks.map((t) => (
+              <line x1={ML} x2={MW - MR} y1={t.ty} y2={t.ty} class="stroke-slate-200" stroke-width="1" />
+            ))}
+            {d.ticks.map((t) => (
+              <text x={ML - 10} y={t.ty + 5} text-anchor="end" class="fill-slate-600"
+                    style="font-size:14px">{t.val.toFixed(d.decimals)}</text>
+            ))}
+            {s.referenceUpper != null && (
+              <line x1={ML} x2={MW - MR} y1={d.big.top} y2={d.big.top}
+                    class="stroke-status-ok" stroke-width="2" stroke-dasharray="7 5" />
+            )}
+            {s.referenceUpper != null && (
+              <text x={MW - MR} y={d.big.top - 8} text-anchor="end" class="fill-status-ok"
+                    style="font-size:14px; font-weight:600">基準上限 {s.referenceUpper}</text>
+            )}
+            {s.referenceLower != null && (
+              <line x1={ML} x2={MW - MR} y1={d.big.bottom} y2={d.big.bottom}
+                    class="stroke-status-ok" stroke-width="2" stroke-dasharray="7 5" />
+            )}
+            {s.referenceLower != null && (
+              <text x={MW - MR} y={d.big.bottom + 18} text-anchor="end" class="fill-status-ok"
+                    style="font-size:14px; font-weight:600">基準下限 {s.referenceLower}</text>
+            )}
+            <line x1={ML} x2={MW - MR} y1={MH - MB} y2={MH - MB} class="stroke-slate-300" stroke-width="1.5" />
+            <path d={d.big.path} fill="none" class="stroke-brand-600" stroke-width="3"
+                  stroke-linecap="round" stroke-linejoin="round" />
+            {d.big.pts.map((p) => (
+              <circle cx={p.x} cy={p.y} r="6" fill="white"
+                      class={p.flag ? 'stroke-status-watch' : 'stroke-brand-600'} stroke-width="3" />
+            ))}
+            {d.big.pts.map((p) => (
+              <text x={p.x} y={p.y - 16} text-anchor="middle" class="fill-slate-900"
+                    style="font-size:15px; font-weight:700">{p.raw}</text>
+            ))}
+            {d.big.pts.map((p) => (
+              <text x={p.x} y={MH - MB + 22} text-anchor="middle" class="fill-slate-600"
+                    style="font-size:13px">{ymd(p.date)}</text>
+            ))}
+          </svg>
+        </div>
+
+        <div class="overflow-x-auto rounded-xl border border-slate-200">
+          <table class="w-full text-base">
+            <caption class="sr-only">{s.label} の測定履歴</caption>
+            <thead class="bg-slate-50">
+              <tr>
+                <th scope="col" class="px-3 py-2.5 text-left font-semibold text-slate-700">検査日</th>
+                <th scope="col" class="px-3 py-2.5 text-right font-semibold text-slate-700">値{s.unit ? ` (${s.unit})` : ''}</th>
+                <th scope="col" class="px-3 py-2.5 text-right font-semibold text-slate-700">前回比</th>
+                <th scope="col" class="px-3 py-2.5 text-right font-semibold text-slate-700">判定</th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.rows.map((r) => (
+                <tr class="border-t border-slate-200">
+                  <td class="whitespace-nowrap px-3 py-2.5 text-slate-800">{jpDate(r.date)}</td>
+                  <td class="tnum px-3 py-2.5 text-right font-semibold text-slate-900">{r.raw}</td>
+                  <td class="tnum px-3 py-2.5 text-right text-slate-700">
+                    {r.delta == null ? '—' : `${r.delta > 0 ? '+' : ''}${r.delta.toFixed(d.decimals)}`}
+                  </td>
+                  <td class="px-3 py-2.5 text-right">
+                    {r.flag ? (
+                      <span class="status-pill status-watch">
+                        <AppIcon name="watch" size={14} />
+                        {r.flag === 'H' ? '高' : '低'}
+                      </span>
+                    ) : (
+                      <span class="text-slate-500">—</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <p class="text-sm text-slate-600">
+          「判定」は検査機関が検査票に記載した基準外マーカーです。当アプリが値と基準値を比較して判定したものではありません。印が無い場合は「—」と表示します。
+        </p>
+      </div>
+
+      <footer class="sticky bottom-0 border-t border-slate-200 bg-white px-5 py-3">
+        <button type="button" data-trend-close class="btn-primary w-full">閉じる</button>
+      </footer>
+    </div>
+  </div>
+))}
+
+<script is:inline>
+  (function () {
+    var lastFocus = null;
+    function closeAll() {
+      document.querySelectorAll('[data-trend-modal]').forEach(function (el) { el.hidden = true; });
+      document.body.style.overflow = '';
+      if (lastFocus) { lastFocus.focus(); lastFocus = null; }
+    }
+    document.addEventListener('click', function (e) {
+      var t = e.target;
+      if (!(t instanceof Element)) return;
+      var opener = t.closest('[data-trend-open]');
+      if (opener) {
+        var el = document.getElementById('trend-modal-' + opener.getAttribute('data-trend-open'));
+        if (!el) return;
+        lastFocus = opener;
+        el.hidden = false;
+        document.body.style.overflow = 'hidden';
+        var close = el.querySelector('button[data-trend-close]');
+        if (close) close.focus();
+        return;
+      }
+      if (t.closest('[data-trend-close]')) closeAll();
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeAll(); });
+  })();
+</script>

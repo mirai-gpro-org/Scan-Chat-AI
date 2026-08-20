@@ -18,7 +18,7 @@ interface Props {
 const { item, href = null } = Astro.props as Props;
 
 const flagged = item.flag != null;
-const flagText = item.flag === 'H' ? '基準値より高い' : item.flag === 'L' ? '基準値より低い' : '基準値内';
+const flagText = item.flag === 'H' ? '基準値より高い' : '基準値より低い';
 
 // 基準値は検査票の表記をそのまま組み立てる (アプリで丸めたり言い換えたりしない)。
 const refText =
@@ -43,10 +43,14 @@ const Tag = href ? 'a' : 'div';
     {item.unit && <span class="text-sm text-slate-600">{item.unit}</span>}
   </span>
 
-  <span class={`status-pill ${flagged ? 'status-watch' : 'status-ok'} self-start`}>
-    <AppIcon name={flagged ? 'watch' : 'ok'} size={14} />
-    {flagText}
-  </span>
+  {/* 検査機関が印を付けたときだけ出す。印が無い＝アプリが「基準値内」と判定してよい
+      わけではないため、null では何も表示しない。 */}
+  {flagged && (
+    <span class="status-pill status-watch self-start">
+      <AppIcon name="watch" size={14} />
+      {flagText}
+    </span>
+  )}
 
   {refText && <span class="tnum text-sm text-slate-600">基準値 {refText}</span>}
 
