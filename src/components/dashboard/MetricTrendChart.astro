@@ -196,7 +196,14 @@ const refLabel = (s: MetricTrendSeries): string => {
     aria-labelledby={`trend-modal-title-${i}`}
   >
     <div data-trend-close class="sheet-backdrop"></div>
-    <div class="relative z-10 mx-auto max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-t-3xl border border-slate-200 bg-white sm:rounded-2xl">
+    <!--
+      パネルはスクリム (.sheet-backdrop = z-40) より必ず上に置く。
+      この 2 つは同じ z-50 の入れ物の中の兄弟なので、パネルが z-40 以下だと
+      スクリムがパネルの上に乗り、モーダルの中身まで塗りつぶされる
+      (以前ここが z-10 で、白いはずのヘッダが rgb(198,206,210) になっていた)。
+      他のシートが使う .sheet-panel も z-50 で同じ関係にしてある。
+    -->
+    <div class="relative z-50 mx-auto max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-t-3xl border border-slate-200 bg-white sm:rounded-2xl">
       <header class="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3">
         <h2 id={`trend-modal-title-${i}`} class="flex items-baseline gap-2 text-lg font-bold text-navy-800">
           <span>{s.label} の推移</span>
