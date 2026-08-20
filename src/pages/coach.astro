@@ -1,10 +1,11 @@
 ---
+import AppIcon from '../components/AppIcon.astro';
 /**
  * AI ヘルスコーチ ページ。
  *
  * 表示デザイン・説明・機能は AI 問診 (chat.astro) と統一:
  *   - hero-gradient ヘッダー (戻る / オンライン pill / リセット)
- *   - モード切替: 🎙 音声 / ⌨ テキスト
+ *   - モード切替:  音声 / ⌨ テキスト
  *   - 開始 hero (大きな mic-fab)
  *   - 開始後: チャットログ + 回答パネル (中断 / 音声 ON/OFF)
  *   - 「話す / タップ どちらでも OK」 dual-mode 案内
@@ -37,8 +38,8 @@ const urgentAlert = ctx?.urgentAlert ?? null;
 // 開始ボタン押下時に AI が最初に喋る挨拶文 (会話履歴が空の時のみ)。
 // 緊急アラートがあれば追記。
 const initialGreeting = urgentAlert
-  ? `${displayName}、こんにちは🌱 AI ヘルスコーチです。最新の AI 診断結果を読み込みました。検査結果に「${urgentAlert.title}」の留意事項がございますので、もし気になることがあればお尋ねください。健康に関するご質問は何でもお気軽にどうぞ。`
-  : `${displayName}、こんにちは🌱 AI ヘルスコーチです。最新の AI 診断結果を読み込みました。健康に関するご質問は何でもお気軽にお尋ねください。`;
+  ? `${displayName}、こんにちは AI ヘルスコーチです。最新の AI 診断結果を読み込みました。検査結果に「${urgentAlert.title}」の留意事項がございますので、もし気になることがあればお尋ねください。健康に関するご質問は何でもお気軽にどうぞ。`
+  : `${displayName}、こんにちは AI ヘルスコーチです。最新の AI 診断結果を読み込みました。健康に関するご質問は何でもお気軽にお尋ねください。`;
 ---
 
 <BaseLayout title="AI ヘルスコーチ | Wellfort">
@@ -46,7 +47,7 @@ const initialGreeting = urgentAlert
     <div class="flex items-center justify-between">
       <a
         href={diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnosticUserId)}` : '/dashboard'}
-        class="text-sm text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
+        class="text-sm text-slate-600 hover:text-slate-900"
       >‹ ダッシュボード</a>
       <div class="flex items-center gap-2">
         <span class="relative flex h-2 w-2">
@@ -58,12 +59,12 @@ const initialGreeting = urgentAlert
       <button
         id="reset-btn"
         type="button"
-        class="text-xs text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
+        class="text-xs text-slate-500 hover:text-slate-800"
       >リセット</button>
     </div>
 
     {hasContext && (
-      <p class="mt-2 text-[11px] text-slate-600 dark:text-slate-300">
+      <p class="mt-2 text-[11px] text-slate-600">
         {displayName} の AI 診断結果 (Elith {sectionCount} セクション) を参照中
       </p>
     )}
@@ -71,7 +72,7 @@ const initialGreeting = urgentAlert
 
   {!diagnosticUserId && (
     <main class="flex flex-1 flex-col items-center justify-center gap-3 px-5 text-center">
-      <span class="text-4xl">🔒</span>
+      <AppIcon name="lock" size={32} class="text-slate-500" />
       <h2 class="text-base font-semibold">ユーザー指定が必要です</h2>
       <p class="text-xs text-slate-500">ダッシュボードから AI ヘルスコーチを開いてください。</p>
       <a href="/dashboard" class="btn-primary mt-2">ダッシュボードへ</a>
@@ -80,7 +81,7 @@ const initialGreeting = urgentAlert
 
   {diagnosticUserId && !hasContext && (
     <main class="flex flex-1 flex-col items-center justify-center gap-3 px-5 text-center">
-      <span class="text-4xl">📋</span>
+      <AppIcon name="result" size={32} class="text-slate-500" />
       <h2 class="text-base font-semibold">AI 診断結果が見つかりません</h2>
       <p class="text-xs text-slate-500">検査結果が表示されているかダッシュボードでご確認ください。</p>
       <a
@@ -93,9 +94,9 @@ const initialGreeting = urgentAlert
   {hasContext && (
     <>
       <div class="flex items-center justify-between px-5 pt-2 pb-1">
-        <div class="inline-flex rounded-full bg-slate-100 p-1 dark:bg-slate-800" role="tablist" id="mode-toggle">
+        <div class="inline-flex rounded-full bg-slate-100 p-1" role="tablist" id="mode-toggle">
           <button type="button" data-mode="voice" class="mode-pill on" role="tab" aria-selected="true">
-            🎙 音声
+            <AppIcon name="mic" size={20} /> 音声
           </button>
           <button type="button" data-mode="text" class="mode-pill" role="tab" aria-selected="false">
             ⌨ テキスト
@@ -105,8 +106,8 @@ const initialGreeting = urgentAlert
       </div>
 
       {urgentAlert && (
-        <div class="mx-5 mt-1 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-[11px] text-red-900 dark:border-red-700/60 dark:bg-red-900/30 dark:text-red-100">
-          <strong>🔴 緊急留意事項:</strong> {urgentAlert.title}
+        <div class="mx-5 mt-1 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-[11px] text-red-900">
+          <strong><AppIcon name="record" size={20} /> 緊急留意事項:</strong> {urgentAlert.title}
         </div>
       )}
 
@@ -124,15 +125,14 @@ const initialGreeting = urgentAlert
           aria-atomic="false"
         >
           <div id="coach-empty" class="flex h-full flex-col items-center justify-center gap-2 py-6 text-center text-slate-400">
-            <span class="text-4xl">💬</span>
-            <p class="text-xs">下の <span class="font-medium text-brand-600">💬 相談を開始</span> から始めてください</p>
+            <AppIcon name="interview" size={32} class="text-slate-500" />
+            <p class="text-xs">下の <span class="font-medium text-brand-600"><AppIcon name="interview" size={20} /> 相談を開始</span> から始めてください</p>
           </div>
         </div>
 
         <section
           id="answer-panel"
-          class="card border-brand-200 dark:border-brand-500/30"
-          style="background: linear-gradient(180deg, rgba(99,102,241,0.04) 0%, rgba(255,255,255,0) 60%);"
+          class="card border-brand-200"
         >
           <!-- ━━━ START HERO（未開始時のみ表示） ━━━ -->
           <div id="start-hero" class="flex flex-col items-center gap-3 py-2">
@@ -160,20 +160,20 @@ const initialGreeting = urgentAlert
               </svg>
               <span class="mic-label mt-1 text-xs font-semibold">相談を開始</span>
             </button>
-            <div class="mt-1 flex items-center gap-2 rounded-full bg-slate-50 px-3 py-1.5 text-[11px] text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
-              <span>🎙 話す</span>
+            <div class="mt-1 flex items-center gap-2 rounded-full bg-slate-50 px-3 py-1.5 text-[11px] text-slate-600">
+              <span><AppIcon name="mic" size={20} /> 話す</span>
               <span class="text-slate-400">/</span>
               <span>⌨ 入力する</span>
               <span class="text-slate-400">—</span>
-              <span class="font-medium text-brand-700 dark:text-brand-300">どちらでも OK</span>
+              <span class="font-medium text-brand-700">どちらでも OK</span>
             </div>
           </div>
 
           <!-- ━━━ QA AREA（開始後に表示） ━━━ -->
           <div id="qa-area" hidden>
             <div class="mb-3 flex items-start gap-2">
-              <div id="coach-hint" class="flex-1 text-sm font-medium leading-relaxed text-slate-700 dark:text-slate-200">
-                {displayName}、健康に関するご質問にお答えします 🌱
+              <div id="coach-hint" class="flex-1 text-sm font-medium leading-relaxed text-slate-700">
+                {displayName}、健康に関するご質問にお答えします <AppIcon name="sprout" size={20} />
               </div>
               <button
                 id="mic-btn"
@@ -181,7 +181,7 @@ const initialGreeting = urgentAlert
                 class="mic-fab compact shrink-0"
                 aria-label="音声入力を開始"
               >
-                <span class="mic-icon text-lg">🎙</span>
+                <span class="mic-icon text-lg"><AppIcon name="mic" size={20} /></span>
                 <span class="mic-label text-[10px]">話す</span>
               </button>
               <button
@@ -220,9 +220,9 @@ const initialGreeting = urgentAlert
             <!-- 二刀流ヒント -->
             <div
               id="dual-hint"
-              class="mb-2 flex items-center justify-center gap-2 rounded-full bg-brand-50 px-3 py-1 text-[11px] text-brand-700 dark:bg-brand-500/10 dark:text-brand-300"
+              class="mb-2 flex items-center justify-center gap-2 rounded-full bg-brand-50 px-3 py-1 text-[11px] text-brand-700"
             >
-              <span>🎙 話してもOK</span>
+              <span><AppIcon name="mic" size={20} /> 話してもOK</span>
               <span class="text-brand-400">・</span>
               <span>⌨ 入力してもOK</span>
             </div>
@@ -230,7 +230,7 @@ const initialGreeting = urgentAlert
             <!-- 音声モード -->
             <div id="ui-voice" class="flex flex-col items-center gap-2 py-3">
               <div id="voice-indicator" class="grid place-items-center">
-                <span class="text-4xl animate-pulse">🎙</span>
+                <AppIcon name="mic" size={32} class="text-slate-500" />
               </div>
               <p class="text-center text-xs text-slate-500">
                 右上の「話す」ボタンを押して質問してください
@@ -243,7 +243,7 @@ const initialGreeting = urgentAlert
                 id="text-input"
                 rows="2"
                 maxlength="500"
-                class="resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900"
+                class="resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
                 placeholder="健康に関する質問を入力してください"
               ></textarea>
               <button id="text-submit" type="button" class="btn-primary">送信</button>
@@ -375,7 +375,7 @@ const initialGreeting = urgentAlert
       const bubble = document.createElement('div');
       bubble.className = isUser
         ? 'max-w-[80%] rounded-2xl rounded-br-md bg-brand-600 px-3.5 py-2 text-sm text-white shadow-sm'
-        : 'max-w-[85%] rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2 text-sm leading-relaxed text-slate-800 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
+        : 'max-w-[85%] rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2 text-sm leading-relaxed text-slate-800 shadow-sm';
       bubble.innerHTML = renderMarkdown(m.text);
       wrap.appendChild(bubble);
       return wrap;
@@ -404,7 +404,7 @@ const initialGreeting = urgentAlert
       wrap.className = 'flex justify-start bubble-in';
       const bubble = document.createElement('div');
       bubble.className =
-        'max-w-[85%] rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-900';
+        'max-w-[85%] rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-500 shadow-sm';
       bubble.innerHTML =
         '<span class="inline-flex items-center gap-1">' +
         '<span class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style="animation-delay:0ms"></span>' +
@@ -423,8 +423,8 @@ const initialGreeting = urgentAlert
       wrap.className = 'flex justify-start bubble-in';
       const bubble = document.createElement('div');
       bubble.className =
-        'max-w-[85%] rounded-2xl rounded-bl-md border border-red-200 bg-red-50 px-3.5 py-2 text-sm text-red-700 shadow-sm dark:border-red-700/60 dark:bg-red-900/30 dark:text-red-100';
-      bubble.textContent = `⚠️ ${msg}`;
+        'max-w-[85%] rounded-2xl rounded-bl-md border border-red-200 bg-red-50 px-3.5 py-2 text-sm text-red-700 shadow-sm';
+      bubble.textContent = ` ${msg}`;
       wrap.appendChild(bubble);
       logEl.appendChild(wrap);
       scrollLog();
@@ -532,7 +532,7 @@ const initialGreeting = urgentAlert
         micBtn.setAttribute('aria-label', '音声入力を停止');
         micBtn.querySelector('.mic-icon')!.textContent = '⏸';
         micBtn.querySelector('.mic-label')!.textContent = '停止';
-        setStatus('🎙 聞き取り中…');
+        setStatus(' 聞き取り中…');
       } catch {
         recording = false;
       }
@@ -541,13 +541,13 @@ const initialGreeting = urgentAlert
       recording = false;
       micBtn.classList.remove('active');
       micBtn.setAttribute('aria-label', '音声入力を開始');
-      micBtn.querySelector('.mic-icon')!.textContent = '🎙';
+      micBtn.querySelector('.mic-icon')!.textContent = '';
       micBtn.querySelector('.mic-label')!.textContent = '話す';
       if (recog) {
         try { recog.stop(); } catch { /* ignore */ }
         recog = null;
       }
-      if (statusEl.textContent?.startsWith('🎙')) setStatus('待機中');
+      if (statusEl.textContent?.startsWith('')) setStatus('待機中');
     }
 
     // ─── 音声出力 (TTS) ───
@@ -562,8 +562,8 @@ const initialGreeting = urgentAlert
       const voices = speechSynthesis.getVoices();
       const ja = voices.find((v) => v.lang?.startsWith('ja'));
       if (ja) utter.voice = ja;
-      utter.onstart = () => setStatus('🔊 読み上げ中…');
-      utter.onend = () => { if (statusEl.textContent?.startsWith('🔊')) setStatus('待機中'); };
+      utter.onstart = () => setStatus(' 読み上げ中…');
+      utter.onend = () => { if (statusEl.textContent?.startsWith('')) setStatus('待機中'); };
       try { speechSynthesis.speak(utter); }
       catch { /* ignore */ }
     }

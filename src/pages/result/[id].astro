@@ -1,4 +1,5 @@
 ---
+import AppIcon from '../../components/AppIcon.astro';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { loadResult } from '../../lib/result-queries';
 import { testTypeLabel, formatJpDate } from '../../lib/dashboard-queries';
@@ -21,7 +22,7 @@ const result = await loadResult(id ?? '');
 const hasError = 'error' in result;
 const data = hasError ? null : result;
 
-const tt = data ? testTypeLabel(data.artifact.test_type) : { name: '検査', emoji: '📋' };
+const tt = data ? testTypeLabel(data.artifact.test_type) : { name: '検査', icon: 'result' as const };
 const dashUrl = u ? `/dashboard?u=${encodeURIComponent(u)}` : '/dashboard';
 
 const linkFor = (m: string) => {
@@ -39,8 +40,8 @@ function md(text: string): string {
     if (u) qs.set('u', u);
     qs.set('mode', 'full');
     qs.set('page', String(n));
-    const cls = 'pdf-page-link inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 no-underline hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300';
-    return `<a href="?${qs.toString()}#pdf-viewer" class="${cls}" data-pdf-page="${n}" title="原本 PDF の ${n} ページ目を見る">📄 p${n}</a>`;
+    const cls = 'pdf-page-link inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 no-underline hover:bg-amber-200';
+    return `<a href="?${qs.toString()}#pdf-viewer" class="${cls}" data-pdf-page="${n}" title="原本 PDF の ${n} ページ目を見る"> p${n}</a>`;
   });
   return marked.parse(linked, { async: false }) as string;
 }
@@ -53,7 +54,7 @@ const pdfSrcWithPage = data?.samplePdfUrl
 <BaseLayout title={data ? `${tt.name} | Wellfort` : '検査結果 | Wellfort'}>
   {hasError && (
     <main class="flex flex-1 flex-col items-center justify-center gap-3 px-5 text-center">
-      <span class="text-4xl">⚠️</span>
+      <AppIcon name="watch" size={32} class="text-slate-500" />
       <h1 class="text-lg font-bold">検査結果を読み込めませんでした</h1>
       <p class="text-sm text-red-700">{(result as { error: string }).error}</p>
       <a href={dashUrl} class="mt-3 inline-flex items-center gap-1 rounded-full bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">‹ ダッシュボードへ</a>
@@ -64,32 +65,32 @@ const pdfSrcWithPage = data?.samplePdfUrl
     <>
       <header class="hero-gradient px-5 pt-6 pb-3">
         <div class="flex items-center justify-between">
-          <a href={dashUrl} class="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400">‹ ダッシュボード</a>
-          <p class="text-xs font-medium uppercase tracking-wider text-brand-700/80 dark:text-brand-300/80">RESULT</p>
+          <a href={dashUrl} class="text-xs text-slate-500 hover:text-slate-700">‹ ダッシュボード</a>
+          <p class="text-xs font-medium uppercase tracking-wider text-brand-700/80">RESULT</p>
           <span class="w-10"></span>
         </div>
         <div class="mt-3 flex items-center gap-3">
-          <span class="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-brand-100 to-cyan-100 text-2xl dark:from-brand-500/20 dark:to-cyan-500/20">
-            {tt.emoji}
+          <span class="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-mist text-2xl">
+            <AppIcon name={tt.icon} size={20} class="text-brand-700" />
           </span>
           <div class="flex-1">
             <h1 class="text-lg font-bold tracking-tight">{tt.name}</h1>
-            <p class="mt-0.5 text-[11px] text-slate-600 dark:text-slate-300">
+            <p class="mt-0.5 text-[11px] text-slate-600">
               {formatJpDate(data.artifact.test_date)}
               {data.artifact.lab_name && <span> · {data.artifact.lab_name}</span>}
               {data.artifact.page_count && data.artifact.page_count > 1 && <span> · {data.artifact.page_count}pg</span>}
             </p>
           </div>
           {data.artifact.source === 'user_upload' && (
-            <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">自分でUP</span>
+            <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">自分でUP</span>
           )}
         </div>
 
         {/* 原本 PDF へのクイックアクセス (kensa_sample) */}
         {data.samplePdfUrl && (
-          <div class="mt-3 flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white/70 px-3 py-2 text-[11px] dark:border-slate-700 dark:bg-slate-900/60">
-            <span class="flex items-center gap-1 text-slate-600 dark:text-slate-300">
-              <span>📄</span>
+          <div class="mt-3 flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white/70 px-3 py-2 text-[11px]">
+            <span class="flex items-center gap-1 text-slate-600">
+              <span><AppIcon name="report" size={20} /></span>
               <span class="font-medium">{data.samplePdfLabel}</span>
             </span>
             <a
@@ -105,30 +106,30 @@ const pdfSrcWithPage = data?.samplePdfUrl
 
         {/* 3-モードタブ (single なら非表示) */}
         {data.isThreeMode && (
-          <nav class="mt-4 inline-flex w-full rounded-full bg-slate-100 p-1 dark:bg-slate-800" role="tablist" aria-label="表示モード">
+          <nav class="mt-4 inline-flex w-full rounded-full bg-slate-100 p-1" role="tablist" aria-label="表示モード">
             <a
               href={linkFor('summary')}
               role="tab"
               aria-selected={mode === 'summary'}
-              class={`flex-1 rounded-full px-3 py-1.5 text-center text-[11px] font-medium transition ${mode === 'summary' ? 'bg-white text-brand-700 shadow-sm dark:bg-slate-900 dark:text-brand-300' : 'text-slate-500 dark:text-slate-400'}`}
+              class={`flex-1 rounded-full px-3 py-1.5 text-center text-[11px] font-medium transition ${mode === 'summary' ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-500'}`}
             >
-              📋 サマリー
+              <AppIcon name="result" size={20} /> サマリー
             </a>
             <a
               href={linkFor('highlights')}
               role="tab"
               aria-selected={mode === 'highlights'}
-              class={`flex-1 rounded-full px-3 py-1.5 text-center text-[11px] font-medium transition ${mode === 'highlights' ? 'bg-white text-brand-700 shadow-sm dark:bg-slate-900 dark:text-brand-300' : 'text-slate-500 dark:text-slate-400'}`}
+              class={`flex-1 rounded-full px-3 py-1.5 text-center text-[11px] font-medium transition ${mode === 'highlights' ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-500'}`}
             >
-              ⚠️ 要注意
+              <AppIcon name="watch" size={20} /> 要注意
             </a>
             <a
               href={linkFor('full')}
               role="tab"
               aria-selected={mode === 'full'}
-              class={`flex-1 rounded-full px-3 py-1.5 text-center text-[11px] font-medium transition ${mode === 'full' ? 'bg-white text-brand-700 shadow-sm dark:bg-slate-900 dark:text-brand-300' : 'text-slate-500 dark:text-slate-400'}`}
+              class={`flex-1 rounded-full px-3 py-1.5 text-center text-[11px] font-medium transition ${mode === 'full' ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-500'}`}
             >
-              📄 全編
+              <AppIcon name="report" size={20} /> 全編
             </a>
           </nav>
         )}
@@ -138,7 +139,7 @@ const pdfSrcWithPage = data?.samplePdfUrl
         {/* Elith JSON が無い + PDF も無い場合のみ「処理中」表示 */}
         {data.sections.length === 0 && !data.samplePdfUrl && (
           <section class="card text-center">
-            <p class="text-sm text-slate-600 dark:text-slate-300">
+            <p class="text-sm text-slate-600">
               {data.artifact.source === 'user_upload'
                 ? 'スキャン処理中、または LLM 解析待ちです。少し時間を置いて再度ご確認ください。'
                 : '検査会社からのレポート受信待ちです。'}
@@ -153,15 +154,15 @@ const pdfSrcWithPage = data?.samplePdfUrl
         {data.sections.length === 0 && data.samplePdfUrl && (
           <section class="card">
             <header class="mb-2 flex items-center justify-between gap-2">
-              <h2 class="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100">
-                <span>📄</span><span>{data.samplePdfLabel ?? '検査結果 (原本)'}</span>
+              <h2 class="flex items-center gap-2 text-sm font-bold text-slate-800">
+                <span><AppIcon name="report" size={20} /></span><span>{data.samplePdfLabel ?? '検査結果 (原本)'}</span>
               </h2>
               <a href={data.samplePdfUrl} target="_blank" rel="noopener" class="text-[11px] font-medium text-brand-600 hover:underline">別タブで開く ↗</a>
             </header>
             <iframe
               src={data.samplePdfUrl}
               title={data.samplePdfLabel ?? '原本 PDF'}
-              class="w-full rounded-lg border border-slate-200 dark:border-slate-700"
+              class="w-full rounded-lg border border-slate-200"
               style="height: clamp(420px, 70vh, 800px);"
               loading="lazy"
             ></iframe>
@@ -175,19 +176,19 @@ const pdfSrcWithPage = data?.samplePdfUrl
         {data.sections.length > 0 && (!data.isThreeMode || mode === 'summary') && (
           <section class="card">
             <header class="mb-2 flex items-center gap-2">
-              <span class="text-base">📋</span>
-              <h2 class="text-sm font-bold text-slate-800 dark:text-slate-100">サマリー (アブストラクト)</h2>
+              <span class="text-base"><AppIcon name="result" size={20} /></span>
+              <h2 class="text-sm font-bold text-slate-800">サマリー (アブストラクト)</h2>
               {!data.isThreeMode && <span class="ml-auto text-[10px] text-slate-500">single モード</span>}
             </header>
             {data.summarySection ? (
-              <div class="md-region md-summary text-[13px] leading-relaxed text-slate-700 dark:text-slate-200" set:html={md(data.summarySection.text)} />
+              <div class="md-region md-summary text-[13px] leading-relaxed text-slate-700" set:html={md(data.summarySection.text)} />
             ) : (
               <p class="text-xs text-slate-500">アブストラクトセクションが見つかりません。「全編」をご確認ください。</p>
             )}
             {data.isThreeMode && (
               <div class="mt-3 flex gap-2 text-[11px]">
-                <a href={linkFor('highlights')} class="rounded-full bg-amber-50 px-3 py-1 text-amber-700 hover:bg-amber-100 dark:bg-amber-900/30 dark:text-amber-300">要注意項目を見る →</a>
-                <a href={linkFor('full')} class="rounded-full bg-slate-100 px-3 py-1 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300">全編を見る →</a>
+                <a href={linkFor('highlights')} class="rounded-full bg-amber-50 px-3 py-1 text-amber-700 hover:bg-amber-100">要注意項目を見る →</a>
+                <a href={linkFor('full')} class="rounded-full bg-slate-100 px-3 py-1 text-slate-700 hover:bg-slate-200">全編を見る →</a>
               </div>
             )}
           </section>
@@ -196,12 +197,12 @@ const pdfSrcWithPage = data?.samplePdfUrl
         {/* b) 要注意抜粋 */}
         {data.sections.length > 0 && data.isThreeMode && mode === 'highlights' && (
           <section class="space-y-3">
-            <div class="card border-amber-300 bg-amber-50/50 dark:border-amber-700/50 dark:bg-amber-900/10">
+            <div class="card border-amber-300 bg-amber-50/50">
               <header class="mb-2 flex items-center gap-2">
-                <span class="text-base">⚠️</span>
-                <h2 class="text-sm font-bold text-amber-900 dark:text-amber-200">要注意 — 優先して確認したい項目</h2>
+                <span class="text-base"><AppIcon name="watch" size={20} /></span>
+                <h2 class="text-sm font-bold text-amber-900">要注意 — 優先して確認したい項目</h2>
               </header>
-              <p class="text-[11px] text-amber-800 dark:text-amber-300">
+              <p class="text-[11px] text-amber-800">
                 医療受診の目安や、行動に移しやすい栄養面の指摘を抜粋しています。
               </p>
             </div>
@@ -212,8 +213,8 @@ const pdfSrcWithPage = data?.samplePdfUrl
             ) : (
               data.highlightSections.map((s) => (
                 <article class="card">
-                  <h3 class="mb-2 text-sm font-bold text-slate-800 dark:text-slate-100">{s.section_name}</h3>
-                  <div class="md-region md-summary text-[13px] leading-relaxed text-slate-700 dark:text-slate-200" set:html={md(s.text)} />
+                  <h3 class="mb-2 text-sm font-bold text-slate-800">{s.section_name}</h3>
+                  <div class="md-region md-summary text-[13px] leading-relaxed text-slate-700" set:html={md(s.text)} />
                 </article>
               ))
             )}
@@ -224,21 +225,21 @@ const pdfSrcWithPage = data?.samplePdfUrl
         {/* c) 全編 */}
         {data.sections.length > 0 && data.isThreeMode && mode === 'full' && (
           <section class="space-y-3">
-            <div class="card border-slate-300 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/40">
+            <div class="card border-slate-300 bg-slate-50">
               <header class="mb-2 flex items-center gap-2">
-                <span class="text-base">📄</span>
-                <h2 class="text-sm font-bold text-slate-800 dark:text-slate-100">全編レポート</h2>
+                <span class="text-base"><AppIcon name="report" size={20} /></span>
+                <h2 class="text-sm font-bold text-slate-800">全編レポート</h2>
                 <span class="ml-auto text-[10px] text-slate-500">{data.fullSections.length} セクション</span>
               </header>
-              <p class="text-[11px] text-slate-600 dark:text-slate-400">Elith AI 診断の全レポートです。原本 PDF と LLM 解析の全テキストを併載しています。</p>
+              <p class="text-[11px] text-slate-600">Elith AI 診断の全レポートです。原本 PDF と LLM 解析の全テキストを併載しています。</p>
             </div>
 
             {/* 原本 PDF を iframe で */}
             {pdfSrcWithPage && (
               <article id="pdf-viewer" class="card scroll-mt-24">
                 <header class="mb-2 flex items-center justify-between gap-2">
-                  <h3 class="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100">
-                    <span>📄</span><span>原本 PDF — {data.samplePdfLabel}</span>
+                  <h3 class="flex items-center gap-2 text-sm font-bold text-slate-800">
+                    <span><AppIcon name="report" size={20} /></span><span>原本 PDF — {data.samplePdfLabel}</span>
                   </h3>
                   <span class="text-[11px] text-slate-500">p{initialPage} から表示</span>
                   <a href={data.samplePdfUrl ?? '#'} target="_blank" rel="noopener" class="text-[11px] font-medium text-brand-600 hover:underline">別タブで開く ↗</a>
@@ -248,7 +249,7 @@ const pdfSrcWithPage = data?.samplePdfUrl
                   data-pdf-base={data.samplePdfUrl}
                   src={pdfSrcWithPage}
                   title={data.samplePdfLabel ?? '原本 PDF'}
-                  class="w-full rounded-lg border border-slate-200 dark:border-slate-700"
+                  class="w-full rounded-lg border border-slate-200"
                   style="height: clamp(420px, 75vh, 900px);"
                   loading="lazy"
                 ></iframe>
@@ -257,12 +258,12 @@ const pdfSrcWithPage = data?.samplePdfUrl
 
             {/* 目次 */}
             <nav class="card">
-              <h3 class="mb-2 text-xs font-bold text-slate-600 dark:text-slate-400">目次</h3>
+              <h3 class="mb-2 text-xs font-bold text-slate-600">目次</h3>
               <ol class="space-y-1 text-[12px]">
                 {data.fullSections.map((s, i) => (
                   <li>
-                    <a href={`#section-${i}`} class="flex items-center justify-between rounded px-2 py-1 hover:bg-slate-100 dark:hover:bg-slate-800">
-                      <span class="text-slate-700 dark:text-slate-200">{i + 1}. {s.section_name}</span>
+                    <a href={`#section-${i}`} class="flex items-center justify-between rounded px-2 py-1 hover:bg-slate-100">
+                      <span class="text-slate-700">{i + 1}. {s.section_name}</span>
                       <span class="text-[10px] text-slate-400">{s.char_count.toLocaleString()}字</span>
                     </a>
                   </li>
@@ -273,26 +274,26 @@ const pdfSrcWithPage = data?.samplePdfUrl
             {data.fullSections.map((s, i) => (
               <article id={`section-${i}`} class="card scroll-mt-24">
                 <header class="mb-2 flex items-baseline justify-between">
-                  <h3 class="text-sm font-bold text-slate-800 dark:text-slate-100">
+                  <h3 class="text-sm font-bold text-slate-800">
                     <span class="text-brand-500">{i + 1}.</span> {s.section_name}
                   </h3>
                   <span class="text-[10px] text-slate-500">{s.char_count.toLocaleString()}字</span>
                 </header>
-                <div class="md-region text-[13px] leading-relaxed text-slate-700 dark:text-slate-200" set:html={md(s.text)} />
+                <div class="md-region text-[13px] leading-relaxed text-slate-700" set:html={md(s.text)} />
               </article>
             ))}
 
             <div class="flex justify-between gap-2">
-              <a href={linkFor('summary')} class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1.5 text-[11px] text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300">‹ サマリーへ戻る</a>
-              <a href="#" class="inline-flex items-center gap-1 rounded-full bg-brand-50 px-3 py-1.5 text-[11px] text-brand-700 hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300">↑ 先頭へ</a>
+              <a href={linkFor('summary')} class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1.5 text-[11px] text-slate-700 hover:bg-slate-200">‹ サマリーへ戻る</a>
+              <a href="#" class="inline-flex items-center gap-1 rounded-full bg-brand-50 px-3 py-1.5 text-[11px] text-brand-700 hover:bg-brand-100">↑ 先頭へ</a>
             </div>
           </section>
         )}
 
         {/* メタ情報 (折りたたみ) */}
-        <details class="rounded-2xl border border-dashed border-slate-300 p-3 dark:border-slate-700">
-          <summary class="cursor-pointer text-xs font-medium text-slate-500">🛠 詳細メタ</summary>
-          <dl class="mt-2 space-y-1 text-[11px] text-slate-600 dark:text-slate-400">
+        <details class="rounded-2xl border border-dashed border-slate-300 p-3">
+          <summary class="cursor-pointer text-xs font-medium text-slate-500"><AppIcon name="tool" size={20} /> 詳細メタ</summary>
+          <dl class="mt-2 space-y-1 text-[11px] text-slate-600">
             <div class="flex justify-between"><dt>artifact id:</dt><dd class="font-mono">{data.artifact.id}</dd></div>
             <div class="flex justify-between"><dt>source:</dt><dd>{data.artifact.source}</dd></div>
             <div class="flex justify-between"><dt>test_type:</dt><dd>{data.artifact.test_type}</dd></div>

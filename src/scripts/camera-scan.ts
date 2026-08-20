@@ -119,8 +119,8 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     setState('busy');
     setStatus(
       opts?.sourceLabel
-        ? `🔬 ${opts.sourceLabel} を解析中…`
-        : '🔬 AI が紙面を精密読解中… (精度優先モード)',
+        ? `${opts.sourceLabel} を解析中…`
+        : 'AI が紙面を精密読解中… (精度優先モード)',
     );
 
     const userHint = refs.hint?.value?.trim() || '';

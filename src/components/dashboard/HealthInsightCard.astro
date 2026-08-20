@@ -1,4 +1,5 @@
 ---
+import AppIcon from '../../components/AppIcon.astro';
 /**
  * 問診回答 + 検査結果を統合した「今日の気付き」カード。
  *
@@ -13,26 +14,26 @@ const { diagnosticUserId } = Astro.props as Props;
 
 <section class="card" id="insight-card" data-diagnostic-user-id={diagnosticUserId}>
   <header class="mb-3 flex items-center justify-between">
-    <h2 class="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100">
-      <span>🌱</span><span>今日の気付き</span>
+    <h2 class="flex items-center gap-2 text-sm font-bold text-slate-800">
+      <span><AppIcon name="sprout" size={20} /></span><span>今日の気付き</span>
     </h2>
     <span id="insight-meta" class="text-[10px] text-slate-500"></span>
   </header>
 
   {/* 状態は JS で切替: empty / loading / content / error */}
 
-  <div id="insight-empty" class="rounded-xl bg-slate-50 px-3 py-4 text-center text-xs text-slate-500 dark:bg-slate-800/40">
-    📝 まずは AI 問診を完了すると、検査結果と合わせた個別アドバイスが表示されます。
+  <div id="insight-empty" class="rounded-xl bg-slate-50 px-3 py-4 text-center text-xs text-slate-500">
+    <AppIcon name="interview" size={20} /> まずは AI 問診を完了すると、検査結果と合わせた個別アドバイスが表示されます。
     <a
       id="insight-cta"
       href="/chat"
       class="mt-2 inline-flex items-center justify-center rounded-lg bg-brand-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-brand-700"
     >
-      🩺 問診を始める ›
+      <AppIcon name="doctor" size={20} /> 問診を始める ›
     </a>
   </div>
 
-  <div id="insight-loading" hidden class="flex items-center gap-2 rounded-xl bg-brand-50 px-3 py-3 text-xs text-brand-700 dark:bg-brand-500/10 dark:text-brand-300">
+  <div id="insight-loading" hidden class="flex items-center gap-2 rounded-xl bg-brand-50 px-3 py-3 text-xs text-brand-700">
     <span class="inline-block h-3 w-3 animate-spin rounded-full border-2 border-brand-400 border-t-transparent"></span>
     <span>あなたへの気付きを生成中…</span>
   </div>
@@ -40,10 +41,10 @@ const { diagnosticUserId } = Astro.props as Props;
   <div
     id="insight-content"
     hidden
-    class="space-y-2 rounded-xl bg-gradient-to-br from-brand-50 to-cyan-50 px-4 py-3 text-[13px] leading-relaxed text-slate-800 dark:from-brand-500/10 dark:to-cyan-500/10 dark:text-slate-100"
+    class="space-y-2 rounded-xl bg-mist px-4 py-3 text-[13px] leading-relaxed text-slate-800"
   ></div>
 
-  <div id="insight-error" hidden class="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-900/30 dark:text-red-200"></div>
+  <div id="insight-error" hidden class="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700"></div>
 
   <div class="mt-2 flex items-center justify-end gap-2">
     <button
@@ -51,7 +52,7 @@ const { diagnosticUserId } = Astro.props as Props;
       type="button"
       hidden
       class="text-[11px] text-slate-500 hover:text-brand-600 hover:underline"
-    >🔄 再生成</button>
+    ><AppIcon name="refresh" size={20} /> 再生成</button>
   </div>
 </section>
 
@@ -123,7 +124,7 @@ const { diagnosticUserId } = Astro.props as Props;
     }
 
     function showError(msg: string) {
-      if (errorBox) errorBox.textContent = `⚠️ ${msg}`;
+      if (errorBox) errorBox.textContent = ` ${msg}`;
       show('error');
     }
 

@@ -1,3 +1,4 @@
+import type { AppIconName } from '../components/AppIcon.astro';
 /**
  * Elith JSON (10 セクション、約 21K 字) からダッシュボードカード用の構造化値を抽出する。
  *
@@ -47,35 +48,35 @@ export function riskColor(level: RiskLevel): {
   switch (level) {
     case 'high':
       return {
-        bg: 'bg-red-50 dark:bg-red-900/20',
-        border: 'border-red-300 dark:border-red-700',
-        text: 'text-red-700 dark:text-red-300',
-        chip: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200',
+        bg: 'bg-red-50',
+        border: 'border-red-300',
+        text: 'text-red-700',
+        chip: 'bg-red-100 text-red-700',
         dot:  'bg-red-500',
       };
     case 'slightly_high':
       return {
-        bg: 'bg-amber-50 dark:bg-amber-900/20',
-        border: 'border-amber-300 dark:border-amber-700',
-        text: 'text-amber-700 dark:text-amber-300',
-        chip: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200',
+        bg: 'bg-amber-50',
+        border: 'border-amber-300',
+        text: 'text-amber-700',
+        chip: 'bg-amber-100 text-amber-700',
         dot:  'bg-amber-500',
       };
     case 'normal':
       return {
-        bg: 'bg-emerald-50 dark:bg-emerald-900/20',
-        border: 'border-emerald-300 dark:border-emerald-700',
-        text: 'text-emerald-700 dark:text-emerald-300',
-        chip: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200',
+        bg: 'bg-emerald-50',
+        border: 'border-emerald-300',
+        text: 'text-emerald-700',
+        chip: 'bg-emerald-100 text-emerald-700',
         dot:  'bg-emerald-500',
       };
     case 'slightly_low':
     case 'low':
       return {
-        bg: 'bg-sky-50 dark:bg-sky-900/20',
-        border: 'border-sky-300 dark:border-sky-700',
-        text: 'text-sky-700 dark:text-sky-300',
-        chip: 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-200',
+        bg: 'bg-sky-50',
+        border: 'border-sky-300',
+        text: 'text-sky-700',
+        chip: 'bg-sky-100 text-sky-700',
         dot:  'bg-sky-500',
       };
   }
@@ -221,7 +222,8 @@ export interface SituationalCard {
   scene: string;
   title: string;
   body: string;
-  emoji: string;
+  /** AppIcon の意味名 (絵文字は本番素材にしない)。 */
+  icon: AppIconName;
 }
 
 export function extractSituationalCards(sections: ElithSection[]): SituationalCard[] {
@@ -237,7 +239,7 @@ export function extractSituationalCards(sections: ElithSection[]): SituationalCa
         scene: '今夜の夕食',
         title: '和定食メニュー',
         body: '鶏ささみの塩焼き定食 / タラの西京焼き定食 — 低プリン体で尿酸値ケア',
-        emoji: '🍱',
+        icon: 'meal',
       });
     }
   }
@@ -248,7 +250,7 @@ export function extractSituationalCards(sections: ElithSection[]): SituationalCa
         scene: '仕事の合間',
         title: '4-7-8 呼吸法',
         body: '4秒吸う・7秒止める・8秒吐く × 5サイクル',
-        emoji: '💆',
+        icon: 'sprout',
       });
     }
   }
@@ -257,7 +259,7 @@ export function extractSituationalCards(sections: ElithSection[]): SituationalCa
     scene: '就寝前',
     title: '半身浴のススメ',
     body: '38〜40度で15-20分。ブルーライト回避で睡眠の質を上げる',
-    emoji: '🛁',
+    icon: 'sleep',
   });
 
   return cards;

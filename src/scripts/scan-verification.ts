@@ -342,8 +342,8 @@ export class ScanVerificationController {
     if (full.startsWith('data:application/pdf')) {
       container.innerHTML = `
         <div class="flex flex-col items-center justify-center gap-2 px-4 py-8 text-center">
-          <span class="text-5xl">📄</span>
-          <p class="text-sm font-medium text-slate-700 dark:text-slate-200">PDF を解析しました</p>
+          <span class="text-5xl"></span>
+          <p class="text-sm font-medium text-slate-700">PDF を解析しました</p>
           <p class="text-xs text-slate-500">表領域のプレビュー画像はありません。下のブロックから内容を確認してください。</p>
         </div>`;
       return;
@@ -475,7 +475,7 @@ export class ScanVerificationController {
     view.table.headers.forEach((h) => {
       const th = document.createElement('th');
       th.className =
-        'border border-slate-200 bg-slate-50 px-2 py-1 text-left font-medium dark:border-slate-700 dark:bg-slate-800';
+        'border border-slate-200 bg-slate-50 px-2 py-1 text-left font-medium';
       th.textContent = h;
       trH.appendChild(th);
     });
@@ -492,12 +492,12 @@ export class ScanVerificationController {
       // 元から疑念ありなら、解消済みでもクリック可 (再修正)。元から OK の行はクリック不可。
       if (originallySuspicious) {
         tr.className = rowOk
-          ? 'cursor-pointer bg-emerald-50/60 transition-colors hover:bg-emerald-100/80 dark:bg-emerald-900/20 dark:hover:bg-emerald-900/40'
-          : 'cursor-pointer bg-amber-50 transition-colors hover:bg-amber-100 dark:bg-amber-900/30 dark:hover:bg-amber-900/50';
+          ? 'cursor-pointer bg-emerald-50/60 transition-colors hover:bg-emerald-100/80'
+          : 'cursor-pointer bg-amber-50 transition-colors hover:bg-amber-100';
         tr.addEventListener('click', () => this.openRowEdit(idx, rowIdx));
       } else {
         tr.className =
-          'bg-emerald-50/40 dark:bg-emerald-900/15';
+          'bg-emerald-50/40';
       }
       const persistedCells = this.state.rows[`${idx}:${rowIdx}`]?.cells ?? {};
       const suspiciousCells =
@@ -511,20 +511,20 @@ export class ScanVerificationController {
         const td = document.createElement('td');
         // セルごとに状態色を反映
         let cellClasses =
-          'border border-slate-200 px-2 py-1 align-top dark:border-slate-700';
+          'border border-slate-200 px-2 py-1 align-top';
         if (cellOriginallySuspicious) {
           if (isCellEdited || isCellConfirmed) {
             cellClasses +=
-              ' bg-emerald-100/80 dark:bg-emerald-900/40';
+              ' bg-emerald-100/80';
           } else {
             cellClasses +=
-              ' bg-amber-100/80 font-semibold dark:bg-amber-900/40';
+              ' bg-amber-100/80 font-semibold';
           }
         }
         td.className = cellClasses;
         if (isCellEdited) {
           td.innerHTML =
-            '<span class="mr-1 text-emerald-600 dark:text-emerald-400" title="修正済">✎</span>' +
+            '<span class="mr-1 text-emerald-600" title="修正済"></span>' +
             escapeHtml(displayText);
         } else {
           td.textContent = displayText;
@@ -604,7 +604,7 @@ export class ScanVerificationController {
       const headerRow = document.createElement('div');
       headerRow.className = 'mb-1 flex items-center justify-between gap-2';
       const label = document.createElement('label');
-      label.className = 'text-xs font-medium text-slate-700 dark:text-slate-200';
+      label.className = 'text-xs font-medium text-slate-700';
       label.textContent = draft.header;
       const status = document.createElement('span');
       status.className = 'text-[10px] font-medium';
@@ -617,7 +617,7 @@ export class ScanVerificationController {
       input.value = draft.value;
       input.spellcheck = false;
       input.className =
-        'w-full rounded border bg-white px-2 py-1 font-mono text-sm text-slate-900 focus:outline-none focus:ring-1 dark:bg-slate-800 dark:text-slate-100';
+        'w-full rounded border bg-white px-2 py-1 font-mono text-sm text-slate-900 focus:outline-none focus:ring-1';
       card.appendChild(input);
 
       // 「このまま OK」ボタン (元から疑念ありのセルのみ)
@@ -627,7 +627,7 @@ export class ScanVerificationController {
         okBtn.type = 'button';
         okBtn.textContent = '✓ このまま OK';
         okBtn.className =
-          'mt-1.5 rounded border border-amber-500 px-2 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100 dark:border-amber-600 dark:text-amber-300 dark:hover:bg-amber-900/30';
+          'mt-1.5 rounded border border-amber-500 px-2 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100';
         card.appendChild(okBtn);
       }
 
@@ -637,30 +637,30 @@ export class ScanVerificationController {
         if (!draft.originalSuspicious) {
           // 元から OK: 中立色
           card.className =
-            'rounded-lg border-2 border-slate-200 bg-slate-50 p-2 transition-colors dark:border-slate-700 dark:bg-slate-800/40';
+            'rounded-lg border-2 border-slate-200 bg-slate-50 p-2 transition-colors';
           input.className =
-            'w-full rounded border border-slate-300 bg-white px-2 py-1 font-mono text-sm text-slate-900 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100';
-          status.textContent = draft.isEdited ? '✎ 修正済' : '';
+            'w-full rounded border border-slate-300 bg-white px-2 py-1 font-mono text-sm text-slate-900 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500';
+          status.textContent = draft.isEdited ? '修正済' : '';
           status.className =
-            'text-[10px] font-medium text-emerald-700 dark:text-emerald-400';
+            'text-[10px] font-medium text-emerald-700';
         } else if (resolved) {
           card.className =
-            'rounded-lg border-2 border-emerald-400 bg-emerald-50 p-2 transition-colors dark:border-emerald-700 dark:bg-emerald-900/30';
+            'rounded-lg border-2 border-emerald-400 bg-emerald-50 p-2 transition-colors';
           input.className =
-            'w-full rounded border border-emerald-400 bg-white px-2 py-1 font-mono text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-emerald-600 dark:bg-slate-800 dark:text-slate-100';
+            'w-full rounded border border-emerald-400 bg-white px-2 py-1 font-mono text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500';
           status.textContent = draft.isEdited
-            ? '✎ 修正済'
+            ? '修正済'
             : '✓ 確認済';
           status.className =
-            'text-[10px] font-medium text-emerald-700 dark:text-emerald-400';
+            'text-[10px] font-medium text-emerald-700';
         } else {
           card.className =
-            'rounded-lg border-2 border-amber-400 bg-amber-50 p-2 transition-colors dark:border-amber-600 dark:bg-amber-900/30';
+            'rounded-lg border-2 border-amber-400 bg-amber-50 p-2 transition-colors';
           input.className =
-            'w-full rounded border border-amber-400 bg-white px-2 py-1 font-mono text-sm text-slate-900 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 dark:border-amber-600 dark:bg-slate-800 dark:text-slate-100';
-          status.textContent = '⚠ 要確認';
+            'w-full rounded border border-amber-400 bg-white px-2 py-1 font-mono text-sm text-slate-900 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500';
+          status.textContent = '要確認';
           status.className =
-            'text-[10px] font-medium text-amber-700 dark:text-amber-400';
+            'text-[10px] font-medium text-amber-700';
         }
         if (okBtn) okBtn.hidden = resolved;
       };
@@ -690,13 +690,13 @@ export class ScanVerificationController {
       (d) => d.originalSuspicious && !d.isEdited && !d.userConfirmed,
     ).length;
     if (unresolved === 0) {
-      this.refs.rowEditSaveBtn.textContent = '💾 保存して閉じる (全セル OK)';
+      this.refs.rowEditSaveBtn.textContent = '保存して閉じる (全セル OK)';
       this.refs.rowEditSaveBtn.classList.remove(
         '!bg-amber-500',
         'hover:!bg-amber-600',
       );
     } else {
-      this.refs.rowEditSaveBtn.textContent = `💾 保存して閉じる (残 ${unresolved} 件)`;
+      this.refs.rowEditSaveBtn.textContent = `保存して閉じる (残 ${unresolved} 件)`;
       this.refs.rowEditSaveBtn.classList.add(
         '!bg-amber-500',
         'hover:!bg-amber-600',
@@ -845,13 +845,13 @@ export class ScanVerificationController {
       this.refs.submitHint.textContent =
         '✓ 全行を確認しました。問診へ進めます。';
       this.refs.submitHint.className =
-        'text-center text-xs text-emerald-700 dark:text-emerald-400';
+        'text-center text-xs text-emerald-700';
     } else {
       this.refs.submitBtn.disabled = true;
       this.refs.submitBtn.textContent = `✓ 確認して送信 (残り ${unresolved} 件)`;
-      this.refs.submitHint.textContent = `⚠ ${unresolved} 件の疑念がまだ未解消です`;
+      this.refs.submitHint.textContent = `${unresolved} 件の疑念がまだ未解消です`;
       this.refs.submitHint.className =
-        'text-center text-xs text-amber-700 dark:text-amber-400';
+        'text-center text-xs text-amber-700';
     }
   }
 
@@ -865,7 +865,7 @@ export class ScanVerificationController {
       // 完了時に確定結果を S3 (Elith 連携) へ自動書き出し (best-effort)。
       if (this.refs.onBeforeSubmit) {
         this.refs.submitBtn.disabled = true;
-        this.refs.submitBtn.textContent = '☁️ 書き出し中…';
+        this.refs.submitBtn.textContent = '書き出し中…';
         try {
           await this.refs.onBeforeSubmit();
         } catch {

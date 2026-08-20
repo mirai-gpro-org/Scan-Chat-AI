@@ -38,7 +38,8 @@ export type SectionId =
 
 export interface ChoiceOpt {
   label: string;
-  emoji?: string;
+  /** AppIcon / icon-svg の意味名 (絵文字は本番素材にしない)。 */
+  icon?: string;
 }
 
 export type AnswerKind = 'text' | 'chip' | 'multi' | 'wheel' | 'slider' | 'matrix';
@@ -117,25 +118,25 @@ const DISEASES = opt([
 ]);
 
 const SYMPTOMS: ChoiceOpt[] = [
-  { label: 'なし', emoji: '✅' },
-  { label: '頭痛', emoji: '🤕' },
-  { label: '肩こり', emoji: '😣' },
-  { label: '腰痛', emoji: '🦴' },
-  { label: '眼精疲労', emoji: '👀' },
-  { label: '冷え性', emoji: '🥶' },
-  { label: '便秘・下痢', emoji: '🚽' },
-  { label: '慢性的な疲労感', emoji: '😪' },
+  { label: 'なし', icon: 'ok' },
+  { label: '頭痛', icon: 'headache' },
+  { label: '肩こり', icon: 'shoulder' },
+  { label: '腰痛', icon: 'back-pain' },
+  { label: '眼精疲労', icon: 'eye-strain' },
+  { label: '冷え性', icon: 'cold' },
+  { label: '便秘・下痢', icon: 'stomach' },
+  { label: '慢性的な疲労感', icon: 'fatigue' },
   { label: 'その他' },
 ];
 
 const EXERCISE_TYPES: ChoiceOpt[] = [
-  { label: 'ウォーキング', emoji: '🚶' },
-  { label: 'ジョギング・ランニング', emoji: '🏃' },
-  { label: '水泳', emoji: '🏊' },
-  { label: '筋力トレーニング', emoji: '💪' },
-  { label: 'ヨガ・ストレッチ', emoji: '🧘' },
-  { label: 'スポーツ（球技・武道等）', emoji: '⚽' },
-  { label: '自転車', emoji: '🚲' },
+  { label: 'ウォーキング', icon: 'exercise-walk' },
+  { label: 'ジョギング・ランニング', icon: 'exercise-run' },
+  { label: '水泳', icon: 'exercise-swim' },
+  { label: '筋力トレーニング', icon: 'exercise-muscle' },
+  { label: 'ヨガ・ストレッチ', icon: 'exercise-yoga' },
+  { label: 'スポーツ（球技・武道等）', icon: 'exercise-sport' },
+  { label: '自転車', icon: 'exercise-bike' },
   { label: 'その他' },
 ];
 
@@ -257,9 +258,9 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
     id: 'S-STATUS', section_id: 'smoking', answer_kind: 'chip',
     question: '喫煙習慣はありますか？',
     chips: [
-      { label: '現在吸っている', emoji: '🚬' },
-      { label: '過去に吸っていたが現在は吸わない', emoji: '🍃' },
-      { label: '吸ったことはない', emoji: '🚭' },
+      { label: '現在吸っている', icon: 'smoking' },
+      { label: '過去に吸っていたが現在は吸わない', icon: 'smoking-past' },
+      { label: '吸ったことはない', icon: 'no-smoking' },
     ],
   },
   {
@@ -343,9 +344,9 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
     id: 'F-VEG', section_id: 'diet', answer_kind: 'chip',
     question: '1回あたりの野菜摂取量に対して、ご自身のお考えを教えてください。',
     chips: [
-      { label: '十分に摂れている', emoji: '🥗' },
-      { label: '普通', emoji: '🥬' },
-      { label: '不足していると感じる', emoji: '🥦' },
+      { label: '十分に摂れている', icon: 'salad' },
+      { label: '普通', icon: 'vegetable' },
+      { label: '不足していると感じる', icon: 'meal' },
     ],
   },
   {
@@ -365,10 +366,10 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
     id: 'E-FREQ', section_id: 'exercise', answer_kind: 'chip',
     question: '週あたりの運動頻度を教えてください。',
     chips: [
-      { label: 'ほぼ毎日（週5日以上）', emoji: '🏃' },
-      { label: '週3〜4日', emoji: '🚶' },
+      { label: 'ほぼ毎日（週5日以上）', icon: 'exercise-run' },
+      { label: '週3〜4日', icon: 'exercise-walk' },
       { label: '週1〜2日' },
-      { label: 'ほとんどしない', emoji: '🧘' },
+      { label: 'ほとんどしない', icon: 'flat' },
     ],
   },
   {
@@ -380,7 +381,7 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
   {
     id: 'E-SPEED', section_id: 'exercise', answer_kind: 'chip',
     question: '同年代の人と比較した歩く速さを教えてください。',
-    chips: [{ label: '速い', emoji: '⚡' }, { label: '遅い', emoji: '🐢' }],
+    chips: [{ label: '速い', icon: 'fast' }, { label: '遅い', icon: 'slow' }],
   },
   {
     id: 'E-SITTING', section_id: 'exercise', answer_kind: 'chip',
@@ -399,7 +400,7 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
   {
     id: 'M-HAS', section_id: 'meds', answer_kind: 'chip',
     question: '現在服用中の薬・定期的に摂取しているサプリメント・健康食品はありますか？',
-    chips: [{ label: 'ある', emoji: '💊' }, { label: 'ない', emoji: '🚫' }],
+    chips: [{ label: 'ある', icon: 'medicine' }, { label: 'ない', icon: 'ban' }],
   },
   {
     id: 'M-NAME', section_id: 'meds', answer_kind: 'text',
@@ -425,11 +426,11 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
     id: 'SL-HOURS', section_id: 'sleep', answer_kind: 'chip',
     question: '平均的な睡眠時間を教えてください。',
     chips: [
-      { label: '5時間未満', emoji: '😴' },
+      { label: '5時間未満', icon: 'sleep' },
       { label: '5〜6時間' },
       { label: '6〜7時間' },
       { label: '7〜8時間' },
-      { label: '8時間以上', emoji: '💤' },
+      { label: '8時間以上', icon: 'bed' },
     ],
   },
   {

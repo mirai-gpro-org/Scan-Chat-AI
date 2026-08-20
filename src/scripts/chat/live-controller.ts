@@ -13,6 +13,7 @@
  *   - ストリーミング transcript で AI/ユーザー発話をライブ表示
  */
 
+import { iconSvg } from '../../lib/icon-svg';
 import {
   GoogleGenAI,
   Modality,
@@ -215,7 +216,7 @@ void _OBSOLETE_SYSTEM_INSTRUCTION;
 // 旧 ChoiceOption / PresentArgs / FALLBACK_QUESTIONS / matchFallbackQuestion /
 // extractLastQuestion は engine 駆動化 (interview-script.ts) により全削除済。
 // 必要な型は QuestionDef / AnswerValue (interview-script から import)。
-type ChoiceOption = { label: string; emoji?: string };
+type ChoiceOption = { label: string; icon?: string };
 
 export async function initLiveController(refs: LiveRefs): Promise<void> {
   let session: ChatSession = loadChatSession(SESSION_ID) ?? createEmptySession(SESSION_ID);
@@ -1075,15 +1076,15 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
     refs.questionText.innerHTML = `
       <div class="flex flex-col items-center gap-3 py-2">
-        <p class="text-center text-base font-semibold text-slate-800 dark:text-slate-100">
+        <p class="text-center text-base font-semibold text-slate-800">
           ✨ お疲れさまでした、ご協力ありがとうございました。
         </p>
-        <p class="text-center text-xs text-slate-600 dark:text-slate-300">
+        <p class="text-center text-xs text-slate-600">
           ダッシュボードに「今日の気付き」が自動生成されます。
         </p>
         <a
           href="${dashUrl}"
-          class="mt-1 inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-brand-600 to-cyan-600 px-5 py-2 text-sm font-medium text-white shadow-md hover:from-brand-700 hover:to-cyan-700"
+          class="mt-1 inline-flex items-center gap-1 rounded-full bg-brand-600 px-5 py-2 text-sm font-medium text-white hover:bg-brand-700"
         >
           📊 ダッシュボードで結果を見る ›
         </a>
@@ -1106,7 +1107,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       btn.type = 'button';
       btn.className = 'choice-card';
       btn.dataset.chip = c.label;
-      btn.innerHTML = `${c.emoji ? `<span class="emoji">${escapeHtml(c.emoji)}</span>` : ''}<span class="flex-1">${escapeHtml(c.label)}</span><span class="text-slate-400">›</span>`;
+      btn.innerHTML = `${c.icon ? `<span class="emoji">${iconSvg(c.icon)}</span>` : ''}<span class="flex-1">${escapeHtml(c.label)}</span><span class="text-slate-400" aria-hidden="true">›</span>`;
       refs.uiChip.appendChild(btn);
     }
     // stagger アニメーション再トリガ
@@ -1126,7 +1127,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       wrap.setAttribute('for', id);
       wrap.innerHTML = `
         <input id="${id}" type="checkbox" value="${escapeAttr(o.label)}" class="h-5 w-5 accent-brand-600" />
-        ${o.emoji ? `<span class="emoji">${escapeHtml(o.emoji)}</span>` : ''}
+        ${o.icon ? `<span class="emoji">${iconSvg(o.icon)}</span>` : ''}
         <span class="flex-1">${escapeHtml(o.label)}</span>
       `;
       refs.multiOptions.appendChild(wrap);
@@ -1264,12 +1265,12 @@ function bubbleClass(role: ChatMessage['role']): string {
   const base = 'max-w-[82%] whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-sm shadow-sm';
   switch (role) {
     case 'user':
-      return `${base} bg-gradient-to-br from-brand-600 to-brand-700 text-white`;
+      return `${base} bg-brand-600 text-white`;
     case 'assistant':
-      return `${base} bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100`;
+      return `${base} bg-slate-100 text-slate-900`;
     case 'system':
     default:
-      return `${base} bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100`;
+      return `${base} bg-amber-100 text-amber-900`;
   }
 }
 

@@ -1,0 +1,249 @@
+---
+/**
+ * AppIcon — アプリ内で使う唯一のアイコン入口。
+ *
+ * 【方針 (発注者指定)】
+ *  - 絵文字・AI生成PNG を本番素材にしない。SVG アイコンライブラリへ統一する。
+ *  - ライブラリは Lucide (@lucide/astro, ISC) の 1 つだけ。混在させない。
+ *  - **静的マッピングのみ**。動的な文字列からのロードは行わない
+ *    (ビルド時に解決され、存在しない名前は型エラーになる)。
+ *  - Lucide の既定属性が設計ルールと一致する:
+ *    24x24 グリッド / アウトライン / stroke-width 2 / fill="none" / stroke="currentColor"。
+ *  - グラデーション・影・角丸タイル・ラスタ画像は付けない。
+ *
+ * 【使い方】
+ *   装飾 (隣にテキストがある):  <AppIcon name="blood" />
+ *     → Lucide 既定で aria-hidden="true" が付く。
+ *   アイコン単独のボタン:        <AppIcon name="close" label="閉じる" />
+ *     → role="img" + aria-label を付ける。
+ *
+ * 【禁止】アイコン単独で医学的判断や緊急性を伝えないこと。
+ *   状態表示は必ず アイコン + テキスト + 色 の 3 点セットにする。
+ *
+ * 意味名 → Lucide 名の対応はこのファイル 1 箇所で管理する。
+ * 差し替えたくなったら右辺だけを変える (呼び出し側は触らない)。
+ */
+import Activity from '@lucide/astro/icons/activity';
+import Ban from '@lucide/astro/icons/ban';
+import BatteryLow from '@lucide/astro/icons/battery-low';
+import BedDouble from '@lucide/astro/icons/bed-double';
+import Bell from '@lucide/astro/icons/bell';
+import Bike from '@lucide/astro/icons/bike';
+import Bone from '@lucide/astro/icons/bone';
+import BookOpen from '@lucide/astro/icons/book-open';
+import Bot from '@lucide/astro/icons/bot';
+import Brain from '@lucide/astro/icons/brain';
+import Calendar from '@lucide/astro/icons/calendar';
+import Camera from '@lucide/astro/icons/camera';
+import ChartNoAxesCombined from '@lucide/astro/icons/chart-no-axes-combined';
+import Check from '@lucide/astro/icons/check';
+import ChevronDown from '@lucide/astro/icons/chevron-down';
+import ChevronLeft from '@lucide/astro/icons/chevron-left';
+import ChevronRight from '@lucide/astro/icons/chevron-right';
+import Cigarette from '@lucide/astro/icons/cigarette';
+import CigaretteOff from '@lucide/astro/icons/cigarette-off';
+import CircleAlert from '@lucide/astro/icons/circle-alert';
+import CircleCheck from '@lucide/astro/icons/circle-check';
+import CircleDot from '@lucide/astro/icons/circle-dot';
+import CircleQuestionMark from '@lucide/astro/icons/circle-question-mark';
+import CircleX from '@lucide/astro/icons/circle-x';
+import ClipboardList from '@lucide/astro/icons/clipboard-list';
+import ClipboardPlus from '@lucide/astro/icons/clipboard-plus';
+import Clock from '@lucide/astro/icons/clock';
+import Cloud from '@lucide/astro/icons/cloud';
+import Disc from '@lucide/astro/icons/disc';
+import Dna from '@lucide/astro/icons/dna';
+import Download from '@lucide/astro/icons/download';
+import Droplet from '@lucide/astro/icons/droplet';
+import Dumbbell from '@lucide/astro/icons/dumbbell';
+import ExternalLink from '@lucide/astro/icons/external-link';
+import Eye from '@lucide/astro/icons/eye';
+import FileText from '@lucide/astro/icons/file-text';
+import Files from '@lucide/astro/icons/files';
+import Folder from '@lucide/astro/icons/folder';
+import FolderOpen from '@lucide/astro/icons/folder-open';
+import Footprints from '@lucide/astro/icons/footprints';
+import Hand from '@lucide/astro/icons/hand';
+import HeartPulse from '@lucide/astro/icons/heart-pulse';
+import House from '@lucide/astro/icons/house';
+import Image from '@lucide/astro/icons/image';
+import Info from '@lucide/astro/icons/info';
+import Leaf from '@lucide/astro/icons/leaf';
+import LeafyGreen from '@lucide/astro/icons/leafy-green';
+import Lightbulb from '@lucide/astro/icons/lightbulb';
+import LoaderCircle from '@lucide/astro/icons/loader-circle';
+import Lock from '@lucide/astro/icons/lock';
+import MapPin from '@lucide/astro/icons/map-pin';
+import Megaphone from '@lucide/astro/icons/megaphone';
+import Menu from '@lucide/astro/icons/menu';
+import MessagesSquare from '@lucide/astro/icons/messages-square';
+import Mic from '@lucide/astro/icons/mic';
+import MicOff from '@lucide/astro/icons/mic-off';
+import Microscope from '@lucide/astro/icons/microscope';
+import Minus from '@lucide/astro/icons/minus';
+import Moon from '@lucide/astro/icons/moon';
+import Newspaper from '@lucide/astro/icons/newspaper';
+import Package from '@lucide/astro/icons/package';
+import PackageCheck from '@lucide/astro/icons/package-check';
+import Paperclip from '@lucide/astro/icons/paperclip';
+import PersonStanding from '@lucide/astro/icons/person-standing';
+import Pill from '@lucide/astro/icons/pill';
+import Plus from '@lucide/astro/icons/plus';
+import QrCode from '@lucide/astro/icons/qr-code';
+import RefreshCw from '@lucide/astro/icons/refresh-cw';
+import Ribbon from '@lucide/astro/icons/ribbon';
+import Rocket from '@lucide/astro/icons/rocket';
+import Salad from '@lucide/astro/icons/salad';
+import Save from '@lucide/astro/icons/save';
+import ScanLine from '@lucide/astro/icons/scan-line';
+import Search from '@lucide/astro/icons/search';
+import Send from '@lucide/astro/icons/send';
+import Settings from '@lucide/astro/icons/settings';
+import Snowflake from '@lucide/astro/icons/snowflake';
+import Sprout from '@lucide/astro/icons/sprout';
+import Stethoscope from '@lucide/astro/icons/stethoscope';
+import Syringe from '@lucide/astro/icons/syringe';
+import Telescope from '@lucide/astro/icons/telescope';
+import TestTubeDiagonal from '@lucide/astro/icons/test-tube-diagonal';
+import Toilet from '@lucide/astro/icons/toilet';
+import TrendingDown from '@lucide/astro/icons/trending-down';
+import TrendingUp from '@lucide/astro/icons/trending-up';
+import TriangleAlert from '@lucide/astro/icons/triangle-alert';
+import Truck from '@lucide/astro/icons/truck';
+import Turtle from '@lucide/astro/icons/turtle';
+import Upload from '@lucide/astro/icons/upload';
+import User from '@lucide/astro/icons/user';
+import Utensils from '@lucide/astro/icons/utensils';
+import Volleyball from '@lucide/astro/icons/volleyball';
+import Volume2 from '@lucide/astro/icons/volume-2';
+import VolumeX from '@lucide/astro/icons/volume-x';
+import WavesLadder from '@lucide/astro/icons/waves-ladder';
+import Wine from '@lucide/astro/icons/wine';
+import Wrench from '@lucide/astro/icons/wrench';
+import X from '@lucide/astro/icons/x';
+import Zap from '@lucide/astro/icons/zap';
+
+export type AppIconName = keyof typeof ICONS;
+
+interface Props {
+  name: AppIconName;
+  /** 既定 20px。ナビ 20-24 / 機能カード 24-32。 */
+  size?: number;
+  class?: string;
+  /** アイコン単独で意味を持つ場合のみ指定する (指定時は aria-label が付く)。 */
+  label?: string;
+}
+
+const ICONS = {
+  'health-checkup': ClipboardPlus,
+  'blood': TestTubeDiagonal,
+  'cancer-risk': Ribbon,
+  'genetics': Dna,
+  'ai-prediction': Telescope,
+  'lab': Microscope,
+  'doctor': Stethoscope,
+  'scan': ScanLine,
+  'interview': MessagesSquare,
+  'coach': Bot,
+  'report': FileText,
+  'result': ClipboardList,
+  'history': Files,
+  'trend': ChartNoAxesCombined,
+  'health-age': HeartPulse,
+  'kit': Package,
+  'kit-shipped': Truck,
+  'kit-done': PackageCheck,
+  'ok': CircleCheck,
+  'watch': TriangleAlert,
+  'action': CircleAlert,
+  'active': LoaderCircle,
+  'unknown': CircleQuestionMark,
+  'blocked': CircleX,
+  'error': CircleX,
+  'up': TrendingUp,
+  'down': TrendingDown,
+  'flat': Minus,
+  'menu': Menu,
+  'close': X,
+  'next': ChevronRight,
+  'prev': ChevronLeft,
+  'expand': ChevronDown,
+  'search': Search,
+  'upload': Upload,
+  'download': Download,
+  'camera': Camera,
+  'qr': QrCode,
+  'external': ExternalLink,
+  'settings': Settings,
+  'user': User,
+  'home': House,
+  'calendar': Calendar,
+  'info': Info,
+  'lock': Lock,
+  'check': Check,
+  'add': Plus,
+  'refresh': RefreshCw,
+  'mic': Mic,
+  'mic-off': MicOff,
+  'speaker': Volume2,
+  'speaker-off': VolumeX,
+  'tip': Lightbulb,
+  'clock': Clock,
+  'send': Send,
+  'image': Image,
+  'notice': Bell,
+  'announce': Megaphone,
+  'news': Newspaper,
+  'location': MapPin,
+  'attachment': Paperclip,
+  'folder': Folder,
+  'folder-open': FolderOpen,
+  'save': Save,
+  'cloud': Cloud,
+  'tool': Wrench,
+  'launch': Rocket,
+  'point-down': ChevronDown,
+  'point': Hand,
+  'eye': Eye,
+  'record': CircleDot,
+  'wheel': Disc,
+  'book': BookOpen,
+  'syringe': Syringe,
+  'sprout': Sprout,
+  'ban': Ban,
+  'blood-drop': Droplet,
+  'smoking': Cigarette,
+  'smoking-past': Leaf,
+  'no-smoking': CigaretteOff,
+  'alcohol': Wine,
+  'meal': Utensils,
+  'vegetable': LeafyGreen,
+  'salad': Salad,
+  'exercise-walk': Footprints,
+  'exercise-run': Activity,
+  'exercise-swim': WavesLadder,
+  'exercise-muscle': Dumbbell,
+  'exercise-yoga': PersonStanding,
+  'exercise-sport': Volleyball,
+  'exercise-bike': Bike,
+  'sleep': Moon,
+  'bed': BedDouble,
+  'fast': Zap,
+  'slow': Turtle,
+  'medicine': Pill,
+  'none': CircleCheck,
+  'headache': Brain,
+  'shoulder': PersonStanding,
+  'back-pain': Bone,
+  'eye-strain': Eye,
+  'cold': Snowflake,
+  'stomach': Toilet,
+  'fatigue': BatteryLow,
+} as const;
+
+const { name, size = 20, class: className = '', label } = Astro.props;
+const Icon = ICONS[name];
+const a11y = label ? ({ role: 'img' as const, 'aria-label': label }) : ({} as Record<string, never>);
+---
+
+<Icon size={size} class={className} {...a11y} />

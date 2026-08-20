@@ -1,4 +1,5 @@
 ---
+import AppIcon from '../components/AppIcon.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import UrgentAlertBanner from '../components/dashboard/UrgentAlertBanner.astro';
 import MetricCard from '../components/dashboard/MetricCard.astro';
@@ -89,7 +90,7 @@ const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Wellfort';
 
   {hasError && (
     <main class="flex flex-1 flex-col items-center justify-center gap-3 px-5 text-center">
-      <span class="text-4xl">⚠️</span>
+      <AppIcon name="watch" size={32} class="text-slate-500" />
       <h1 class="text-lg font-bold">ダッシュボードを読み込めませんでした</h1>
       <p class="text-sm text-red-700">{(result as { error: string }).error}</p>
       <p class="text-xs text-slate-500">supabase/README.md の手順で local stack が起動しているか確認してください。</p>
@@ -114,10 +115,10 @@ const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Wellfort';
           />
           <a
             href={noticesHref}
-            class="relative flex flex-col items-center text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+            class="relative flex flex-col items-center text-slate-500 hover:text-slate-700"
             aria-label="お知らせ"
           >
-            <span class="text-xl leading-none">🔔</span>
+            <span class="text-xl leading-none"><AppIcon name="notice" size={20} /></span>
             <span class="text-[10px] font-medium">お知らせ</span>
             {unreadNotices > 0 && (
               <span class="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">
@@ -130,9 +131,9 @@ const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Wellfort';
           {greeting}、こんにちは。
         </h1>
         {data?.latestResult?.received_at && (
-          <p class="mt-1 text-[11px] text-slate-600 dark:text-slate-300">
+          <p class="mt-1 text-[11px] text-slate-600">
             最新の AI 診断: {new Date(data.latestResult.received_at).toLocaleDateString('ja-JP')} ·
-            <span class="ml-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+            <span class="ml-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
               {data.latestResult.status === 'published' ? '公開済' : data.latestResult.status}
             </span>
           </p>
@@ -147,16 +148,16 @@ const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Wellfort';
         <section class="grid grid-cols-2 gap-2">
           <a
             href={u ? `/chat?u=${encodeURIComponent(u)}` : '/chat'}
-            class="group flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-brand-500 via-indigo-500 to-cyan-500 px-3 py-3 text-white shadow-md shadow-brand-500/30 transition hover:-translate-y-0.5 hover:shadow-lg"
+            class="group flex items-center justify-center gap-2 rounded-2xl bg-brand-600 px-3 py-3 text-white transition hover:-translate-y-0.5"
           >
-            <span class="text-xl">🩺</span>
+            <span class="text-xl"><AppIcon name="doctor" size={20} /></span>
             <span class="text-sm font-semibold">AI 問診を始める</span>
           </a>
           <a
             href={u ? `/scan?u=${encodeURIComponent(u)}` : '/scan'}
-            class="group flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+            class="group flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:border-brand-300"
           >
-            <span class="text-xl">📸</span>
+            <span class="text-xl"><AppIcon name="camera" size={20} /></span>
             <span class="text-sm font-semibold">AI スキャン</span>
           </a>
         </section>
@@ -176,7 +177,7 @@ const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Wellfort';
           return (
           <section>
             <header class="mb-2 flex items-center justify-between">
-              <h2 class="text-sm font-bold text-slate-800 dark:text-slate-100">📈 直近の検査結果</h2>
+              <h2 class="text-sm font-bold text-slate-800"><AppIcon name="trend" size={20} /> 直近の検査結果</h2>
               <span class="text-[10px] text-slate-500">AI診断結果 (Wellfort-Elith)</span>
             </header>
             <div class="grid grid-cols-3 gap-2">
@@ -210,9 +211,9 @@ const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Wellfort';
         <TestHistoryList artifacts={data?.artifacts ?? []} diagnosticUserId={data?.diagnosticUserId} />
 
         {/* dev / debug 用フッタ */}
-        <details class="rounded-2xl border border-dashed border-slate-300 p-3 dark:border-slate-700">
-          <summary class="cursor-pointer text-xs font-medium text-slate-500">🛠 デバッグ (開発用)</summary>
-          <dl class="mt-2 space-y-1 text-[11px] text-slate-600 dark:text-slate-400">
+        <details class="rounded-2xl border border-dashed border-slate-300 p-3">
+          <summary class="cursor-pointer text-xs font-medium text-slate-500"><AppIcon name="tool" size={20} /> デバッグ (開発用)</summary>
+          <dl class="mt-2 space-y-1 text-[11px] text-slate-600">
             <div class="flex justify-between"><dt>diagnostic_user_id:</dt><dd class="font-mono">{data?.diagnosticUserId}</dd></div>
             <div class="flex justify-between"><dt>artifacts:</dt><dd>{data?.artifacts.length} 件</dd></div>
             <div class="flex justify-between"><dt>shipments:</dt><dd>{data?.shipments.length} 件</dd></div>
@@ -220,11 +221,11 @@ const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Wellfort';
             <div class="flex justify-between"><dt>abstract:</dt><dd>{abstract ? `${abstract.char_count}字` : 'なし'}</dd></div>
             <p class="pt-2 text-[10px]">他ユーザーで試す:</p>
             <div class="flex flex-wrap gap-1 pt-1">
-              <a href="/dashboard?u=d0000001-0000-0000-0000-000000000000" class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300">真鍋 (主役)</a>
-              <a href="/dashboard?u=d0000002-0000-0000-0000-000000000000" class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300">田中</a>
-              <a href="/dashboard?u=d0000003-0000-0000-0000-000000000000" class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300">山田</a>
-              <a href="/dashboard?u=d0000007-0000-0000-0000-000000000000" class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300">渡辺</a>
-              <a href="/dashboard?u=da000001-0000-0000-0000-000000000000" class="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-800 hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-200">山田太郎 (OEMデモ)</a>
+              <a href="/dashboard?u=d0000001-0000-0000-0000-000000000000" class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-200">真鍋 (主役)</a>
+              <a href="/dashboard?u=d0000002-0000-0000-0000-000000000000" class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-200">田中</a>
+              <a href="/dashboard?u=d0000003-0000-0000-0000-000000000000" class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-200">山田</a>
+              <a href="/dashboard?u=d0000007-0000-0000-0000-000000000000" class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-200">渡辺</a>
+              <a href="/dashboard?u=da000001-0000-0000-0000-000000000000" class="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-800 hover:bg-emerald-200">山田太郎 (OEMデモ)</a>
             </div>
           </dl>
         </details>
