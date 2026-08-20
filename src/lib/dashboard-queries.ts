@@ -27,13 +27,17 @@ export interface MetricTrendPoint {
   value: number;
   /** chip 表示用 — 元の "8.4" や "132/85" */
   raw: string;
+  /** 検査機関が付けた基準外マーカー。アプリは算出しない。 */
+  flag?: 'H' | 'L' | null;
 }
 
 export interface MetricTrendSeries {
-  label: string;       // '尿酸' | '血圧 (収縮期)' | '空腹時血糖'
+  label: string;
   unit: string;
-  /** 参考の基準上限 (折れ線グラフに点線で描画) */
+  /** 検査票由来の基準上限 (グラフに基準帯として描画)。アプリが決めた値ではない。 */
   referenceUpper?: number;
+  /** 検査票由来の基準下限。 */
+  referenceLower?: number;
   points: MetricTrendPoint[];
 }
 

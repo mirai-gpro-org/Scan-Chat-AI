@@ -42,7 +42,7 @@ const initialGreeting = urgentAlert
   : `${displayName}、こんにちは AI ヘルスコーチです。最新の AI 診断結果を読み込みました。健康に関するご質問は何でもお気軽にお尋ねください。`;
 ---
 
-<BaseLayout title="AI ヘルスコーチ | Wellfort">
+<BaseLayout title="AI ヘルスコーチ | Welltect" width="flow">
   <header class="hero-gradient relative px-5 pt-5 pb-3">
     <div class="flex items-center justify-between">
       <a
@@ -64,7 +64,7 @@ const initialGreeting = urgentAlert
     </div>
 
     {hasContext && (
-      <p class="mt-2 text-[11px] text-slate-600">
+      <p class="mt-2 text-xs text-slate-600">
         {displayName} の AI 診断結果 (Elith {sectionCount} セクション) を参照中
       </p>
     )}
@@ -106,7 +106,7 @@ const initialGreeting = urgentAlert
       </div>
 
       {urgentAlert && (
-        <div class="mx-5 mt-1 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-[11px] text-red-900">
+        <div class="mx-5 mt-1 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-900">
           <strong><AppIcon name="record" size={20} /> 緊急留意事項:</strong> {urgentAlert.title}
         </div>
       )}
@@ -160,7 +160,7 @@ const initialGreeting = urgentAlert
               </svg>
               <span class="mic-label mt-1 text-xs font-semibold">相談を開始</span>
             </button>
-            <div class="mt-1 flex items-center gap-2 rounded-full bg-slate-50 px-3 py-1.5 text-[11px] text-slate-600">
+            <div class="mt-1 flex items-center gap-2 rounded-full bg-slate-50 px-3 py-1.5 text-xs text-slate-600">
               <span><AppIcon name="mic" size={20} /> 話す</span>
               <span class="text-slate-400">/</span>
               <span>⌨ 入力する</span>
@@ -182,7 +182,7 @@ const initialGreeting = urgentAlert
                 aria-label="音声入力を開始"
               >
                 <span class="mic-icon text-lg"><AppIcon name="mic" size={20} /></span>
-                <span class="mic-label text-[10px]">話す</span>
+                <span class="mic-label text-xs">話す</span>
               </button>
               <button
                 id="speaker-btn"
@@ -213,14 +213,14 @@ const initialGreeting = urgentAlert
                   <line x1="22" y1="9" x2="16" y2="15"/>
                   <line x1="16" y1="9" x2="22" y2="15"/>
                 </svg>
-                <span class="speaker-label text-[10px]">音声</span>
+                <span class="speaker-label text-xs">音声</span>
               </button>
             </div>
 
             <!-- 二刀流ヒント -->
             <div
               id="dual-hint"
-              class="mb-2 flex items-center justify-center gap-2 rounded-full bg-brand-50 px-3 py-1 text-[11px] text-brand-700"
+              class="mb-2 flex items-center justify-center gap-2 rounded-full bg-brand-50 px-3 py-1 text-xs text-brand-700"
             >
               <span><AppIcon name="mic" size={20} /> 話してもOK</span>
               <span class="text-brand-400">・</span>
@@ -251,7 +251,7 @@ const initialGreeting = urgentAlert
           </div>
         </section>
 
-        <p class="text-center text-[10px] text-slate-400">
+        <p class="text-center text-xs text-slate-400">
           ※ 医療アドバイスには該当しません。診断・治療は主治医にご相談ください。
         </p>
       </main>

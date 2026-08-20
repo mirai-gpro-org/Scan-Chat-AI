@@ -412,7 +412,7 @@ export class ScanVerificationController {
       overlay.addEventListener('click', () => this.selectRegion(idx));
       const labelEl = document.createElement('span');
       labelEl.className =
-        'absolute -top-5 left-0 rounded bg-slate-900/80 px-1.5 py-0.5 text-[10px] font-medium text-white';
+        'absolute -top-5 left-0 rounded bg-slate-900/80 px-1.5 py-0.5 text-xs font-medium text-white';
       labelEl.textContent = `#${idx + 1} ${this.regions[idx].region.label}`;
       overlay.appendChild(labelEl);
       layer.appendChild(overlay);
@@ -537,7 +537,7 @@ export class ScanVerificationController {
     body.appendChild(table);
     // 凡例
     const legend = document.createElement('p');
-    legend.className = 'mt-3 text-[11px] text-slate-500';
+    legend.className = 'mt-3 text-xs text-slate-500';
     legend.innerHTML =
       '<span class="inline-block h-2 w-2 rounded bg-amber-300"></span> 要確認セル / ' +
       '<span class="inline-block h-2 w-2 rounded bg-emerald-300"></span> 確認済 (タップで修正できます)';
@@ -607,7 +607,7 @@ export class ScanVerificationController {
       label.className = 'text-xs font-medium text-slate-700';
       label.textContent = draft.header;
       const status = document.createElement('span');
-      status.className = 'text-[10px] font-medium';
+      status.className = 'text-xs font-medium';
       headerRow.append(label, status);
       card.appendChild(headerRow);
 
@@ -627,7 +627,7 @@ export class ScanVerificationController {
         okBtn.type = 'button';
         okBtn.textContent = '✓ このまま OK';
         okBtn.className =
-          'mt-1.5 rounded border border-amber-500 px-2 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100';
+          'mt-1.5 rounded border border-amber-500 px-2 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-100';
         card.appendChild(okBtn);
       }
 
@@ -642,7 +642,7 @@ export class ScanVerificationController {
             'w-full rounded border border-slate-300 bg-white px-2 py-1 font-mono text-sm text-slate-900 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500';
           status.textContent = draft.isEdited ? '修正済' : '';
           status.className =
-            'text-[10px] font-medium text-emerald-700';
+            'text-xs font-medium text-emerald-700';
         } else if (resolved) {
           card.className =
             'rounded-lg border-2 border-emerald-400 bg-emerald-50 p-2 transition-colors';
@@ -652,7 +652,7 @@ export class ScanVerificationController {
             ? '修正済'
             : '✓ 確認済';
           status.className =
-            'text-[10px] font-medium text-emerald-700';
+            'text-xs font-medium text-emerald-700';
         } else {
           card.className =
             'rounded-lg border-2 border-amber-400 bg-amber-50 p-2 transition-colors';
@@ -660,7 +660,7 @@ export class ScanVerificationController {
             'w-full rounded border border-amber-400 bg-white px-2 py-1 font-mono text-sm text-slate-900 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500';
           status.textContent = '要確認';
           status.className =
-            'text-[10px] font-medium text-amber-700';
+            'text-xs font-medium text-amber-700';
         }
         if (okBtn) okBtn.hidden = resolved;
       };

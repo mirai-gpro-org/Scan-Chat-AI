@@ -341,6 +341,16 @@
   }
   @keyframes caret-blink { 50% { opacity: 0; } }
 
+  /* ─ 端末種別による出し分け ─
+     要件 F-A5「PC はカメラスキャン非対応」。JS ではなくポインタ種別で分けるため、
+     JS が無効でも表示が破綻しない。 */
+  .touch-only { display: none; }
+  .pointer-only { display: block; }
+  @media (pointer: coarse) {
+    .touch-only { display: flex; }
+    .pointer-only { display: none; }
+  }
+
   /* ヘッダー背景。放射グラデーションは使わない (禁止指定) → Medical Mist の単色面。 */
   .hero-gradient {
     background: theme('colors.mist');

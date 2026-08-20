@@ -16,7 +16,7 @@ const uidQs = diagnosticUserId ? `?u=${encodeURIComponent(diagnosticUserId)}` : 
     <h2 class="flex items-center gap-2 text-sm font-bold text-slate-800">
       <span><AppIcon name="trend" size={20} /></span><span>検査履歴</span>
     </h2>
-    <span class="text-[10px] text-slate-500">{artifacts.length} 件</span>
+    <span class="text-xs text-slate-500">{artifacts.length} 件</span>
   </header>
 
   {artifacts.length === 0 ? (
@@ -40,9 +40,9 @@ const uidQs = diagnosticUserId ? `?u=${encodeURIComponent(diagnosticUserId)}` : 
               <div class="flex-1">
                 <div class="flex items-baseline justify-between gap-2">
                   <h3 class="text-sm font-medium text-slate-800">{tt.name}</h3>
-                  <time class="text-[10px] text-slate-500">{formatJpDate(a.test_date)}</time>
+                  <time class="text-xs text-slate-500">{formatJpDate(a.test_date)}</time>
                 </div>
-                <div class="mt-0.5 flex items-center gap-2 text-[10px] text-slate-500">
+                <div class="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
                   <span>{a.lab_name ?? a.source}</span>
                   {a.page_count && a.page_count > 1 && <span>· {a.page_count}pg</span>}
                   {isThreeMode && (

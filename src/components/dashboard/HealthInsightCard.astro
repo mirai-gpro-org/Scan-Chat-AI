@@ -17,7 +17,7 @@ const { diagnosticUserId } = Astro.props as Props;
     <h2 class="flex items-center gap-2 text-sm font-bold text-slate-800">
       <span><AppIcon name="sprout" size={20} /></span><span>今日の気付き</span>
     </h2>
-    <span id="insight-meta" class="text-[10px] text-slate-500"></span>
+    <span id="insight-meta" class="text-xs text-slate-500"></span>
   </header>
 
   {/* 状態は JS で切替: empty / loading / content / error */}
@@ -27,7 +27,7 @@ const { diagnosticUserId } = Astro.props as Props;
     <a
       id="insight-cta"
       href="/chat"
-      class="mt-2 inline-flex items-center justify-center rounded-lg bg-brand-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-brand-700"
+      class="mt-2 inline-flex items-center justify-center rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700"
     >
       <AppIcon name="doctor" size={20} /> 問診を始める ›
     </a>
@@ -51,7 +51,7 @@ const { diagnosticUserId } = Astro.props as Props;
       id="insight-refresh"
       type="button"
       hidden
-      class="text-[11px] text-slate-500 hover:text-brand-600 hover:underline"
+      class="text-xs text-slate-500 hover:text-brand-600 hover:underline"
     ><AppIcon name="refresh" size={20} /> 再生成</button>
   </div>
 </section>

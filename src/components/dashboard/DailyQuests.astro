@@ -14,7 +14,7 @@ const { quests } = Astro.props as Props;
       <span class="text-base"><AppIcon name="tip" size={20} /></span>
       <span>本日の健康クエスト</span>
     </h2>
-    <span class="text-[10px] text-slate-500">{quests.length} 件</span>
+    <span class="text-xs text-slate-500">{quests.length} 件</span>
   </header>
 
   <ul class="space-y-2">
@@ -35,7 +35,7 @@ const { quests } = Astro.props as Props;
               <div class="flex items-baseline justify-between gap-2">
                 <span class="text-sm font-medium text-slate-800">{q.text}</span>
                 {q.display && (
-                  <span class="text-[11px] tabular-nums text-slate-500">{q.display}</span>
+                  <span class="text-xs tabular-nums text-slate-500">{q.display}</span>
                 )}
               </div>
               {typeof q.progress === 'number' && q.progress > 0 && (

@@ -16,7 +16,7 @@ const uploads = diagnosticUserId ? await getUserUploads(diagnosticUserId) : [];
 const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnosticUserId)}` : '/dashboard';
 ---
 
-<BaseLayout title="スキャン | Scan-Chat Medical AI">
+<BaseLayout title="AI スキャン | Welltect" width="app">
   <header class="flex items-center justify-between px-5 pt-6 pb-3">
     <a href={diagnosticUserId ? `/?u=${encodeURIComponent(diagnosticUserId)}` : '/'} class="-ml-2 inline-flex h-10 w-10 items-center justify-center text-2xl text-slate-500 hover:text-slate-700" aria-label="戻る">‹</a>
     <h1 class="text-base font-semibold">スキャン</h1>
@@ -48,7 +48,7 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
         >
           <AppIcon name="attachment" size={32} class="text-slate-500" />
           <span class="text-base">ファイルをアップロード</span>
-          <span class="text-[11px] font-normal text-white/85">PDF / JPEG / PNG / WebP / HEIC<span class="text-white/65"> (最大 4 MB)</span></span>
+          <span class="text-xs font-normal text-white/85">PDF / JPEG / PNG / WebP / HEIC<span class="text-white/65"> (最大 4 MB)</span></span>
         </label>
         <input
           id="scan-file"
@@ -57,13 +57,47 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
           accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"
         />
 
+        {/*
+          カメラ撮影はスマートフォン限定 (要件 F-A5: PC はカメラスキャン非対応)。
+          タッチ端末 (pointer: coarse) でだけ表示し、PC ではアップロードのみにする。
+          判定は CSS のポインタ種別で行い、JS が無効でも崩れないようにする。
+        */}
         <button
           id="scan-start"
-          class="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 active:scale-[0.98]"
+          class="touch-only flex min-h-touch w-full items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-5 py-3 text-base font-semibold text-slate-700 transition hover:border-brand-400 hover:bg-brand-50 active:scale-[0.99]"
         >
-          <span class="text-lg"><AppIcon name="camera" size={20} /></span>
+          <AppIcon name="camera" size={20} />
           <span>カメラで撮影</span>
         </button>
+
+        {/* PC 向け: カメラの代わりにスマートフォンへの導線を出す。 */}
+        <div class="pointer-only rounded-2xl border border-slate-200 bg-white p-4 text-left">
+          <p class="flex items-center gap-2 text-base font-semibold text-navy-800">
+            <AppIcon name="camera" size={20} class="text-slate-600" />
+            カメラ撮影はスマートフォンから
+          </p>
+          <p class="mt-1.5 text-sm text-slate-700">
+            PC ではファイルのアップロードのみに対応しています。用紙を撮影して読み取る場合は、
+            このページをスマートフォンで開いてください。
+          </p>
+          <div class="mt-3 flex flex-wrap items-center gap-2">
+            <input
+              id="scan-share-url"
+              type="text"
+              readonly
+              class="min-h-touch flex-1 rounded-xl border border-slate-300 bg-slate-50 px-3 text-sm text-slate-800"
+              aria-label="このページの URL"
+            />
+            <button
+              id="scan-share-copy"
+              type="button"
+              class="btn-secondary !py-2 !text-sm"
+            >
+              <AppIcon name="attachment" size={16} class="mr-1.5" />URL をコピー
+            </button>
+          </div>
+          <p id="scan-share-msg" class="mt-1.5 text-sm text-brand-700" aria-live="polite"></p>
+        </div>
       </div>
 
       {/* ━━━ これまでにスキャンした検査一覧 ━━━ */}
@@ -74,7 +108,7 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
               <span><AppIcon name="book" size={20} /></span>
               <span>これまでにスキャンした検査</span>
             </h3>
-            <a href={dashUrl} class="text-[10px] text-brand-600 hover:underline">全件 ›</a>
+            <a href={dashUrl} class="text-xs text-brand-600 hover:underline">全件 ›</a>
           </header>
           <ul class="space-y-1.5">
             {uploads.slice(0, 5).map((a) => {
@@ -94,9 +128,9 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
                     <div class="min-w-0 flex-1">
                       <div class="flex items-baseline justify-between gap-2">
                         <h4 class="truncate text-sm font-medium text-slate-800">{tt.name}</h4>
-                        <time class="shrink-0 text-[10px] text-slate-500">{formatJpDate(a.test_date)}</time>
+                        <time class="shrink-0 text-xs text-slate-500">{formatJpDate(a.test_date)}</time>
                       </div>
-                      <p class="mt-0.5 truncate text-[10px] text-slate-500">
+                      <p class="mt-0.5 truncate text-xs text-slate-500">
                         {a.lab_name ?? 'ユーザー UL'}
                         {a.page_count && a.page_count > 1 && <span> · {a.page_count}pg</span>}
                       </p>
@@ -108,7 +142,7 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
             })}
           </ul>
           {uploads.length > 5 && (
-            <p class="mt-2 text-center text-[10px] text-slate-500">
+            <p class="mt-2 text-center text-xs text-slate-500">
               他 {uploads.length - 5} 件 — <a href={dashUrl} class="text-brand-600 hover:underline">ダッシュボードで確認</a>
             </p>
           )}
@@ -146,7 +180,7 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
         <div class="pointer-events-none absolute inset-4 rounded-xl border-2 border-white/70"></div>
 
         <!-- 信頼度の凡例 -->
-        <div class="pointer-events-none absolute left-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-xs text-white backdrop-blur-sm">
+        <div class="pointer-events-none absolute left-3 top-3 rounded-full bg-navy-900/85 px-2.5 py-1 text-xs text-white">
           <span class="mr-1 inline-block h-2 w-2 rounded-full bg-emerald-400 align-middle"></span>
           高信頼
           <span class="ml-2 mr-1 inline-block h-2 w-2 rounded-full bg-amber-300 align-middle"></span>
@@ -154,7 +188,7 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
         </div>
 
         <!-- 解析中オーバーレイ -->
-        <div id="busy-overlay" class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/60 text-white backdrop-blur-sm" hidden>
+        <div id="busy-overlay" class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-navy-900/85 text-white" hidden>
           <div class="h-10 w-10 animate-spin rounded-full border-2 border-white/30 border-t-white"></div>
           <p class="text-sm font-medium">AI が解析しています…</p>
         </div>
@@ -226,13 +260,13 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
         <summary class="cursor-pointer text-xs font-medium text-slate-500">詳細データ (開発用)</summary>
         <div class="mt-2 space-y-3">
           <div>
-            <p class="mb-1 text-[10px] uppercase tracking-wide text-slate-400">
-              Gemini raw markdown <span id="scan-finish" class="ml-1 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-normal text-slate-700"></span>
+            <p class="mb-1 text-xs uppercase tracking-wide text-slate-400">
+              Gemini raw markdown <span id="scan-finish" class="ml-1 rounded bg-slate-200 px-1.5 py-0.5 text-xs font-normal text-slate-700"></span>
             </p>
             <pre id="scan-raw" class="max-h-[480px] overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs text-slate-700"></pre>
           </div>
           <div>
-            <p class="mb-1 text-[10px] uppercase tracking-wide text-slate-400">下流診断 AI 送信用 Markdown (編集反映)</p>
+            <p class="mb-1 text-xs uppercase tracking-wide text-slate-400">下流診断 AI 送信用 Markdown (編集反映)</p>
             <pre id="scan-result" class="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs text-slate-700"></pre>
           </div>
         </div>
@@ -253,7 +287,7 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
           <button id="scan-export-s3" type="button" class="btn-secondary w-full !py-2 text-sm" disabled>
             <AppIcon name="cloud" size={20} /> S3へ書き出し（Elith用・テスト）
           </button>
-          <p id="scan-export-status" class="mt-1 break-words text-center text-[11px] text-slate-500" aria-live="polite"></p>
+          <p id="scan-export-status" class="mt-1 break-words text-center text-xs text-slate-500" aria-live="polite"></p>
         </div>
       </div>
     </section>
@@ -267,7 +301,7 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
         </header>
         <div id="row-edit-cells" class="flex-1 space-y-2 overflow-y-auto px-3 py-3"></div>
         <footer class="border-t border-slate-100 px-4 py-3">
-          <p class="mb-2 text-[10px] text-slate-500">
+          <p class="mb-2 text-xs text-slate-500">
             <span class="inline-block h-2 w-2 rounded bg-amber-300"></span> 要確認のセル: 修正を入力するか「このまま OK」で解消します。
           </p>
           <button id="row-edit-save" type="button" class="btn-primary w-full !py-2 text-sm"><AppIcon name="save" size={20} /> 保存して閉じる</button>
@@ -508,4 +542,23 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
 
     show('ready');
   });
+
+  // ── PC 向け: このページの URL を表示してコピーできるようにする ──
+  // (カメラはスマートフォン限定のため、端末を移してもらう導線)
+  {
+    const urlInput = document.getElementById('scan-share-url') as HTMLInputElement | null;
+    const copyBtn = document.getElementById('scan-share-copy');
+    const msg = document.getElementById('scan-share-msg');
+    if (urlInput) urlInput.value = window.location.href;
+    copyBtn?.addEventListener('click', async () => {
+      if (!urlInput) return;
+      try {
+        await navigator.clipboard.writeText(urlInput.value);
+        if (msg) msg.textContent = 'コピーしました。スマートフォンのブラウザで開いてください。';
+      } catch {
+        urlInput.select();
+        if (msg) msg.textContent = 'コピーできませんでした。選択状態にしたので手動でコピーしてください。';
+      }
+    });
+  }
 </script>

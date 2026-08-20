@@ -1,0 +1,148 @@
+---
+import AppIcon from './AppIcon.astro';
+import type { AppIconName } from './AppIcon.astro';
+
+/**
+ * グローバルナビゲーション。
+ *
+ * PC でも左固定サイドバーにせず、**左上のボタンで開閉するドロワー**にする
+ * (発注者指定 2026-08)。画面幅によらず操作が同じで、業務画面の横幅を奪わない。
+ *
+ * アクセシビリティ:
+ *   - トグルは aria-expanded / aria-controls を持つ
+ *   - 開いている間は Esc で閉じ、フォーカスをパネル内に移す
+ *   - ナビ項目はアイコン 20px + テキストラベル (アイコン単独にしない)
+ *   - タップ領域 44px 以上
+ */
+
+interface Props {
+  /** ?u= を引き継ぐための diagnostic_user_id (テストフェーズの導線)。 */
+  u?: string | null;
+  /** 現在のパス (/dashboard 等)。現在地の強調に使う。 */
+  current?: string;
+  /** 未読の重要なお知らせ件数。 */
+  unreadNotices?: number;
+  /** OEM デモ用のロゴ差し替え。 */
+  logoSrc?: string;
+  logoAlt?: string;
+}
+const {
+  u = null,
+  current = '',
+  unreadNotices = 0,
+  logoSrc = '/wellfort_logo.png',
+  logoAlt = 'Welltect',
+} = Astro.props as Props;
+
+const q = u ? `?u=${encodeURIComponent(u)}` : '';
+const ITEMS: { href: string; label: string; icon: AppIconName; note?: string }[] = [
+  { href: `/dashboard${q}`, label: 'ホーム',       icon: 'home',      note: '最新の状況' },
+  { href: `/scan${q}`,      label: 'AI スキャン',  icon: 'scan',      note: '検診結果を読み取る' },
+  { href: `/chat${q}`,      label: 'AI 問診',      icon: 'interview', note: '生活習慣を記録する' },
+  { href: `/kit${q}`,       label: '検査キット',   icon: 'kit',       note: '発送と返送の進捗' },
+  { href: `/coach${q}`,     label: 'AI コーチ',    icon: 'coach',     note: '結果について相談' },
+  { href: `/notices${q}`,   label: 'お知らせ',     icon: 'notice' },
+];
+---
+
+<header class="sticky top-0 z-30 border-b border-slate-200 bg-slate-50">
+  <div class="flex items-center justify-between gap-2 px-4 py-2">
+    <button
+      type="button"
+      id="nav-toggle"
+      class="inline-flex min-h-touch min-w-touch items-center justify-center gap-2 rounded-xl px-3 text-slate-700 transition hover:bg-slate-100"
+      aria-expanded="false"
+      aria-controls="nav-panel"
+    >
+      <AppIcon name="menu" size={24} />
+      <span class="text-sm font-medium">メニュー</span>
+    </button>
+
+    <img src={logoSrc} alt={logoAlt} height="36" class="h-9 w-auto select-none" />
+
+    <a
+      href={`/notices${q}`}
+      class="relative inline-flex min-h-touch min-w-touch flex-col items-center justify-center rounded-xl px-2 text-slate-700 transition hover:bg-slate-100"
+    >
+      <AppIcon name="notice" size={22} />
+      <span class="text-xs font-medium">お知らせ</span>
+      {unreadNotices > 0 && (
+        <span class="tnum absolute right-0 top-0 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-status-action px-1 text-xs font-bold text-white">
+          {unreadNotices > 9 ? '9+' : unreadNotices}
+        </span>
+      )}
+      <span class="sr-only">{unreadNotices > 0 ? `未読 ${unreadNotices} 件` : '未読なし'}</span>
+    </a>
+  </div>
+</header>
+
+<div id="nav-backdrop" class="sheet-backdrop hidden" hidden></div>
+
+<nav
+  id="nav-panel"
+  class="fixed left-0 top-0 z-50 hidden h-full w-[min(20rem,85vw)] flex-col gap-1 overflow-y-auto border-r border-slate-200 bg-white p-4 safe-top safe-bottom"
+  aria-label="グローバルナビゲーション"
+  hidden
+>
+  <div class="mb-2 flex items-center justify-between">
+    <span class="text-base font-bold text-navy-800">メニュー</span>
+    <button
+      type="button"
+      id="nav-close"
+      class="inline-flex min-h-touch min-w-touch items-center justify-center rounded-xl text-slate-700 transition hover:bg-slate-100"
+    >
+      <AppIcon name="close" size={24} label="メニューを閉じる" />
+    </button>
+  </div>
+
+  {ITEMS.map((it) => {
+    const active = current === it.href.split('?')[0];
+    return (
+      <a
+        href={it.href}
+        aria-current={active ? 'page' : undefined}
+        class={`flex min-h-touch items-center gap-3 rounded-xl px-3 py-3 transition ${
+          active ? 'bg-mist text-brand-800' : 'text-slate-800 hover:bg-slate-100'
+        }`}
+      >
+        <AppIcon name={it.icon} size={22} class={active ? 'text-brand-700' : 'text-slate-600'} />
+        <span class="flex flex-col">
+          <span class="text-base font-semibold">{it.label}</span>
+          {it.note && <span class="text-sm text-slate-600">{it.note}</span>}
+        </span>
+      </a>
+    );
+  })}
+</nav>
+
+<script>
+  const toggle = document.getElementById('nav-toggle');
+  const panel = document.getElementById('nav-panel');
+  const backdrop = document.getElementById('nav-backdrop');
+  const closeBtn = document.getElementById('nav-close');
+  let lastFocus: HTMLElement | null = null;
+
+  function setOpen(open: boolean): void {
+    if (!toggle || !panel || !backdrop) return;
+    toggle.setAttribute('aria-expanded', String(open));
+    panel.hidden = !open;
+    backdrop.hidden = !open;
+    panel.classList.toggle('hidden', !open);
+    panel.classList.toggle('flex', open);
+    backdrop.classList.toggle('hidden', !open);
+    document.body.style.overflow = open ? 'hidden' : '';
+    if (open) {
+      lastFocus = document.activeElement as HTMLElement | null;
+      (panel.querySelector('a, button') as HTMLElement | null)?.focus();
+    } else {
+      lastFocus?.focus();
+    }
+  }
+
+  toggle?.addEventListener('click', () => setOpen(panel?.hidden ?? true));
+  closeBtn?.addEventListener('click', () => setOpen(false));
+  backdrop?.addEventListener('click', () => setOpen(false));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !panel?.hidden) setOpen(false);
+  });
+</script>

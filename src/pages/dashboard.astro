@@ -1,5 +1,6 @@
 ---
 import AppIcon from '../components/AppIcon.astro';
+import AppNav from '../components/AppNav.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import UrgentAlertBanner from '../components/dashboard/UrgentAlertBanner.astro';
 import MetricCard from '../components/dashboard/MetricCard.astro';
@@ -11,11 +12,11 @@ import HealthInsightCard from '../components/dashboard/HealthInsightCard.astro';
 import MetricTrendChart from '../components/dashboard/MetricTrendChart.astro';
 import HealthAgeCard from '../components/dashboard/HealthAgeCard.astro';
 import TestHistoryList from '../components/dashboard/TestHistoryList.astro';
-import { loadDashboard, formatGreeting, getMetricTrend, getHealthAge } from '../lib/dashboard-queries';
+import { loadDashboard, formatGreeting, getHealthAge, formatJpDate, testTypeLabel } from '../lib/dashboard-queries';
+import { getLatestMeasurements, getMeasurementTrend } from '../lib/measurement-queries';
 import { countUnreadImportant } from '../lib/notice-queries';
 import { isBridgeConfigured } from '../lib/supabase';
 import {
-  extractMetricCards,
   extractUrgentAlert,
   extractDailyQuests,
   extractSituationalCards,
@@ -29,16 +30,17 @@ const u = url.searchParams.get('u');
 
 // === [一時デバッグ] HP↔#2 ブリッジ接続状態の可視化 ===
 // `?debug=bridge` を付けて開くとサーバー側 env の有無をUIに表示する。
-// 本番反映確認後に削除予定。
 const debugBridge = url.searchParams.get('debug') === 'bridge';
 const bridgeConfigured = isBridgeConfigured();
 const bridgeUrlSeen = !!(import.meta.env.HP_BRIDGE_SUPABASE_URL || (typeof process !== 'undefined' ? process.env?.HP_BRIDGE_SUPABASE_URL : ''));
 const bridgeKeySeen = !!(import.meta.env.HP_BRIDGE_READONLY_KEY  || (typeof process !== 'undefined' ? process.env?.HP_BRIDGE_READONLY_KEY  : ''));
-// サーバーログにも出す（Vercel の Logs で確認可能）
 console.log('[bridge-debug]', { bridgeConfigured, bridgeUrlSeen, bridgeKeySeen, build: 'v3-2026-06-22' });
 
-// 認証連携が有効 (Google One Tap が設定済) かつ ?u= が無い場合は、
-// 他人のデフォルトデータを露出させないように sign-in gate を出す。
+// テストフェーズの前提 (発注者指定 2026-08-20):
+//   Wellfort の admin なら誰でもアクセスでき、全員が同じデータ・同じ表示になる。
+//   クライアントに UI を確認してもらうために必要な状態なので、この仕組みは維持する。
+//   本番相当への切替 (?u= 入場の廃止・PUBLIC_DEMO_FALLBACK=false・デバッグ表示の遮蔽) は
+//   総合テストの段階で行う。
 const authEnabled = !!import.meta.env.PUBLIC_GOOGLE_CLIENT_ID;
 const needsSignIn = authEnabled && !u;
 
@@ -47,148 +49,172 @@ const result = needsSignIn ? null : await loadDashboard(u);
 const hasError = result ? 'error' in result : false;
 const data = !result || hasError ? null : (result as Exclude<typeof result, { error: string }>);
 
-// 検査結果の取得元 uid（デモフォールバック時は真鍋/DEFAULT_USER）でトレンドも揃える
-const metricTrend = data ? await getMetricTrend(data.resultUid) : [];
+// ── 実データ (STEP 1/2 で作った diagnosis.measurement_values から読む) ──
+// 判定・助言はアプリで作らない。検査票の値・基準値と、検査機関が付けた flag のみを渡す。
+const latest = data ? await getLatestMeasurements(data.resultUid) : null;
+const metricTrend = data ? await getMeasurementTrend(data.resultUid) : [];
 
-// 健康年齢 (選択ユーザー本人の diagnostic_user_id で取得。diagnosis_results が無くても表示)
+// 健康年齢 (選択ユーザー本人の diagnostic_user_id で取得)
 const healthAge = data ? await getHealthAge(data.diagnosticUserId) : null;
-// 健康年齢の時系列は既存のトレンドチャートに先頭で合流させる
-const trendSeries = healthAge?.trend ? [healthAge.trend, ...metricTrend] : metricTrend;
 
-// ヘッダーの「お知らせ」バッジ用 — 未読の重要なお知らせ件数
 const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;
-const noticesHref = u ? `/notices?u=${encodeURIComponent(u)}` : '/notices';
 
 const greeting    = data ? formatGreeting(data) : '';
 const sections    = data?.elithSections ?? [];
 const urgentAlert = data ? extractUrgentAlert(sections) : null;
-const metrics     = data ? extractMetricCards(sections) : [];
 const quests      = data ? extractDailyQuests(sections) : [];
 const situations  = data ? extractSituationalCards(sections) : [];
 const abstract    = findSection(sections, 'アブストラクト');
 const totalChars  = sections.reduce((sum, s) => sum + (s.char_count || 0), 0);
 
+// 直近の検査結果カード: 検査機関が印を付けた項目を先に、最大 6 件まで。
+// 「どれを先に出すか」は既にある印での並べ替えであって、アプリによる判定ではない。
+const CARD_LIMIT = 6;
+const latestItems = latest?.items.slice(0, CARD_LIMIT) ?? [];
+const latestTypeName = latest ? testTypeLabel(latest.testType).name : '';
+const resultHref = (() => {
+  if (!latest || !u) return null;
+  return `/result/${latest.artifactId}?u=${encodeURIComponent(u)}&mode=full&page=1#pdf-viewer`;
+})();
+
 // OEM 相手先ブランド向けデモ顧客 (山田太郎 / da000001) はロゴを差し替える
 const DEMO_OEM_UID = 'da000001-0000-0000-0000-000000000000';
 const isDemoBrand = data?.diagnosticUserId === DEMO_OEM_UID;
 const logoSrc = isDemoBrand ? '/gan-checker-logo.svg' : '/wellfort_logo.png';
-const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Wellfort';
+const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Welltect';
+const q = u ? `?u=${encodeURIComponent(u)}` : '';
 ---
 
-<BaseLayout title={data ? `${greeting} | Wellfort` : 'マイページ | Wellfort'}>
+<BaseLayout title={data ? `${greeting} | Welltect` : 'マイページ | Welltect'} width="app">
   {debugBridge && (
-    <div style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#111;color:#fff;font-size:12px;padding:6px 10px;font-family:monospace;">
+    <div style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#102B3A;color:#fff;font-size:12px;padding:6px 10px;font-family:monospace;">
       bridge[configured={String(bridgeConfigured)} url={String(bridgeUrlSeen)} key={String(bridgeKeySeen)}] build=v3-2026-06-22
     </div>
   )}
   {needsSignIn && (
     <main class="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
-      <img src="/wellfort_logo.png" alt="Wellfort" width="48" height="54" class="h-12 w-auto opacity-80" />
-      <span class="inline-flex h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-brand-500"></span>
+      <img src="/wellfort_logo.png" alt="Welltect" width="48" height="54" class="h-12 w-auto opacity-80" />
+      <span class="inline-flex h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-brand-600"></span>
     </main>
   )}
 
   {hasError && (
     <main class="flex flex-1 flex-col items-center justify-center gap-3 px-5 text-center">
-      <AppIcon name="watch" size={32} class="text-slate-500" />
-      <h1 class="text-lg font-bold">ダッシュボードを読み込めませんでした</h1>
-      <p class="text-sm text-red-700">{(result as { error: string }).error}</p>
-      <p class="text-xs text-slate-500">supabase/README.md の手順で local stack が起動しているか確認してください。</p>
+      <AppIcon name="watch" size={32} class="text-status-action" />
+      <h1 class="text-lg font-bold text-navy-800">ダッシュボードを読み込めませんでした</h1>
+      <p class="text-base text-status-action">{(result as { error: string }).error}</p>
+      <p class="text-sm text-slate-600">supabase/README.md の手順で local stack が起動しているか確認してください。</p>
     </main>
   )}
 
   {!needsSignIn && !hasError && (
     <>
+      <AppNav u={u} current="/dashboard" unreadNotices={unreadNotices} logoSrc={logoSrc} logoAlt={logoAlt} />
+
       {data?.usingDemoData && (
-        <div class="bg-amber-50 text-amber-800 text-xs px-4 py-2 text-center border-b border-amber-200">
+        <div class="border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-center text-sm text-amber-800">
           検査データがまだ無いため、サンプル（デモ）の検査結果を表示しています。
         </div>
       )}
-      <header class="hero-gradient px-5 pt-6 pb-4">
-        <div class="flex items-center justify-between">
-          <span class="w-9"></span>
-          <img
-            src={logoSrc}
-            alt={logoAlt}
-            height="40"
-            class="h-10 w-auto select-none"
-          />
-          <a
-            href={noticesHref}
-            class="relative flex flex-col items-center text-slate-500 hover:text-slate-700"
-            aria-label="お知らせ"
-          >
-            <span class="text-xl leading-none"><AppIcon name="notice" size={20} /></span>
-            <span class="text-[10px] font-medium">お知らせ</span>
-            {unreadNotices > 0 && (
-              <span class="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">
-                {unreadNotices > 9 ? '9+' : unreadNotices}
-              </span>
-            )}
-          </a>
-        </div>
-        <h1 class="mt-3 text-xl font-bold tracking-tight">
+
+      <header class="hero-gradient px-5 pb-5 pt-5">
+        <h1 class="text-2xl font-bold tracking-tight text-navy-800">
           {greeting}、こんにちは。
         </h1>
+        {latest?.testDate && (
+          <p class="mt-1.5 text-base text-slate-700">
+            最新の検査: {latestTypeName} ・ {formatJpDate(latest.testDate)}
+          </p>
+        )}
         {data?.latestResult?.received_at && (
-          <p class="mt-1 text-[11px] text-slate-600">
-            最新の AI 診断: {new Date(data.latestResult.received_at).toLocaleDateString('ja-JP')} ·
-            <span class="ml-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
-              {data.latestResult.status === 'published' ? '公開済' : data.latestResult.status}
-            </span>
+          <p class="mt-1 text-sm text-slate-600">
+            最新の AI 診断: {formatJpDate(data.latestResult.received_at)}
           </p>
         )}
       </header>
 
-      <main class="flex flex-1 flex-col gap-4 px-5 pb-8">
+      <main class="flex flex-1 flex-col gap-5 px-5 pb-12 pt-5">
 
-        {/* 非表示 (緊急受診勧告 URGENT ALERT): {urgentAlert && <UrgentAlertBanner alert={urgentAlert} />} */}
+        {/* ① 注意項目 — 非表示 (緊急受診勧告 URGENT ALERT): {urgentAlert && <UrgentAlertBanner alert={urgentAlert} />} */}
 
-        {/* AI 問診 + AI スキャン への動線 */}
-        <section class="grid grid-cols-2 gap-2">
-          <a
-            href={u ? `/chat?u=${encodeURIComponent(u)}` : '/chat'}
-            class="group flex items-center justify-center gap-2 rounded-2xl bg-brand-600 px-3 py-3 text-white transition hover:-translate-y-0.5"
-          >
-            <span class="text-xl"><AppIcon name="doctor" size={20} /></span>
-            <span class="text-sm font-semibold">AI 問診を始める</span>
-          </a>
-          <a
-            href={u ? `/scan?u=${encodeURIComponent(u)}` : '/scan'}
-            class="group flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:border-brand-300"
-          >
-            <span class="text-xl"><AppIcon name="camera" size={20} /></span>
-            <span class="text-sm font-semibold">AI スキャン</span>
-          </a>
-        </section>
-
+        {/* ② 健康年齢 */}
         {healthAge?.latest && <HealthAgeCard latest={healthAge.latest} />}
 
-        {metrics.length > 0 && (() => {
-          // 各指標から「原本 PDF の該当ページ」へ deep link を作る:
-          //   尿酸・中性脂肪・血糖値 → 血液検査 (test_type='blood') の latest artifact
-          //   血圧 → 同上 (血液検査内に最高/最低血圧が含まれるため)
-          // PDF は 1pg 単位なので page=1 固定で十分。
-          const bloodArtifact = data?.artifacts.find((a) => a.test_type === 'blood') ?? null;
-          const linkFor = (_label: string): string | null => {
-            if (!bloodArtifact || !u) return null;
-            return `/result/${bloodArtifact.id}?u=${encodeURIComponent(u)}&mode=full&page=1#pdf-viewer`;
-          };
-          return (
+        {/* ③ 次にすること — 非表示 (本日の健康クエスト): <DailyQuests quests={quests} /> */}
+
+        {/* ④ 主要導線 */}
+        <section aria-label="主要な操作">
+          <h2 class="sr-only">主要な操作</h2>
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <a
+              href={`/scan${q}`}
+              class="flex min-h-touch items-center gap-3 rounded-2xl bg-brand-600 px-4 py-4 text-white transition hover:bg-brand-700"
+            >
+              <AppIcon name="scan" size={28} />
+              <span class="flex flex-col">
+                <span class="text-base font-semibold">AI スキャン</span>
+                <span class="text-sm opacity-90">検診・人間ドックの結果を読み取る</span>
+              </span>
+            </a>
+            <a
+              href={`/chat${q}`}
+              class="flex min-h-touch items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-4 text-slate-800 transition hover:border-brand-400"
+            >
+              <AppIcon name="interview" size={28} class="text-brand-700" />
+              <span class="flex flex-col">
+                <span class="text-base font-semibold">AI 問診</span>
+                <span class="text-sm text-slate-600">生活習慣を記録する</span>
+              </span>
+            </a>
+          </div>
+        </section>
+
+        {/* ⑤ 直近の検査結果 */}
+        {latestItems.length > 0 && (
           <section>
-            <header class="mb-2 flex items-center justify-between">
-              <h2 class="text-sm font-bold text-slate-800"><AppIcon name="trend" size={20} /> 直近の検査結果</h2>
-              <span class="text-[10px] text-slate-500">AI診断結果 (Wellfort-Elith)</span>
+            <header class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+              <h2 class="flex items-center gap-2 text-base font-bold text-navy-800">
+                <AppIcon name="result" size={20} class="text-brand-700" />
+                直近の検査結果
+              </h2>
+              <span class="text-sm text-slate-600">
+                {latestTypeName}
+                {latest?.testDate && ` ・ ${formatJpDate(latest.testDate)}`}
+              </span>
             </header>
-            <div class="grid grid-cols-3 gap-2">
-              {metrics.map((m) => <MetricCard metric={m} href={linkFor(m.label)} />)}
+            {latest && latest.flaggedCount > 0 && (
+              <p class="mb-3 text-sm text-slate-700">
+                検査機関が基準値外として印を付けた項目が {latest.flaggedCount} 件あります。先頭に表示しています。
+              </p>
+            )}
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {latestItems.map((item) => <MetricCard item={item} href={resultHref} />)}
             </div>
+            {latest && latest.items.length > CARD_LIMIT && resultHref && (
+              <a
+                href={resultHref}
+                class="mt-3 inline-flex min-h-touch items-center gap-1.5 text-base font-medium text-brand-700 hover:underline"
+              >
+                すべての検査値 {latest.items.length} 件を見る
+                <AppIcon name="next" size={18} />
+              </a>
+            )}
           </section>
-          );
-        })()}
+        )}
 
-        {/* 非表示 (本日の健康クエスト): <DailyQuests quests={quests} /> */}
+        {/* ⑥ 推移 */}
+        <MetricTrendChart series={metricTrend} />
 
+        {/* ⑦ キット要約 */}
+        <KitProgressCard
+          shipments={data?.shipments ?? []}
+          nextTestAt={data?.subscription?.next_test_at}
+          planName={data?.subscription?.plan_name}
+          diagnosticUserId={data?.diagnosticUserId ?? ''}
+          detailHref={`/kit${q}`}
+        />
+
+        {/* ⑧ コーチ */}
         <HealthCoachPreview
           greeting={greeting}
           summaryHint={data?.latestResult?.summary_text}
@@ -196,36 +222,32 @@ const logoAlt = isDemoBrand ? 'がんチェッカー' : 'Wellfort';
         />
 
         {/* 非表示 (今日の気付き): <HealthInsightCard diagnosticUserId={data?.diagnosticUserId ?? ''} /> */}
-
-        <MetricTrendChart series={trendSeries} />
-
         {/* 非表示 (シチュエーション別アドバイス): {situations.length > 0 && <SituationalCards cards={situations} />} */}
 
-        <KitProgressCard
-          shipments={data?.shipments ?? []}
-          nextTestAt={data?.subscription?.next_test_at}
-          planName={data?.subscription?.plan_name}
-          diagnosticUserId={data?.diagnosticUserId ?? ''}
-        />
-
+        {/* ⑨ 履歴 */}
         <TestHistoryList artifacts={data?.artifacts ?? []} diagnosticUserId={data?.diagnosticUserId} />
 
-        {/* dev / debug 用フッタ */}
-        <details class="rounded-2xl border border-dashed border-slate-300 p-3">
-          <summary class="cursor-pointer text-xs font-medium text-slate-500"><AppIcon name="tool" size={20} /> デバッグ (開発用)</summary>
-          <dl class="mt-2 space-y-1 text-[11px] text-slate-600">
-            <div class="flex justify-between"><dt>diagnostic_user_id:</dt><dd class="font-mono">{data?.diagnosticUserId}</dd></div>
-            <div class="flex justify-between"><dt>artifacts:</dt><dd>{data?.artifacts.length} 件</dd></div>
-            <div class="flex justify-between"><dt>shipments:</dt><dd>{data?.shipments.length} 件</dd></div>
-            <div class="flex justify-between"><dt>Elith sections:</dt><dd>{sections.length} 件 / {totalChars.toLocaleString()} 字</dd></div>
-            <div class="flex justify-between"><dt>abstract:</dt><dd>{abstract ? `${abstract.char_count}字` : 'なし'}</dd></div>
-            <p class="pt-2 text-[10px]">他ユーザーで試す:</p>
-            <div class="flex flex-wrap gap-1 pt-1">
-              <a href="/dashboard?u=d0000001-0000-0000-0000-000000000000" class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-200">真鍋 (主役)</a>
-              <a href="/dashboard?u=d0000002-0000-0000-0000-000000000000" class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-200">田中</a>
-              <a href="/dashboard?u=d0000003-0000-0000-0000-000000000000" class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-200">山田</a>
-              <a href="/dashboard?u=d0000007-0000-0000-0000-000000000000" class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-200">渡辺</a>
-              <a href="/dashboard?u=da000001-0000-0000-0000-000000000000" class="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-800 hover:bg-emerald-200">山田太郎 (OEMデモ)</a>
+        {/* テストフェーズの確認用フッタ (総合テストで遮蔽する)。§02 参照。 */}
+        <details class="rounded-2xl border border-dashed border-slate-300 p-4">
+          <summary class="min-h-touch cursor-pointer text-sm font-medium text-slate-600">
+            デバッグ (テストフェーズ確認用)
+          </summary>
+          <dl class="mt-3 space-y-1 text-sm text-slate-600">
+            <div class="flex justify-between gap-3"><dt>diagnostic_user_id:</dt><dd class="font-mono break-all">{data?.diagnosticUserId}</dd></div>
+            <div class="flex justify-between gap-3"><dt>検査アーティファクト:</dt><dd class="tnum">{data?.artifacts.length} 件</dd></div>
+            <div class="flex justify-between gap-3"><dt>検査値 (最新回):</dt><dd class="tnum">{latest?.items.length ?? 0} 件</dd></div>
+            <div class="flex justify-between gap-3"><dt>推移グラフ:</dt><dd class="tnum">{metricTrend.length} 系列</dd></div>
+            <div class="flex justify-between gap-3"><dt>キット出荷:</dt><dd class="tnum">{data?.shipments.length} 件</dd></div>
+            <div class="flex justify-between gap-3"><dt>Elith sections:</dt><dd class="tnum">{sections.length} 件 / {totalChars.toLocaleString()} 字</dd></div>
+            <div class="flex justify-between gap-3"><dt>abstract:</dt><dd>{abstract ? `${abstract.char_count}字` : 'なし'}</dd></div>
+            <p class="pt-3">他ユーザーで試す:</p>
+            <div class="flex flex-wrap gap-2 pt-1">
+              <a href="/dashboard?u=d0000001-0000-0000-0000-000000000000" class="chip">真鍋 (横ばい)</a>
+              <a href="/dashboard?u=d0000002-0000-0000-0000-000000000000" class="chip">田中 (改善)</a>
+              <a href="/dashboard?u=d0000003-0000-0000-0000-000000000000" class="chip">山田 (悪化)</a>
+              <a href="/dashboard?u=d0000004-0000-0000-0000-000000000000" class="chip">鈴木 (検査なし)</a>
+              <a href="/dashboard?u=d0000009-0000-0000-0000-000000000000" class="chip">中村 (検査中)</a>
+              <a href="/dashboard?u=da000001-0000-0000-0000-000000000000" class="chip">山田太郎 (OEMデモ)</a>
             </div>
           </dl>
         </details>

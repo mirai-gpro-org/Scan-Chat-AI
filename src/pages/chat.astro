@@ -9,7 +9,7 @@ const rawU = url.searchParams.get('u');
 const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
 ---
 
-<BaseLayout title="AI 問診 | Scan-Chat Medical AI">
+<BaseLayout title="AI 問診 | Welltect" width="flow">
   <header class="hero-gradient relative px-5 pt-5 pb-3">
     <div class="flex items-center justify-between">
       <a href={diagnosticUserId ? `/?u=${encodeURIComponent(diagnosticUserId)}` : '/'} class="text-sm text-slate-600 hover:text-slate-900">
@@ -86,7 +86,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
       <!-- ━━━ START HERO（未接続時のみ表示） ━━━ -->
       <div id="start-hero" class="flex flex-col items-center gap-3 py-2">
         <!-- 冒頭の免責事項 (医療アドバイス・診断ではない旨) -->
-        <p class="w-full rounded-lg bg-slate-50 px-3 py-2 text-center text-[11px] leading-relaxed text-slate-500">
+        <p class="w-full rounded-lg bg-slate-50 px-3 py-2 text-center text-xs leading-relaxed text-slate-500">
           このAI問診で提供される情報は、医療上のアドバイスや診断として利用されるものではありません。必要な場合は、必ず医療専門家にご相談ください。
         </p>
         <p class="text-center text-xs text-slate-500">
@@ -113,7 +113,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
           </svg>
           <span class="mic-label mt-1 text-xs font-semibold">問診を開始</span>
         </button>
-        <div class="mt-1 flex items-center gap-2 rounded-full bg-slate-50 px-3 py-1.5 text-[11px] text-slate-600">
+        <div class="mt-1 flex items-center gap-2 rounded-full bg-slate-50 px-3 py-1.5 text-xs text-slate-600">
           <span><AppIcon name="mic" size={20} /> 話す</span>
           <span class="text-slate-400">/</span>
           <span><AppIcon name="point" size={20} /> 選んでタップ</span>
@@ -135,7 +135,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
             aria-label="問診を中断"
           >
             <span class="mic-icon text-lg">⏸</span>
-            <span class="mic-label text-[10px]">中断</span>
+            <span class="mic-label text-xs">中断</span>
           </button>
           <button
             id="speaker-btn"
@@ -166,14 +166,14 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
               <line x1="22" y1="9" x2="16" y2="15"/>
               <line x1="16" y1="9" x2="22" y2="15"/>
             </svg>
-            <span class="speaker-label text-[10px]">音声</span>
+            <span class="speaker-label text-xs">音声</span>
           </button>
         </div>
 
         <!-- 二刀流ヒント（widget 表示時のみ） -->
         <div
           id="dual-hint"
-          class="mb-2 flex items-center justify-center gap-2 rounded-full bg-brand-50 px-3 py-1 text-[11px] text-brand-700"
+          class="mb-2 flex items-center justify-center gap-2 rounded-full bg-brand-50 px-3 py-1 text-xs text-brand-700"
           hidden
         >
           <span><AppIcon name="mic" size={20} /> 話してもOK</span>

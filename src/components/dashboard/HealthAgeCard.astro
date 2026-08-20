@@ -1,9 +1,14 @@
 ---
-import AppIcon from '../../components/AppIcon.astro';
+import AppIcon from '../AppIcon.astro';
 /**
  * 健康年齢 (生物学的年齢 / CABA v5.4) カード。
- * 生物学的年齢を大きく表示し、実年齢との差をバッジで示す。
- * 血液回で一部項目を据え置いた場合・必須項目が欠けた場合は注記を出す。
+ *
+ * 【位置づけ】クライアントからの要望で途中から追加した機能で、算出ロジック自体が
+ *   専門医の協力のもとテスト中。ダッシュボード最上位に置くのは暫定の扱い。
+ *
+ * 【表示の原則】アプリは独自に分析・解釈しない。ここで出すのは算出値・実年齢との差・
+ *   算出条件 (補完/据え置き/不足) だけで、生活指導や受診勧奨の文言は付けない。
+ *   実年齢より高い結果でも警告調にせず、事実と但し書きに留める。
  */
 import type { HealthAgeLatest } from '../../lib/dashboard-queries';
 
@@ -16,21 +21,13 @@ const bio = latest.biologicalAge;
 const delta = latest.delta;
 const sourceLabel = latest.sourceKind === 'blood' ? '血液検査' : '人間ドック';
 
-// 差分バッジ (実年齢比)
-let badgeText = '実年齢と同等';
-let badgeClass = 'bg-sky-100 text-sky-700';
-let bioColor = 'text-sky-600';
+// 実年齢との差。判定ではなく差の提示に留めるため、状態色は使わず中立色で示す。
+let deltaText = '実年齢と同程度です';
 if (delta != null) {
-  if (delta > 2) {
-    badgeText = `実年齢より ${delta.toFixed(1)} 歳 老化`;
-    badgeClass = 'bg-rose-100 text-rose-700';
-    bioColor = 'text-rose-600';
-  } else if (delta < -2) {
-    badgeText = `実年齢より ${Math.abs(delta).toFixed(1)} 歳 若い`;
-    badgeClass = 'bg-emerald-100 text-emerald-700';
-    bioColor = 'text-emerald-600';
-  }
+  if (delta > 2) deltaText = `実年齢より ${delta.toFixed(1)} 歳 高い`;
+  else if (delta < -2) deltaText = `実年齢より ${Math.abs(delta).toFixed(1)} 歳 低い`;
 }
+const deltaIcon = delta == null ? 'flat' : delta > 2 ? 'up' : delta < -2 ? 'down' : 'flat';
 
 const carried = latest.carried ?? [];
 const imputed = latest.imputed ?? [];
@@ -38,42 +35,78 @@ const missing = latest.missing ?? [];
 const markerLabel: Record<string, string> = {
   crp: 'CRP', mcv: 'MCV', albumin: 'アルブミン', creatinine: 'クレアチニン',
   glucose: '空腹時血糖', lymph: 'リンパ球%', alp: 'ALP', sbp: '収縮期血圧',
+  rdw: 'RDW', wbc: '白血球数',
 };
 const jp = (ks: string[]) => ks.map((k) => markerLabel[k] ?? k).join('・');
 const isReference = imputed.length > 0 || carried.length > 0;
 ---
 
-<section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-  <header class="mb-2 flex items-center justify-between">
-    <h2 class="text-sm font-bold text-slate-800"><AppIcon name="health-age" size={20} /> 健康年齢{isReference && bio != null && <span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">参考値</span>}</h2>
-    <span class="text-[10px] text-slate-500">CABA v5.4 ／ {sourceLabel}</span>
+<section class="card card-hairline">
+  <header class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+    <h2 class="flex items-center gap-2 text-base font-bold text-navy-800">
+      <AppIcon name="health-age" size={20} class="text-brand-700" />
+      健康年齢
+      {isReference && bio != null && (
+        <span class="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">参考値</span>
+      )}
+    </h2>
+    <span class="text-sm text-slate-600">CABA v5.4 ／ {sourceLabel}</span>
   </header>
 
   {bio != null ? (
-    <div class="flex items-end justify-between gap-3">
+    <div class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <div class={`text-5xl font-semibold leading-none ${bioColor}`}>{bio.toFixed(1)}<span class="ml-1 text-base font-medium text-slate-500">歳</span></div>
-        <div class="mt-1 text-xs text-slate-500">生物学的年齢 ／ 実年齢 {latest.chronologicalAge} 歳</div>
+        <p class="tnum text-6xl font-bold leading-none text-navy-800">
+          {bio.toFixed(1)}<span class="ml-1.5 text-xl font-medium text-slate-600">歳</span>
+        </p>
+        <p class="mt-2 text-base text-slate-700">
+          生物学的年齢 ／ 実年齢 <span class="tnum">{latest.chronologicalAge}</span> 歳
+        </p>
       </div>
-      <span class={`shrink-0 rounded-full px-3 py-1 text-xs font-medium ${badgeClass}`}>{badgeText}</span>
+      <span class="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-slate-300 bg-slate-50 px-3.5 py-1.5 text-base font-medium text-slate-800">
+        <AppIcon name={deltaIcon} size={16} class="text-slate-600" />
+        {deltaText}
+      </span>
     </div>
   ) : (
-    <div class="text-sm text-slate-500">
+    <p class="text-base text-slate-700">
       必須項目が不足しているため算出できませんでした。
-      {missing.length > 0 && <span class="text-slate-400">（不足: {missing.join(', ')}）</span>}
-    </div>
+      {missing.length > 0 && <span class="text-slate-600">（不足: {jp(missing)}）</span>}
+    </p>
   )}
 
-  {bio != null && (imputed.length > 0 || carried.length > 0) && (
-    <p class="mt-3 border-t border-slate-100 pt-2 text-[11px] leading-relaxed text-slate-400">
+  {bio != null && isReference && (
+    <p class="mt-4 border-t border-slate-200 pt-3 text-sm leading-relaxed text-slate-600">
       {imputed.length > 0 && <span>※ {jp(imputed)} は測定値が無いため標準値で補完した参考値です。</span>}
       {carried.length > 0 && <span>※ {jp(carried)} は直近の人間ドック値を据え置いて再計算しています。</span>}
     </p>
   )}
 
-  {/* 免責 (Wellfort 確認 2026-08・対外表記に明記・必須)。 */}
-  <p class="mt-3 border-t border-slate-100 pt-2 text-[11px] leading-relaxed text-slate-400">
-    診断・治療の根拠にしないでください。本結果は、検査結果に基づく理論値です。<br />
-    本数値は、原著に基づきウェルフォート社が改変したものです。
-  </p>
+  {/* 出典と免責 (Wellfort 確認 2026-08・対外表記に明記・必須)。 */}
+  <details class="mt-4 border-t border-slate-200 pt-3">
+    <summary class="min-h-touch cursor-pointer text-sm font-medium text-slate-700">
+      健康年齢の算出方法について
+    </summary>
+    <div class="mt-2 space-y-2 text-sm leading-relaxed text-slate-600">
+      <p>
+        「健康年齢」は、以下の 2 論文に基づく生物学的年齢評価手法を基礎とし、
+        当社が実務利用向けに独自の改変を加えて算出しています。
+      </p>
+      <ul class="ml-5 list-disc space-y-1">
+        <li>
+          Gao X, et al. “Accelerated biological aging and risk of depression and anxiety:
+          evidence from 424,299 UK Biobank participants.” Nat Commun. 2023;14:2277.
+          doi:10.1038/s41467-023-38013-7
+        </li>
+        <li>
+          Levine ME, et al. “An epigenetic biomarker of aging for lifespan and healthspan.”
+          Aging (Albany NY). 2018;10(4):573–591. doi:10.18632/aging.101414 (PMID: 29676998)
+        </li>
+      </ul>
+      <p>
+        診断・治療の根拠にしないでください。本結果は、検査結果に基づく理論値です。<br />
+        本数値は、原著に基づきウェルフォート社が改変したものです。
+      </p>
+    </div>
+  </details>
 </section>

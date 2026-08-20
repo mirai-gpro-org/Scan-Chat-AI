@@ -49,7 +49,7 @@ function noticesHref(overrides: Record<string, string | null>): string {
 const importantTitle = data ? `${data.userName}への重要なお知らせ` : '重要なお知らせ';
 ---
 
-<BaseLayout title="お知らせ | Wellfort">
+<BaseLayout title="お知らせ | Welltect" width="app">
   <header class="hero-gradient px-5 pt-6 pb-4">
     <div class="flex items-center justify-between">
       <a href={dashHref} class="text-sm text-slate-600 hover:text-slate-900">
@@ -84,7 +84,7 @@ const importantTitle = data ? `${data.userName}への重要なお知らせ` : '�
           <h2 class="flex items-center gap-1.5 text-sm font-bold text-slate-800">
             <span><AppIcon name="action" size={20} /></span><span>{importantTitle}</span>
             {data.importantUnreadCount > 0 && (
-              <span class="rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+              <span class="rounded-full bg-rose-500 px-1.5 py-0.5 text-xs font-semibold text-white">
                 未読 {data.importantUnreadCount}
               </span>
             )}
@@ -116,21 +116,21 @@ const importantTitle = data ? `${data.userName}への重要なお知らせ` : '�
                   <div class="flex items-start justify-between gap-2">
                     <h3 class="text-sm font-semibold text-slate-800">{n.title}</h3>
                     {unread ? (
-                      <span class="shrink-0 rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-semibold text-white">未読</span>
+                      <span class="shrink-0 rounded-full bg-rose-500 px-2 py-0.5 text-xs font-semibold text-white">未読</span>
                     ) : (
-                      <span class="shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-500">既読</span>
+                      <span class="shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-500">既読</span>
                     )}
                   </div>
                   <p class="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-slate-600">{n.body}</p>
                   <div class="mt-2 flex items-center justify-between">
-                    <time class="text-[10px] text-slate-400">{formatJpDate(n.published_at)}</time>
+                    <time class="text-xs text-slate-400">{formatJpDate(n.published_at)}</time>
                     {unread ? (
                       <button
                         type="button"
                         data-mark-read
                         data-read="true"
                         data-notice-id={n.id}
-                        class="rounded-lg border border-rose-300 bg-white px-2.5 py-1 text-[11px] font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-wait disabled:opacity-60"
+                        class="rounded-lg border border-rose-300 bg-white px-2.5 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-wait disabled:opacity-60"
                       >
                         既読にする
                       </button>
@@ -140,7 +140,7 @@ const importantTitle = data ? `${data.userName}への重要なお知らせ` : '�
                         data-mark-read
                         data-read="false"
                         data-notice-id={n.id}
-                        class="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500 transition hover:bg-slate-100 disabled:cursor-wait disabled:opacity-60"
+                        class="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-500 transition hover:bg-slate-100 disabled:cursor-wait disabled:opacity-60"
                       >
                         未読に戻す
                       </button>
@@ -187,7 +187,7 @@ const importantTitle = data ? `${data.userName}への重要なお知らせ` : '�
                   <p class="text-sm font-semibold text-slate-800">{a.title}</p>
                 )}
                 <p class="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-slate-600">{a.body}</p>
-                <time class="mt-2 block text-[10px] text-slate-400">{formatJpDate(a.published_at)}</time>
+                <time class="mt-2 block text-xs text-slate-400">{formatJpDate(a.published_at)}</time>
               </li>
             ))}
           </ul>
@@ -225,7 +225,7 @@ const importantTitle = data ? `${data.userName}への重要なお知らせ` : '�
                   <p class="text-sm font-semibold text-slate-800">{a.title}</p>
                 )}
                 <p class="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-slate-600">{a.body}</p>
-                <time class="mt-2 block text-[10px] text-slate-400">{formatJpDate(a.published_at)}</time>
+                <time class="mt-2 block text-xs text-slate-400">{formatJpDate(a.published_at)}</time>
               </li>
             ))}
           </ul>
