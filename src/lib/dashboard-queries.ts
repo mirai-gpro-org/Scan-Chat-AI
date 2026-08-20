@@ -303,7 +303,7 @@ export interface HealthAgeSummary {
  */
 export async function getHealthAge(diagnosticUserId: string): Promise<HealthAgeSummary> {
   const sb = getServerSupabase();
-  if (!sb) return { latest: null, trend: null };
+  if (!sb) return demoHealthAge();
   try {
     // 型未生成テーブルのため any 経由。
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -313,7 +313,7 @@ export async function getHealthAge(diagnosticUserId: string): Promise<HealthAgeS
       .eq('diagnostic_user_id', diagnosticUserId)
       .order('test_date', { ascending: true })
       .limit(24);
-    if (error || !data || data.length === 0) return { latest: null, trend: null };
+    if (error || !data || data.length === 0) return demoHealthAge();
 
     const points: MetricTrendPoint[] = [];
     for (const r of data) {
@@ -338,8 +338,39 @@ export async function getHealthAge(diagnosticUserId: string): Promise<HealthAgeS
       points.length > 0 ? { label: '健康年齢', unit: '歳', points } : null;
     return { latest, trend };
   } catch {
-    return { latest: null, trend: null };
+    return demoHealthAge();
   }
+}
+
+/**
+ * 健康年齢のダミー (テストフェーズの表示確認用)。
+ *
+ * health_age_scores が空 / Supabase 未接続でも、ダッシュボードの並び
+ * (健康年齢 → AI 診断結果 → AI スキャン/AI 問診) を確認できるようにする。
+ * demo-data.ts の他のダミーと同じ扱いで、`PUBLIC_DEMO_FALLBACK=false` で切れる。
+ * **値は CABA で算出したものではなく固定のダミー**。DB に実データが入れば自動で消える。
+ */
+function demoHealthAge(): HealthAgeSummary {
+  if (!demoFallbackEnabled()) return { latest: null, trend: null };
+  const points: MetricTrendPoint[] = [
+    { date: '2026-03-13', value: 60.8, raw: '60.8歳' },
+    { date: '2026-05-02', value: 60.1, raw: '60.1歳' },
+    { date: '2026-06-21', value: 59.6, raw: '59.6歳' },
+    { date: '2026-08-02', value: 59.4, raw: '59.4歳' },
+  ];
+  return {
+    latest: {
+      testDate: '2026-08-02',
+      sourceKind: 'blood',
+      chronologicalAge: 56,
+      biologicalAge: 59.4,
+      delta: 3.4,
+      carried: ['fev1'],
+      imputed: ['crp'],
+      missing: [],
+    },
+    trend: { label: '健康年齢', unit: '歳', points },
+  };
 }
 
 /** ユーザー氏名を「真鍋様」形式で返す。なければ「お客様」。 */

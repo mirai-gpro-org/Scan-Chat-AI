@@ -148,22 +148,32 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
         {/* ② 健康年齢 */}
         {healthAge?.latest && <HealthAgeCard latest={healthAge.latest} followup={healthAgeFollowup} />}
 
+        {/*
+          ②-2 AI 診断結果 — AIスキャン/AI問診 (入力の導線) とは性質が違うので横並びにせず、
+          健康年齢の直後に独立して置く。面はブランド薄色 (brand-50)。
+          Quiet Bronze は使わない (ヘアラインと小面積のみ、の規則)。
+        */}
+        <a
+          href={`/report${q}`}
+          class="flex min-h-touch items-center gap-4 rounded-2xl border border-brand-200 bg-brand-50 px-5 py-4 text-slate-800 transition hover:border-brand-400 hover:bg-brand-100"
+        >
+          <span class="flex shrink-0 items-center gap-3">
+            <AppIcon name="report" size={32} class="text-brand-700" />
+            <AppLogo height={44} />
+          </span>
+          <span class="flex min-w-0 flex-col">
+            <span class="text-base font-semibold text-navy-800">AI 診断結果</span>
+            <span class="text-sm text-slate-700">レポートを読む</span>
+          </span>
+          <AppIcon name="next" size={20} class="ml-auto shrink-0 text-brand-700" />
+        </a>
+
         {/* ③ 次にすること — 非表示 (本日の健康クエスト): <DailyQuests quests={quests} /> */}
 
         {/* ④ 主要導線 */}
         <section aria-label="主要な操作">
           <h2 class="sr-only">主要な操作</h2>
-          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            <a
-              href={`/report${q}`}
-              class="flex min-h-touch items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-4 text-slate-800 transition hover:border-brand-400"
-            >
-              <AppIcon name="report" size={28} class="text-brand-700" />
-              <span class="flex flex-col">
-                <span class="text-base font-semibold">AI 診断結果</span>
-                <span class="text-sm text-slate-600">レポートを読む</span>
-              </span>
-            </a>
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <a
               href={`/scan${q}`}
               class="flex min-h-touch items-center gap-3 rounded-2xl bg-brand-600 px-4 py-4 text-white transition hover:bg-brand-700"

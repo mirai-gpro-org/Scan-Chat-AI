@@ -107,20 +107,59 @@ function demoLatestResult(uid: string): DiagnosisResult {
 
 /** ダミーの検査キット進捗。 */
 function demoShipments(uid: string): (KitShipment & { lab_name: string | null })[] {
-  return [
-    {
-      id: 'demo-kit-0001', order_id: 'demo-order-0001', customer_id: uid,
-      lab_company_id: '', test_type: 'blood', subscription_id: null,
-      subscription_year: null, subscription_seq: null, warehouse: null,
-      shipped_at: daysAgo(5), tracking_no: '1234-5678-9012', carrier: null,
-      carrier_tracking_url: null, expected_arrival_date: null,
-      requested_arrival_date: null, requested_time_window: null,
-      requested_at: null, requested_lock_at: null,
-      user_received_at: daysAgo(3), user_returned_at: null,
-      lab_received_at: null, lab_completed_at: null, notes: null,
-      created_at: daysAgo(5), lab_name: 'リージャー',
-    } as KitShipment & { lab_name: string | null },
+  /**
+   * 進捗の 6 段階 (SHIPMENT_STAGES) を一通り見せる。
+   * DB のダミー (supabase/seed_kit_demo.sql) を入れなくても /kit と
+   * ダッシュボードのキットカードで全段階を確認できるようにするため。
+   * shipmentLabel() は「どこまで日時が埋まっているか」で段階を決めるので、
+   * 各行の日時の埋まり方がそのまま段階になる。
+   */
+  const base = {
+    customer_id: uid, lab_company_id: '', subscription_id: null,
+    subscription_year: null, subscription_seq: null, warehouse: null,
+    carrier: null, carrier_tracking_url: null, expected_arrival_date: null,
+    requested_arrival_date: null, requested_time_window: null,
+    requested_at: null, requested_lock_at: null, notes: null,
+  };
+  const rows: {
+    id: string; test_type: string; lab_name: string; tracking_no: string | null;
+    shipped: number | null; received: number | null; returned: number | null;
+    labRecv: number | null; done: number | null;
+  }[] = [
+    // step 1 出荷準備 (発送前)
+    { id: 'demo-kit-0001', test_type: 'blood',        lab_name: 'リージャー',  tracking_no: null,
+      shipped: null, received: null, returned: null, labRecv: null, done: null },
+    // step 2 発送済
+    { id: 'demo-kit-0002', test_type: 'cancer_urine', lab_name: 'プリベント',  tracking_no: '2345-6789-0123',
+      shipped: 2,  received: null, returned: null, labRecv: null, done: null },
+    // step 3 受取済
+    { id: 'demo-kit-0003', test_type: 'blood',        lab_name: 'リージャー',  tracking_no: '1234-5678-9012',
+      shipped: 5,  received: 3,    returned: null, labRecv: null, done: null },
+    // step 4 返送済
+    { id: 'demo-kit-0004', test_type: 'genetics',     lab_name: 'Genoplan',   tracking_no: '3456-7890-1234',
+      shipped: 14, received: 12,   returned: 9,    labRecv: null, done: null },
+    // step 5 検査会社受領
+    { id: 'demo-kit-0005', test_type: 'blood',        lab_name: 'リージャー',  tracking_no: '4567-8901-2345',
+      shipped: 24, received: 22,   returned: 19,   labRecv: 16,   done: null },
+    // step 6 検査完了
+    { id: 'demo-kit-0006', test_type: 'cancer_urine', lab_name: 'プリベント',  tracking_no: '5678-9012-3456',
+      shipped: 60, received: 58,   returned: 55,   labRecv: 52,   done: 46 },
   ];
+  const at = (d: number | null) => (d == null ? null : daysAgo(d));
+  return rows.map((r) => ({
+    ...base,
+    id: r.id,
+    order_id: `demo-order-${r.id.slice(-4)}`,
+    test_type: r.test_type,
+    tracking_no: r.tracking_no,
+    shipped_at:       at(r.shipped),
+    user_received_at: at(r.received),
+    user_returned_at: at(r.returned),
+    lab_received_at:  at(r.labRecv),
+    lab_completed_at: at(r.done),
+    created_at: at(r.shipped ?? 1)!,
+    lab_name: r.lab_name,
+  }) as KitShipment & { lab_name: string | null });
 }
 
 /** ダミーのサブスク (プラン名 / 次回検査)。 */

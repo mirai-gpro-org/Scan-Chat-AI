@@ -215,10 +215,15 @@
 
   /* ─ ボトムシート ─ 背景ぼかし (グラスモーフィズム) は使わない ─ */
 
+  /*
+   * スクリム。**暗くしすぎない** — モーダルの中身 (グラフ / データ表) は白面なので
+   * 背面を沈める必要がなく、濃いと 50〜65 代には「画面が暗くなった」と読まれる。
+   * navy を薄く敷いて「背面は操作できない」ことだけ伝える。
+   */
   .sheet-backdrop {
     @apply fixed inset-0 z-40;
-    background-color: theme('colors.navy.900');
-    opacity: 0.5;
+    background-color: theme('colors.navy.700');
+    opacity: 0.24;
     animation: fade-in 0.16s ease-out both;
   }
   .sheet-panel {
