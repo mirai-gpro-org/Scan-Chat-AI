@@ -36,7 +36,26 @@ const debugBridge = url.searchParams.get('debug') === 'bridge';
 const bridgeConfigured = isBridgeConfigured();
 const bridgeUrlSeen = !!(import.meta.env.HP_BRIDGE_SUPABASE_URL || (typeof process !== 'undefined' ? process.env?.HP_BRIDGE_SUPABASE_URL : ''));
 const bridgeKeySeen = !!(import.meta.env.HP_BRIDGE_READONLY_KEY  || (typeof process !== 'undefined' ? process.env?.HP_BRIDGE_READONLY_KEY  : ''));
-console.log('[bridge-debug]', { bridgeConfigured, bridgeUrlSeen, bridgeKeySeen, build: 'v3-2026-06-22' });
+
+/*
+ * 表示中のデプロイを特定するための刻印。
+ * 「直したはずの表示が変わらない」ときに、コードの問題かデプロイ未反映かを
+ * 切り分けるために出す。値は Vercel のシステム環境変数
+ * (VERCEL_GIT_COMMIT_REF / VERCEL_GIT_COMMIT_SHA — 公式ドキュメント
+ *  vercel.com/docs/environment-variables/system-environment-variables。
+ *  どちらも runtime で参照できるが、プロジェクト設定の
+ *  「Enable access to System Environment Variables」が必要)。
+ * ローカルでは未設定なので 'local' を出す。
+ */
+const envStr = (name: string): string => {
+  const v = (import.meta.env as Record<string, string | undefined>)[name];
+  if (v) return v;
+  if (typeof process !== 'undefined' && process.env) return (process.env as Record<string, string | undefined>)[name] ?? '';
+  return '';
+};
+const buildRef = envStr('VERCEL_GIT_COMMIT_REF') || 'local';
+const buildSha = (envStr('VERCEL_GIT_COMMIT_SHA') || 'local').slice(0, 7);
+console.log('[bridge-debug]', { bridgeConfigured, bridgeUrlSeen, bridgeKeySeen, buildRef, buildSha });
 
 // テストフェーズの前提 (発注者指定 2026-08-20):
 //   Wellfort の admin なら誰でもアクセスでき、全員が同じデータ・同じ表示になる。
@@ -98,8 +117,26 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
     <div style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#102B3A;color:#fff;font-size:12px;padding:6px 10px;font-family:monospace;">
       bridge[configured={String(bridgeConfigured)} url={String(bridgeUrlSeen)} key={String(bridgeKeySeen)}]
       kit[source={data?.shipmentSource ?? '-'} n={String(data?.shipments?.length ?? 0)} uid={data?.resultUid ?? '-'}]
-      build=v3-2026-06-22
+      build[{buildRef}@{buildSha}]
+      <span id="dbg-scrim">scrim[?]</span>
     </div>
+  )}
+  {debugBridge && (
+    /* 実際に適用されているスクリム色をそのまま出す (CSS が新しいか古いかの判定用)。 */
+    <script is:inline>
+      (() => {
+        const el = document.createElement('div');
+        el.className = 'sheet-backdrop';
+        el.style.position = 'absolute';
+        el.style.left = '-9999px';
+        el.style.animation = 'none'; // フェード中の値を読まないよう止める
+        document.body.appendChild(el);
+        const cs = getComputedStyle(el);
+        const out = document.getElementById('dbg-scrim');
+        if (out) out.textContent = `scrim[${cs.backgroundColor} op=${cs.opacity}]`;
+        el.remove();
+      })();
+    </script>
   )}
   {needsSignIn && (
     <main class="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
