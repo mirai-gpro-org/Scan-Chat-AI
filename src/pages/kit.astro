@@ -11,6 +11,7 @@ import {
   SHIPMENT_STAGES,
 } from '../lib/dashboard-queries';
 import { countUnreadImportant } from '../lib/notice-queries';
+import { refreshConfig, cfg } from '../lib/app-config';
 
 /**
  * 検査キットの進捗ページ。
@@ -35,6 +36,10 @@ const hasError = result ? 'error' in result : false;
 const data = !result || hasError ? null : (result as Exclude<typeof result, { error: string }>);
 
 const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;
+
+// 画面文言 (app_config)。未設定なら空文字が返り、UI 側で非表示になる。
+await refreshConfig();
+const supportContact = cfg('ui.support_contact');
 const shipments = data?.shipments ?? [];
 
 // 進行中を先に、完了済みを後に。同じ区分では発送日の新しい順。
@@ -69,7 +74,7 @@ const UNAVAILABLE_STEPS = new Set([5, 6]);
 
   {!needsSignIn && !hasError && (
     <>
-      <AppNav u={u} current="/kit" unreadNotices={unreadNotices} />
+      <AppNav u={u} current="/kit" unreadNotices={unreadNotices} supportContact={supportContact} />
 
       <header class="hero-gradient px-5 pb-5 pt-5">
         <h1 class="flex items-center gap-2 text-2xl font-bold tracking-tight text-navy-800">

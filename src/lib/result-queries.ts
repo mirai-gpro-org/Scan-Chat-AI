@@ -11,6 +11,7 @@
  */
 
 import { getServerSupabase } from './supabase';
+import { getOriginalSignedUrl } from './originals-storage';
 import type { TestArtifact, DiagnosisResult } from '../types/supabase';
 import { findSection, type ElithSection } from './elith-parser';
 import { getElithSampleFor } from './elith-samples';
@@ -31,11 +32,16 @@ export interface ResultData {
   samplePdfUrl: string | null;
   /** 原本 PDF の表示用ラベル */
   samplePdfLabel: string | null;
+  /** true = 実際の原本 / false = サンプルへのフォールバック */
+  isOriginal: boolean;
 }
 
 /**
- * test_type → public/kensa_sample/ にあるサンプル PDF への URL。
- * 本番では test_artifact_files.raw_pdf_redacted の Storage URL に置換予定 (Phase 1.5)。
+ * test_type → public/kensa_sample/ にあるサンプル PDF。
+ *
+ * **実データが最優先**。test_artifact_files に原本 (raw_pdf / raw_pdf_redacted /
+ * raw_csv) があれば署名 URL を発行してそちらを使い、このサンプルは
+ * 原本がまだ無いときのフォールバックとしてのみ使う (テストフェーズ)。
  */
 const SAMPLE_PDF_MAP: Record<string, { url: string; label: string }> = {
   blood:         { url: '/kensa_sample/blood.pdf',         label: '血液検査 (リージャー)' },
@@ -107,7 +113,17 @@ export async function loadResult(
     .map((n) => findSection(sections, n))
     .filter((s): s is ElithSection => s != null);
 
+  // ── 原本の解決 ───────────────────────────────────────────────
+  // 実データ (test_artifact_files) があれば署名 URL を発行して使う。
+  // 無ければ従来のサンプル PDF にフォールバックする。
+  const original = await resolveOriginal(sb, artifact.id);
   const samplePdf = SAMPLE_PDF_MAP[artifact.test_type] ?? null;
+  const pdfUrl = original?.url ?? samplePdf?.url ?? null;
+  const pdfLabel = original
+    ? original.label
+    : samplePdf
+      ? `${samplePdf.label}（サンプル）`
+      : null;
 
   return {
     artifact,
@@ -117,7 +133,44 @@ export async function loadResult(
     highlightSections,
     fullSections,
     isThreeMode: artifact.display_mode === 'three_mode',
-    samplePdfUrl: samplePdf?.url ?? null,
-    samplePdfLabel: samplePdf?.label ?? null,
+    samplePdfUrl: pdfUrl,
+    samplePdfLabel: pdfLabel,
+    isOriginal: original != null,
   };
+}
+
+/** 原本ファイルの種別ごとの表示名。 */
+const FILE_KIND_LABEL: Record<string, string> = {
+  raw_pdf: '検査結果 (原本 PDF)',
+  raw_pdf_redacted: '検査結果 (原本 PDF)',
+  raw_csv: '検査結果 (原本 CSV)',
+};
+
+/** 原本 (PDF 優先) の署名 URL を発行する。無ければ null。 */
+async function resolveOriginal(
+  sb: NonNullable<ReturnType<typeof getServerSupabase>>,
+  artifactId: string,
+): Promise<{ url: string; label: string } | null> {
+  try {
+    const { data, error } = await (sb.schema('diagnosis') as any)
+      .from('test_artifact_files')
+      .select('file_kind, storage_url')
+      .eq('test_artifact_id', artifactId)
+      .in('file_kind', ['raw_pdf', 'raw_pdf_redacted', 'raw_csv']);
+    if (error || !data || data.length === 0) return null;
+
+    // PDF を優先し、無ければ CSV。
+    const order = ['raw_pdf_redacted', 'raw_pdf', 'raw_csv'];
+    const rows = [...data].sort(
+      (a: { file_kind: string }, b: { file_kind: string }) =>
+        order.indexOf(a.file_kind) - order.indexOf(b.file_kind),
+    );
+    for (const row of rows) {
+      const url = await getOriginalSignedUrl(row.storage_url);
+      if (url) return { url, label: FILE_KIND_LABEL[row.file_kind] ?? '検査結果 (原本)' };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }

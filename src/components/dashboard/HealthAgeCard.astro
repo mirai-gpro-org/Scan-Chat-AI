@@ -14,8 +14,14 @@ import type { HealthAgeLatest } from '../../lib/dashboard-queries';
 
 interface Props {
   latest: HealthAgeLatest;
+  /**
+   * 実年齢より高いときに添える案内文 (app_config `ui.health_age_followup`)。
+   * 既定は空で、空なら何も出さない。文言は Wellfort が admin から設定する
+   * (アプリが助言文を作らない方針のため、ここでは文面を持たない)。
+   */
+  followup?: string | null;
 }
-const { latest } = Astro.props;
+const { latest, followup = null } = Astro.props;
 
 const bio = latest.biologicalAge;
 const delta = latest.delta;
@@ -72,6 +78,14 @@ const isReference = imputed.length > 0 || carried.length > 0;
     <p class="text-base text-slate-700">
       必須項目が不足しているため算出できませんでした。
       {missing.length > 0 && <span class="text-slate-600">（不足: {jp(missing)}）</span>}
+    </p>
+  )}
+
+  {/* 実年齢より高い場合の案内。表示帯は上のバッジと同じ (delta > 2)。
+      文面は設定値をそのまま出す。アプリは文言を生成しない。 */}
+  {bio != null && delta != null && delta > 2 && followup && (
+    <p class="mt-4 rounded-xl bg-mist px-4 py-3 text-base leading-relaxed text-navy-800">
+      {followup}
     </p>
   )}
 

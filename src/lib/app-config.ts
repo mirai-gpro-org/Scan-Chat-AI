@@ -28,6 +28,15 @@ export interface ConfigSpec {
  * default は **現行の確定運用 (CLAUDE.md)** に一致させること (env 廃止のため DB/既定が唯一の真実)。
  */
 export const CONFIG_SPECS: ConfigSpec[] = [
+  // ── 画面表示の文言 (Wellfort が admin から編集できるようにする) ──
+  // 既定は**空**。空のあいだは UI 側に何も出さない (架空の連絡先や文言を作らない)。
+  { key: 'ui.support_contact', type: 'string', group: '画面表示', label: 'サポート窓口', default: '',
+    description: 'メニューやエラー画面に出す問い合わせ先 (例: support@example.co.jp / 0120-000-000)。空なら非表示。' },
+  { key: 'ui.health_age_followup', type: 'string', group: '画面表示', label: '健康年齢のフォローアップ文', default: '',
+    description: '健康年齢が実年齢より高いときに添える案内文。空なら非表示。'
+      + ' **診断・治療の助言にならない範囲で書くこと** (アプリは独自に解釈しない方針)。'
+      + ' 例: 「気になる点は次回の検査時に医師へご相談ください。」' },
+
   // ── モデル ──
   { key: 'scan.model', type: 'enum', group: 'モデル', label: 'スキャン用モデル', default: 'gemini-3.1-flash-lite',
     options: ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-flash'],

@@ -23,6 +23,8 @@ interface Props {
   current?: string;
   /** 未読の重要なお知らせ件数。 */
   unreadNotices?: number;
+  /** サポート窓口 (app_config `ui.support_contact`)。空なら表示しない。 */
+  supportContact?: string | null;
   /** OEM デモ用のロゴ差し替え (未指定なら Welltect ロゴ)。 */
   logoSrc?: string;
   logoAlt?: string;
@@ -31,6 +33,7 @@ const {
   u = null,
   current = '',
   unreadNotices = 0,
+  supportContact = null,
   logoSrc,
   logoAlt = 'Welltect',
 } = Astro.props as Props;
@@ -114,6 +117,15 @@ const ITEMS: { href: string; label: string; icon: AppIconName; note?: string }[]
       </a>
     );
   })}
+
+  {/* サポート窓口。app_config `ui.support_contact` が未設定なら出さない
+      (架空の連絡先を作らないため)。 */}
+  {supportContact && (
+    <div class="mt-4 border-t border-slate-200 pt-4">
+      <p class="text-sm font-semibold text-slate-700">お問い合わせ</p>
+      <p class="mt-1 break-all text-base text-slate-800">{supportContact}</p>
+    </div>
+  )}
 </nav>
 
 <script>

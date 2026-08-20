@@ -16,6 +16,7 @@ import TestHistoryList from '../components/dashboard/TestHistoryList.astro';
 import { loadDashboard, formatGreeting, getHealthAge, formatJpDate, testTypeLabel } from '../lib/dashboard-queries';
 import { getLatestMeasurements, getMeasurementTrend } from '../lib/measurement-queries';
 import { countUnreadImportant } from '../lib/notice-queries';
+import { refreshConfig, cfg } from '../lib/app-config';
 import { isBridgeConfigured } from '../lib/supabase';
 import {
   extractUrgentAlert,
@@ -59,6 +60,11 @@ const metricTrend = data ? await getMeasurementTrend(data.resultUid) : [];
 const healthAge = data ? await getHealthAge(data.diagnosticUserId) : null;
 
 const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;
+
+// 画面文言 (app_config)。未設定なら空文字が返り、UI 側で非表示になる。
+await refreshConfig();
+const healthAgeFollowup = cfg('ui.health_age_followup');
+const supportContact = cfg('ui.support_contact');
 
 const greeting    = data ? formatGreeting(data) : '';
 const sections    = data?.elithSections ?? [];
@@ -111,7 +117,7 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
 
   {!needsSignIn && !hasError && (
     <>
-      <AppNav u={u} current="/dashboard" unreadNotices={unreadNotices} logoSrc={logoSrc} logoAlt={logoAlt} />
+      <AppNav u={u} current="/dashboard" unreadNotices={unreadNotices} logoSrc={logoSrc} logoAlt={logoAlt} supportContact={supportContact} />
 
       {data?.usingDemoData && (
         <div class="border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-center text-sm text-amber-800">
@@ -140,7 +146,7 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
         {/* ① 注意項目 — 非表示 (緊急受診勧告 URGENT ALERT): {urgentAlert && <UrgentAlertBanner alert={urgentAlert} />} */}
 
         {/* ② 健康年齢 */}
-        {healthAge?.latest && <HealthAgeCard latest={healthAge.latest} />}
+        {healthAge?.latest && <HealthAgeCard latest={healthAge.latest} followup={healthAgeFollowup} />}
 
         {/* ③ 次にすること — 非表示 (本日の健康クエスト): <DailyQuests quests={quests} /> */}
 
