@@ -34,7 +34,7 @@ const active = shipments.filter((s) => !s.lab_completed_at).slice(0, 2);
   </header>
 
   {active.length === 0 ? (
-    <div class="rounded-xl border border-dashed border-slate-300 p-5 text-center text-base text-slate-600">
+    <div class="rounded-xl border border-dashed border-slate-300 p-4 text-center text-base text-slate-600 sm:p-5">
       進行中のキットはありません
       {nextTestAt && (
         <p class="mt-2">

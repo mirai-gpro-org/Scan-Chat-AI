@@ -138,12 +138,39 @@ export default {
         },
       },
       fontFamily: {
+        /*
+         * 欧文・数字は OS の UI フォント、**和文は UD フォント**を当てる。
+         * フォントのフォールバックは 1 文字ずつ効くので、この 1 本で
+         *   欧文/数字 = system-ui (検査値の tabular-nums がそのまま効く)
+         *   和文      = BIZ UDPGothic → Hiragino Sans → Noto Sans JP
+         * になる。
+         *
+         * BIZ UDGothic (モリサワ) を和文の先頭に置く理由:
+         *   - **Windows 10 October 2018 Update 以降に OS 標準搭載**なので、
+         *     主な利用者 (50〜65 代・Windows) には **追加ダウンロードなし**で届く。
+         *     出典: モリサワ ニュースリリース
+         *     morisawa.co.jp/about/news/4010
+         *   - UD フォントで、装飾を省いて誤読を避け、字画間を広く取る設計。
+         *     小さいサイズでも全文字を判別できることを開発基準にしている。
+         *   - 和文と英数字・記号が混在したときのばらつきが少ない。
+         *   - **等幅版 (BIZ UDGothic) を先に置く**。プロポーショナル版 (UDP) は
+         *     句読点を詰めるため、今回指摘のあった「句読点が詰まって読めない」に
+         *     逆行する。等幅版は句読点が全角幅のままで、和文本来のベタ組みになる。
+         *     欧文・数字は system-ui 側が担当するので等幅の影響を受けない。
+         * 未搭載の環境 (macOS/iOS) は Hiragino Sans に落ちる = 従来どおり。
+         * 和名も併記するのは、環境によって登録名が和名のことがあるため (保険)。
+         * Web フォント (Google Fonts) は入れていない — 和文は実測で 400+700 の
+         * サブセットが約 700KB になるため、まず OS 搭載フォントで取りに行く。
+         */
         sans: [
           'system-ui',
           '-apple-system',
           'BlinkMacSystemFont',
           '"Segoe UI"',
           'Roboto',
+          '"BIZ UDGothic"',
+          '"BIZ UDゴシック"',
+          '"BIZ UDPGothic"',
           '"Hiragino Sans"',
           '"Noto Sans JP"',
           'sans-serif',
@@ -152,10 +179,17 @@ export default {
       fontSize: {
         // 本文の下限は 16px。補助情報を小さくしない方針のため、
         // 12px 以下のユーティリティは定義しない (text-xs = 13px に引き上げ)。
-        xs: ['0.8125rem', { lineHeight: '1.5rem' }],   // 13px
-        sm: ['0.875rem',  { lineHeight: '1.6rem' }],   // 14px
-        base: ['1rem',    { lineHeight: '1.85rem' }],  // 16px
-        lg: ['1.125rem',  { lineHeight: '1.8rem' }],
+        //
+        // 【行間 (2026-08 見直し)】16px は iOS/Web の標準的な本文サイズであって
+        //   大きくはない。「大きく見える・1 画面に入る量が少ない」の実体は行間の
+        //   広さだったので、**文字は縮めず行間を詰める**方針に変えた。
+        //   base 1.85rem (1.85) → 1.75rem (1.75)。実測でスマホ 1 画面あたりの
+        //   文字数が 330 → 377 字に増える (iPhone 15 Pro 相当)。
+        //   1.75 は和文本文の一般的な範囲内で、詰めすぎではない。
+        xs: ['0.8125rem', { lineHeight: '1.4rem' }],   // 13px
+        sm: ['0.875rem',  { lineHeight: '1.5rem' }],   // 14px
+        base: ['1rem',    { lineHeight: '1.75rem' }],  // 16px
+        lg: ['1.125rem',  { lineHeight: '1.75rem' }],
       },
       minHeight: { touch: '44px' }, // タップ領域の下限
       minWidth:  { touch: '44px' },

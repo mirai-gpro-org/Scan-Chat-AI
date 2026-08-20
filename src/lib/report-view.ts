@@ -41,9 +41,44 @@ export function modeHref(mode: ReportMode, opts: LinkOpts = {}): string {
  * 本文 Markdown を HTML 化し、`[pN]` を「原本 PDF の N ページ目へ飛ぶリンク」に変換する。
  * クリック時はページ遷移せず iframe を直接更新する (ページ側のスクリプトが拾う)。
  */
+
+/**
+ * 長い一続きの本文を、文の切れ目で段落に割る。
+ *
+ * Elith のレポートは 1 章がまるごと 1 段落 (改行なし・実測 600 字超) で届くため、
+ * そのまま出すと「文字の壁」になり読む気にならない。**内容には一切触れず**、
+ * 「。」の後ろに空行を入れて段落化するだけ (要約・言い換え・並べ替えはしない)。
+ *
+ * 触らない行:
+ *   - 見出し / 箇条書き / 表 / 引用 など Markdown の構造を持つ行
+ *   - 「。」が SENTENCES_PER_PARA 個以下しかない短い行
+ */
+const SENTENCES_PER_PARA = 2;
+
+export function paragraphizeJa(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => {
+      const t = line.trim();
+      if (!t) return line;
+      // Markdown の構造行はそのまま (# 見出し / - * + 箇条書き / 1. / | 表 / > 引用)
+      if (/^(#{1,6}\s|[-*+]\s|\d+[.)]\s|\||>)/.test(t)) return line;
+      // 太字だけの行 = 小見出し扱いなので割らない
+      if (/^\*\*.*\*\*$/.test(t)) return line;
+      const sentences = t.split(/(?<=。)/).filter(Boolean);
+      if (sentences.length <= SENTENCES_PER_PARA) return line;
+      const out: string[] = [];
+      for (let i = 0; i < sentences.length; i += SENTENCES_PER_PARA) {
+        out.push(sentences.slice(i, i + SENTENCES_PER_PARA).join(''));
+      }
+      return out.join('\n\n');
+    })
+    .join('\n');
+}
+
 export function renderReportMarkdown(text: string, opts: LinkOpts = {}): string {
   if (!text) return '';
-  const linked = text.replace(/\[p(\d+)\]/g, (_m, n: string) => {
+  const linked = paragraphizeJa(text).replace(/\[p(\d+)\]/g, (_m, n: string) => {
     const qs = new URLSearchParams();
     if (opts.u) qs.set('u', opts.u);
     qs.set('mode', 'full');
