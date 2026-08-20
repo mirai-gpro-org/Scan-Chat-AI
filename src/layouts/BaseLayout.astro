@@ -1,6 +1,7 @@
 ---
 import '../styles/global.css';
 import GoogleOneTap from '../components/GoogleOneTap.astro';
+import { LOGO } from '../lib/brand.ts';
 
 interface Props {
   title?: string;
@@ -40,7 +41,15 @@ const WIDTH = {
     <meta name="description" content={description} />
     <!-- Executive Navy。ダークモードは提供しないため単一値。 -->
     <meta name="theme-color" content="#102B3A" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    {/*
+      Welltect ロゴ (public/welltect_logo.svg 等) が置かれていればそれを favicon に使う。
+      未配置のあいだは暫定の favicon.svg にフォールバックする。
+    */}
+    <link
+      rel="icon"
+      type={LOGO.pending ? 'image/svg+xml' : undefined}
+      href={LOGO.pending ? '/favicon.svg' : LOGO.src}
+    />
     <title>{title}</title>
   </head>
   <body class="min-h-full">

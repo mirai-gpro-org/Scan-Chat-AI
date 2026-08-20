@@ -1,6 +1,7 @@
 ---
 import AppIcon from '../components/AppIcon.astro';
 import AppNav from '../components/AppNav.astro';
+import AppLogo from '../components/AppLogo.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import {
   loadDashboard,
@@ -53,7 +54,7 @@ const UNAVAILABLE_STEPS = new Set([5, 6]);
 <BaseLayout title="検査キットの進捗 | Welltect" width="app">
   {needsSignIn && (
     <main class="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
-      <img src="/wellfort_logo.png" alt="Welltect" width="48" height="54" class="h-12 w-auto opacity-80" />
+      <AppLogo height={56} class="opacity-80" />
       <span class="inline-flex h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-brand-600"></span>
     </main>
   )}

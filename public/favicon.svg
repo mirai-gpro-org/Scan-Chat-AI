@@ -1,4 +1,9 @@
+<!-- 暫定 favicon。Welltect ロゴ原本 (public/welltect_logo.svg) を配置すると
+     BaseLayout が自動的にそちらを favicon として使うため、このファイルは使われなくなる。
+     ブランドマークの目視トレースは行わないため、ここでは配色のみ Welltect に合わせた無地の代替。 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#2563eb"/>
-  <path d="M20 32h24M32 20v24" stroke="#fff" stroke-width="6" stroke-linecap="round"/>
+  <rect width="64" height="64" rx="16" fill="#102B3A"/>
+  <path d="M14 34h8l5-9 6 15 5-11 4 5h8"
+        fill="none" stroke="#4FC3CE" stroke-width="5"
+        stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

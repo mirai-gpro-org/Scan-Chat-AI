@@ -1,0 +1,31 @@
+---
+import { LOGO } from '../lib/brand.ts';
+
+/**
+ * Welltect ロゴ。解決ロジックは src/lib/brand.ts に集約している
+ * (差し替え方法もそちらのコメントを参照)。
+ */
+
+interface Props {
+  /** 表示高さ (px)。ヘッダ 36 / サインイン 56 程度。 */
+  height?: number;
+  class?: string;
+  /** OEM 等でロゴを差し替える場合のみ指定する。 */
+  src?: string;
+  alt?: string;
+}
+const {
+  height = 36,
+  class: className = '',
+  src = LOGO.src,
+  alt = 'Welltect',
+} = Astro.props as Props;
+---
+
+<img
+  src={src}
+  alt={alt}
+  height={height}
+  style={`height:${height}px`}
+  class={`w-auto select-none ${className}`}
+/>

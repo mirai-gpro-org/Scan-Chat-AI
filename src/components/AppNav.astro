@@ -1,5 +1,6 @@
 ---
 import AppIcon from './AppIcon.astro';
+import AppLogo from './AppLogo.astro';
 import type { AppIconName } from './AppIcon.astro';
 
 /**
@@ -22,7 +23,7 @@ interface Props {
   current?: string;
   /** 未読の重要なお知らせ件数。 */
   unreadNotices?: number;
-  /** OEM デモ用のロゴ差し替え。 */
+  /** OEM デモ用のロゴ差し替え (未指定なら Welltect ロゴ)。 */
   logoSrc?: string;
   logoAlt?: string;
 }
@@ -30,7 +31,7 @@ const {
   u = null,
   current = '',
   unreadNotices = 0,
-  logoSrc = '/wellfort_logo.png',
+  logoSrc,
   logoAlt = 'Welltect',
 } = Astro.props as Props;
 
@@ -58,7 +59,7 @@ const ITEMS: { href: string; label: string; icon: AppIconName; note?: string }[]
       <span class="text-sm font-medium">メニュー</span>
     </button>
 
-    <img src={logoSrc} alt={logoAlt} height="36" class="h-9 w-auto select-none" />
+    <AppLogo src={logoSrc} alt={logoAlt} height={36} />
 
     <a
       href={`/notices${q}`}
