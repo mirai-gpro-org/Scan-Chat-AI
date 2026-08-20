@@ -344,10 +344,13 @@
   /* ─ 端末種別による出し分け ─
      要件 F-A5「PC はカメラスキャン非対応」。JS ではなくポインタ種別で分けるため、
      JS が無効でも表示が破綻しない。 */
-  .touch-only { display: none; }
+  /* 表示/非表示はこの 2 クラスだけで決める。要素側に flex / block などの
+     display ユーティリティを併記すると Tailwind の utilities レイヤが後勝ちして
+     非表示が効かなくなる (実測 2026-08: PC でカメラボタンが消えなかった)。 */
+  .touch-only { display: none !important; }
   .pointer-only { display: block; }
   @media (pointer: coarse) {
-    .touch-only { display: flex; }
+    .touch-only { display: flex !important; }
     .pointer-only { display: none; }
   }
 

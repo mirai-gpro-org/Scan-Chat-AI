@@ -70,6 +70,44 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## QR コード生成 — qrcode-generator
+
+| 項目 | 内容 |
+|---|---|
+| パッケージ | `qrcode-generator` |
+| バージョン | 2.0.4 |
+| ライセンス | MIT |
+| 依存 | なし |
+
+PC でカメラ撮影を提供しない (要件 F-A5) ため、同じページをスマートフォンで開く
+ための QR コードをサーバ側で生成する。符号化は本ライブラリに任せ、自前実装しない
+(誤り訂正やマスク選択を手書きすると検証できないため)。SVG の組み立てのみ
+`src/lib/qr.ts` で行う。
+
+### MIT License (qrcode-generator)
+
+```
+Copyright (c) 2009 Kazuhiko Arase
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ---
 
 更新方法: アイコンを追加・削除したら `src/components/AppIcon.astro` のマップを更新し、

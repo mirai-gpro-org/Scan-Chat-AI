@@ -292,7 +292,7 @@ const pdfSrcWithPage = data?.samplePdfUrl
 
         {/* メタ情報 (折りたたみ) */}
         <details class="rounded-2xl border border-dashed border-slate-300 p-3">
-          <summary class="cursor-pointer text-xs font-medium text-slate-500"><AppIcon name="tool" size={20} /> 詳細メタ</summary>
+          <summary class="min-h-touch cursor-pointer text-sm font-medium text-slate-700"><AppIcon name="tool" size={20} /> 詳細メタ</summary>
           <dl class="mt-2 space-y-1 text-xs text-slate-600">
             <div class="flex justify-between"><dt>artifact id:</dt><dd class="font-mono">{data.artifact.id}</dd></div>
             <div class="flex justify-between"><dt>source:</dt><dd>{data.artifact.source}</dd></div>
