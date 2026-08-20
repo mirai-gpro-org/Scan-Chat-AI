@@ -144,8 +144,9 @@ const toc = sections
                     <a
                       href={`/report?${u ? `u=${encodeURIComponent(u)}&` : ''}mode=full&page=${topPriority.page}#pdf-viewer`}
                       data-pdf-page={String(topPriority.page)}
-                      class="pdf-page-link inline-flex min-h-touch items-center rounded-full border border-brand-300 bg-white px-2.5 text-sm font-medium text-brand-800 no-underline hover:bg-brand-50"
-                    >原本 p{topPriority.page}</a>
+                      class="pdf-page-link inline-flex min-h-touch items-center gap-1.5 rounded-full border border-brand-300 bg-white px-3 text-sm font-medium text-brand-800 no-underline hover:bg-brand-50"
+                      title="原本レポートの該当ページを開く"
+                    ><AppIcon name="report" size={15} />説明</a>
                   </p>
                   <p class="mt-2 text-base leading-relaxed text-navy-800">{topPriority.text}</p>
                 </li>
@@ -163,8 +164,9 @@ const toc = sections
                     <a
                       href={`/report?${u ? `u=${encodeURIComponent(u)}&` : ''}mode=full&page=${pt.page}#pdf-viewer`}
                       data-pdf-page={String(pt.page)}
-                      class="pdf-page-link inline-flex min-h-touch items-center rounded-full border border-brand-300 bg-brand-50 px-2.5 text-sm font-medium text-brand-800 no-underline hover:bg-brand-100"
-                    >原本 p{pt.page}</a>
+                      class="pdf-page-link inline-flex min-h-touch items-center gap-1.5 rounded-full border border-brand-300 bg-brand-50 px-3 text-sm font-medium text-brand-800 no-underline hover:bg-brand-100"
+                      title="原本レポートの該当ページを開く"
+                    ><AppIcon name="report" size={15} />説明</a>
                   </p>
                   <p class="mt-1.5 text-base leading-relaxed text-slate-800">{pt.text}</p>
                 </li>
@@ -202,7 +204,7 @@ const toc = sections
                   class="pdf-page-link flex min-h-touch items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-800 transition hover:border-brand-400 hover:bg-brand-50"
                 >
                   <span>{t.name}</span>
-                  <span class="tnum shrink-0 text-sm text-slate-600">原本 p{t.page}</span>
+                  <AppIcon name="next" size={18} class="shrink-0 text-brand-700" />
                 </a>
               </li>
             ))}

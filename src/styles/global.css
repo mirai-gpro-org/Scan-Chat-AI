@@ -410,7 +410,8 @@
 }
 .md-region h1,
 .md-region h2,
-.md-region h3 {
+.md-region h3,
+.md-region h4 {
   @apply mb-1.5 mt-3 text-base font-semibold text-navy-800;
 }
 /*
@@ -434,7 +435,15 @@
  */
 .md-summary p { @apply my-2 text-base; line-height: 1.75; }
 .md-summary p + p { @apply mt-3; }
-.md-summary p:has(> strong:first-child:last-child) {
+/*
+ * 章の中の小見出し。
+ * 以前は `p:has(> strong:first-child:last-child)` で「太字だけの段落」を拾っていたが、
+ * **:first-child/:last-child は text ノードを数えない**ため、文中に 1 箇所だけ
+ * 強調を入れた段落まで一致し、段落全体が太字になっていた (実測 2026-08)。
+ * `**…**` だけの行は report-view.ts の headingizeBoldLines() が h4 に変換するので、
+ * ここは h4 を見る。
+ */
+.md-summary h4 {
   @apply mb-2 mt-5 text-lg font-bold text-navy-800;
 }
 .md-summary ul {

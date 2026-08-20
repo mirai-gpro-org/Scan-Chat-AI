@@ -9,6 +9,7 @@
  */
 
 import { marked } from 'marked';
+import { ICON_SVG } from './icon-svg';
 
 export type ReportMode = 'summary' | 'highlights' | 'full';
 
@@ -76,18 +77,107 @@ export function paragraphizeJa(text: string): string {
     .join('\n');
 }
 
+
+/**
+ * 文頭の「主題」を太字にする。
+ *
+ * 目的: 長文が均一な灰色の塊に見えて、何の話かが目に飛び込んでこない状態を避ける。
+ *
+ * 【内容の解釈はしない】どこが重要かを判断するのではなく、**日本語の文法構造**
+ * (文頭に置かれる主題提示部) を機械的に拾うだけ。
+ *   「現在の健康状態について、…」        → 「現在の健康状態について」
+ *   「また、がんリスク評価については…」   → 「がんリスク評価については」
+ *   「一方で、今回の検査結果では…」       → 「今回の検査結果では」
+ * 主題マーカーが無い文 (「まずは無理のない範囲で…」等) は何もしない。
+ * 文字は 1 つも増減させず、`**` を挿し込むだけ (ミッション④: 要約・加工しない)。
+ */
+
+/** 文頭に来る接続語。主題はこの後ろから始まる。 */
+const CONJ = '(?:また|一方(?:で)?|さらに|加えて|そのため|したがって|ただし|なお|次に|続いて|あわせて|しかし|そして|一般に|特に)';
+/** 主題を示す助詞。長いものから順に見る。 */
+const TOPIC_MARK = '(?:については|について|に関しては|に関して|としては|における|におけるは|では|は)';
+/** 指示語だけの主題 (「これは」「その点は」等) は太字にしても情報が無いので除外。 */
+const DEMONSTRATIVE = /^(?:これ|それ|あれ|この|その|あの|ここ|そこ|以上|以下|なお|そのため)/;
+
+const TOPIC_RE = new RegExp(
+  `^(\\s*(?:${CONJ}[、,]\\s*)?)([^、。！？\\n]{3,20}?)(${TOPIC_MARK})(?=[、。]|[^、。])`,
+);
+
+/** 1 文を受け取り、主題があれば `**` で囲んで返す。無ければそのまま。 */
+function emphasizeSentence(sentence: string): string {
+  // 先頭の [pN] マーカーは主題判定の対象外 (後段でリンクに変換される)
+  const lead = /^\s*\[p\d+\]\s*/.exec(sentence);
+  const head = lead ? lead[0] : '';
+  const rest = sentence.slice(head.length);
+
+  const m = TOPIC_RE.exec(rest);
+  if (!m) return sentence;
+  const [, prefix, topic, mark] = m;
+  if (DEMONSTRATIVE.test(topic)) return sentence;
+  const at = prefix.length + topic.length + mark.length;
+  return `${head}${prefix}**${topic}${mark}**${rest.slice(at)}`;
+}
+
+export function emphasizeTopicJa(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => {
+      const t = line.trim();
+      if (!t) return line;
+      // Markdown の構造行 / すでに強調のある行は触らない (`**` の入れ子を作らない)
+      if (/^(#{1,6}\s|[-*+]\s|\d+[.)]\s|\||>)/.test(t)) return line;
+      if (line.includes('**')) return line;
+      // **1 段落につき 1 箇所だけ**。全文がボールドだらけになると強調の意味が消え、
+      // かえって読みにくくなるため、最初に主題が見つかった文でおしまいにする。
+      let done = false;
+      return line
+        .split(/(?<=。)/)
+        .map((sentence) => {
+          if (done) return sentence;
+          const out = emphasizeSentence(sentence);
+          if (out !== sentence) done = true;
+          return out;
+        })
+        .join('');
+    })
+    .join('\n');
+}
+
+
+/**
+ * `**小見出し**` だけの行を、本物の見出し (h4) にする。
+ *
+ * Elith のレポートは章の中の小見出しを「その行が丸ごと太字」で表現してくる。
+ * これを段落 (`<p><strong>…</strong></p>`) のまま出すと、CSS 側で
+ * 「太字だけの段落＝小見出し」を判定する必要があり、`p:has(> strong:first-child:last-child)`
+ * のような選択子になる。**これは text ノードを数えないため誤爆する** —
+ * 文中に 1 箇所だけ強調を入れた段落まで小見出し扱いになり、段落全体が太字になった
+ * (実測 2026-08)。構造は構造として出しておく方が安全なので、ここで見出しに変換する。
+ */
+export function headingizeBoldLines(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => {
+      const m = /^\s*\*\*(.+?)\*\*\s*$/.exec(line);
+      return m ? `#### ${m[1]}` : line;
+    })
+    .join('\n');
+}
+
 export function renderReportMarkdown(text: string, opts: LinkOpts = {}): string {
   if (!text) return '';
-  const linked = paragraphizeJa(text).replace(/\[p(\d+)\]/g, (_m, n: string) => {
+  const linked = emphasizeTopicJa(paragraphizeJa(headingizeBoldLines(text))).replace(/\[p(\d+)\]/g, (_m, n: string) => {
     const qs = new URLSearchParams();
     if (opts.u) qs.set('u', opts.u);
     qs.set('mode', 'full');
     qs.set('page', n);
     const cls =
-      'pdf-page-link inline-flex min-h-touch items-center gap-1 rounded-full border border-brand-300 '
-      + 'bg-brand-50 px-2.5 py-0.5 text-sm font-medium text-brand-800 no-underline hover:bg-brand-100';
+      'pdf-page-link inline-flex min-h-touch items-center gap-1.5 rounded-full border border-brand-300 '
+      + 'bg-brand-50 px-3 py-0.5 text-sm font-medium text-brand-800 no-underline hover:bg-brand-100';
+    // ページ番号は読み手には意味が無いので出さない (飛び先の指定には引き続き使う)。
+    // 絵文字は本番素材に使わない規則があるため、アイコンは Lucide の SVG を使う。
     return `<a href="${opts.basePath ?? ''}?${qs.toString()}#pdf-viewer" class="${cls}"`
-      + ` data-pdf-page="${n}" title="原本レポートの ${n} ページ目を見る">原本 p${n}</a>`;
+      + ` data-pdf-page="${n}" title="原本レポートの該当ページを開く">${ICON_SVG.report}説明</a>`;
   });
   return marked.parse(linked, { async: false }) as string;
 }
