@@ -347,6 +347,28 @@
   氏名・住所・生年月日を診断系/外部/S3 に載せない (`docs/architecture/data_integration_requirements.md` §1.3,
   `docs/lab/lab_integration_workflow.md` §1.1)。氏名OCRのみでの顧客割当確定は禁止。
 
+#### DB 権限まわりの既知の宿題 (総合テスト時に必ず潰す・2026-08-20)
+Supabase database linter の指摘を棚卸しした結果。**テストフェーズの前提 (admin なら誰でも同じ
+データが見える) を維持するため、今は直さない**。本番相当へ切り替える段で以下を必ず処理する。
+- **[最重要] `customer` スキーマの PII が anon キーで読める**。
+  `20260601000020_rls_policies.sql:45` の `grant select on all tables in schema customer to anon`
+  ＋ 同 `:63` の `dev_read_all` (`for select using (true)`) の組み合わせ。anon キーは
+  `GoogleOneTap.astro:35,53` でブラウザに出るため、**公開鍵だけで `customer_profiles` の
+  氏名/住所/生年月日/メール/電話が引ける**。上の「PII は診断系/外部に載せない」方針と正面衝突する。
+  → 本番では customer 系の read を `auth.uid()` 紐付け (または service_role 限定) に絞る。
+  ※ linter の `rls_policy_always_true` は SELECT を対象外にしているので**この件は警告に出ない**。
+- **`dev_authn_write` (`for all to authenticated using(true) with check(true)`) が全 15 テーブル**。
+  `20260601000020_rls_policies.sql:67` のループ生成 + 後続マイグレーションの個別コピー。
+  authenticated JWT を取れれば全テーブルに書ける。元コード `:51` にも
+  「本番移行時に customer 系は service_role 以外の write を禁止する」と書いてある。
+- **`function_search_path_mutable` は解消済** (`20260820000050_function_search_path.sql`)。
+  3 つとも `new.updated_at = now()` だけで名前解決をしないため `search_path=''` 固定で挙動不変。
+  ローカル PG16 で 3 トリガーが発火し続けることを確認済み。
+- **Leaked Password Protection (Auth)** はコードでなく Supabase Dashboard の設定
+  (Authentication → Providers → Password)。本アプリの認証は `signInWithIdToken` (Google) のみ
+  (`GoogleOneTap.astro:56`) なので、**そもそもメール/パスワード サインアップを無効化するのが本筋**。
+  ホスト側で有効かは未確認 (`supabase/config.toml:45,48` はローカル用の設定であり本番を表さない)。
+
 ## 主要ドキュメント索引
 
 | ドキュメント | 内容 |
