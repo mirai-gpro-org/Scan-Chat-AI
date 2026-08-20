@@ -192,7 +192,7 @@ const pdfSrcWithPage = data?.samplePdfUrl
               {!data.isThreeMode && <span class="ml-auto text-xs text-slate-500">single モード</span>}
             </header>
             {data.summarySection ? (
-              <div class="md-region md-summary text-[13px] leading-relaxed text-slate-700" set:html={md(data.summarySection.text)} />
+              <div class="md-region md-summary text-xs leading-relaxed text-slate-700" set:html={md(data.summarySection.text)} />
             ) : (
               <p class="text-xs text-slate-500">アブストラクトセクションが見つかりません。「全編」をご確認ください。</p>
             )}
@@ -225,7 +225,7 @@ const pdfSrcWithPage = data?.samplePdfUrl
               data.highlightSections.map((s) => (
                 <article class="card">
                   <h3 class="mb-2 text-sm font-bold text-slate-800">{s.section_name}</h3>
-                  <div class="md-region md-summary text-[13px] leading-relaxed text-slate-700" set:html={md(s.text)} />
+                  <div class="md-region md-summary text-xs leading-relaxed text-slate-700" set:html={md(s.text)} />
                 </article>
               ))
             )}
@@ -290,7 +290,7 @@ const pdfSrcWithPage = data?.samplePdfUrl
                   </h3>
                   <span class="text-xs text-slate-500">{s.char_count.toLocaleString()}字</span>
                 </header>
-                <div class="md-region text-[13px] leading-relaxed text-slate-700" set:html={md(s.text)} />
+                <div class="md-region text-xs leading-relaxed text-slate-700" set:html={md(s.text)} />
               </article>
             ))}
 
