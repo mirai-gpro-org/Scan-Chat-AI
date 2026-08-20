@@ -219,12 +219,16 @@
    * スクリム。**暗くしすぎない** — モーダルの中身 (グラフ / データ表) は白面なので
    * 背面を沈める必要がなく、濃いと 50〜65 代には「画面が暗くなった」と読まれる。
    * navy を薄く敷いて「背面は操作できない」ことだけ伝える。
+   *
+   * 【濃さは background-color の alpha だけで決める】
+   *   以前は `opacity: <値>` と `@keyframes fade-in { to { opacity: 0.5 } }` の
+   *   二重管理で、animation-fill-mode: both が宣言側を上書きしていた
+   *   (= opacity をいくら下げても実効 0.5 のまま変わらない)。
+   *   アニメーションは 0→1 のフェードだけを担当させ、濃さは持たせない。
    */
   .sheet-backdrop {
-    @apply fixed inset-0 z-40;
-    background-color: theme('colors.navy.700');
-    opacity: 0.24;
-    animation: fade-in 0.16s ease-out both;
+    @apply fixed inset-0 z-40 bg-navy-700/25;
+    animation: scrim-in 0.16s ease-out both;
   }
   .sheet-panel {
     @apply fixed inset-x-0 bottom-0 z-50 mx-auto max-w-lg rounded-t-3xl border border-slate-200
@@ -234,7 +238,7 @@
     max-height: 80vh;
     overflow-y: auto;
   }
-  @keyframes fade-in { from { opacity: 0; } to { opacity: 0.5; } }
+  @keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
   @keyframes sheet-up {
     from { transform: translateY(100%); }
     to   { transform: translateY(0); }

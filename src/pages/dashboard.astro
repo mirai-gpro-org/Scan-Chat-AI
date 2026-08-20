@@ -96,7 +96,9 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
 <BaseLayout title={data ? `${greeting} | Welltect` : 'マイページ | Welltect'} width="app">
   {debugBridge && (
     <div style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#102B3A;color:#fff;font-size:12px;padding:6px 10px;font-family:monospace;">
-      bridge[configured={String(bridgeConfigured)} url={String(bridgeUrlSeen)} key={String(bridgeKeySeen)}] build=v3-2026-06-22
+      bridge[configured={String(bridgeConfigured)} url={String(bridgeUrlSeen)} key={String(bridgeKeySeen)}]
+      kit[source={data?.shipmentSource ?? '-'} n={String(data?.shipments?.length ?? 0)} uid={data?.resultUid ?? '-'}]
+      build=v3-2026-06-22
     </div>
   )}
   {needsSignIn && (

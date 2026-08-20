@@ -52,7 +52,7 @@ const DEMO_REPORT: ElithSection[] = [
 ];
 
 /** ダミーの検査履歴。 */
-function demoArtifacts(uid: string): TestArtifact[] {
+export function demoArtifacts(uid: string): TestArtifact[] {
   const base = {
     diagnostic_user_id: uid,
     schema_version: '1.0',
@@ -106,7 +106,7 @@ function demoLatestResult(uid: string): DiagnosisResult {
 }
 
 /** ダミーの検査キット進捗。 */
-function demoShipments(uid: string): (KitShipment & { lab_name: string | null })[] {
+export function demoShipments(uid: string): (KitShipment & { lab_name: string | null })[] {
   /**
    * 進捗の 6 段階 (SHIPMENT_STAGES) を一通り見せる。
    * DB のダミー (supabase/seed_kit_demo.sql) を入れなくても /kit と
@@ -193,6 +193,7 @@ export function buildDemoDashboard(uid: string, displayName: string | null): Das
     elithSections: DEMO_REPORT,
     shipments: demoShipments(uid),
     subscription: demoSubscription(uid),
+    shipmentSource: 'demo',
   };
 }
 
