@@ -164,7 +164,12 @@ export function demoMetricTrend(): MetricTrendSeries[] {
     label: string, unit: string, ref: number, vals: number[],
   ): MetricTrendSeries => ({
     label, unit, referenceUpper: ref,
-    points: vals.map((value, i) => ({ date: dates[i], value, raw: String(value) })),
+    // 検査機関が付ける flag を模す。これが無いとカード表示と推移表示で
+    // 基準外の印の有無が食い違う (実測 2026-08)。
+    points: vals.map((value, i) => ({
+      date: dates[i], value, raw: String(value),
+      flag: value > ref ? ('H' as const) : null,
+    })),
   });
   return [
     series('尿酸', 'mg/dL', 7.0, [7.0, 7.3, 7.6, 7.8]),

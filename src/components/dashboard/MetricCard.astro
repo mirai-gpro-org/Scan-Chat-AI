@@ -1,48 +1,66 @@
 ---
-import type { MetricCard as MetricCardType } from '../../lib/elith-parser';
-import { riskColor } from '../../lib/elith-parser';
+import AppIcon from '../AppIcon.astro';
+import type { MeasurementItem } from '../../lib/measurement-queries';
+
+/**
+ * 検査値 1 項目のカード。
+ *
+ * 【原則】アプリは判定を作らない。
+ *   表示するのは 検査票の値・単位・基準値 と、**検査機関が付けた** flag / assessment のみ。
+ *   「要警戒」「正常」等のアプリ独自ラベルは付けない (旧実装の level/comment は撤去)。
+ */
 
 interface Props {
-  metric: MetricCardType;
-  /** 原本 PDF への deep link (artifact ID + ?u= + page) — 任意 */
+  item: MeasurementItem;
+  /** 原本へのリンク (任意) */
   href?: string | null;
 }
-const { metric, href = null } = Astro.props as Props;
-const color = riskColor(metric.level);
-const levelText: Record<MetricCardType['level'], string> = {
-  high: '要警戒',
-  slightly_high: '要注意',
-  normal: '正常',
-  slightly_low: 'やや低い',
-  low: '低い',
-};
-const baseClass = `flex flex-col gap-1 rounded-2xl border-2 ${color.bg} ${color.border} p-3 shadow-sm transition-colors`;
+const { item, href = null } = Astro.props as Props;
+
+const flagged = item.flag != null;
+const flagText = item.flag === 'H' ? '基準値より高い' : '基準値より低い';
+
+// 基準値は検査票の表記をそのまま組み立てる (アプリで丸めたり言い換えたりしない)。
+const refText =
+  item.refLow && item.refHigh ? `${item.refLow}〜${item.refHigh}`
+  : item.refHigh ? `〜${item.refHigh}`
+  : item.refLow ? `${item.refLow}〜`
+  : null;
+
 const Tag = href ? 'a' : 'div';
 ---
 
 <Tag
   href={href ?? undefined}
-  class={`${baseClass} ${href ? 'cursor-pointer' : ''}`}
-  title={href ? '原本の検査結果を見る' : undefined}
+  class={`flex flex-col gap-1.5 rounded-2xl border bg-white p-4 transition-colors ${
+    flagged ? 'border-status-watch' : 'border-slate-200'
+  } ${href ? 'hover:border-brand-400' : ''}`}
 >
-  <div class="flex items-center justify-between">
-    <span class="text-xs font-medium text-slate-600 dark:text-slate-300">{metric.label}</span>
-    <span class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${color.chip}`}>
-      <span class={`h-1.5 w-1.5 rounded-full ${color.dot}`}></span>
-      {levelText[metric.level]}
+  <span class="text-sm font-medium text-slate-600">{item.name}</span>
+
+  <span class="flex items-baseline gap-1.5">
+    <span class="tnum text-3xl font-bold text-slate-900">{item.value ?? '—'}</span>
+    {item.unit && <span class="text-sm text-slate-600">{item.unit}</span>}
+  </span>
+
+  {/* 検査機関が印を付けたときだけ出す。印が無い＝アプリが「基準値内」と判定してよい
+      わけではないため、null では何も表示しない。 */}
+  {flagged && (
+    <span class="status-pill status-watch self-start">
+      <AppIcon name="watch" size={14} />
+      {flagText}
     </span>
-  </div>
-  <div class="flex items-baseline gap-1">
-    <span class={`text-2xl font-bold tabular-nums ${color.text}`}>{metric.value}</span>
-    <span class="text-xs text-slate-500 dark:text-slate-400">{metric.unit}</span>
-  </div>
-  {metric.reference && (
-    <span class="text-[10px] text-slate-500 dark:text-slate-400">基準: {metric.reference}</span>
   )}
-  {metric.comment && (
-    <p class="mt-1 text-[11px] leading-snug text-slate-600 dark:text-slate-300">{metric.comment}</p>
+
+  {refText && <span class="tnum text-sm text-slate-600">基準値 {refText}</span>}
+
+  {item.assessment && (
+    <span class="text-sm text-slate-600">検査機関の判定コード: {item.assessment}</span>
   )}
+
   {href && (
-    <span class="mt-1 text-[10px] text-brand-600 dark:text-brand-300">📄 原本を見る ›</span>
+    <span class="mt-1 inline-flex items-center gap-1 text-sm font-medium text-brand-700">
+      <AppIcon name="report" size={16} />原本を見る
+    </span>
   )}
 </Tag>

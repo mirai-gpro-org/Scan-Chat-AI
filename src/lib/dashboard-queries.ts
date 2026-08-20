@@ -6,6 +6,7 @@
  * app_users.auth_user_id → diagnostic_user_id 解決に置き換える。
  */
 
+import type { AppIconName } from '../components/AppIcon.astro';
 import { getServerSupabase, isBridgeConfigured } from './supabase';
 import { loadBridgeBundle, type CustomerBundle } from './bridge-queries';
 import { buildDemoDashboard, demoFallbackEnabled, demoMetricTrend } from './demo-data';
@@ -26,13 +27,17 @@ export interface MetricTrendPoint {
   value: number;
   /** chip 表示用 — 元の "8.4" や "132/85" */
   raw: string;
+  /** 検査機関が付けた基準外マーカー。アプリは算出しない。 */
+  flag?: 'H' | 'L' | null;
 }
 
 export interface MetricTrendSeries {
-  label: string;       // '尿酸' | '血圧 (収縮期)' | '空腹時血糖'
+  label: string;
   unit: string;
-  /** 参考の基準上限 (折れ線グラフに点線で描画) */
+  /** 検査票由来の基準上限 (グラフに基準帯として描画)。アプリが決めた値ではない。 */
   referenceUpper?: number;
+  /** 検査票由来の基準下限。 */
+  referenceLower?: number;
   points: MetricTrendPoint[];
 }
 
@@ -344,26 +349,53 @@ export function formatGreeting(data: DashboardData): string {
   return 'お客様';
 }
 
-/** kit_shipment のステータス文字列を画面表示用にラベル化。 */
-export function shipmentLabel(s: KitShipment): { label: string; color: string; step: number } {
-  if (s.lab_completed_at) return { label: '✅ 検査完了', color: 'text-emerald-600', step: 6 };
-  if (s.lab_received_at)  return { label: '🔬 検査会社受領', color: 'text-sky-600', step: 5 };
-  if (s.user_returned_at) return { label: '📮 返送済', color: 'text-blue-600', step: 4 };
-  if (s.user_received_at) return { label: '📦 受取済', color: 'text-amber-600', step: 3 };
-  if (s.shipped_at)       return { label: '🚚 発送済', color: 'text-orange-600', step: 2 };
-  return { label: '⏳ 出荷準備', color: 'text-slate-500', step: 1 };
+/** 検査キットの進捗段階。表示は アイコン + テキスト + 色 の 3 点セットで行う。 */
+export interface ShipmentStage {
+  label: string;
+  icon: AppIconName;
+  /** 状態トーン (ブランド色ではなく status.* を使う)。 */
+  tone: 'ok' | 'active' | 'unknown';
+  color: string;
+  step: number;
+}
+
+/** 検査キット進捗の全 6 段階 (表示順は step 昇順)。 */
+export const SHIPMENT_STAGES: ReadonlyArray<{ step: number; label: string; icon: AppIconName }> = [
+  { step: 1, label: '出荷準備',     icon: 'clock' },
+  { step: 2, label: '発送済',       icon: 'kit-shipped' },
+  { step: 3, label: '受取済',       icon: 'kit' },
+  { step: 4, label: '返送済',       icon: 'send' },
+  { step: 5, label: '検査会社受領', icon: 'lab' },
+  { step: 6, label: '検査完了',     icon: 'kit-done' },
+];
+
+/**
+ * kit_shipment を画面表示用の段階へ変換する。
+ *
+ * 【注意】段階 5「検査会社受領」/ 6「検査完了」は本番では値が入らない。
+ *   src/lib/bridge-queries.ts の adaptShipment() が lab_received_at / lab_completed_at を
+ *   null 固定で返すため。完了したように見せず「未取得」として表示すること
+ *   (到達不能な段階を完了扱いにしない)。
+ */
+export function shipmentLabel(s: KitShipment): ShipmentStage {
+  if (s.lab_completed_at) return { label: '検査完了',     icon: 'kit-done',    tone: 'ok',      color: 'text-status-ok',      step: 6 };
+  if (s.lab_received_at)  return { label: '検査会社受領', icon: 'lab',         tone: 'active',  color: 'text-status-active',  step: 5 };
+  if (s.user_returned_at) return { label: '返送済',       icon: 'send',        tone: 'active',  color: 'text-status-active',  step: 4 };
+  if (s.user_received_at) return { label: '受取済',       icon: 'kit',         tone: 'active',  color: 'text-status-active',  step: 3 };
+  if (s.shipped_at)       return { label: '発送済',       icon: 'kit-shipped', tone: 'active',  color: 'text-status-active',  step: 2 };
+  return { label: '出荷準備', icon: 'clock', tone: 'unknown', color: 'text-status-unknown', step: 1 };
 }
 
 /** test_type ラベル */
-export function testTypeLabel(type: string): { name: string; emoji: string } {
-  const map: Record<string, { name: string; emoji: string }> = {
-    health_checkup: { name: '人間ドック',  emoji: '🩺' },
-    blood:          { name: '血液検査',    emoji: '🩸' },
-    genetics:       { name: '遺伝子検査',  emoji: '🧬' },
-    cancer_urine:   { name: 'がんリスク',  emoji: '🎗️' },
-    ai_prediction:  { name: 'AI 疾病予測', emoji: '🤖' },
+export function testTypeLabel(type: string): { name: string; icon: AppIconName } {
+  const map: Record<string, { name: string; icon: AppIconName }> = {
+    health_checkup: { name: '人間ドック',  icon: 'health-checkup' },
+    blood:          { name: '血液検査',    icon: 'blood' },
+    genetics:       { name: '遺伝子検査',  icon: 'genetics' },
+    cancer_urine:   { name: 'がんリスク',  icon: 'cancer-risk' },
+    ai_prediction:  { name: 'AI 疾病予測', icon: 'ai-prediction' },
   };
-  return map[type] ?? { name: type, emoji: '📋' };
+  return map[type] ?? { name: type, icon: 'result' };
 }
 
 /** ISO 日付を「2026年6月15日 (木)」 形式に。 */

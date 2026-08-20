@@ -279,6 +279,69 @@
   `docs/lab/demecal_auto_download_overview_spec.md` (クライアント証明書 mTLS)
 - 生活習慣・問診 (`LifestyleQuestionnaireData`) … アプリの AI 問診
 
+### 検査値と原本の保存 (2026-08-20 確定・発注者承認)
+- **検査値 = 案A-3 (ハイブリッド)**。`diagnosis.test_artifacts.measurements` (jsonb・原本忠実の全記録) と
+  `diagnosis.measurement_values` (正規化・時系列グラフ用) の 2 層に書く。
+  マイグレーション `supabase/migrations/20260820000010_measurement_values.sql`。
+  - **書き込み口は `src/lib/measurement-persist.ts` の `persistMeasurements()` だけ**。両層を同時に書く。
+    入力は `sanitizeMeasurementsForDelivery()` を通した後の lean measurement (整形はここでしない)。
+  - 一意制約は `(artifact_id, seq)`。`(artifact_id, item_name)` にしない —
+    同名別値は `observation-dedup` が競合として残す仕様のため、名前で一意にすると取込時に
+    **行が黙って落ちる** (「サイレント脱落ゼロ」に反する)。
+  - `canonical_name` は `standard-master.findByAlias` のヒット時のみ。非ヒットは null のまま (当て推量で埋めない)。
+  - 旧計画の `diagnosis.test_artifact_items` は**不採用**。
+- **原本ファイル = 案C′**。DB とホット層は Supabase (US Central) 据え置き、**原本だけ S3 `ap-northeast-1`**。
+  署名 URL でブラウザとストレージが直結するため Vercel(iad1) は配信経路に入らない = レイテンシ不変。
+  - 実装 `src/lib/originals-storage.ts`。**env `AWS_S3_ORIGINALS_BUCKET` が切替スイッチ**で、
+    未設定なら Supabase Storage にフォールバック。読み出しは `storage_url` が `s3://` かで自動振り分け。
+  - **Elith 連携用の `AWS_S3_BUCKET` (`wellfort-ai-input`) とは別変数**。上書きしない。
+  - 10 年保管・削除不可 (§6.1) は S3 の Versioning + Object Lock で担保。構築手順は
+    `docs/operations/S3原本ストレージ_構築手順書.md`。
+    **Compliance モードはルートでも削除不可 (AWS公式)。テスト中は GOVERNANCE にすること。**
+  - `file_kind` に `raw_pdf` を追加。**redaction は未実装**なので未処理の原本は `raw_pdf` を書く。
+    `raw_pdf_redacted` は PII 除去を実装した経路でのみ使う (実態と名前を一致させる)。
+- **Elith の AI 診断結果レポート (PDF) = パイプライン⑥・暫定実装 (2026-08-20)**。
+  置き場所は **`diagnosis.diagnosis_results`** (`test_artifact_files` ではない —
+  あちらは検査機関の原本。`diagnosis_results` が既に「Elith の診断結果 1 回分」を表す)。
+  マイグレーション `supabase/migrations/20260820000040_diagnosis_report_pdf.sql` で
+  `report_pdf_url` / `report_pdf_sha256` / `report_pdf_pages` / `report_pdf_received_at` を追加。
+  - 取込 API = `src/pages/api/admin/elith-report/upload.ts` (Bearer `ADMIN_API_KEY`)。
+    PDF を `putOriginal()` へ保存し、既存行を `status='superseded'` に落として新行を足す。
+    **UI は wellfort-site 側**に作る (Scan-Chat-AI は API 提供側)。
+  - 表示 = `src/lib/elith-report-queries.ts` `loadElithReport()` → `src/pages/report.astro`。
+    実データが無い間は Elith 提供サンプル (`elith-report-sample.ts`・2026-08-06 Stage2 版) へ
+    フォールバックする。3 モード (a サマリー / b 要注意抜粋 / c 全編 PDF) と `[pN]`→`#page=N`。
+  - **要約はアプリが作らない**。a/b はレポート自身が持つ章 (アブストラクト / 医療受診の目安 /
+    栄養素) と、本文に印字された `（判定区分：X）` の機械抽出だけ (`elith-report-highlights.ts`)。
+  - 実データ経路の目視確認は `supabase/seed_elith_report.sql` (既定では読み込まない・手で流す)。
+  - **受取仕様は未確定** (`docs/lab/lab_data_pipeline_master_spec.md:98`)。命名規則・出力トリガ・
+    世代管理・ひも付け・受領確認が決まったら自動受信へ差し替える。
+
+### UI / デザイン (2026-08 刷新)
+- **ブランド**: 顧客向け主ブランド = **Welltect** / 運営 = Wellfort。主な利用者は 50〜65 代の経営者・役員。
+- **トークンは `tailwind.config.mjs` に集約**。既存クラス名は変えず**パレットの解決先だけ差し替える**方針
+  (brand-/slate- は数百箇所で使用中。改名すると差分が全ファイルに広がる)。
+  brand = Precision Teal `#287F86` (操作の色) / slate = Warm Ivory〜Graphite / navy・mist・bronze・status.* を追加。
+  装飾の cyan/sky/blue/indigo/violet は navy へ寄せて中立化済み。
+  - **Quiet Bronze `#A98558` はヘアラインと小面積のみ**。ボタン・カード背景に使わない。
+  - **ステータス色は `status.*`** でブランド色と分離。表示は必ず アイコン + テキスト + 色 の 3 点セット。
+  - 配色変更時は **WCAG AA を数値で検証**すること (過去に 2 ペアが不足し調整した実績あり)。
+- **禁止事項 (発注者指定)**: フルダークモード / グラスモーフィズム / ネオン・発光 / 過度な影 /
+  **絵文字を本番素材にする** / 小さく薄いグレー文字 (12px 以下を作らない)。
+- **アイコンは Lucide 一本 (`@lucide/astro`, ISC)**。入口は `src/components/AppIcon.astro` の**静的マッピングのみ**
+  (動的な文字列ロードをしない)。JS から HTML を組む箇所は `src/lib/icon-svg.ts`。
+  - **絵文字を戻さないこと**。`live-controller.ts` の Live プロンプト・`scan-prompt.ts`・`elith-samples.ts` は対象外。
+- **ロゴは `src/lib/brand.ts` が解決**。`public/welltect_logo.svg` 等を置けば自動的に切り替わる。
+  ブランド資産を目視トレースした代替 SVG は作らない。
+- **表示の原則 (ミッション④)**: 各診断結果を整理して伝える。**独自に分析・解釈しない**。
+  - 判定レベルを値と基準値から算出しない。助言文・受診勧告文を生成しない。
+  - 表示してよいのは 検査票の値・単位・基準値 と、**検査機関が付けた** `flag` / `assessment`。
+    `flag` が null は「印が無い」であって「基準値内」ではない → **判定を表示しない**。
+- **テストフェーズの前提 (維持)**: admin なら誰でもアクセスでき全員が同じデータ・同じ表示になる。
+  `?u=` 入場 (`dashboard.astro`) / `DEFAULT_USER` フォールバック (`dashboard-queries.ts`) /
+  デモ層 (`demo-data.ts`・env `PUBLIC_DEMO_FALLBACK`) / デバッグフッタ。**クライアントの UI 確認に必要なので触らない。**
+  本番相当への切替は**総合テスト段階**で行う。
+
 ### PII / データ分離
 - `customer` スキーマ(PII) と `diagnosis` スキーマ(非PII) を **`diagnostic_user_id` のみで橋渡し**。
   氏名・住所・生年月日を診断系/外部/S3 に載せない (`docs/architecture/data_integration_requirements.md` §1.3,
@@ -307,6 +370,7 @@
 | `docs/lab/lab_integration_workflow.md` | 検査機関→ユーザー割当ワークフロー (PII 制約) |
 | `docs/lab/kit_progress_management.md` | 検査キット発送・進捗管理 |
 | `docs/architecture/data_integration_requirements.md` | PII 分離・連携要件 |
+| `docs/operations/S3原本ストレージ_構築手順書.md` | **原本を S3 ap-northeast-1 へ置くためのインフラ手順** (Object Lock / ライフサイクル / IAM / Vercel env / 動作確認)。Compliance モードの不可逆性に注意 |
 | `docs/architecture/id_management_and_correlation_spec.md` | **ID体系の正本**(顧客ID/診断ユーザーID=diagnostic_user_id/注文/契約/出荷/検査/各社上りID/Elith client_id を層別整理・採番=現状全てWellfort・相関マップ・PII境界・**将来の各社独自ID/キット物理ID(POS/バーコード)連携=受け皿カラム`lab_tests.external_test_id`/`external_barcode`実在**) |
 | `docs/architecture/diagnostic_session_data_spec.md` | 診断セッションのデータ構造 |
 | `docs/scan/scan_feature_requirements.md` / `docs/scan/scan_s3_export.md` | AIスキャン機能要件 / S3書き出し |

@@ -1,0 +1,236 @@
+---
+import AppIcon from '../components/AppIcon.astro';
+import AppNav from '../components/AppNav.astro';
+import AppLogo from '../components/AppLogo.astro';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import {
+  loadDashboard,
+  shipmentLabel,
+  testTypeLabel,
+  formatJpDate,
+  SHIPMENT_STAGES,
+} from '../lib/dashboard-queries';
+import { countUnreadImportant } from '../lib/notice-queries';
+import { refreshConfig, cfg } from '../lib/app-config';
+
+/**
+ * 検査キットの進捗ページ。
+ *
+ * 【正直に表示する】段階 5「検査会社受領」/ 6「検査完了」は本番では値が入らない。
+ *   src/lib/bridge-queries.ts:70-87 の adaptShipment() が lab_received_at /
+ *   lab_completed_at / carrier_tracking_url を null 固定で返すため。
+ *   到達不能な段階を完了扱いにせず「未取得」と表示し、理由を 1 文添える。
+ *   配送業者イベントの取り込みは Phase 2 (本ページのスコープ外)。
+ */
+
+export const prerender = false;
+
+const url = new URL(Astro.request.url);
+const u = url.searchParams.get('u');
+
+const authEnabled = !!import.meta.env.PUBLIC_GOOGLE_CLIENT_ID;
+const needsSignIn = authEnabled && !u;
+
+const result = needsSignIn ? null : await loadDashboard(u);
+const hasError = result ? 'error' in result : false;
+const data = !result || hasError ? null : (result as Exclude<typeof result, { error: string }>);
+
+const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;
+
+// 画面文言 (app_config)。未設定なら空文字が返り、UI 側で非表示になる。
+await refreshConfig();
+const supportContact = cfg('ui.support_contact');
+const shipments = data?.shipments ?? [];
+
+// 進行中を先に、完了済みを後に。同じ区分では発送日の新しい順。
+const byRecent = (a: { shipped_at: string | null }, b: { shipped_at: string | null }) =>
+  String(b.shipped_at ?? '').localeCompare(String(a.shipped_at ?? ''));
+const inProgress = shipments.filter((s) => !s.lab_completed_at).sort(byRecent);
+const completed = shipments.filter((s) => s.lab_completed_at).sort(byRecent);
+
+/** 各段階の到達日時。null は「まだ」か「取得できていない」。 */
+function stageDates(s: (typeof shipments)[number]): (string | null)[] {
+  return [null, s.shipped_at, s.user_received_at, s.user_returned_at, s.lab_received_at, s.lab_completed_at];
+}
+/** 連携未整備で本番では値が入らない段階 (完了に見せない)。 */
+const UNAVAILABLE_STEPS = new Set([5, 6]);
+---
+
+<BaseLayout title="検査キットの進捗 | Welltect" width="app">
+  {needsSignIn && (
+    <main class="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+      <AppLogo height={56} class="opacity-80" />
+      <span class="inline-flex h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-brand-600"></span>
+    </main>
+  )}
+
+  {hasError && (
+    <main class="flex flex-1 flex-col items-center justify-center gap-3 px-5 text-center">
+      <AppIcon name="watch" size={32} class="text-status-action" />
+      <h1 class="text-lg font-bold text-navy-800">進捗を読み込めませんでした</h1>
+      <p class="text-base text-status-action">{(result as { error: string }).error}</p>
+    </main>
+  )}
+
+  {!needsSignIn && !hasError && (
+    <>
+      <AppNav u={u} current="/kit" unreadNotices={unreadNotices} supportContact={supportContact} />
+
+      <header class="hero-gradient px-5 pb-5 pt-5">
+        <h1 class="flex items-center gap-2 text-2xl font-bold tracking-tight text-navy-800">
+          <AppIcon name="kit" size={28} class="text-brand-700" />
+          検査キットの進捗
+        </h1>
+        <p class="mt-1.5 text-base text-slate-700">
+          お手元への発送から検査完了までの状況です。
+        </p>
+        {data?.subscription?.plan_name && (
+          <p class="mt-1 text-sm text-slate-600">
+            ご契約プラン: {data.subscription.plan_name}
+            {data.subscription.next_test_at && ` ・ 次回検査 ${formatJpDate(data.subscription.next_test_at)}`}
+          </p>
+        )}
+      </header>
+
+      <main class="flex flex-1 flex-col gap-6 px-5 pb-12 pt-5">
+        {shipments.length === 0 && (
+          <section class="card text-center">
+            <AppIcon name="kit" size={32} class="mx-auto text-slate-400" />
+            <h2 class="mt-3 text-lg font-bold text-navy-800">まだ発送されたキットはありません</h2>
+            <p class="mt-2 text-base text-slate-600">
+              ご契約のプランに応じて検査キットを発送します。発送するとこちらに表示されます。
+            </p>
+            {data?.subscription?.next_test_at && (
+              <p class="mt-3 text-base text-slate-700">
+                次回検査の予定: <span class="font-semibold">{formatJpDate(data.subscription.next_test_at)}</span>
+              </p>
+            )}
+          </section>
+        )}
+
+        {[
+          { key: 'in', title: '進行中', items: inProgress },
+          { key: 'done', title: '完了した検査', items: completed },
+        ].map((group) =>
+          group.items.length === 0 ? null : (
+            <section>
+              <h2 class="mb-3 text-lg font-bold text-navy-800">{group.title}</h2>
+              <div class="flex flex-col gap-4">
+                {group.items.map((s) => {
+                  const tt = testTypeLabel(s.test_type);
+                  const status = shipmentLabel(s);
+                  const dates = stageDates(s);
+                  return (
+                    <article class="card">
+                      <header class="mb-4 flex flex-wrap items-start justify-between gap-3">
+                        <div class="flex items-center gap-3">
+                          <span class="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-mist text-brand-700">
+                            <AppIcon name={tt.icon} size={24} />
+                          </span>
+                          <div>
+                            <h3 class="text-lg font-bold text-navy-800">{tt.name}</h3>
+                            <p class="text-sm text-slate-600">{s.lab_name ?? '検査会社未定'}</p>
+                          </div>
+                        </div>
+                        <span class={`status-pill ${status.tone === 'ok' ? 'status-ok' : status.tone === 'active' ? 'status-active' : 'status-unknown'}`}>
+                          <AppIcon name={status.icon} size={14} />
+                          {status.label}
+                        </span>
+                      </header>
+
+                      <div class="lg:grid lg:grid-cols-[minmax(0,1fr)_18rem] lg:gap-8">
+                      {/* 6 段階のタイムライン。到達済み / 現在地 / 未到達 / 未取得 を形でも区別する。 */}
+                      <ol class="flex flex-col gap-0">
+                        {SHIPMENT_STAGES.map((st, i) => {
+                          const reached = status.step >= st.step;
+                          const isCurrent = st.step === status.step;
+                          const unavailable = UNAVAILABLE_STEPS.has(st.step) && !reached;
+                          const at = dates[i];
+                          return (
+                            <li class="flex gap-3">
+                              <div class="flex flex-col items-center">
+                                <span
+                                  class={`grid h-8 w-8 shrink-0 place-items-center rounded-full border-2 ${
+                                    reached
+                                      ? 'border-brand-600 bg-brand-600 text-white'
+                                      : unavailable
+                                        ? 'border-dashed border-slate-300 bg-white text-slate-400'
+                                        : 'border-slate-300 bg-white text-slate-400'
+                                  }`}
+                                >
+                                  <AppIcon name={reached ? 'check' : unavailable ? 'unknown' : st.icon} size={16} />
+                                </span>
+                                {SHIPMENT_STAGES.length - 1 > i && (
+                                  <span class={`w-0.5 flex-1 ${status.step > st.step ? 'bg-brand-600' : 'bg-slate-200'}`} style="min-height:1.75rem"></span>
+                                )}
+                              </div>
+                              <div class="pb-5">
+                                <p class={`text-base ${isCurrent ? 'font-bold text-navy-800' : reached ? 'font-medium text-slate-800' : 'text-slate-600'}`}>
+                                  {st.label}
+                                  {isCurrent && <span class="ml-2 text-sm font-semibold text-brand-700">現在</span>}
+                                </p>
+                                {at && <p class="tnum text-sm text-slate-600">{formatJpDate(at)}</p>}
+                                {unavailable && (
+                                  <p class="mt-1 text-sm text-slate-600">
+                                    未取得 — 検査会社との自動連携が未整備のため、この段階の日時はまだ受け取れていません。
+                                  </p>
+                                )}
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ol>
+
+                      {/* 配送メタ。PC では右カラム、モバイルではタイムラインの下。 */}
+                      <div class="lg:pt-1">
+                        {s.tracking_no ? (
+                          <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                            <p class="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                              <AppIcon name="location" size={16} />お問い合わせ番号
+                            </p>
+                            <p class="tnum mt-1 text-base font-medium text-slate-900">{s.tracking_no}</p>
+                            {s.carrier && <p class="mt-0.5 text-sm text-slate-600">{s.carrier}</p>}
+                            {s.carrier_tracking_url ? (
+                              <a
+                                href={s.carrier_tracking_url}
+                                target="_blank"
+                                rel="noopener"
+                                class="mt-2 inline-flex min-h-touch items-center gap-1.5 text-base font-medium text-brand-700 hover:underline"
+                              >
+                                配送状況を見る
+                                <AppIcon name="external" size={16} />
+                              </a>
+                            ) : (
+                              <p class="mt-2 text-sm text-slate-600">配送業者の追跡リンクは未連携です。</p>
+                            )}
+                          </div>
+                        ) : (
+                          <p class="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-600">
+                            発送後にお問い合わせ番号を表示します。
+                          </p>
+                        )}
+                      </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          ),
+        )}
+
+        <section class="rounded-2xl border border-slate-200 bg-white p-5">
+          <h2 class="flex items-center gap-2 text-base font-bold text-navy-800">
+            <AppIcon name="info" size={20} class="text-slate-600" />
+            表示について
+          </h2>
+          <p class="mt-2 text-base text-slate-700">
+            「検査会社受領」「検査完了」は、検査会社との自動連携が整うまで日時を受け取れません。
+            完了したように見せず「未取得」と表示しています。検査結果が届き次第、
+            ホームと検査履歴に反映されます。
+          </p>
+        </section>
+      </main>
+    </>
+  )}
+</BaseLayout>

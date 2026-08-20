@@ -1,0 +1,281 @@
+---
+import AppIcon from '../components/AppIcon.astro';
+import AppNav from '../components/AppNav.astro';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { loadElithReport } from '../lib/elith-report-queries';
+import { findSection, type ElithSection } from '../lib/elith-parser';
+import { extractReportPoints, extractTopPriority } from '../lib/elith-report-highlights';
+import { REPORT_MODES, isReportMode, modeHref, renderReportMarkdown, normalizePage } from '../lib/report-view';
+import { countUnreadImportant } from '../lib/notice-queries';
+import { refreshConfig, cfg } from '../lib/app-config';
+import { loadDashboard } from '../lib/dashboard-queries';
+
+/**
+ * AI 診断結果レポート (Elith) の表示ページ。
+ *
+ * パイプライン ⑥ (docs/lab/lab_data_pipeline_master_spec.md:24,96):
+ *   「ElithのAI診断結果(PDF)をS3から受取→Webアプリへ表示UP」
+ *
+ * 表示方式は 3 モード (test_data_storage_and_db_design.md §6.4):
+ *   a) サマリー   … レポート自身の「アブストラクト」
+ *   b) 要注意抜粋 … レポート自身の「医療受診の目安」「必要とする栄養素/サプリ情報」
+ *   c) 全編       … 原本 PDF (17 ページ) を iframe 表示
+ * a/b の `[pN]` から c) の該当ページへ飛ぶ。
+ *
+ * 【現状】受取仕様が未確定 (同 :98) のため、実データ (diagnosis_results.report_pdf_url)
+ *   が無い間は Elith 提供のサンプル (2026-08-06 Stage2 版) にフォールバックする。
+ *   切替は `loadElithReport()` が行う (elith-report-queries.ts)。
+ *
+ * 【原則】要約はアプリが作らない。レポートが自前で持っている章をそのまま出す。
+ */
+
+export const prerender = false;
+
+const url = new URL(Astro.request.url);
+const u = url.searchParams.get('u');
+const modeParam = url.searchParams.get('mode');
+const mode = isReportMode(modeParam) ? modeParam : 'summary';
+const initialPage = normalizePage(url.searchParams.get('page'));
+
+const authEnabled = !!import.meta.env.PUBLIC_GOOGLE_CLIENT_ID;
+const needsSignIn = authEnabled && !u;
+
+const result = needsSignIn ? null : await loadDashboard(u);
+const data = !result || 'error' in result ? null : result;
+const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;
+
+await refreshConfig();
+const supportContact = cfg('ui.support_contact');
+
+// ── 表示するレポート ────────────────────────────────────────────
+// 実データ (diagnosis_results) があればそれを、無ければサンプルを返す。
+const view = await loadElithReport(data?.diagnosticUserId ?? null);
+const sections: ElithSection[] = view.sections;
+const pdf = view.pdf;
+const isSample = view.isSample;
+const reportPages = view.pages;
+
+const HIGHLIGHT_NAMES = ['医療受診の目安', '必要とする栄養素/サプリ情報'];
+const summarySection = findSection(sections, 'アブストラクト');
+
+// 要点は「レポート本文に書かれている判定区分」を機械的に拾ったもの。
+// アプリが値を評価して作ったものではない (elith-report-highlights.ts 参照)。
+const points = extractReportPoints(sections, reportPages);
+const topPriority = extractTopPriority(sections, reportPages);
+const highlightSections = HIGHLIGHT_NAMES
+  .map((n) => findSection(sections, n))
+  .filter((s): s is ElithSection => s != null);
+
+const md = (t: string): string => renderReportMarkdown(t, { u, basePath: '/report' });
+const href = (m: (typeof REPORT_MODES)[number]['key']): string => modeHref(m, { u, basePath: '/report' });
+const pdfSrc = pdf ? `${pdf.url}#page=${initialPage}` : null;
+
+// 目次 (章 → 原本ページ)。要約から全編へ飛ぶための案内で、内容の解釈は含まない。
+const toc = sections
+  .filter((s) => s.section_name !== 'アブストラクト')
+  .map((s) => ({ name: s.section_name, page: reportPages[s.section_name] ?? 1 }));
+---
+
+<BaseLayout title="AI 診断結果 | Welltect" width="app">
+  <AppNav u={u} current="/report" unreadNotices={unreadNotices} supportContact={supportContact} />
+
+  <header class="hero-gradient px-5 pb-5 pt-5">
+    <h1 class="flex items-center gap-2 text-2xl font-bold tracking-tight text-navy-800">
+      <AppIcon name="report" size={28} class="text-brand-700" />
+      AI 診断結果
+    </h1>
+    <p class="mt-1.5 text-base text-slate-700">
+      {pdf
+        ? `${pdf.label} ・ ${pdf.issuedOn} 発行${pdf.pageCount ? ` ・ 全 ${pdf.pageCount} ページ` : ''}`
+        : 'レポートはまだ届いていません。'}
+    </p>
+    {isSample && (
+      <p class="mt-2 inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-sm text-amber-800">
+        <AppIcon name="info" size={14} />
+        サンプル表示（受取仕様の確定前）
+      </p>
+    )}
+
+    <nav class="mt-4 flex w-full max-w-xl rounded-full bg-white p-1" role="tablist" aria-label="表示モード">
+      {REPORT_MODES.map((m) => (
+        <a
+          href={href(m.key)}
+          role="tab"
+          aria-selected={mode === m.key}
+          class={`flex min-h-touch flex-1 items-center justify-center rounded-full px-3 text-center text-base font-medium transition ${
+            mode === m.key ? 'bg-brand-600 text-white' : 'text-slate-700 hover:bg-slate-100'
+          }`}
+        >{m.label}</a>
+      ))}
+    </nav>
+    <p class="mt-1.5 text-sm text-slate-600">
+      {REPORT_MODES.find((m) => m.key === mode)?.note}
+    </p>
+  </header>
+
+  <main class="flex flex-1 flex-col gap-5 px-5 pb-12 pt-5">
+
+    {/* a) サマリー */}
+    {mode === 'summary' && (
+      <>
+        {/* 要点 — レポートが記載した判定区分をそのまま並べたもの */}
+        {(topPriority || points.length > 0) && (
+          <section class="card card-hairline">
+            <h2 class="mb-1 flex items-center gap-2 text-lg font-bold text-navy-800">
+              <AppIcon name="watch" size={20} class="text-status-watch" />
+              レポートが挙げている要点
+            </h2>
+            <p class="mb-4 text-sm text-slate-600">
+              レポート本文に記載された判定をそのまま抜き出しています。各項目から原本の該当ページへ移動できます。
+            </p>
+
+            <ul class="flex flex-col gap-3">
+              {topPriority && (
+                <li class="rounded-xl border border-status-watch bg-status-watch-bg p-4">
+                  <p class="flex flex-wrap items-center gap-2">
+                    <span class="status-pill status-watch">
+                      <AppIcon name="watch" size={14} />最優先
+                    </span>
+                    <a
+                      href={`/report?${u ? `u=${encodeURIComponent(u)}&` : ''}mode=full&page=${topPriority.page}#pdf-viewer`}
+                      data-pdf-page={String(topPriority.page)}
+                      class="pdf-page-link inline-flex min-h-touch items-center rounded-full border border-brand-300 bg-white px-2.5 text-sm font-medium text-brand-800 no-underline hover:bg-brand-50"
+                    >原本 p{topPriority.page}</a>
+                  </p>
+                  <p class="mt-2 text-base leading-relaxed text-navy-800">{topPriority.text}</p>
+                </li>
+              )}
+
+              {points.map((pt) => (
+                <li class="rounded-xl border border-slate-200 bg-white p-4">
+                  <p class="flex flex-wrap items-center gap-2">
+                    <span class="text-base font-semibold text-navy-800">{pt.category}</span>
+                    {pt.judgement && (
+                      <span class="status-pill status-watch">
+                        <AppIcon name="watch" size={14} />{pt.judgement}
+                      </span>
+                    )}
+                    <a
+                      href={`/report?${u ? `u=${encodeURIComponent(u)}&` : ''}mode=full&page=${pt.page}#pdf-viewer`}
+                      data-pdf-page={String(pt.page)}
+                      class="pdf-page-link inline-flex min-h-touch items-center rounded-full border border-brand-300 bg-brand-50 px-2.5 text-sm font-medium text-brand-800 no-underline hover:bg-brand-100"
+                    >原本 p{pt.page}</a>
+                  </p>
+                  <p class="mt-1.5 text-base leading-relaxed text-slate-800">{pt.text}</p>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        <section class="card">
+          <h2 class="mb-3 flex items-center gap-2 text-lg font-bold text-navy-800">
+            <AppIcon name="tip" size={20} class="text-brand-700" />
+            レポートのまとめ
+          </h2>
+          {summarySection ? (
+            <div class="md-region md-summary" set:html={md(summarySection.text)} />
+          ) : (
+            <p class="text-base text-slate-600">サマリーがありません。</p>
+          )}
+        </section>
+
+        <section class="card">
+          <h2 class="mb-1 flex items-center gap-2 text-lg font-bold text-navy-800">
+            <AppIcon name="result" size={20} class="text-brand-700" />
+            レポートの構成
+          </h2>
+          <p class="mb-3 text-sm text-slate-600">
+            見たい章を選ぶと、原本レポートの該当ページを開きます。
+          </p>
+          <ul class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {toc.map((t) => (
+              <li>
+                <a
+                  href={`/report?${u ? `u=${encodeURIComponent(u)}&` : ''}mode=full&page=${t.page}#pdf-viewer`}
+                  data-pdf-page={String(t.page)}
+                  class="pdf-page-link flex min-h-touch items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-800 transition hover:border-brand-400 hover:bg-brand-50"
+                >
+                  <span>{t.name}</span>
+                  <span class="tnum shrink-0 text-sm text-slate-600">原本 p{t.page}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      </>
+    )}
+
+    {/* b) 要注意抜粋 */}
+    {mode === 'highlights' && (
+      highlightSections.length === 0 ? (
+        <p class="card text-base text-slate-600">要注意として抽出された章がありません。</p>
+      ) : (
+        highlightSections.map((s) => (
+          <section class="card">
+            <h2 class="mb-3 flex items-center gap-2 text-lg font-bold text-navy-800">
+              <AppIcon name="watch" size={20} class="text-status-watch" />
+              {s.section_name}
+            </h2>
+            <div class="md-region md-summary" set:html={md(s.text)} />
+          </section>
+        ))
+      )
+    )}
+
+    {/* c) 全編 = 原本 PDF */}
+    {mode === 'full' && (
+      !pdf || !pdfSrc ? (
+        <p class="card text-base text-slate-600">原本レポートがまだ届いていません。</p>
+      ) : (
+      <section id="pdf-viewer" class="card scroll-mt-24">
+        <header class="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 class="flex items-center gap-2 text-lg font-bold text-navy-800">
+            <AppIcon name="report" size={20} class="text-brand-700" />
+            原本レポート
+          </h2>
+          <a
+            href={pdf.url}
+            target="_blank"
+            rel="noopener"
+            class="inline-flex min-h-touch items-center gap-1.5 text-base font-medium text-brand-700 hover:underline"
+          >
+            別タブで開く
+            <AppIcon name="external" size={16} />
+          </a>
+        </header>
+        <iframe
+          id="report-pdf-iframe"
+          src={pdfSrc}
+          title={pdf.label}
+          class="w-full rounded-lg border border-slate-200"
+          style="height: clamp(520px, 78vh, 1100px)"
+          loading="lazy"
+        ></iframe>
+      </section>
+      )
+    )}
+
+    <p class="text-sm leading-relaxed text-slate-600">
+      本レポートは Elith 社の AI が作成したものです。Welltect は内容を要約・加工せず、
+      レポートに書かれている章をそのまま表示しています。診断・治療の判断は医療機関にご相談ください。
+    </p>
+  </main>
+</BaseLayout>
+
+<script>
+  // [pN] / 目次クリック: サーバ往復せず iframe を直接更新する
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    const a = t.closest('a.pdf-page-link');
+    if (!a) return;
+    const iframe = document.getElementById('report-pdf-iframe') as HTMLIFrameElement | null;
+    if (!iframe) return; // 全編モードでなければ通常遷移させる
+    e.preventDefault();
+    const page = a.getAttribute('data-pdf-page') ?? '1';
+    const base = iframe.src.split('#')[0];
+    iframe.src = `${base}#page=${page}`;
+    document.getElementById('pdf-viewer')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+</script>

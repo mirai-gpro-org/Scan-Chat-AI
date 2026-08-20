@@ -66,11 +66,12 @@ supabase db reset
 このコマンドで:
 - DB を初期化
 - `supabase/migrations/` の全 SQL を順次実行
-- `supabase/seed.sql` → `supabase/seed_notices.sql` を実行 (config.toml の `[db.seed]` で指定)
+- `supabase/seed.sql` → `seed_notices.sql` → `seed_measurements.sql` → `seed_kit_demo.sql` を実行
+  (config.toml の `[db.seed]` で指定。後ろの 2 本は前の seed が作った artifact / 顧客を参照するため順序が重要)
 
 ### 3. Elith 実サンプル JSON の投入 (任意)
 
-`docs/2026_05_24 Elith_demo.json` (21K 字、全 10 セクション) を 1 件の
+`docs/elith/2026_05_24 Elith_demo.json` (21K 字、全 10 セクション) を 1 件の
 `diagnosis_results` レコードに後置きで読み込みます:
 
 ```bash
@@ -104,6 +105,9 @@ http://127.0.0.1:54323 にアクセス → `customer` / `diagnosis` schema を�
 | diagnosis.diagnosis_results |  3 | Elith JSON 簡略版。`load_elith_demo.mjs` で 1 件を実物に置換可 |
 | diagnosis.user_notices     |  4 | 個別の重要なお知らせ。真鍋 (未読2/既読1) + 田中 (未読1)。お知らせページ用 |
 | diagnosis.announcements    | 10 | 一般のお知らせ 5 + ニュース 5 (全ユーザー共通)。お知らせページ用 |
+| diagnosis.measurement_values | 275 | 検査値 (seed_measurements.sql)。血液 12 回 x 22 項目 + 健診 11 項目 |
+| diagnosis.health_age_scores | 12 | 健康年齢の時系列 3 パターン (横ばい/改善/悪化) |
+| customer.kit_shipments (追加分) | +4 | 6 段階を網羅するための表示確認用 (seed_kit_demo.sql) |
 
 ### 主な人物像
 
@@ -158,7 +162,7 @@ order by dr.received_at desc;
 |---|---|---|
 | `customer.lab_intake_files` | 検査会社から受領した原本 PDF 管理 | test_data_storage_and_db_design.md §7.2 |
 | `customer.notifications` | 4 段階通知キュー (N1-N7) | kit_progress_management.md §8 |
-| `diagnosis.test_artifact_items` | a/b の項目データ + deep-link | test_data_storage_and_db_design.md §6.4 |
+| ~~`diagnosis.test_artifact_items`~~ | **不採用**。案A-3 (2026-08-20 承認) により `test_artifacts.measurements` (jsonb) + `diagnosis.measurement_values` (正規化) の 2 層に置き換え | 20260820000010_measurement_values.sql |
 | `diagnosis.diagnosis_result_items` | Elith JSON の二次抽出項目 | elith_report_integration.md §3.2 |
 | `diagnosis.sessions / messages` | AI 問診履歴 (パイロットの localStorage を DB 化) | data_integration_requirements.md §5.1 |
 | `audit_logs` | 10 年保管監査ログ | data_integration_requirements.md §6 |

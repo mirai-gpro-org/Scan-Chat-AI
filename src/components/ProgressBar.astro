@@ -14,20 +14,20 @@ const clamped = Math.max(0, Math.min(100, value));
 ---
 
 <div class="w-full" data-progress-root={id}>
-  <div class="mb-1 flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
+  <div class="mb-1 flex items-center justify-between text-xs text-slate-600">
     <span>
       {label}
       {section && (
-        <span class="ml-1 font-medium text-slate-800 dark:text-slate-100" data-progress-section>{section}</span>
+        <span class="ml-1 font-medium text-slate-800" data-progress-section>{section}</span>
       )}
       {!section && (
-        <span class="ml-1 font-medium text-slate-800 dark:text-slate-100" data-progress-section></span>
+        <span class="ml-1 font-medium text-slate-800" data-progress-section></span>
       )}
     </span>
     <span data-progress-text>{clamped}%</span>
   </div>
   <div
-    class="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800"
+    class="h-2 w-full overflow-hidden rounded-full bg-slate-200"
     role="progressbar"
     aria-valuemin="0"
     aria-valuemax="100"

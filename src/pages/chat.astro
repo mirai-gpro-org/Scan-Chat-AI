@@ -1,4 +1,5 @@
 ---
+import AppIcon from '../components/AppIcon.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 
 export const prerender = false;
@@ -8,10 +9,10 @@ const rawU = url.searchParams.get('u');
 const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
 ---
 
-<BaseLayout title="AI 問診 | Scan-Chat Medical AI">
+<BaseLayout title="AI 問診 | Welltect" width="flow">
   <header class="hero-gradient relative px-5 pt-5 pb-3">
     <div class="flex items-center justify-between">
-      <a href={diagnosticUserId ? `/?u=${encodeURIComponent(diagnosticUserId)}` : '/'} class="text-sm text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white">
+      <a href={diagnosticUserId ? `/?u=${encodeURIComponent(diagnosticUserId)}` : '/'} class="text-sm text-slate-600 hover:text-slate-900">
         ‹ メニュー
       </a>
       <div class="flex items-center gap-2">
@@ -24,7 +25,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
       <button
         id="reset-btn"
         type="button"
-        class="text-xs text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
+        class="text-xs text-slate-500 hover:text-slate-800"
       >
         リセット
       </button>
@@ -35,15 +36,15 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
     </div>
 
     <div class="mt-2 flex items-center justify-between text-xs">
-      <span id="section-label" class="font-medium text-slate-700 dark:text-slate-200">準備中…</span>
+      <span id="section-label" class="font-medium text-slate-700">準備中…</span>
       <span id="progress-text" class="text-slate-500">0%</span>
     </div>
   </header>
 
   <div class="flex items-center justify-between px-5 pt-2 pb-1">
-    <div class="inline-flex rounded-full bg-slate-100 p-1 dark:bg-slate-800" role="tablist" id="mode-toggle">
+    <div class="inline-flex rounded-full bg-slate-100 p-1" role="tablist" id="mode-toggle">
       <button type="button" data-mode="voice" class="mode-pill on" role="tab" aria-selected="true">
-        🎙 音声
+        <AppIcon name="mic" size={20} /> 音声
       </button>
       <button type="button" data-mode="text" class="mode-pill" role="tab" aria-selected="false">
         ⌨ テキスト
@@ -54,7 +55,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
 
   <div
     id="chat-resume"
-    class="mx-5 mt-1 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/60 dark:bg-amber-900/30 dark:text-amber-100"
+    class="mx-5 mt-1 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
     hidden
   >
     前回の続きから再開します。
@@ -73,20 +74,19 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
       aria-atomic="false"
     >
       <div id="chat-empty" class="flex h-full flex-col items-center justify-center gap-2 py-6 text-center text-slate-400">
-        <span class="text-4xl">💬</span>
-        <p class="text-xs">下の <span class="font-medium text-brand-600">🩺 問診を開始</span> から始めてください</p>
+        <AppIcon name="interview" size={32} class="text-slate-500" />
+        <p class="text-xs">下の <span class="font-medium text-brand-600"><AppIcon name="doctor" size={20} /> 問診を開始</span> から始めてください</p>
       </div>
     </div>
 
     <section
       id="answer-panel"
-      class="card border-brand-200 dark:border-brand-500/30"
-      style="background: linear-gradient(180deg, rgba(99,102,241,0.04) 0%, rgba(255,255,255,0) 60%);"
+      class="card border-brand-200"
     >
       <!-- ━━━ START HERO（未接続時のみ表示） ━━━ -->
       <div id="start-hero" class="flex flex-col items-center gap-3 py-2">
         <!-- 冒頭の免責事項 (医療アドバイス・診断ではない旨) -->
-        <p class="w-full rounded-lg bg-slate-50 px-3 py-2 text-center text-[11px] leading-relaxed text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+        <p class="w-full rounded-lg bg-slate-50 px-3 py-2 text-center text-xs leading-relaxed text-slate-500">
           このAI問診で提供される情報は、医療上のアドバイスや診断として利用されるものではありません。必要な場合は、必ず医療専門家にご相談ください。
         </p>
         <p class="text-center text-xs text-slate-500">
@@ -113,19 +113,19 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
           </svg>
           <span class="mic-label mt-1 text-xs font-semibold">問診を開始</span>
         </button>
-        <div class="mt-1 flex items-center gap-2 rounded-full bg-slate-50 px-3 py-1.5 text-[11px] text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
-          <span>🎙 話す</span>
+        <div class="mt-1 flex items-center gap-2 rounded-full bg-slate-50 px-3 py-1.5 text-xs text-slate-600">
+          <span><AppIcon name="mic" size={20} /> 話す</span>
           <span class="text-slate-400">/</span>
-          <span>👆 選んでタップ</span>
+          <span><AppIcon name="point" size={20} /> 選んでタップ</span>
           <span class="text-slate-400">—</span>
-          <span class="font-medium text-brand-700 dark:text-brand-300">どちらでも OK</span>
+          <span class="font-medium text-brand-700">どちらでも OK</span>
         </div>
       </div>
 
       <!-- ━━━ QA AREA（接続時のみ表示） ━━━ -->
       <div id="qa-area" hidden>
         <div class="mb-3 flex items-start gap-2">
-          <div id="question-text" class="flex-1 text-sm font-medium leading-relaxed text-slate-800 dark:text-slate-100">
+          <div id="question-text" class="flex-1 text-sm font-medium leading-relaxed text-slate-800">
             …
           </div>
           <button
@@ -135,7 +135,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
             aria-label="問診を中断"
           >
             <span class="mic-icon text-lg">⏸</span>
-            <span class="mic-label text-[10px]">中断</span>
+            <span class="mic-label text-xs">中断</span>
           </button>
           <button
             id="speaker-btn"
@@ -166,25 +166,25 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
               <line x1="22" y1="9" x2="16" y2="15"/>
               <line x1="16" y1="9" x2="22" y2="15"/>
             </svg>
-            <span class="speaker-label text-[10px]">音声</span>
+            <span class="speaker-label text-xs">音声</span>
           </button>
         </div>
 
         <!-- 二刀流ヒント（widget 表示時のみ） -->
         <div
           id="dual-hint"
-          class="mb-2 flex items-center justify-center gap-2 rounded-full bg-brand-50 px-3 py-1 text-[11px] text-brand-700 dark:bg-brand-500/10 dark:text-brand-300"
+          class="mb-2 flex items-center justify-center gap-2 rounded-full bg-brand-50 px-3 py-1 text-xs text-brand-700"
           hidden
         >
-          <span>🎙 話してもOK</span>
+          <span><AppIcon name="mic" size={20} /> 話してもOK</span>
           <span class="text-brand-400">・</span>
-          <span>👇 タップでもOK</span>
+          <span><AppIcon name="point-down" size={20} /> タップでもOK</span>
         </div>
 
         <!-- 音声モード（質問なし時のループ待機） -->
         <div id="ui-voice" class="flex flex-col items-center gap-2 py-3">
           <div id="voice-indicator" class="grid place-items-center">
-            <span class="text-4xl animate-pulse">🎙</span>
+            <AppIcon name="mic" size={32} class="text-slate-500" />
           </div>
           <p class="text-center text-xs text-slate-500">
             話しかけてください
@@ -205,7 +205,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
         <!-- wheel ホイール選択 (選択肢が多い設問) -->
         <div id="ui-wheel" class="flex flex-col gap-2" hidden>
           <button id="wheel-open" type="button" class="btn-primary w-full">
-            🎡 回して選ぶ
+            <AppIcon name="wheel" size={20} /> 回して選ぶ
           </button>
           <p id="wheel-summary" class="text-center text-xs text-slate-500"></p>
         </div>
@@ -213,7 +213,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
         <!-- matrix マトリクス選択 (項目 × 頻度) -->
         <div id="ui-matrix" class="flex flex-col gap-2" hidden>
           <button id="matrix-open" type="button" class="btn-primary w-full">
-            🗂 項目ごとに選ぶ
+            <AppIcon name="folder" size={20} /> 項目ごとに選ぶ
           </button>
           <p id="matrix-summary" class="text-center text-xs text-slate-500"></p>
         </div>
@@ -224,7 +224,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
             <span id="slider-low" class="text-xs text-slate-500">低</span>
             <div
               id="slider-value"
-              class="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-cyan-500 text-2xl font-bold text-white shadow-md"
+              class="grid h-14 w-14 place-items-center rounded-2xl bg-brand-600 text-2xl font-bold text-white"
             >5</div>
             <span id="slider-high" class="text-xs text-slate-500">高</span>
           </div>
@@ -251,7 +251,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
           <textarea
             id="text-input"
             rows="2"
-            class="resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900"
+            class="resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
             placeholder="自由にお答えください"
           ></textarea>
           <button id="text-submit" type="button" class="btn-primary">送信</button>
@@ -262,7 +262,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
           <button
             id="skip-btn"
             type="button"
-            class="text-xs text-slate-500 hover:text-slate-700 hover:underline dark:hover:text-slate-200"
+            class="text-xs text-slate-500 hover:text-slate-700 hover:underline"
             hidden
           >答えたくない</button>
         </div>
@@ -274,7 +274,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
       <textarea
         id="fallback-input"
         rows="1"
-        class="min-h-[44px] flex-1 resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900"
+        class="min-h-[44px] flex-1 resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
         placeholder="質問や補足を入力"
       ></textarea>
       <button id="fallback-send" type="button" class="btn-primary shrink-0">送信</button>

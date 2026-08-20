@@ -1,36 +1,44 @@
 ---
+import AppIcon from '../../components/AppIcon.astro';
 import type { KitShipment } from '../../types/supabase';
-import { shipmentLabel, testTypeLabel, formatJpDate } from '../../lib/dashboard-queries';
+import { shipmentLabel, testTypeLabel, formatJpDate, SHIPMENT_STAGES } from '../../lib/dashboard-queries';
+
+/**
+ * ホーム用のキット進捗サマリ。詳細は /kit ページ。
+ * 段階 5/6 は本番で値が入らない (bridge-queries.ts:70-87 が null 固定) ため、
+ * 到達済みの塗り分けだけを行い、完了扱いにはしない。
+ */
 
 interface Props {
   shipments: (KitShipment & { lab_name: string | null })[];
   nextTestAt?: string | null;
   planName?: string | null;
   diagnosticUserId: string;
+  /** ?u= を引き継いだ詳細ページへのリンク。 */
+  detailHref?: string;
 }
-const { shipments, nextTestAt, planName, diagnosticUserId } = Astro.props as Props;
+const { shipments, nextTestAt, planName, diagnosticUserId, detailHref = '/kit' } = Astro.props as Props;
 const active = shipments.filter((s) => !s.lab_completed_at).slice(0, 2);
-const STEPS = ['出荷準備', '発送済', 'お受取', '返送', '検査会社受領', '検査完了'];
 ---
 
 <section class="card">
-  <header class="mb-3 flex items-center justify-between">
-    <h2 class="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100">
-      <span>📦</span><span>検査キット進捗</span>
+  <header class="mb-3 flex flex-wrap items-center justify-between gap-2">
+    <h2 class="flex shrink-0 items-center gap-2 text-base font-bold text-navy-800">
+      <AppIcon name="kit" size={20} class="text-brand-700" /><span class="whitespace-nowrap">検査キットの進捗</span>
     </h2>
     {planName && (
-      <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+      <span class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
         {planName}
       </span>
     )}
   </header>
 
   {active.length === 0 ? (
-    <div class="rounded-xl border border-dashed border-slate-300 p-4 text-center text-xs text-slate-500 dark:border-slate-700">
+    <div class="rounded-xl border border-dashed border-slate-300 p-5 text-center text-base text-slate-600">
       進行中のキットはありません
       {nextTestAt && (
-        <p class="mt-2 text-[11px]">
-          次回検査: <span class="font-medium text-slate-700 dark:text-slate-200">{formatJpDate(nextTestAt)}</span>
+        <p class="mt-2">
+          次回検査: <span class="font-medium text-slate-800">{formatJpDate(nextTestAt)}</span>
         </p>
       )}
     </div>
@@ -40,38 +48,36 @@ const STEPS = ['出荷準備', '発送済', 'お受取', '返送', '検査会社
         const tt = testTypeLabel(s.test_type);
         const status = shipmentLabel(s);
         return (
-          <article class="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+          <article class="rounded-xl border border-slate-200 bg-white p-3">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <span class="text-lg">{tt.emoji}</span>
+                <AppIcon name={tt.icon} size={24} class="text-slate-600" />
                 <div>
-                  <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-100">{tt.name}</h3>
-                  <p class="text-[10px] text-slate-500">{s.lab_name ?? '検査会社未定'}</p>
+                  <h3 class="text-base font-semibold text-navy-800">{tt.name}</h3>
+                  <p class="text-sm text-slate-600">{s.lab_name ?? '検査会社未定'}</p>
                 </div>
               </div>
-              <span class={`text-xs font-medium ${status.color}`}>{status.label}</span>
+              <span class={`status-pill ${status.tone === 'ok' ? 'status-ok' : status.tone === 'active' ? 'status-active' : 'status-unknown'}`}>
+                <AppIcon name={status.icon} size={14} />{status.label}
+              </span>
             </div>
 
-            {/* 6 ステップステッパー */}
-            <div class="mt-3 grid grid-cols-6 gap-1">
-              {STEPS.map((_, i) => (
-                <div
-                  class={`h-1 rounded-full transition ${
-                    i < status.step ? 'bg-brand-500' : i === status.step - 1 ? 'bg-gradient-to-r from-brand-500 to-cyan-400' : 'bg-slate-200 dark:bg-slate-700'
-                  }`}
-                ></div>
+            {/* 6 段階ステッパー (詳細は /kit) */}
+            <div class="mt-3 grid grid-cols-6 gap-1" role="img" aria-label={`全 6 段階のうち ${status.step} 段階目 (${status.label})`}>
+              {SHIPMENT_STAGES.map((st) => (
+                <div class={`h-1.5 rounded-full ${status.step >= st.step ? 'bg-brand-600' : 'bg-slate-200'}`}></div>
               ))}
             </div>
 
-            <div class="mt-2 flex items-center justify-between text-[10px] text-slate-500">
+            <div class="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">
               <span>{formatJpDate(s.shipped_at)} 発送</span>
               {s.tracking_no && (
                 s.carrier_tracking_url ? (
-                  <a href={s.carrier_tracking_url} target="_blank" rel="noopener" class="font-medium text-brand-600 hover:underline">
-                    📍 追跡 {s.tracking_no}
+                  <a href={s.carrier_tracking_url} target="_blank" rel="noopener" class="inline-flex items-center gap-1 font-medium text-brand-700 hover:underline">
+                    <AppIcon name="location" size={16} />追跡 {s.tracking_no}
                   </a>
                 ) : (
-                  <span>📍 {s.tracking_no}</span>
+                  <span class="inline-flex items-center gap-1"><AppIcon name="location" size={16} />{s.tracking_no}</span>
                 )
               )}
             </div>
@@ -83,9 +89,9 @@ const STEPS = ['出荷準備', '発送済', 'お受取', '返送', '検査会社
                 data-self-report
                 data-shipment-id={s.id}
                 data-action="received"
-                class="mt-3 w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 transition hover:bg-amber-100 disabled:cursor-wait disabled:opacity-60 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-200"
+                class="mt-3 flex min-h-touch w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base font-medium text-slate-800 transition hover:border-brand-400 hover:bg-brand-50 disabled:cursor-wait disabled:opacity-60"
               >
-                📦 受け取りました
+                <AppIcon name="kit" size={18} />受け取りました
               </button>
             )}
             {s.user_received_at && !s.user_returned_at && (
@@ -94,9 +100,9 @@ const STEPS = ['出荷準備', '発送済', 'お受取', '返送', '検査会社
                 data-self-report
                 data-shipment-id={s.id}
                 data-action="returned"
-                class="mt-3 w-full rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-800 transition hover:bg-blue-100 disabled:cursor-wait disabled:opacity-60 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-200"
+                class="mt-3 flex min-h-touch w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base font-medium text-slate-800 transition hover:border-brand-400 hover:bg-brand-50 disabled:cursor-wait disabled:opacity-60"
               >
-                💉 返送しました
+                <AppIcon name="send" size={18} />返送しました
               </button>
             )}
           </article>
@@ -106,10 +112,15 @@ const STEPS = ['出荷準備', '発送済', 'お受取', '返送', '検査会社
   )}
 
   {nextTestAt && active.length > 0 && (
-    <p class="mt-3 text-[11px] text-slate-500">
-      次回検査予定: <span class="font-medium text-slate-700 dark:text-slate-200">{formatJpDate(nextTestAt)}</span>
+    <p class="mt-3 text-sm text-slate-600">
+      次回検査予定: <span class="font-medium text-slate-800">{formatJpDate(nextTestAt)}</span>
     </p>
   )}
+
+  <a href={detailHref} class="mt-3 inline-flex min-h-touch items-center gap-1.5 text-base font-medium text-brand-700 hover:underline">
+    進捗の詳細を見る
+    <AppIcon name="next" size={18} />
+  </a>
 </section>
 
 <script is:inline define:vars={{ diagnosticUserId }}>

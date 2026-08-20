@@ -1,3 +1,4 @@
+import { iconSvg } from '../../lib/icon-svg';
 /**
  * ホイール (ドラム) 選択モーダル
  *
@@ -14,7 +15,7 @@
 
 export interface WheelOption {
   label: string;
-  emoji?: string;
+  icon?: string;
 }
 
 export interface WheelPickerArgs {
@@ -84,7 +85,7 @@ export function openWheelPicker(args: WheelPickerArgs): Promise<string[] | null>
       li.dataset.label = o.label;
       li.innerHTML = `
         <span class="wheel-check" aria-hidden="true">${multi ? '' : ''}</span>
-        <span class="wheel-text">${o.emoji ? `<span class="wheel-emoji">${escapeHtml(o.emoji)}</span>` : ''}${escapeHtml(o.label)}</span>
+        <span class="wheel-text">${o.icon ? `<span class="wheel-emoji">${iconSvg(o.icon)}</span>` : ''}${escapeHtml(o.label)}</span>
       `;
       if (selected.has(o.label)) li.classList.add('on');
       list.appendChild(li);

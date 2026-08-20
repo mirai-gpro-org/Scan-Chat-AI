@@ -1,16 +1,36 @@
 ---
 import '../styles/global.css';
 import GoogleOneTap from '../components/GoogleOneTap.astro';
+import { LOGO } from '../lib/brand.ts';
 
 interface Props {
   title?: string;
   description?: string;
+  /**
+   * 本文の最大幅。
+   *   'app'   … 業務画面 (ダッシュボード/進捗/結果)。PC まで広げる。
+   *   'flow'  … 単一導線 (問診/スキャン/サインイン)。読みやすさ優先で中幅に留める。
+   *   'full'  … 幅制御を親に委ねる。
+   * 既定は 'flow' (従来の max-w-md 相当の挙動に最も近い)。
+   */
+  width?: 'app' | 'flow' | 'full';
 }
 
 const {
-  title = 'Scan-Chat Medical AI',
-  description = '医療向けスキャン + ハイブリッドチャットのパイロット',
+  title = 'Welltect',
+  description = 'Welltect — 検査結果とAI診断を、わかりやすく整理してお届けします。',
+  width = 'flow',
 } = Astro.props;
+
+// F-A3 のブレークポイント (sm640 / md768 / lg1024 / xl1280) に沿う。
+// 従来は全ページ max-w-md 固定で、PC で極端に間延びしていた。
+const WIDTH = {
+  // 業務画面は PC で本文が間延びしない範囲まで広げる。lg 以上は 2 カラムに
+  // 組む前提の幅で、単一カラムのまま広げるとタブレット表示のまま巨大化する。
+  app:  'w-full max-w-md sm:max-w-2xl lg:max-w-5xl xl:max-w-7xl 2xl:max-w-[88rem]',
+  flow: 'w-full max-w-md sm:max-w-xl lg:max-w-2xl',
+  full: 'w-full',
+} as const;
 ---
 
 <!doctype html>
@@ -19,12 +39,21 @@ const {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="description" content={description} />
-    <meta name="theme-color" content="#2563eb" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Executive Navy。ダークモードは提供しないため単一値。 -->
+    <meta name="theme-color" content="#102B3A" />
+    {/*
+      Welltect ロゴ (public/welltect_logo.svg 等) が置かれていればそれを favicon に使う。
+      未配置のあいだは暫定の favicon.svg にフォールバックする。
+    */}
+    <link
+      rel="icon"
+      type={LOGO.pending ? 'image/svg+xml' : undefined}
+      href={LOGO.pending ? '/favicon.svg' : LOGO.src}
+    />
     <title>{title}</title>
   </head>
   <body class="min-h-full">
-    <div class="mx-auto flex min-h-screen w-full max-w-md flex-col safe-top safe-bottom">
+    <div class={`mx-auto flex min-h-screen flex-col safe-top safe-bottom ${WIDTH[width]}`}>
       <slot />
     </div>
     {/* Google One Tap (PUBLIC_GOOGLE_CLIENT_ID 未設定なら何もレンダリングしない) */}

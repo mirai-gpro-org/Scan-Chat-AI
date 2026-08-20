@@ -9,22 +9,22 @@ const { alert } = Astro.props as Props;
 
 {alert && (
   <section
-    class="relative overflow-hidden rounded-2xl border-2 border-red-400 bg-gradient-to-br from-red-50 to-rose-50 p-4 shadow-lg dark:border-red-700 dark:from-red-900/30 dark:to-rose-900/30"
+    class="relative overflow-hidden rounded-2xl border-2 border-red-400 bg-status-action-bg p-4"
     role="alert"
   >
-    <div class="absolute -right-6 -top-6 h-24 w-24 rounded-full bg-red-200/40 blur-xl dark:bg-red-700/30"></div>
+    <div class="absolute -right-6 -top-6 h-24 w-24 rounded-full bg-red-200/40 blur-xl"></div>
     <div class="relative">
-      <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-red-700 dark:text-red-300">
+      <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-red-700">
         <span class="relative flex h-2 w-2">
           <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75"></span>
           <span class="relative inline-flex h-2 w-2 rounded-full bg-red-600"></span>
         </span>
         <span>URGENT ALERT</span>
       </div>
-      <h2 class="mt-1 text-lg font-bold text-red-800 dark:text-red-100">
+      <h2 class="mt-1 text-lg font-bold text-red-800">
         {alert.title}
       </h2>
-      <p class="mt-1 text-sm leading-relaxed text-red-900/90 dark:text-red-100/90">
+      <p class="mt-1 text-sm leading-relaxed text-red-900/90">
         {alert.body}
       </p>
       {alert.cta && (
