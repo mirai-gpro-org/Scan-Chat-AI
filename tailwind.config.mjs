@@ -138,12 +138,39 @@ export default {
         },
       },
       fontFamily: {
+        /*
+         * 欧文・数字は OS の UI フォント、**和文は UD フォント**を当てる。
+         * フォントのフォールバックは 1 文字ずつ効くので、この 1 本で
+         *   欧文/数字 = system-ui (検査値の tabular-nums がそのまま効く)
+         *   和文      = BIZ UDPGothic → Hiragino Sans → Noto Sans JP
+         * になる。
+         *
+         * BIZ UDGothic (モリサワ) を和文の先頭に置く理由:
+         *   - **Windows 10 October 2018 Update 以降に OS 標準搭載**なので、
+         *     主な利用者 (50〜65 代・Windows) には **追加ダウンロードなし**で届く。
+         *     出典: モリサワ ニュースリリース
+         *     morisawa.co.jp/about/news/4010
+         *   - UD フォントで、装飾を省いて誤読を避け、字画間を広く取る設計。
+         *     小さいサイズでも全文字を判別できることを開発基準にしている。
+         *   - 和文と英数字・記号が混在したときのばらつきが少ない。
+         *   - **等幅版 (BIZ UDGothic) を先に置く**。プロポーショナル版 (UDP) は
+         *     句読点を詰めるため、今回指摘のあった「句読点が詰まって読めない」に
+         *     逆行する。等幅版は句読点が全角幅のままで、和文本来のベタ組みになる。
+         *     欧文・数字は system-ui 側が担当するので等幅の影響を受けない。
+         * 未搭載の環境 (macOS/iOS) は Hiragino Sans に落ちる = 従来どおり。
+         * 和名も併記するのは、環境によって登録名が和名のことがあるため (保険)。
+         * Web フォント (Google Fonts) は入れていない — 和文は実測で 400+700 の
+         * サブセットが約 700KB になるため、まず OS 搭載フォントで取りに行く。
+         */
         sans: [
           'system-ui',
           '-apple-system',
           'BlinkMacSystemFont',
           '"Segoe UI"',
           'Roboto',
+          '"BIZ UDGothic"',
+          '"BIZ UDゴシック"',
+          '"BIZ UDPGothic"',
           '"Hiragino Sans"',
           '"Noto Sans JP"',
           'sans-serif',

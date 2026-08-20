@@ -76,7 +76,12 @@ const toc = sections
   .map((s) => ({ name: s.section_name, page: reportPages[s.section_name] ?? 1 }));
 ---
 
-<BaseLayout title="AI 診断結果 | Welltect" width="app">
+<!--
+  読み物のモード (サマリー/要注意) は本文の行長に合わせた中幅 (flow) にする。
+  幅を app のままにすると本文だけ 38em で止まり、右側が大きく空いて座りが悪い。
+  全編は PDF ビューアなので広い方 (app) を使う。
+-->
+<BaseLayout title="AI 診断結果 | Welltect" width={mode === 'full' ? 'app' : 'flow'}>
   <AppNav u={u} current="/report" unreadNotices={unreadNotices} supportContact={supportContact} />
 
   <header class="hero-gradient px-5 pb-5 pt-5">
