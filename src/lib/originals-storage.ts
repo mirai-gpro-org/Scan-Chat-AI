@@ -144,6 +144,9 @@ export async function getOriginalSignedUrl(
   expiresInSec = 300,
 ): Promise<string | null> {
   try {
+    // 先頭 "/" は public 配下の静的ファイル (サンプル表示用)。署名は不要でそのまま返す。
+    if (storageUrl.startsWith('/')) return storageUrl;
+
     const s3 = parseS3Uri(storageUrl);
     if (s3) {
       const cfg = getOriginalsS3Config();

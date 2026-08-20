@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 実物の Elith サンプル JSON (docs/2026_05_24 Elith_demo.json, 10 セクション × 約 21K 字)
+ * 実物の Elith サンプル JSON (docs/elith/2026_05_24 Elith_demo.json, 10 セクション × 約 21K 字)
  * を seed 済の 80000001 レコードに後置きで読み込ませる。
  *
  * 使い方:
@@ -20,7 +20,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..');
-const samplePath = join(repoRoot, 'docs/2026_05_24 Elith_demo.json');
+const samplePath = join(repoRoot, 'docs/elith/2026_05_24 Elith_demo.json');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'http://127.0.0.1:54321';
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;

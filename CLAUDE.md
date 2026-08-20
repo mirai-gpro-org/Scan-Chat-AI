@@ -300,6 +300,22 @@
     **Compliance モードはルートでも削除不可 (AWS公式)。テスト中は GOVERNANCE にすること。**
   - `file_kind` に `raw_pdf` を追加。**redaction は未実装**なので未処理の原本は `raw_pdf` を書く。
     `raw_pdf_redacted` は PII 除去を実装した経路でのみ使う (実態と名前を一致させる)。
+- **Elith の AI 診断結果レポート (PDF) = パイプライン⑥・暫定実装 (2026-08-20)**。
+  置き場所は **`diagnosis.diagnosis_results`** (`test_artifact_files` ではない —
+  あちらは検査機関の原本。`diagnosis_results` が既に「Elith の診断結果 1 回分」を表す)。
+  マイグレーション `supabase/migrations/20260820000040_diagnosis_report_pdf.sql` で
+  `report_pdf_url` / `report_pdf_sha256` / `report_pdf_pages` / `report_pdf_received_at` を追加。
+  - 取込 API = `src/pages/api/admin/elith-report/upload.ts` (Bearer `ADMIN_API_KEY`)。
+    PDF を `putOriginal()` へ保存し、既存行を `status='superseded'` に落として新行を足す。
+    **UI は wellfort-site 側**に作る (Scan-Chat-AI は API 提供側)。
+  - 表示 = `src/lib/elith-report-queries.ts` `loadElithReport()` → `src/pages/report.astro`。
+    実データが無い間は Elith 提供サンプル (`elith-report-sample.ts`・2026-08-06 Stage2 版) へ
+    フォールバックする。3 モード (a サマリー / b 要注意抜粋 / c 全編 PDF) と `[pN]`→`#page=N`。
+  - **要約はアプリが作らない**。a/b はレポート自身が持つ章 (アブストラクト / 医療受診の目安 /
+    栄養素) と、本文に印字された `（判定区分：X）` の機械抽出だけ (`elith-report-highlights.ts`)。
+  - 実データ経路の目視確認は `supabase/seed_elith_report.sql` (既定では読み込まない・手で流す)。
+  - **受取仕様は未確定** (`docs/lab/lab_data_pipeline_master_spec.md:98`)。命名規則・出力トリガ・
+    世代管理・ひも付け・受領確認が決まったら自動受信へ差し替える。
 
 ### UI / デザイン (2026-08 刷新)
 - **ブランド**: 顧客向け主ブランド = **Welltect** / 運営 = Wellfort。主な利用者は 50〜65 代の経営者・役員。

@@ -71,7 +71,7 @@ supabase db reset
 
 ### 3. Elith 実サンプル JSON の投入 (任意)
 
-`docs/2026_05_24 Elith_demo.json` (21K 字、全 10 セクション) を 1 件の
+`docs/elith/2026_05_24 Elith_demo.json` (21K 字、全 10 セクション) を 1 件の
 `diagnosis_results` レコードに後置きで読み込みます:
 
 ```bash

@@ -2,7 +2,7 @@
 import AppIcon from '../components/AppIcon.astro';
 import AppNav from '../components/AppNav.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
-import { ELITH_REPORT_SAMPLE, ELITH_REPORT_PDF, ELITH_REPORT_PAGES } from '../lib/elith-report-sample';
+import { loadElithReport } from '../lib/elith-report-queries';
 import { findSection, type ElithSection } from '../lib/elith-parser';
 import { extractReportPoints, extractTopPriority } from '../lib/elith-report-highlights';
 import { REPORT_MODES, isReportMode, modeHref, renderReportMarkdown, normalizePage } from '../lib/report-view';
@@ -22,8 +22,9 @@ import { loadDashboard } from '../lib/dashboard-queries';
  *   c) 全編       … 原本 PDF (17 ページ) を iframe 表示
  * a/b の `[pN]` から c) の該当ページへ飛ぶ。
  *
- * 【現状】受取仕様が未確定 (同 :98) のため、表示は Elith 提供のサンプル
- *   (2026-08-06 Stage2 版) を使う。実データ受領後は差し替えるだけでよい。
+ * 【現状】受取仕様が未確定 (同 :98) のため、実データ (diagnosis_results.report_pdf_url)
+ *   が無い間は Elith 提供のサンプル (2026-08-06 Stage2 版) にフォールバックする。
+ *   切替は `loadElithReport()` が行う (elith-report-queries.ts)。
  *
  * 【原則】要約はアプリが作らない。レポートが自前で持っている章をそのまま出す。
  */
@@ -47,30 +48,32 @@ await refreshConfig();
 const supportContact = cfg('ui.support_contact');
 
 // ── 表示するレポート ────────────────────────────────────────────
-// 実データ受領後はここを test_artifact_files / diagnosis_results 由来に差し替える。
-const sections: ElithSection[] = ELITH_REPORT_SAMPLE;
-const pdf = ELITH_REPORT_PDF;
-const isSample = true;
+// 実データ (diagnosis_results) があればそれを、無ければサンプルを返す。
+const view = await loadElithReport(data?.diagnosticUserId ?? null);
+const sections: ElithSection[] = view.sections;
+const pdf = view.pdf;
+const isSample = view.isSample;
+const reportPages = view.pages;
 
 const HIGHLIGHT_NAMES = ['医療受診の目安', '必要とする栄養素/サプリ情報'];
 const summarySection = findSection(sections, 'アブストラクト');
 
 // 要点は「レポート本文に書かれている判定区分」を機械的に拾ったもの。
 // アプリが値を評価して作ったものではない (elith-report-highlights.ts 参照)。
-const points = extractReportPoints(sections, ELITH_REPORT_PAGES);
-const topPriority = extractTopPriority(sections, ELITH_REPORT_PAGES);
+const points = extractReportPoints(sections, reportPages);
+const topPriority = extractTopPriority(sections, reportPages);
 const highlightSections = HIGHLIGHT_NAMES
   .map((n) => findSection(sections, n))
   .filter((s): s is ElithSection => s != null);
 
 const md = (t: string): string => renderReportMarkdown(t, { u, basePath: '/report' });
 const href = (m: (typeof REPORT_MODES)[number]['key']): string => modeHref(m, { u, basePath: '/report' });
-const pdfSrc = `${pdf.url}#page=${initialPage}`;
+const pdfSrc = pdf ? `${pdf.url}#page=${initialPage}` : null;
 
 // 目次 (章 → 原本ページ)。要約から全編へ飛ぶための案内で、内容の解釈は含まない。
 const toc = sections
   .filter((s) => s.section_name !== 'アブストラクト')
-  .map((s) => ({ name: s.section_name, page: ELITH_REPORT_PAGES[s.section_name] ?? 1 }));
+  .map((s) => ({ name: s.section_name, page: reportPages[s.section_name] ?? 1 }));
 ---
 
 <BaseLayout title="AI 診断結果 | Welltect" width="app">
@@ -82,7 +85,9 @@ const toc = sections
       AI 診断結果
     </h1>
     <p class="mt-1.5 text-base text-slate-700">
-      {pdf.label} ・ {pdf.issuedOn} 発行 ・ 全 {pdf.pageCount} ページ
+      {pdf
+        ? `${pdf.label} ・ ${pdf.issuedOn} 発行${pdf.pageCount ? ` ・ 全 ${pdf.pageCount} ページ` : ''}`
+        : 'レポートはまだ届いていません。'}
     </p>
     {isSample && (
       <p class="mt-2 inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-sm text-amber-800">
@@ -91,7 +96,7 @@ const toc = sections
       </p>
     )}
 
-    <nav class="mt-4 inline-flex w-full max-w-xl rounded-full bg-white p-1" role="tablist" aria-label="表示モード">
+    <nav class="mt-4 flex w-full max-w-xl rounded-full bg-white p-1" role="tablist" aria-label="表示モード">
       {REPORT_MODES.map((m) => (
         <a
           href={href(m.key)}
@@ -220,6 +225,9 @@ const toc = sections
 
     {/* c) 全編 = 原本 PDF */}
     {mode === 'full' && (
+      !pdf || !pdfSrc ? (
+        <p class="card text-base text-slate-600">原本レポートがまだ届いていません。</p>
+      ) : (
       <section id="pdf-viewer" class="card scroll-mt-24">
         <header class="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 class="flex items-center gap-2 text-lg font-bold text-navy-800">
@@ -245,6 +253,7 @@ const toc = sections
           loading="lazy"
         ></iframe>
       </section>
+      )
     )}
 
     <p class="text-sm leading-relaxed text-slate-600">

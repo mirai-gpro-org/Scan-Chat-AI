@@ -99,11 +99,17 @@ export async function loadResult(
     .limit(1)
     .maybeSingle();
 
-  // 検査種別ごとの専用サンプル Elith を優先 (本番では artifact ごとの
-  // 個別 diagnosis_results に紐付ける)
-  const sampleSections = getElithSampleFor(artifact.test_type);
-  const sections: ElithSection[] = sampleSections
-    ?? ((latestResult?.report as ElithSection[] | null) ?? []);
+  // **実データが最優先**。diagnosis_results に本文があればそれを表示し、
+  // 空のときだけ検査種別ごとの専用サンプル Elith へフォールバックする
+  // (原本 PDF の resolveOriginal と同じ優先順位に揃えた。以前はサンプルが
+  //  常に勝っており、実データを入れても表示が変わらなかった)。
+  // 本番では artifact ごとの個別 diagnosis_results に紐付ける。
+  const realSections = Array.isArray(latestResult?.report)
+    ? (latestResult!.report as unknown as ElithSection[])
+    : [];
+  const sections: ElithSection[] = realSections.length > 0
+    ? realSections
+    : (getElithSampleFor(artifact.test_type) ?? []);
 
   const summarySection = findSection(sections, 'アブストラクト');
   const highlightSections = HIGHLIGHT_NAMES
