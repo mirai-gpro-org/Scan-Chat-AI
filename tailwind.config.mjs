@@ -179,10 +179,17 @@ export default {
       fontSize: {
         // 本文の下限は 16px。補助情報を小さくしない方針のため、
         // 12px 以下のユーティリティは定義しない (text-xs = 13px に引き上げ)。
-        xs: ['0.8125rem', { lineHeight: '1.5rem' }],   // 13px
-        sm: ['0.875rem',  { lineHeight: '1.6rem' }],   // 14px
-        base: ['1rem',    { lineHeight: '1.85rem' }],  // 16px
-        lg: ['1.125rem',  { lineHeight: '1.8rem' }],
+        //
+        // 【行間 (2026-08 見直し)】16px は iOS/Web の標準的な本文サイズであって
+        //   大きくはない。「大きく見える・1 画面に入る量が少ない」の実体は行間の
+        //   広さだったので、**文字は縮めず行間を詰める**方針に変えた。
+        //   base 1.85rem (1.85) → 1.75rem (1.75)。実測でスマホ 1 画面あたりの
+        //   文字数が 330 → 377 字に増える (iPhone 15 Pro 相当)。
+        //   1.75 は和文本文の一般的な範囲内で、詰めすぎではない。
+        xs: ['0.8125rem', { lineHeight: '1.4rem' }],   // 13px
+        sm: ['0.875rem',  { lineHeight: '1.5rem' }],   // 14px
+        base: ['1rem',    { lineHeight: '1.75rem' }],  // 16px
+        lg: ['1.125rem',  { lineHeight: '1.75rem' }],
       },
       minHeight: { touch: '44px' }, // タップ領域の下限
       minWidth:  { touch: '44px' },

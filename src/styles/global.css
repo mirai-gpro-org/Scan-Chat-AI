@@ -88,8 +88,9 @@
            hover:border-brand-400 hover:bg-brand-50 active:scale-[0.99];
   }
 
+  /* カードの内側。スマホは 16px、sm 以上で 20px (画面が狭いほど本文に幅を回す)。 */
   .card {
-    @apply rounded-2xl border border-slate-200 bg-white p-5;
+    @apply rounded-2xl border border-slate-200 bg-white p-4 sm:p-5;
   }
 
   /* 見出しカード: Quiet Bronze はヘアラインとしてのみ使う。 */
@@ -426,8 +427,13 @@
 .md-region code { @apply rounded bg-slate-100 px-1 text-[0.9em]; }
 
 /* ─ サマリー / 要注意モードでの強調表示 ─ */
-.md-summary p { @apply my-2 text-base; line-height: 2; }
-.md-summary p + p { @apply mt-4; }
+/*
+ * 長文の行間。2.0 は空きすぎで「間延びして 1 画面に入る量が少ない」ため 1.75 に。
+ * 文字サイズ (16px) は変えていない — 16px は iOS/Web の標準的な本文サイズで、
+ * これを縮めると今度は読みづらくなる。詰めるのは行間と余白だけにする。
+ */
+.md-summary p { @apply my-2 text-base; line-height: 1.75; }
+.md-summary p + p { @apply mt-3; }
 .md-summary p:has(> strong:first-child:last-child) {
   @apply mb-2 mt-5 text-lg font-bold text-navy-800;
 }
