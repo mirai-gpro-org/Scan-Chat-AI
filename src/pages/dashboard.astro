@@ -153,7 +153,17 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
         {/* ④ 主要導線 */}
         <section aria-label="主要な操作">
           <h2 class="sr-only">主要な操作</h2>
-          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <a
+              href={`/report${q}`}
+              class="flex min-h-touch items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-4 text-slate-800 transition hover:border-brand-400"
+            >
+              <AppIcon name="report" size={28} class="text-brand-700" />
+              <span class="flex flex-col">
+                <span class="text-base font-semibold">AI 診断結果</span>
+                <span class="text-sm text-slate-600">レポートを読む</span>
+              </span>
+            </a>
             <a
               href={`/scan${q}`}
               class="flex min-h-touch items-center gap-3 rounded-2xl bg-brand-600 px-4 py-4 text-white transition hover:bg-brand-700"

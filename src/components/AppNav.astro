@@ -41,6 +41,7 @@ const {
 const q = u ? `?u=${encodeURIComponent(u)}` : '';
 const ITEMS: { href: string; label: string; icon: AppIconName; note?: string }[] = [
   { href: `/dashboard${q}`, label: 'ホーム',       icon: 'home',      note: '最新の状況' },
+  { href: `/report${q}`,    label: 'AI 診断結果',  icon: 'report',    note: 'レポートを読む' },
   { href: `/scan${q}`,      label: 'AI スキャン',  icon: 'scan',      note: '検診結果を読み取る' },
   { href: `/chat${q}`,      label: 'AI 問診',      icon: 'interview', note: '生活習慣を記録する' },
   { href: `/kit${q}`,       label: '検査キット',   icon: 'kit',       note: '発送と返送の進捗' },

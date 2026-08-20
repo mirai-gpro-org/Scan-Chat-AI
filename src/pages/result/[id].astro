@@ -3,7 +3,7 @@ import AppIcon from '../../components/AppIcon.astro';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { loadResult } from '../../lib/result-queries';
 import { testTypeLabel, formatJpDate } from '../../lib/dashboard-queries';
-import { marked } from 'marked';
+import { renderReportMarkdown } from '../../lib/report-view';
 
 export const prerender = false;
 
@@ -33,17 +33,10 @@ const linkFor = (m: string) => {
 };
 
 /** [pN] → PDF 該当ページへの deep link (?mode=full&page=N) に変換 */
+/** 本文 Markdown → HTML。`[pN]` は原本 PDF の該当ページへのリンクになる。
+    変換ロジックは src/lib/report-view.ts に集約 (/report と共通)。 */
 function md(text: string): string {
-  if (!text) return '';
-  const linked = text.replace(/\[p(\d+)\]/g, (_, n) => {
-    const qs = new URLSearchParams();
-    if (u) qs.set('u', u);
-    qs.set('mode', 'full');
-    qs.set('page', String(n));
-    const cls = 'pdf-page-link inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800 no-underline hover:bg-amber-200';
-    return `<a href="?${qs.toString()}#pdf-viewer" class="${cls}" data-pdf-page="${n}" title="原本 PDF の ${n} ページ目を見る"> p${n}</a>`;
-  });
-  return marked.parse(linked, { async: false }) as string;
+  return renderReportMarkdown(text, { u });
 }
 
 const pdfSrcWithPage = data?.samplePdfUrl
