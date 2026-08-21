@@ -10,6 +10,7 @@
  */
 
 import { getServerSupabase } from './supabase';
+import { withHonorific } from './dashboard-queries';
 import type { UserNotice, Announcement } from '../types/supabase';
 import { buildDemoNotices, demoFallbackEnabled, demoUnreadImportant } from './demo-data';
 
@@ -93,7 +94,8 @@ export async function loadNotices(
     newsQuery,
   ]);
 
-  const userName = appUser?.display_name_cache ?? 'お客様';
+  // 敬称の付け方はダッシュボードと揃える (氏名のみで届く連携元があるため)。
+  const userName = appUser?.display_name_cache ? withHonorific(appUser.display_name_cache) : 'お客様';
 
   // テストフェーズ: お知らせテーブル未適用 (エラー) もしくは未投入 (空) の場合は
   // 共通のダミーお知らせを表示する。実データが入れば自動で実データに切替。

@@ -399,10 +399,24 @@ function demoHealthAge(): HealthAgeSummary {
   };
 }
 
-/** ユーザー氏名を「真鍋様」形式で返す。なければ「お客様」。 */
+/**
+ * ユーザー氏名を「真鍋様」形式で返す。なければ「お客様」。
+ *
+ * `display_name_cache` は連携元によって「真鍋様」(敬称込み) だったり
+ * 「浜田一英」(氏名のみ) だったりするため、**敬称が無いときだけ「様」を足す**。
+ * 二重敬称 (「〇〇様様」) を作らないよう、既に様/さん/殿で終わるものは触らない。
+ */
+const HONORIFIC = /(?:様|さま|さん|殿|どの)$/;
+
+export function withHonorific(name: string): string {
+  const n = name.trim();
+  if (!n) return 'お客様';
+  return HONORIFIC.test(n) ? n : `${n}様`;
+}
+
 export function formatGreeting(data: DashboardData): string {
-  if (data.appUser?.display_name_cache) return data.appUser.display_name_cache;
-  if (data.customer?.family_name) return `${data.customer.family_name}様`;
+  if (data.appUser?.display_name_cache) return withHonorific(data.appUser.display_name_cache);
+  if (data.customer?.family_name) return withHonorific(data.customer.family_name);
   return 'お客様';
 }
 
