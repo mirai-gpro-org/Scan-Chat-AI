@@ -1,0 +1,55 @@
+---
+import AppIcon from '../AppIcon.astro';
+import AppLogo from '../AppLogo.astro';
+
+/**
+ * AI 診断結果 (Elith レポート) への導線カード。
+ *
+ * 入力の導線 (AI スキャン / AI 問診) とは性質が違うので横並びにせず、
+ * 健康年齢の隣に置く。PC / タブレットでは健康年齢が 1 枚だけだと横に間延びするため、
+ * 2 カラムの右側に入って余白を埋める役割も持つ。
+ *
+ * layout:
+ *   'row'   … 1 カラム時 (スマホ / 健康年齢が無いとき)。横並びの帯。
+ *   'stack' … 2 カラムの右側。縦組みにして健康年齢と高さを揃える。
+ *             中身は上下中央に寄せる — 上下へ振り分けると中央が大きく空いて
+ *             未完成に見えるため。
+ */
+interface Props {
+  href: string;
+  layout?: 'row' | 'stack';
+}
+const { href, layout = 'row' } = Astro.props as Props;
+
+const base =
+  'group flex min-h-touch rounded-2xl border border-brand-200 bg-brand-50 transition '
+  + 'hover:border-brand-400 hover:bg-brand-100';
+---
+
+{layout === 'stack' ? (
+  <a href={href} class={`${base} h-full flex-col items-start justify-center gap-3 px-5 py-5`}>
+    <span class="flex items-center gap-3">
+      <AppIcon name="report" size={30} class="shrink-0 text-brand-700" />
+      <AppLogo height={40} />
+    </span>
+    <span class="flex min-w-0 flex-col">
+      <span class="text-base font-semibold text-navy-800">AI 診断結果</span>
+      <span class="text-sm text-slate-700">レポートを読む</span>
+    </span>
+    <span class="inline-flex items-center gap-1 text-sm font-medium text-brand-700">
+      開く<AppIcon name="next" size={16} />
+    </span>
+  </a>
+) : (
+  <a href={href} class={`${base} items-center gap-4 px-5 py-4`}>
+    <span class="flex shrink-0 items-center gap-3">
+      <AppIcon name="report" size={32} class="text-brand-700" />
+      <AppLogo height={44} />
+    </span>
+    <span class="flex min-w-0 flex-col">
+      <span class="text-base font-semibold text-navy-800">AI 診断結果</span>
+      <span class="text-sm text-slate-700">レポートを読む</span>
+    </span>
+    <AppIcon name="next" size={20} class="ml-auto shrink-0 text-brand-700" />
+  </a>
+)}

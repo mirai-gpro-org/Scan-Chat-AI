@@ -12,6 +12,7 @@ import KitProgressCard from '../components/dashboard/KitProgressCard.astro';
 import HealthInsightCard from '../components/dashboard/HealthInsightCard.astro';
 import MetricTrendChart from '../components/dashboard/MetricTrendChart.astro';
 import HealthAgeCard from '../components/dashboard/HealthAgeCard.astro';
+import ReportLinkCard from '../components/dashboard/ReportLinkCard.astro';
 import TestHistoryList from '../components/dashboard/TestHistoryList.astro';
 import { loadDashboard, formatGreeting, getHealthAge, formatJpDate, testTypeLabel } from '../lib/dashboard-queries';
 import { getLatestMeasurements, getMeasurementTrend } from '../lib/measurement-queries';
@@ -184,28 +185,20 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
 
         {/* ① 注意項目 — 非表示 (緊急受診勧告 URGENT ALERT): {urgentAlert && <UrgentAlertBanner alert={urgentAlert} />} */}
 
-        {/* ② 健康年齢 */}
-        {healthAge?.latest && <HealthAgeCard latest={healthAge.latest} followup={healthAgeFollowup} />}
-
         {/*
-          ②-2 AI 診断結果 — AIスキャン/AI問診 (入力の導線) とは性質が違うので横並びにせず、
-          健康年齢の直後に独立して置く。面はブランド薄色 (brand-50)。
-          Quiet Bronze は使わない (ヘアラインと小面積のみ、の規則)。
+          ② 健康年齢 ＋ ②-2 AI 診断結果。
+          健康年齢だけを全幅で置くと PC / タブレットで横に間延びするため、
+          sm 以上では 2 カラムにして右に AI 診断結果を並べる。
+          健康年齢が無い (算出前) ときは AI 診断結果を全幅の帯で出す。
         */}
-        <a
-          href={`/report${q}`}
-          class="flex min-h-touch items-center gap-4 rounded-2xl border border-brand-200 bg-brand-50 px-5 py-4 text-slate-800 transition hover:border-brand-400 hover:bg-brand-100"
-        >
-          <span class="flex shrink-0 items-center gap-3">
-            <AppIcon name="report" size={32} class="text-brand-700" />
-            <AppLogo height={44} />
-          </span>
-          <span class="flex min-w-0 flex-col">
-            <span class="text-base font-semibold text-navy-800">AI 診断結果</span>
-            <span class="text-sm text-slate-700">レポートを読む</span>
-          </span>
-          <AppIcon name="next" size={20} class="ml-auto shrink-0 text-brand-700" />
-        </a>
+        {healthAge?.latest ? (
+          <div class="grid grid-cols-1 gap-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,16rem)] xl:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
+            <HealthAgeCard latest={healthAge.latest} followup={healthAgeFollowup} />
+            <ReportLinkCard href={`/report${q}`} layout="stack" />
+          </div>
+        ) : (
+          <ReportLinkCard href={`/report${q}`} />
+        )}
 
         {/* ③ 次にすること — 非表示 (本日の健康クエスト): <DailyQuests quests={quests} /> */}
 
