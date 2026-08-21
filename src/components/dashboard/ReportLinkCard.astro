@@ -11,9 +11,9 @@ import AppLogo from '../AppLogo.astro';
  *
  * layout:
  *   'row'   … 1 カラム時 (スマホ / 健康年齢が無いとき)。横並びの帯。
- *   'stack' … 2 カラムの右側。縦組みにして健康年齢と高さを揃える。
- *             中身は上下中央に寄せる — 上下へ振り分けると中央が大きく空いて
- *             未完成に見えるため。
+ *   'stack' … 2 カラムの右側。縦組み。**高さは健康年齢に揃えない** —
+ *             中身が少ないので引き伸ばすと中央が大きく空いて未完成に見える
+ *             (グリッド側を items-start にしてある)。
  */
 interface Props {
   href: string;
@@ -27,7 +27,7 @@ const base =
 ---
 
 {layout === 'stack' ? (
-  <a href={href} class={`${base} h-full flex-col items-start justify-center gap-3 px-5 py-5`}>
+  <a href={href} class={`${base} flex-col items-start gap-3 px-5 py-5`}>
     <span class="flex items-center gap-3">
       <AppIcon name="report" size={30} class="shrink-0 text-brand-700" />
       <AppLogo height={40} />

@@ -190,9 +190,11 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
           健康年齢だけを全幅で置くと PC / タブレットで横に間延びするため、
           sm 以上では 2 カラムにして右に AI 診断結果を並べる。
           健康年齢が無い (算出前) ときは AI 診断結果を全幅の帯で出す。
+          items-start にして**高さは揃えない** — AI 診断結果は中身が少ないので、
+          健康年齢の高さまで引き伸ばすと中央が大きく空いて「未完成の箱」に見える。
         */}
         {healthAge?.latest ? (
-          <div class="grid grid-cols-1 gap-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,16rem)] xl:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
+          <div class="grid grid-cols-1 items-start gap-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,16rem)] xl:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
             <HealthAgeCard latest={healthAge.latest} followup={healthAgeFollowup} />
             <ReportLinkCard href={`/report${q}`} layout="stack" />
           </div>

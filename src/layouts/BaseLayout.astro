@@ -27,7 +27,12 @@ const {
 const WIDTH = {
   // 業務画面は PC で本文が間延びしない範囲まで広げる。lg 以上は 2 カラムに
   // 組む前提の幅で、単一カラムのまま広げるとタブレット表示のまま巨大化する。
-  app:  'w-full max-w-md sm:max-w-2xl lg:max-w-5xl xl:max-w-7xl 2xl:max-w-[88rem]',
+  //
+  // **md (768px) の段を必ず置く**。sm(640) の次が lg(1024) だと、その間の
+  // タブレット (iPad 縦 834px 等) が 672px で頭打ちになり、左右に 80px ずつ
+  // 余白が残って間延びして見える (実測 2026-08)。
+  app:  'w-full max-w-md sm:max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-7xl 2xl:max-w-[88rem]',
+  // flow は読み物向けなので意図的に狭い (和文 38 字前後に収める)。広げない。
   flow: 'w-full max-w-md sm:max-w-xl lg:max-w-2xl',
   full: 'w-full',
 } as const;
