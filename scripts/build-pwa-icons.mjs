@@ -5,9 +5,13 @@
  * ロゴは**加工しない** — 正方形のキャンバスに配置するだけ (縦横比は維持)。
  * 元画像は public/welltect_logo.png (ブランド資産の原本)。
  *
- * 余白は **0 (ratio=1.0)**。PWABuilder Image Generator の出力 (2026-08 受領) を実測したところ
- * ロゴのインクが**横幅の 80.9%** を占めており、こちらの旧設定 (ratio 0.76 = インク 61.5%) より
- * 1.3 倍大きかった。小さいアイコンでの視認性はこの差が効くため、同じ大きさに合わせた。
+ * **アイコンにはロゴの「マーク」部分だけを使う** (2026-08・視認性の指摘を受けて)。
+ * 原本を実測すると マーク(円+W)=100x78px / ワードマーク"welltect"=198x35px。
+ * ロゴ全体を 60px のアイコンに収めると縮小率が 0.25 倍になり、ワードマークの線幅が
+ * **1px を切って潰れる**。マークだけなら同じ 60px でも線幅が 2.3 倍残るため読める。
+ * ホーム画面ではアイコンの下に「Welltect」という名前が別途出るので、絵柄に文字は要らない。
+ * **切り出すだけで、ロゴの色も形も変えていない** (再描画・トレースはしない)。
+ * ロゴ全体に戻すときは `node scripts/build-pwa-icons.mjs "#FFFFFF" full`。
  *
  * 地の色は既定で **白 #FFFFFF**。
  * 「ロゴが薄い」の指摘 (2026-08) を受けて一度 Executive Navy #102B3A にした
@@ -42,11 +46,45 @@ function hexToBg(hex) {
 /** 地の色。既定 = 白 (実機の見え方で白を採用・上のコメント参照)。 */
 const BG_HEX = process.argv[2] ?? '#FFFFFF';
 const BG = hexToBg(BG_HEX);
-console.log(`地の色: ${BG_HEX}`);
+/** 'full' を渡すとロゴ全体を使う。既定はマークだけ。 */
+const USE_FULL = process.argv[3] === 'full';
+console.log(`地の色: ${BG_HEX} / 絵柄: ${USE_FULL ? 'ロゴ全体' : 'マークのみ'}`);
 
-/** size 四方の地色に、ロゴを ratio の幅で中央配置する。 */
+/**
+ * ロゴ原本から**マークだけ**を切り出したバッファを返す。
+ * インクのある行の連続帯を数え、2 本 (マーク / ワードマーク) なら上の帯を採る。
+ * それ以外の構成の画像に差し替わったときは、判定を諦めて全体を返す (壊さない)。
+ */
+async function markBuffer() {
+  const src = sharp(SRC);
+  const { data, info } = await src.raw().toBuffer({ resolveWithObject: true });
+  const { width: W, height: H, channels: C } = info;
+  const opaque = (x, y) => (C === 4 ? data[(y * W + x) * C + 3] : 255) > 30;
+
+  const bands = [];
+  let start = -1;
+  for (let y = 0; y < H; y++) {
+    let hasInk = false;
+    for (let x = 0; x < W && !hasInk; x++) if (opaque(x, y)) hasInk = true;
+    if (hasInk && start < 0) start = y;
+    if (!hasInk && start >= 0) { bands.push([start, y - 1]); start = -1; }
+  }
+  if (start >= 0) bands.push([start, H - 1]);
+
+  if (bands.length !== 2) {
+    console.warn(`  ロゴのインク帯が ${bands.length} 本。マークを特定できないので全体を使う`);
+    return sharp(SRC).toBuffer();
+  }
+  const [y0, y1] = bands[0];
+  let minX = W, maxX = -1;
+  for (let y = y0; y <= y1; y++) for (let x = 0; x < W; x++) if (opaque(x, y)) { if (x < minX) minX = x; if (x > maxX) maxX = x; }
+  console.log(`  マーク切り出し: x=${minX}..${maxX} y=${y0}..${y1} (${maxX - minX + 1}x${y1 - y0 + 1})`);
+  return sharp(SRC).extract({ left: minX, top: y0, width: maxX - minX + 1, height: y1 - y0 + 1 }).toBuffer();
+}
+
+/** size 四方の地色に、絵柄を ratio の幅で中央配置する。 */
 async function make(out, size, ratio) {
-  const logo = await sharp(SRC)
+  const logo = await sharp(ART)
     .resize({ width: Math.round(size * ratio), fit: 'inside', withoutEnlargement: false })
     .toBuffer();
   await sharp({ create: { width: size, height: size, channels: 4, background: BG } })
@@ -61,11 +99,16 @@ async function make(out, size, ratio) {
 }
 
 await mkdir('public/icons', { recursive: true });
-await make('public/icons/icon-192.png', 192, 1.0);
-await make('public/icons/icon-512.png', 512, 1.0);
-// maskable: 端が円形に切られる前提なので、直径 80% のセーフゾーンに収める。
-//   ratio r のときインク幅 = r * 0.809 / 高さ = 幅 * 0.673 (ロゴの縦横比)。
-//   対角 = インク幅 * 1.205 ≦ 0.8 → r ≦ 0.82。余裕を見て 0.78 (対角 0.761)。
-await make('public/icons/icon-maskable-512.png', 512, 0.78);
+const ART = USE_FULL ? await sharp(SRC).toBuffer() : await markBuffer();
+
+// マーク (100x78 = 縦横比 0.78) を横幅の 74% で置く。
+// iOS/Android が角を丸く切っても、辺の中央付近は削られないので問題ない。
+const R_ANY = USE_FULL ? 1.0 : 0.74;
+await make('public/icons/icon-192.png', 192, R_ANY);
+await make('public/icons/icon-512.png', 512, R_ANY);
+// maskable: 直径 80% の円で切られる前提。
+//   マークの対角 = 幅 * sqrt(1 + 0.78^2) = 幅 * 1.268 ≦ 0.8 → 幅 ≦ 0.63。余裕を見て 0.60。
+//   (ロゴ全体を使う場合は 幅 * 1.205 ≦ 0.8 → 0.78)
+await make('public/icons/icon-maskable-512.png', 512, USE_FULL ? 0.78 : 0.60);
 // iOS は角丸を OS 側で付ける。透過を残すと黒背景になることがあるので不透明で書き出す。
-await make('public/apple-touch-icon.png', 180, 1.0);
+await make('public/apple-touch-icon.png', 180, R_ANY);
