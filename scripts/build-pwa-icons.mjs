@@ -2,8 +2,12 @@
 /**
  * ホーム画面アイコン (PWA / apple-touch-icon) を Welltect ロゴから生成する。
  *
- * ロゴは**加工しない** — 正方形のキャンバスに余白付きで配置するだけ (縦横比は維持)。
+ * ロゴは**加工しない** — 正方形のキャンバスに配置するだけ (縦横比は維持)。
  * 元画像は public/welltect_logo.png (ブランド資産の原本)。
+ *
+ * 余白は **0 (ratio=1.0)**。PWABuilder Image Generator の出力 (2026-08 受領) を実測したところ
+ * ロゴのインクが**横幅の 80.9%** を占めており、こちらの旧設定 (ratio 0.76 = インク 61.5%) より
+ * 1.3 倍大きかった。小さいアイコンでの視認性はこの差が効くため、同じ大きさに合わせた。
  *
  * 地の色は既定で **白 #FFFFFF**。
  * 「ロゴが薄い」の指摘 (2026-08) を受けて一度 Executive Navy #102B3A にした
@@ -57,9 +61,11 @@ async function make(out, size, ratio) {
 }
 
 await mkdir('public/icons', { recursive: true });
-await make('public/icons/icon-192.png', 192, 0.76);
-await make('public/icons/icon-512.png', 512, 0.76);
-// maskable: 端が円形/角丸に切られる前提。中央 60% に収める (セーフゾーン 80% の内側)。
-await make('public/icons/icon-maskable-512.png', 512, 0.58);
+await make('public/icons/icon-192.png', 192, 1.0);
+await make('public/icons/icon-512.png', 512, 1.0);
+// maskable: 端が円形に切られる前提なので、直径 80% のセーフゾーンに収める。
+//   ratio r のときインク幅 = r * 0.809 / 高さ = 幅 * 0.673 (ロゴの縦横比)。
+//   対角 = インク幅 * 1.205 ≦ 0.8 → r ≦ 0.82。余裕を見て 0.78 (対角 0.761)。
+await make('public/icons/icon-maskable-512.png', 512, 0.78);
 // iOS は角丸を OS 側で付ける。透過を残すと黒背景になることがあるので不透明で書き出す。
-await make('public/apple-touch-icon.png', 180, 0.76);
+await make('public/apple-touch-icon.png', 180, 1.0);
