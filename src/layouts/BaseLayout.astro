@@ -55,6 +55,23 @@ const WIDTH = {
       type={LOGO.pending ? 'image/svg+xml' : undefined}
       href={LOGO.pending ? '/favicon.svg' : LOGO.src}
     />
+
+    {/*
+      ホーム画面に追加したときのアイコン / 表示名。
+        - Android (Chrome) は manifest の icons を使う。192 と 512 が必須
+          (web.dev/articles/install-criteria の installability criteria)。
+        - iOS Safari は manifest ではなく `apple-touch-icon` を使う
+          (Apple: Configuring Web Applications)。180x180 を 1 枚置く。
+        - 画像は scripts/build-pwa-icons.mjs が Welltect ロゴから生成する
+          (ロゴは加工せず、白地の正方形に余白付きで配置するだけ)。
+    */}
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-title" content="Welltect" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+
     <title>{title}</title>
   </head>
   <body class="min-h-full">

@@ -14,6 +14,7 @@ import HealthInsightCard from '../components/dashboard/HealthInsightCard.astro';
 import MetricTrendChart from '../components/dashboard/MetricTrendChart.astro';
 import HealthAgeCard from '../components/dashboard/HealthAgeCard.astro';
 import ReportLinkCard from '../components/dashboard/ReportLinkCard.astro';
+import AddToHomeCard from '../components/AddToHomeCard.astro';
 import TestHistoryList from '../components/dashboard/TestHistoryList.astro';
 import { loadDashboard, formatGreeting, getHealthAge, formatJpDate, testTypeLabel } from '../lib/dashboard-queries';
 import { getLatestMeasurements, getMeasurementTrend } from '../lib/measurement-queries';
@@ -307,6 +308,9 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
 
         {/* ⑨ 履歴 (全幅) */}
         <TestHistoryList artifacts={data?.artifacts ?? []} diagnosticUserId={data?.diagnosticUserId} />
+
+        {/* ⑩ ホーム画面への追加 (追加済み / 閉じたあとは出ない。判定はクライアント側) */}
+        <AddToHomeCard />
 
         {/* テストフェーズの確認用フッタ (総合テストで遮蔽する)。§02 参照。 */}
         <details class="rounded-2xl border border-dashed border-slate-300 p-4">
