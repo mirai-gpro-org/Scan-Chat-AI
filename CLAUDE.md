@@ -437,6 +437,22 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
     パネルが無いページでは alert にフォールバックする。
   - 使用箇所は `dashboard` / `kit` / `notices`。gate の markup を各ページに複製しない。
 
+- **ホーム画面追加の案内は `src/components/AddToHomeCard.astro`** (2026-08)。開くたびに
+  モーダルで出し、閉じたらページ下部のカードとして残す (発注者指示)。中身は 1 つだけ持ち、
+  モーダルの器と `#a2hs-slot` の間で要素を移動させる (markup を 2 つ置かない)。
+  - **「出さない」判断は 3 つだけ**: ①`display-mode: standalone`/`navigator.standalone`
+    (いまホーム画面から起動中) ②`appinstalled` (その場で閉じるだけ)
+    ③localStorage `welltect.a2hs.dismissed` (**「このガイドを今後表示しない」を押したときだけ**)。
+  - **`appinstalled` と ✕ で ③ を書かないこと**。以前は `appinstalled` で恒久フラグを
+    書いていたが、**ホーム画面から削除しても localStorage は消えない**ため、一度追加した
+    端末では二度と案内が出せなくなった (実機で発覚 2026-08)。実機の解除は `?a2hs=reset`。
+  - **Android は `beforeinstallprompt` を待たない**。Chrome は「タップ 1 回以上 + 30 秒以上の
+    滞在」を満たすまで発火しない (web.dev: Installability criteria) ので、発火前は
+    ブラウザメニューからの手順を出し、発火したらボタンへ差し替える。
+  - ホーム画面アイコンは `scripts/build-pwa-icons.mjs` で生成。**ロゴは無加工**で、
+    地の色だけ Executive Navy `#102B3A`。白地はロゴ色 rgb(71,191,200) に対して 2.20:1 しかなく
+    「薄い」と指摘された (濃紺なら 6.69:1)。白に戻すなら引数に `"#FFFFFF"` を渡す。
+
 - **表示の原則 (ミッション④)**: 各診断結果を整理して伝える。**独自に分析・解釈しない**。
   - 判定レベルを値と基準値から算出しない。助言文・受診勧告文を生成しない。
   - 表示してよいのは 検査票の値・単位・基準値 と、**検査機関が付けた** `flag` / `assessment`。

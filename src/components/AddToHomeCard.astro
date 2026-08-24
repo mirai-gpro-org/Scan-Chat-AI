@@ -24,13 +24,21 @@ import AppLogo from './AppLogo.astro';
  *     追加できないので、共有 →「ホーム画面に追加」の**手順を案内**する。
  *   - それ以外のブラウザ: 一般的な手順だけ書く (メニュー名を断定しない)。
  *
- * 【すでに追加済みの場合】`display-mode: standalone` (MDN) と iOS の
- *   `navigator.standalone` で判定して出さない。Android は追加後に
- *   `beforeinstallprompt` が発火しなくなり、`appinstalled` でも消える。
+ * 【「出さない」の判断は 3 つだけ】
+ *   1. `display-mode: standalone` / iOS の `navigator.standalone`
+ *      = **いま**ホーム画面から起動している (MDN)。起動のたびに評価されるので、
+ *      ホーム画面から消せば次からまた出る。
+ *   2. `appinstalled` (Android) = このタブで追加された → **その場で閉じるだけ**。
+ *   3. localStorage `welltect.a2hs.dismissed`
+ *      = **「このガイドを今後表示しない」を押したときだけ**書く恒久フラグ。
+ *
+ *   **`appinstalled` と ✕ では 3 を書かない** (2026-08 修正)。以前は `appinstalled` で
+ *   恒久フラグを書いていたが、**ホーム画面から削除しても localStorage は消えない**ため、
+ *   一度追加した端末では二度と案内が出せなくなっていた (実機で発覚)。
+ *   すでにフラグが付いた端末は `?a2hs=reset` を付けて開けば解除できる。
  *
  * 【iOS の「追加済み」は判定できない】Safari のタブから見ている限り、追加済みかどうかを
- *   知る手段が無い。案内が出続けるのを避けるため**閉じるボタン**を付け、localStorage に
- *   記録する (端末内のみ・PII なし)。
+ *   知る手段が無い。だから止めるのは利用者の明示操作 (上記 3) だけにしてある。
  *
  * 【スマホだけ】文言が「ホーム画面」なので、PC では出さない。
  *
@@ -180,6 +188,15 @@ import AppLogo from './AppLogo.astro';
       try { localStorage.setItem(k, '1'); } catch { /* 保存できなくても表示は消す */ }
     };
 
+    // 一度付いた恒久フラグを実機で解除する手段 (?a2hs=reset)。
+    // ホーム画面から削除しても localStorage は残るため、確認作業で必要になる。
+    try {
+      if (new URLSearchParams(location.search).get('a2hs') === 'reset') {
+        localStorage.removeItem(KEY_DISMISS);
+        console.log('[a2hs] 表示フラグを解除しました');
+      }
+    } catch { /* localStorage も URL も無い環境では何もしない */ }
+
     const ua = navigator.userAgent;
     const isIOS = /iPad|iPhone|iPod/.test(ua)
       // iPadOS は UA が Mac を名乗るため、タッチ対応の Mac も iPad として扱う
@@ -246,12 +263,11 @@ import AppLogo from './AppLogo.astro';
     });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
 
-    // ✕ の意味はモードで変える。モーダルでは「閉じる」だけ (カードは残る)。
-    // カードの ✕ は「今後出さない」。
+    // ✕ は「いま閉じる」だけ。恒久フラグは書かない
+    // (「今後表示しない」を押したときだけ = 利用者が明示的に選んだときだけ)。
     dismiss.addEventListener('click', () => {
       if (!modal.classList.contains('hidden')) { closeModal(); return; }
       card.hidden = true;
-      writeFlag(KEY_DISMISS);
     });
 
     // ── Android / Chromium: インストール導線 ──
@@ -273,10 +289,12 @@ import AppLogo from './AppLogo.astro';
       closeModal();
       card.hidden = true;
     });
+    // 追加できたので、この表示は閉じる。**恒久フラグは書かない** —
+    // ホーム画面から削除しても localStorage は消えず、二度と案内できなくなるため。
+    // 次回以降は launchedFromHome() と beforeinstallprompt の有無で自然に決まる。
     window.addEventListener('appinstalled', () => {
       closeModal();
       card.hidden = true;
-      writeFlag(KEY_DISMISS);
     });
   })();
 </script>
