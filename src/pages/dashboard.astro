@@ -7,6 +7,7 @@ import UrgentAlertBanner from '../components/dashboard/UrgentAlertBanner.astro';
 import MetricCard from '../components/dashboard/MetricCard.astro';
 import DailyQuests from '../components/dashboard/DailyQuests.astro';
 import HealthCoachPreview from '../components/dashboard/HealthCoachPreview.astro';
+import OnlineConsultCard from '../components/dashboard/OnlineConsultCard.astro';
 import SituationalCards from '../components/dashboard/SituationalCards.astro';
 import KitProgressCard from '../components/dashboard/KitProgressCard.astro';
 import HealthInsightCard from '../components/dashboard/HealthInsightCard.astro';
@@ -288,12 +289,15 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
           detailHref={`/kit${q}`}
         />
 
-        {/* ⑧ コーチ */}
+        {/* ⑧ コーチ (AI) */}
         <HealthCoachPreview
           greeting={greeting}
           summaryHint={data?.latestResult?.summary_text}
           diagnosticUserId={data?.diagnosticUserId}
         />
+
+        {/* ⑧-2 オンライン相談 (人)。AI コーチとは相手が違うので枠を分ける。 */}
+        <OnlineConsultCard />
 
         {/* 非表示 (今日の気付き): <HealthInsightCard diagnosticUserId={data?.diagnosticUserId ?? ''} /> */}
         {/* 非表示 (シチュエーション別アドバイス): {situations.length > 0 && <SituationalCards cards={situations} />} */}

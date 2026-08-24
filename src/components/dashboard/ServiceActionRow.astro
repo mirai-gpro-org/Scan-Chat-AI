@@ -1,0 +1,46 @@
+---
+import AppIcon from '../../components/AppIcon.astro';
+import type { AppIconName } from '../../components/AppIcon.astro';
+
+/**
+ * サービス枠の中に置く 1 行アクション。
+ *
+ * `ready=false` のときは**押せない状態**で出す。リンクのまま「準備中」と書くと
+ * 押せそうに見えて何も起きないので、`<button disabled>` にして状態を明示する。
+ * 状態表示はデザイン規則どおり アイコン + テキスト + 色 の 3 点セット
+ * (clock +「準備中」+ status.unknown)。ブランド色は使わない。
+ *
+ * 提供開始時は呼び出し側で `ready` を true にするだけで `<a>` に戻る。
+ */
+interface Props {
+  label: string;
+  icon: AppIconName;
+  href?: string | null;
+  ready?: boolean;
+}
+const { label, icon, href = null, ready = false } = Astro.props as Props;
+
+const box =
+  'flex min-h-touch w-full items-center justify-between gap-3 rounded-xl '
+  + 'border border-slate-200 bg-white px-3 py-2 text-base';
+---
+
+{ready && href ? (
+  <a href={href} class={`${box} text-slate-800 transition hover:border-brand-400`}>
+    <span class="flex items-center gap-2">
+      <AppIcon name={icon} size={20} class="text-brand-700" />
+      {label}
+    </span>
+    <AppIcon name="next" size={18} class="shrink-0 text-brand-700" />
+  </a>
+) : (
+  <button type="button" disabled aria-disabled="true" class={`${box} cursor-not-allowed text-slate-600`}>
+    <span class="flex items-center gap-2">
+      <AppIcon name={icon} size={20} class="text-slate-500" />
+      {label}
+    </span>
+    <span class="status-pill status-unknown shrink-0">
+      <AppIcon name="clock" size={14} />準備中
+    </span>
+  </button>
+)}
