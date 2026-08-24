@@ -426,6 +426,17 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
     今回の刷新の対象外で、本文が `text-xs` (13px) 中心 + `leading-relaxed` の個別指定なので
     **行間トークンの見直しが届いていない** (実測で他ページが -4〜-11% のところ ±0%)。
     他ページと文字サイズの基準が揃っていない。揃えるなら別途作業。
+- **未サインイン画面は `src/components/SignInPanel.astro`** (2026-08)。以前はロゴと
+  スピナーだけで、One Tap が自動で出るのを待つ作りだった。**One Tap は iOS Safari の ITP や
+  Google 未サインインの環境では出ない**ため、その場合に文言もボタンも無い行き止まりになっていた。
+  → 見出し+説明+**Google 公式ボタン**(`#gsi-button` に `renderButton`)+読み込み失敗時の
+  再読み込み導線、の 4 状態を持たせた。**ロゴ+スピナーだけの実装に戻さないこと。**
+  - 責務分界: 表示=`SignInPanel.astro` / 認証処理=`GoogleOneTap.astro`。両者は
+    `#gsi-button` と `welltect:signin` イベント (`state: ready|unavailable`, `text`, `tone`) で繋ぐ。
+  - 認証失敗は `alert()` をやめ、画面内の `#signin-status` (aria-live) に出す。
+    パネルが無いページでは alert にフォールバックする。
+  - 使用箇所は `dashboard` / `kit` / `notices`。gate の markup を各ページに複製しない。
+
 - **表示の原則 (ミッション④)**: 各診断結果を整理して伝える。**独自に分析・解釈しない**。
   - 判定レベルを値と基準値から算出しない。助言文・受診勧告文を生成しない。
   - 表示してよいのは 検査票の値・単位・基準値 と、**検査機関が付けた** `flag` / `assessment`。

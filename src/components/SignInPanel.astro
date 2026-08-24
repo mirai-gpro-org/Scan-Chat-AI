@@ -1,0 +1,113 @@
+---
+import AppIcon from './AppIcon.astro';
+import AppLogo from './AppLogo.astro';
+
+/**
+ * 未サインイン時に出す画面。
+ *
+ * 【なぜ作ったか】以前はロゴと 5px のスピナーだけで、文言もボタンも無く、
+ *   Google One Tap が自動で出るのを待つだけだった。One Tap は
+ *   **iOS Safari の ITP や、そのブラウザで Google にサインインしていない場合は
+ *   表示されない**ので、その環境ではロゴとスピナーの画面で止まり、
+ *   何が起きているのかも次に何をすればよいのかも分からなかった。
+ *
+ * 【責務分界】この部品は**表示だけ**を持つ。認証処理は GoogleOneTap.astro。
+ *   両者は DOM とイベントで繋ぐ (契約は下記)。
+ *     - `#gsi-button`     … GoogleOneTap が Google 公式ボタンを描画する器。
+ *     - `welltect:signin` … GoogleOneTap → この部品への通知。
+ *         detail.state = 'ready'       … GSI が使える (ボタンを出す)
+ *                      | 'unavailable' … GSI を読み込めなかった (再読み込み導線)
+ *                      | 'message'     … 処理中/失敗の文言だけ差し替える
+ *         detail.text, detail.tone ('error' | 'info')
+ */
+interface Props {
+  /** app_config `ui.support_contact`。未設定なら行ごと出さない。 */
+  supportContact?: string;
+  /** 見出しの下に出す説明。ページごとに変えたいとき用。 */
+  desc?: string;
+}
+const {
+  supportContact = '',
+  desc = 'ご登録の Google アカウントでサインインしてください。検査結果と AI 診断は、サインイン後に表示されます。',
+} = Astro.props as Props;
+---
+
+<main class="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-10 text-center">
+  <AppLogo height={56} />
+
+  <h1 class="text-lg font-bold text-navy-800">サインイン</h1>
+  <p class="max-w-[28em] text-base leading-relaxed text-slate-700">{desc}</p>
+
+  {/* 1. 初期状態。GSI の読み込みを待っている。 */}
+  <div id="signin-loading" class="flex items-center gap-2 text-base text-slate-600">
+    <span class="inline-flex h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-brand-600"></span>
+    サインインの準備をしています…
+  </div>
+
+  {/* 2. GSI が使える。Google 公式ボタンをここに描画する。 */}
+  <div id="signin-ready" class="flex flex-col items-center gap-3" hidden>
+    <div id="gsi-button" class="flex min-h-touch items-center justify-center"></div>
+  </div>
+
+  {/* 3. GSI を読み込めなかった。行き止まりにしないため再読み込み導線を出す。 */}
+  <div id="signin-error" class="flex max-w-[28em] flex-col items-center gap-3" hidden>
+    <p class="flex items-start gap-2 text-left text-base text-status-action">
+      <AppIcon name="watch" size={20} class="mt-0.5 shrink-0" />
+      <span>サインイン機能を読み込めませんでした。通信環境をご確認のうえ、再読み込みしてください。</span>
+    </p>
+    <button type="button" id="signin-reload" class="btn-secondary">
+      <AppIcon name="refresh" size={20} class="mr-2" />
+      再読み込み
+    </button>
+  </div>
+
+  {/* 4. 認証処理の途中経過・失敗。ボタンは出したまま文言だけ差し替える。 */}
+  <p id="signin-status" role="status" aria-live="polite" class="min-h-[1.5rem] max-w-[28em] text-base text-slate-700"></p>
+
+  {supportContact && (
+    <p class="max-w-[28em] text-sm text-slate-600">
+      うまくいかないときは {supportContact} へご連絡ください。
+    </p>
+  )}
+</main>
+
+<script is:inline>
+  (function () {
+    var loading = document.getElementById('signin-loading');
+    var ready   = document.getElementById('signin-ready');
+    var errorEl = document.getElementById('signin-error');
+    var status  = document.getElementById('signin-status');
+    var reload  = document.getElementById('signin-reload');
+    if (!loading || !ready || !errorEl) return;
+
+    var settled = false;
+
+    function show(which) {
+      settled = true;
+      loading.hidden = which !== 'loading';
+      ready.hidden   = which !== 'ready';
+      errorEl.hidden = which !== 'error';
+    }
+
+    function message(text, tone) {
+      if (!status) return;
+      status.textContent = text || '';
+      status.className =
+        'min-h-[1.5rem] max-w-[28em] text-base ' +
+        (tone === 'error' ? 'text-status-action' : 'text-slate-700');
+    }
+
+    document.addEventListener('welltect:signin', function (e) {
+      var d = (e && e.detail) || {};
+      if (d.state === 'ready') show('ready');
+      else if (d.state === 'unavailable') show('error');
+      if (d.text) message(d.text, d.tone);
+    });
+
+    if (reload) reload.addEventListener('click', function () { location.reload(); });
+
+    // 保険。GoogleOneTap のモジュール自体が読み込めないと上のイベントが
+    // 一度も来ないため、その場合もスピナーのまま放置しない。
+    setTimeout(function () { if (!settled) show('error'); }, 12000);
+  })();
+</script>

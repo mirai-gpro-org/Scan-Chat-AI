@@ -14,6 +14,11 @@
  *      function 参照を直接渡し、prompt() で One Tap 起動
  *   4. 認証成功 → signInWithIdToken → ?u=<uid> に redirect
  *
+ * 【表示との分界】この部品は認証処理だけを持ち、画面は SignInPanel.astro。
+ *   One Tap は iOS Safari の ITP や Google 未サインインの環境では**出ない**ので、
+ *   `#gsi-button` があれば Google 公式ボタンをそこに描画し、進捗と失敗を
+ *   `welltect:signin` イベントで SignInPanel に渡す (契約は SignInPanel 側に記載)。
+ *
  * iOS Safari / ITP ブラウザ対応: itp_support: true
  *
  * 環境変数: PUBLIC_GOOGLE_CLIENT_ID
@@ -38,20 +43,32 @@ const enabled = !!clientId;
       type GsiCredentialResponse = { credential: string };
       type GsiId = {
         initialize: (cfg: Record<string, unknown>) => void;
+        renderButton: (el: HTMLElement, cfg: Record<string, unknown>) => void;
         prompt: (cb?: (n: unknown) => void) => void;
         cancel: () => void;
       };
+
+      /** SignInPanel へ通知する。パネルが無いページでは alert にフォールバックする。 */
+      function notify(detail: { state?: string; text?: string; tone?: string }) {
+        const hasPanel = !!document.getElementById('signin-status');
+        if (hasPanel) {
+          document.dispatchEvent(new CustomEvent('welltect:signin', { detail }));
+          return;
+        }
+        if (detail.text && detail.tone === 'error') alert(detail.text);
+      }
 
       async function handleCredentialResponse(response: GsiCredentialResponse) {
         console.log('[OneTap] callback fired, credential length:', response.credential?.length ?? 0);
         try {
           if (!supabaseUrl || !supabaseAnon) {
             console.error('[OneTap] PUBLIC_SUPABASE_URL / PUBLIC_SUPABASE_ANON_KEY が未設定');
-            alert('Supabase 環境変数が未設定です');
+            notify({ text: 'Supabase 環境変数が未設定です', tone: 'error' });
             return;
           }
           const sb = createClient(supabaseUrl, supabaseAnon);
 
+          notify({ text: '確認しています…', tone: 'info' });
           console.log('[OneTap] calling signInWithIdToken…');
           const { data, error } = await sb.auth.signInWithIdToken({
             provider: 'google',
@@ -59,13 +76,13 @@ const enabled = !!clientId;
           });
           if (error) {
             console.error('[OneTap] Supabase auth error:', error);
-            alert(`認証エラー: ${error.message}`);
+            notify({ text: `認証エラー: ${error.message}`, tone: 'error' });
             return;
           }
           const accessToken = data.session?.access_token;
           console.log('[OneTap] signInWithIdToken OK, uid:', data.user?.id, 'hasToken:', !!accessToken);
           if (!accessToken) {
-            alert('サインインセッションの取得に失敗しました');
+            notify({ text: 'サインインセッションの取得に失敗しました', tone: 'error' });
             return;
           }
 
@@ -83,12 +100,15 @@ const enabled = !!clientId;
           const payload = await res.json().catch(() => ({}));
           if (!res.ok) {
             console.error('[OneTap] resolve error:', payload);
-            alert(`連携処理エラー: ${payload.error ?? `HTTP ${res.status}`}`);
+            notify({ text: `連携処理エラー: ${payload.error ?? `HTTP ${res.status}`}`, tone: 'error' });
             return;
           }
           if (!payload.linked || !payload.diagnosticUserId) {
             console.warn('[OneTap] not linked');
-            alert('お客様情報が見つかりませんでした。検査のお申し込み状況をご確認のうえ、サポートまでご連絡ください。');
+            notify({
+              text: 'お客様情報が見つかりませんでした。検査のお申し込み状況をご確認のうえ、サポートまでご連絡ください。',
+              tone: 'error',
+            });
             return;
           }
 
@@ -97,7 +117,7 @@ const enabled = !!clientId;
           window.location.replace(url.toString());
         } catch (err) {
           console.error('[OneTap] callback exception:', err);
-          alert(`サインイン処理エラー: ${err instanceof Error ? err.message : String(err)}`);
+          notify({ text: `サインイン処理エラー: ${err instanceof Error ? err.message : String(err)}`, tone: 'error' });
         }
       }
 
@@ -105,7 +125,13 @@ const enabled = !!clientId;
       function whenGsiReady(cb: (gsi: GsiId) => void, attempts = 50): void {
         const gsi = (window as unknown as { google?: { accounts?: { id?: GsiId } } }).google?.accounts?.id;
         if (gsi) { cb(gsi); return; }
-        if (attempts <= 0) return;
+        if (attempts <= 0) {
+          // ここに来る = GSI を読み込めなかった。放置するとスピナーのまま
+          // 行き止まりになるので、画面側に再読み込み導線を出させる。
+          console.warn('[OneTap] GSI client not available');
+          notify({ state: 'unavailable' });
+          return;
+        }
         setTimeout(() => whenGsiReady(cb, attempts - 1), 100);
       }
 
@@ -121,6 +147,21 @@ const enabled = !!clientId;
           itp_support: true,
           context: 'signin',
         });
+
+        // One Tap が出ない環境 (iOS Safari の ITP・Google 未サインイン等) の受け皿。
+        // 器がある画面でだけ、Google 公式ボタンを描画する。
+        const slot = document.getElementById('gsi-button');
+        if (slot) {
+          gsi.renderButton(slot, {
+            type: 'standard',
+            theme: 'outline',
+            size: 'large',
+            shape: 'pill',
+            text: 'signin_with',
+            locale: 'ja',
+          });
+        }
+        notify({ state: 'ready' });
 
         const params = new URLSearchParams(window.location.search);
         if (params.has('u') && params.get('u')) {
