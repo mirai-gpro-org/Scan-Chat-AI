@@ -5,10 +5,13 @@
  * ロゴは**加工しない** — 正方形のキャンバスに余白付きで配置するだけ (縦横比は維持)。
  * 元画像は public/welltect_logo.png (ブランド資産の原本)。
  *
- * 地の色は既定で **Executive Navy #102B3A** (theme_color と同じ)。
- * 白地だとロゴの淡いシアンがアイコンサイズで沈んで見える、という指摘 (2026-08) を受けて
- * 白 → 濃紺へ変更した。**ロゴ自体の色は変えていない** (ブランド資産は無加工)。
- * 白地に戻すときは `node scripts/build-pwa-icons.mjs "#FFFFFF"`。
+ * 地の色は既定で **白 #FFFFFF**。
+ * 「ロゴが薄い」の指摘 (2026-08) を受けて一度 Executive Navy #102B3A にした
+ * (ロゴ色 rgb(71,191,200) とのコントラストは 2.20:1 → 6.69:1)。**が、実機では
+ * かえって視認性が落ちたため白へ差し戻した (発注者判断 2026-08)**。数値上の
+ * コントラストと、ホーム画面の壁紙・並んだ他アイコンの中での見え方は別物。
+ * 濃紺に戻すときは `node scripts/build-pwa-icons.mjs "#102B3A"`。
+ * どちらの場合も**ロゴ自体の色は変えない** (ブランド資産は無加工)。
  *
  * 生成物:
  *   public/icons/icon-192.png          manifest icons (purpose any)
@@ -32,8 +35,8 @@ function hexToBg(hex) {
   return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255, alpha: 1 };
 }
 
-/** 地の色。既定 = Executive Navy (淡いシアンのロゴを沈ませない)。 */
-const BG_HEX = process.argv[2] ?? '#102B3A';
+/** 地の色。既定 = 白 (実機の見え方で白を採用・上のコメント参照)。 */
+const BG_HEX = process.argv[2] ?? '#FFFFFF';
 const BG = hexToBg(BG_HEX);
 console.log(`地の色: ${BG_HEX}`);
 
