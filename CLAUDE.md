@@ -34,6 +34,44 @@
 
 ## 確定事項 (Settled decisions)
 
+### 設定値の置き場所 (env / app_config の切り分け・2026-08 確定・発注者判断)
+
+**判断基準は「秘匿性」**。
+
+| | 置き場所 | 対象 |
+|---|---|---|
+| **秘匿性が高い** | **env 継続** (Vercel 環境変数) | API キー・シークレット・接続情報 |
+| **秘匿性が低く、切り替えが想定される** | **`diagnosis.app_config` (Supabase) → admin で管理** | 使用モデル・スキャン精度フラグ・画面文言 |
+
+env は「現在値が見えない」「変えるたびに再デプロイが要る」ため運用パラメータに不適、というのが理由
+(マイグレーション `supabase/migrations/20260815000010_app_config.sql` の冒頭コメントに記載)。
+
+- **優先順位 = DB値 → コード既定** (`src/lib/app-config.ts` の `CONFIG_SPECS[].default`)。
+  **env フォールバックは廃止済み**。旧 `SCAN_*` / `GEMINI_*_MODEL` env は**コードから参照されていない**
+  (grep でヒット 0) ので、Vercel 側に残っていても無視される。撤去してよい。
+- 反映は TTL 45 秒 (`app-config.ts` の `TTL_MS`)。各 API は処理前に `refreshConfig()` を呼ぶ。
+- 変更 API = `src/pages/api/admin/config.ts` (Bearer `ADMIN_API_KEY`)。
+  GET でカタログ+現在値、POST で upsert。**UI は wellfort-site admin 側** (この作業ツリーには
+  未取得のため実装状況は未確認)。
+
+**app_config の現行キー (18 件)**: `ui.support_contact` / `ui.health_age_followup` /
+`scan.model` / `live.model` / `scan.output_format` / `scan.boundary_recheck` / `scan.obs_dedup` /
+`scan.scramble_fix` / `scan.eye_resolve` / `scan.lipid_fix` / `scan.canonicalize` /
+`scan.perception_repair` / `scan.vqa_rowcrop` / `scan.ai_prediction_dedup` /
+`fabgate.unperformed` / `fabgate.refbleed` / `fabgate.reftable` / `fabgate.adjacent`
+
+**【重要】この文書の下の方に残っている `env SCAN_XXX` という表記は、すべて app_config キーの
+読み替え**で理解すること (`SCAN_BOUNDARY_RECHECK` → `scan.boundary_recheck` のように
+小文字ドット区切り。`SCAN_FABGATE_*` → `fabgate.*`)。**env として設定しても効かない。**
+
+**env に残すもの (秘匿値・実測 grep)**: `GEMINI_API_KEY` / `ADMIN_API_KEY` /
+`SUPABASE_SERVICE_ROLE_KEY` / `PUBLIC_SUPABASE_URL` / `PUBLIC_SUPABASE_ANON_KEY` /
+`HP_BRIDGE_SUPABASE_URL` / `HP_BRIDGE_READONLY_KEY` / `HP_EDGE_BASE_URL` /
+`RESOLVE_SHARED_SECRET` / `PUBLIC_GOOGLE_CLIENT_ID` / `PUBLIC_DEMO_FALLBACK` /
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` / `AWS_S3_BUCKET` /
+`AWS_S3_PREFIX` / `AWS_S3_ENDPOINT` / `AWS_S3_ORIGINALS_BUCKET` / `AWS_S3_ORIGINALS_PREFIX`
+(wellfort-site 側は `SCAN_CHAT_AI_API_KEY`)。
+
 ### 環境変数・キー管理
 - **API キー (Gemini / AWS S3 など) は Vercel 本番環境の環境変数で一元管理**。
   **ローカル `.env`・operator PC・クライアントには置かない。**
@@ -45,8 +83,10 @@
     **旧 `AIza` は 2026-09 に失効** → それまでに Vercel の `GEMINI_API_KEY` を `AQ.` キーへ差し替える
     (運用のみ)。詳細: `docs/operations/Gemini_APIキー作成手順書_Wellfort_v1.0.md` §7.1。
   - Gemini 呼び出しは `src/lib/gemini.ts` に集約。キーは `x-goog-api-key` ヘッダ送信 (URL に載せない)。
-- **使用モデルは env で差替え可 (コード変更不要・env反映は再デプロイ要)**。既定は `src/lib/gemini.ts` の `MODELS`。
-  - スキャン (画像解析・全 REST 呼び出し): 既定 **`gemini-3.1-flash-lite`** (軽量・安定)。`GEMINI_SCAN_MODEL` で上書き。
+- **使用モデルは app_config (DB) で差替え可 (コード変更・再デプロイ不要・admin から即時)**。
+  `src/lib/gemini.ts` の `MODELS` は getter で、`scan.model` / `live.model` を都度参照する。
+  **旧 `GEMINI_SCAN_MODEL` / `GEMINI_LIVE_MODEL` env は廃止 (コードに存在しない)**。
+  - スキャン (画像解析・全 REST 呼び出し): 既定 **`gemini-3.1-flash-lite`** (軽量・安定)。`scan.model` で上書き。
     精度を上げるなら `gemini-3.5-flash` (GA) だが、**混雑時に 503(model overloaded) が出やすくバッチ全滅の実績あり (2026-07)**
     ため常用の既定は 3.1-flash-lite に据え置き。Tier1 未開通/不具合時は `gemini-2.5-flash` (旧既定) へ。
     ※ 正式ID は Gemini API 公式 (ai.google.dev/gemini-api/docs/models/gemini-3.5-flash) で確認: Stable=`gemini-3.5-flash` /
@@ -54,7 +94,11 @@
     - **前提**: 3.x 系は **Tier1 (課金有効化) + 当該キーでのモデルアクセス** が必要。未開通のまま 3.x を指すと
       全スキャン (検診/がん/血液image/遺伝子) が失敗する → その場合は env で 2.5 に戻す。
     - スキャン精度は **検診 numeric → 健康年齢 (CABA)** に直結。モデル切替時は代表ページで再検証すること。
-  - Live (AI問診): 既定 `gemini-3.1-flash-live-preview` (REST 非対応の専用プレビュー)。`GEMINI_LIVE_MODEL` で追従。
+  - **Live (AI問診)**: 既定 `gemini-3.1-flash-live-preview` (REST 非対応の専用プレビュー)。`live.model` で追従。
+    経路: `chat` 画面 (`live-controller.ts`) → `POST /api/live-token` → `MODELS.liveChat`
+    → `getLiveModel()` → `cfg('live.model')`。**実際に何が使われているかは DB の値次第**なので、
+    確認するときは `select value from diagnosis.app_config where key='live.model'` を見る
+    (行が無ければコード既定)。
   - **スキャン出力形式 `SCAN_OUTPUT_FORMAT` (既定 `markdown`)**: `json` で **responseSchema 構造化出力** 経路に切替
     (Phase 2)。Markdown 表は列帰属が自由すぎ定性記号 `(-)` が run 毎に基準列へ吸われる (Semantic Tie) ため、
     value/ref_high をフィールドで固定して列ズレを構造的に断つ狙い。Gemini/ChatGPT 両者の一致見解 (2026-07)。
@@ -191,10 +235,12 @@
 ### 捏造ゲート (False-Value 抑制・決定論・仕様着手2026-08)
 - **正本: `docs/scan/修正仕様書_捏造ゲート.md`**。人間ドックgolden(2025-02-17)で顕在化した False-Value 8件
   (尿定性/便潜血の未実施(-)充填・腹囲=基準吸い上げ・B3基準値表の男性/女性項目化) を決定論で抑制する仕様。
-  4ゲート (G1未実施ブロック抑制[env `SCAN_FABGATE_UNPERFORMED`・比重/pH アンカーで尿未実施判定]・
-  G2基準吸い上げ[`SCAN_FABGATE_REFBLEED`・value==片側基準閾値をドロップ]・G3参考資料行[`SCAN_FABGATE_REFTABLE`・
-  レンジ値/男性女性名をドロップ]・G4隣接漏れ[`SCAN_FABGATE_ADJACENT`・監査のみ])。全て `sanitizeMeasurementsForDelivery`
-  集約・env off=挙動不変・捏造ゼロ・🎯(test_date=2025-02-17)回帰ゼロで on化。**現状=仕様(未実装)**。
+  4ゲート (G1未実施ブロック抑制[`fabgate.unperformed`・比重/pH アンカーで尿未実施判定]・
+  G2基準吸い上げ[`fabgate.refbleed`・value==片側基準閾値をドロップ]・G3参考資料行[`fabgate.reftable`・
+  レンジ値/男性女性名をドロップ]・G4隣接漏れ[`fabgate.adjacent`・監査のみ])。全て `sanitizeMeasurementsForDelivery`
+  集約・off=挙動不変・捏造ゼロ・🎯(test_date=2025-02-17)回帰ゼロで on化。
+  **実装済 (2026-08・`elith-export.ts:457` で 4 ゲートとも参照)・既定は 4 つとも off**。
+  切替は app_config の `fabgate.*` (旧 `SCAN_FABGATE_*` env は廃止)。
 
 ### スキャン読取の共通ルール (検査票 → JSON)
 - **時系列列は「今回」のみ採用**: 検査票に「今回/前回/前々回」や受診日付きの複数回分が

@@ -1,0 +1,31 @@
+---
+import AppIcon from '../../components/AppIcon.astro';
+import ServiceActionRow from './ServiceActionRow.astro';
+
+/**
+ * オンライン相談 の枠。AI ヘルスコーチ (AI が相手) とは性質が違うので枠を分ける。
+ *
+ * 【ローンチ時は未提供 (発注者指定 2026-08)】「準備中」として押せない状態で見せる。
+ *   提供開始時は `READY` を true にし、`href` に予約導線を渡す。
+ *
+ * 説明文はまだ置いていない。サービス内容 (相手・時間・予約方法) が未確定で、
+ * ここで文面を作ると事実でないことを書くことになるため (ミッション④)。
+ */
+const READY = false;
+const HREF: string | null = null;
+---
+
+<section class="rounded-2xl bg-mist p-4" aria-labelledby="consult-title">
+  <div class="flex items-start gap-3">
+    <div class="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-600 text-white">
+      <AppIcon name="doctor" size={22} />
+    </div>
+    <div class="flex-1">
+      <h3 id="consult-title" class="text-base font-bold text-navy-800">オンライン相談</h3>
+    </div>
+  </div>
+
+  <div class="mt-3">
+    <ServiceActionRow label="オンライン相談を予約" icon="calendar" href={HREF} ready={READY} />
+  </div>
+</section>

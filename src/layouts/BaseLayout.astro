@@ -27,7 +27,12 @@ const {
 const WIDTH = {
   // 業務画面は PC で本文が間延びしない範囲まで広げる。lg 以上は 2 カラムに
   // 組む前提の幅で、単一カラムのまま広げるとタブレット表示のまま巨大化する。
-  app:  'w-full max-w-md sm:max-w-2xl lg:max-w-5xl xl:max-w-7xl 2xl:max-w-[88rem]',
+  //
+  // **md (768px) の段を必ず置く**。sm(640) の次が lg(1024) だと、その間の
+  // タブレット (iPad 縦 834px 等) が 672px で頭打ちになり、左右に 80px ずつ
+  // 余白が残って間延びして見える (実測 2026-08)。
+  app:  'w-full max-w-md sm:max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-7xl 2xl:max-w-[88rem]',
+  // flow は読み物向けなので意図的に狭い (和文 38 字前後に収める)。広げない。
   flow: 'w-full max-w-md sm:max-w-xl lg:max-w-2xl',
   full: 'w-full',
 } as const;
@@ -50,6 +55,23 @@ const WIDTH = {
       type={LOGO.pending ? 'image/svg+xml' : undefined}
       href={LOGO.pending ? '/favicon.svg' : LOGO.src}
     />
+
+    {/*
+      ホーム画面に追加したときのアイコン / 表示名。
+        - Android (Chrome) は manifest の icons を使う。192 と 512 が必須
+          (web.dev/articles/install-criteria の installability criteria)。
+        - iOS Safari は manifest ではなく `apple-touch-icon` を使う
+          (Apple: Configuring Web Applications)。180x180 を 1 枚置く。
+        - 画像は scripts/build-pwa-icons.mjs が Welltect ロゴから生成する
+          (ロゴは加工せず、白地の正方形に余白付きで配置するだけ)。
+    */}
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-title" content="Welltect" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+
     <title>{title}</title>
   </head>
   <body class="min-h-full">

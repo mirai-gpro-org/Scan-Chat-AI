@@ -1,0 +1,140 @@
+---
+import AppIcon from './AppIcon.astro';
+import AppLogo from './AppLogo.astro';
+
+/**
+ * ホーム画面への追加を案内するカード。
+ *
+ * 【出し分け】プラットフォームで手段が違うため、クライアント側で判定して切り替える。
+ *   - Android / Chrome 系: `beforeinstallprompt` を捕まえて**インストールボタン**を出す。
+ *     この API は非標準・Chromium 系のみ (MDN: BeforeInstallPromptEvent)。
+ *     **既にインストール済みならブラウザがこのイベントを発火しない**ので、
+ *     「設定済みなら非表示」は自然に満たされる。`appinstalled` でも消す。
+ *   - iOS / Safari: `beforeinstallprompt` は**非対応** (同 MDN)。プログラムから
+ *     追加できないので、共有 →「ホーム画面に追加」の**手順を案内**する。
+ *
+ * 【すでにホーム画面から起動している場合】`display-mode: standalone` (MDN) と
+ *   iOS の `navigator.standalone` で判定して、カードごと出さない。
+ *
+ * 【iOS の「追加済み」は判定できない】Safari のタブから見ている限り、追加済みかどうかを
+ *   知る手段が無い。案内が出続けるのを避けるため**閉じるボタン**を付け、localStorage に
+ *   記録する (端末内のみ・PII なし)。
+ *
+ * サーバ側では何も描かず、条件を満たしたときだけ JS で表示する (初期状態は hidden)。
+ */
+---
+
+<section id="a2hs-card" class="card" hidden>
+  <div class="flex items-start gap-3">
+    <span class="flex shrink-0 items-center gap-2">
+      <AppLogo height={40} />
+    </span>
+    <div class="min-w-0 flex-1">
+      <h2 class="text-base font-bold text-navy-800">ホーム画面に追加</h2>
+      <p class="mt-1 text-sm text-slate-700">
+        ホーム画面のアイコンから、アプリのように開けます。
+      </p>
+    </div>
+    <button
+      type="button"
+      id="a2hs-dismiss"
+      class="grid h-11 w-11 shrink-0 place-items-center rounded-full text-slate-600 transition hover:bg-slate-100"
+    >
+      <AppIcon name="close" size={20} label="この案内を閉じる" />
+    </button>
+  </div>
+
+  {/* Android など: ブラウザのインストール導線を呼ぶ */}
+  <button
+    type="button"
+    id="a2hs-install"
+    class="mt-3 hidden min-h-touch w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 text-base font-semibold text-white transition hover:bg-brand-700"
+  >
+    <AppIcon name="download" size={20} />
+    ホーム画面に追加する
+  </button>
+
+  {/* iOS: 手順の案内 (プログラムからは追加できないため) */}
+  <ol id="a2hs-ios" class="mt-3 hidden list-none flex-col gap-2">
+    <li class="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-800">
+      <span class="tnum shrink-0 font-bold text-brand-700">1.</span>
+      <span class="flex flex-wrap items-center gap-1">
+        画面下の
+        <AppIcon name="upload" size={18} class="text-brand-700" />
+        <b>共有</b>ボタンを押す
+      </span>
+    </li>
+    <li class="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-800">
+      <span class="tnum shrink-0 font-bold text-brand-700">2.</span>
+      <span class="flex flex-wrap items-center gap-1">
+        メニューを下にたどり
+        <AppIcon name="add" size={18} class="text-brand-700" />
+        <b>「ホーム画面に追加」</b>を選ぶ
+      </span>
+    </li>
+    <li class="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-800">
+      <span class="tnum shrink-0 font-bold text-brand-700">3.</span>
+      <span>右上の<b>「追加」</b>を押す</span>
+    </li>
+  </ol>
+</section>
+
+<script>
+  (() => {
+    const KEY = 'welltect.a2hs.dismissed';
+    const card    = document.getElementById('a2hs-card') as HTMLElement | null;
+    const install = document.getElementById('a2hs-install') as HTMLButtonElement | null;
+    const iosSteps = document.getElementById('a2hs-ios') as HTMLElement | null;
+    const dismiss = document.getElementById('a2hs-dismiss') as HTMLButtonElement | null;
+    if (!card || !install || !iosSteps || !dismiss) return;
+
+    /** ホーム画面から起動中か (= 追加済みで、案内は不要)。 */
+    const launchedFromHome = () =>
+      window.matchMedia('(display-mode: standalone)').matches
+      // iOS Safari 独自。型定義に無いので any 経由で読む。
+      || (navigator as unknown as { standalone?: boolean }).standalone === true;
+
+    /** localStorage が使えない環境 (プライベートブラウズ等) でも落ちないようにする。 */
+    const dismissed = () => {
+      try { return localStorage.getItem(KEY) === '1'; } catch { return false; }
+    };
+    const remember = () => {
+      try { localStorage.setItem(KEY, '1'); } catch { /* 保存できなくても表示は消す */ }
+    };
+
+    const show = (which: 'install' | 'ios') => {
+      if (launchedFromHome() || dismissed()) return;
+      (which === 'install' ? install : iosSteps).classList.remove('hidden');
+      (which === 'install' ? install : iosSteps).classList.add('flex');
+      card.hidden = false;
+    };
+
+    dismiss.addEventListener('click', () => { card.hidden = true; remember(); });
+
+    // ── Android / Chromium: インストール導線 ──
+    let deferred: (Event & { prompt: () => Promise<{ outcome: string }> }) | null = null;
+    window.addEventListener('beforeinstallprompt', (e) => {
+      // 既定のミニ情報バーを止めて、こちらのボタンから出す (MDN の推奨手順)
+      e.preventDefault();
+      deferred = e as typeof deferred;
+      show('install');
+    });
+    install.addEventListener('click', async () => {
+      if (!deferred) return;
+      install.disabled = true;
+      try { await deferred.prompt(); } catch { /* ユーザーが閉じた等 */ }
+      deferred = null;
+      card.hidden = true;
+    });
+    window.addEventListener('appinstalled', () => { card.hidden = true; remember(); });
+
+    // ── iOS / Safari: 手順の案内 ──
+    const ua = navigator.userAgent;
+    const isIOS = /iPad|iPhone|iPod/.test(ua)
+      // iPadOS は UA が Mac を名乗るため、タッチ対応の Mac も iPad として扱う
+      || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    // Chrome/Firefox for iOS からはホーム画面に追加できないので Safari のときだけ出す
+    const isIOSSafari = isIOS && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
+    if (isIOSSafari) show('ios');
+  })();
+</script>

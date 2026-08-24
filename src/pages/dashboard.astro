@@ -7,12 +7,14 @@ import UrgentAlertBanner from '../components/dashboard/UrgentAlertBanner.astro';
 import MetricCard from '../components/dashboard/MetricCard.astro';
 import DailyQuests from '../components/dashboard/DailyQuests.astro';
 import HealthCoachPreview from '../components/dashboard/HealthCoachPreview.astro';
+import OnlineConsultCard from '../components/dashboard/OnlineConsultCard.astro';
 import SituationalCards from '../components/dashboard/SituationalCards.astro';
 import KitProgressCard from '../components/dashboard/KitProgressCard.astro';
 import HealthInsightCard from '../components/dashboard/HealthInsightCard.astro';
 import MetricTrendChart from '../components/dashboard/MetricTrendChart.astro';
 import HealthAgeCard from '../components/dashboard/HealthAgeCard.astro';
 import ReportLinkCard from '../components/dashboard/ReportLinkCard.astro';
+import AddToHomeCard from '../components/AddToHomeCard.astro';
 import TestHistoryList from '../components/dashboard/TestHistoryList.astro';
 import { loadDashboard, formatGreeting, getHealthAge, formatJpDate, testTypeLabel } from '../lib/dashboard-queries';
 import { getLatestMeasurements, getMeasurementTrend } from '../lib/measurement-queries';
@@ -190,9 +192,11 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
           健康年齢だけを全幅で置くと PC / タブレットで横に間延びするため、
           sm 以上では 2 カラムにして右に AI 診断結果を並べる。
           健康年齢が無い (算出前) ときは AI 診断結果を全幅の帯で出す。
+          items-start にして**高さは揃えない** — AI 診断結果は中身が少ないので、
+          健康年齢の高さまで引き伸ばすと中央が大きく空いて「未完成の箱」に見える。
         */}
         {healthAge?.latest ? (
-          <div class="grid grid-cols-1 gap-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,16rem)] xl:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
+          <div class="grid grid-cols-1 items-start gap-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,16rem)] xl:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
             <HealthAgeCard latest={healthAge.latest} followup={healthAgeFollowup} />
             <ReportLinkCard href={`/report${q}`} layout="stack" />
           </div>
@@ -286,12 +290,15 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
           detailHref={`/kit${q}`}
         />
 
-        {/* ⑧ コーチ */}
+        {/* ⑧ コーチ (AI) */}
         <HealthCoachPreview
           greeting={greeting}
           summaryHint={data?.latestResult?.summary_text}
           diagnosticUserId={data?.diagnosticUserId}
         />
+
+        {/* ⑧-2 オンライン相談 (人)。AI コーチとは相手が違うので枠を分ける。 */}
+        <OnlineConsultCard />
 
         {/* 非表示 (今日の気付き): <HealthInsightCard diagnosticUserId={data?.diagnosticUserId ?? ''} /> */}
         {/* 非表示 (シチュエーション別アドバイス): {situations.length > 0 && <SituationalCards cards={situations} />} */}
@@ -301,6 +308,9 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
 
         {/* ⑨ 履歴 (全幅) */}
         <TestHistoryList artifacts={data?.artifacts ?? []} diagnosticUserId={data?.diagnosticUserId} />
+
+        {/* ⑩ ホーム画面への追加 (追加済み / 閉じたあとは出ない。判定はクライアント側) */}
+        <AddToHomeCard />
 
         {/* テストフェーズの確認用フッタ (総合テストで遮蔽する)。§02 参照。 */}
         <details class="rounded-2xl border border-dashed border-slate-300 p-4">
