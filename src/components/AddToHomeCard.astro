@@ -3,90 +3,176 @@ import AppIcon from './AppIcon.astro';
 import AppLogo from './AppLogo.astro';
 
 /**
- * ホーム画面への追加を案内するカード。
+ * ホーム画面への追加を案内する。
+ *
+ * 【出し方】開くたびに**モーダル**で出し、閉じたあとはページ下部のカードとして残す
+ *   (発注者指示 2026-08「トップにモーダル表示できない？」「iPhone も基本はトップに表示で、
+ *   『このガイドを今後表示しない』を選択できるように」)。iOS は追加済みかを判定する
+ *   手段が無いため、**止めるのは利用者の明示操作** = 「今後表示しない」に一本化する。
+ *   Android は追加すると `appinstalled` で自動的に止まる。
+ *   中身は 1 つしか持たず、`#a2hs-card` をモーダルの器と `#a2hs-slot` の間で JS が
+ *   移動させる。同じ markup を 2 つ置くと id と表示条件が二重管理になるため。
  *
  * 【出し分け】プラットフォームで手段が違うため、クライアント側で判定して切り替える。
- *   - Android / Chrome 系: `beforeinstallprompt` を捕まえて**インストールボタン**を出す。
- *     この API は非標準・Chromium 系のみ (MDN: BeforeInstallPromptEvent)。
- *     **既にインストール済みならブラウザがこのイベントを発火しない**ので、
- *     「設定済みなら非表示」は自然に満たされる。`appinstalled` でも消す。
+ *   - Android / Chrome 系: `beforeinstallprompt` を捕まえられたら**インストールボタン**。
+ *     この API は非標準・Chromium 系のみ (MDN: BeforeInstallPromptEvent)。さらに
+ *     **Chrome は「タップ 1 回以上 + 30 秒以上の滞在」を満たすまで発火しない**
+ *     (web.dev: Installability criteria)。発火を待つ作りだと、探しているときほど
+ *     何も出ない → **発火前でもブラウザメニューからの手順を出す**。発火したら
+ *     ボタンへ差し替える。
  *   - iOS / Safari: `beforeinstallprompt` は**非対応** (同 MDN)。プログラムから
  *     追加できないので、共有 →「ホーム画面に追加」の**手順を案内**する。
+ *   - それ以外のブラウザ: 一般的な手順だけ書く (メニュー名を断定しない)。
  *
- * 【すでにホーム画面から起動している場合】`display-mode: standalone` (MDN) と
- *   iOS の `navigator.standalone` で判定して、カードごと出さない。
+ * 【「出さない」の判断は 3 つだけ】
+ *   1. `display-mode: standalone` / iOS の `navigator.standalone`
+ *      = **いま**ホーム画面から起動している (MDN)。起動のたびに評価されるので、
+ *      ホーム画面から消せば次からまた出る。
+ *   2. `appinstalled` (Android) = このタブで追加された → **その場で閉じるだけ**。
+ *   3. localStorage `welltect.a2hs.dismissed`
+ *      = **「このガイドを今後表示しない」を押したときだけ**書く恒久フラグ。
+ *
+ *   **`appinstalled` と ✕ では 3 を書かない** (2026-08 修正)。以前は `appinstalled` で
+ *   恒久フラグを書いていたが、**ホーム画面から削除しても localStorage は消えない**ため、
+ *   一度追加した端末では二度と案内が出せなくなっていた (実機で発覚)。
+ *   すでにフラグが付いた端末は `?a2hs=reset` を付けて開けば解除できる。
  *
  * 【iOS の「追加済み」は判定できない】Safari のタブから見ている限り、追加済みかどうかを
- *   知る手段が無い。案内が出続けるのを避けるため**閉じるボタン**を付け、localStorage に
- *   記録する (端末内のみ・PII なし)。
+ *   知る手段が無い。だから止めるのは利用者の明示操作 (上記 3) だけにしてある。
+ *
+ * 【スマホだけ】文言が「ホーム画面」なので、PC では出さない。
  *
  * サーバ側では何も描かず、条件を満たしたときだけ JS で表示する (初期状態は hidden)。
  */
 ---
 
-<section id="a2hs-card" class="card" hidden>
-  <div class="flex items-start gap-3">
-    <span class="flex shrink-0 items-center gap-2">
-      <AppLogo height={40} />
-    </span>
-    <div class="min-w-0 flex-1">
-      <h2 class="text-base font-bold text-navy-800">ホーム画面に追加</h2>
-      <p class="mt-1 text-sm text-slate-700">
-        ホーム画面のアイコンから、アプリのように開けます。
-      </p>
+{/* モーダルの器。中身は #a2hs-card を JS で移してくる。 */}
+<div
+  id="a2hs-modal"
+  class="fixed inset-0 z-50 hidden items-center justify-center px-4"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="a2hs-title"
+>
+  {/*
+    スクリム (.sheet-backdrop = z-40) より必ず上にパネルを置く。
+    同じ z-50 の入れ物の中の兄弟なので、パネルが z-40 以下だと
+    スクリムが中身まで塗りつぶす (MetricTrendChart で実際に踏んだ)。
+  */}
+  <div id="a2hs-scrim" class="sheet-backdrop"></div>
+  <div id="a2hs-panel" class="relative z-50 max-h-[90vh] w-full max-w-md overflow-y-auto"></div>
+</div>
+
+{/* 通常の置き場所。モーダルを閉じたらここへ戻す。 */}
+<div id="a2hs-slot">
+  <section id="a2hs-card" class="card" hidden>
+    <div class="flex items-start gap-3">
+      <span class="flex shrink-0 items-center gap-2">
+        <AppLogo height={40} />
+      </span>
+      <div class="min-w-0 flex-1">
+        <h2 id="a2hs-title" class="text-base font-bold text-navy-800">ホーム画面に追加</h2>
+        <p class="mt-1 text-sm text-slate-700">
+          ホーム画面のアイコンから、アプリのように開けます。
+        </p>
+      </div>
+      <button
+        type="button"
+        id="a2hs-dismiss"
+        class="grid h-11 w-11 shrink-0 place-items-center rounded-full text-slate-600 transition hover:bg-slate-100"
+      >
+        <AppIcon name="close" size={20} label="この案内を閉じる" />
+      </button>
     </div>
+
+    {/* Android など: ブラウザのインストール導線を呼ぶ (beforeinstallprompt を捕まえたときだけ) */}
     <button
       type="button"
-      id="a2hs-dismiss"
-      class="grid h-11 w-11 shrink-0 place-items-center rounded-full text-slate-600 transition hover:bg-slate-100"
+      id="a2hs-install"
+      class="mt-3 hidden min-h-touch w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 text-base font-semibold text-white transition hover:bg-brand-700"
     >
-      <AppIcon name="close" size={20} label="この案内を閉じる" />
+      <AppIcon name="download" size={20} />
+      ホーム画面に追加する
     </button>
-  </div>
 
-  {/* Android など: ブラウザのインストール導線を呼ぶ */}
-  <button
-    type="button"
-    id="a2hs-install"
-    class="mt-3 hidden min-h-touch w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 text-base font-semibold text-white transition hover:bg-brand-700"
-  >
-    <AppIcon name="download" size={20} />
-    ホーム画面に追加する
-  </button>
+    {/* iOS: 手順の案内 (プログラムからは追加できないため) */}
+    <ol id="a2hs-ios" class="mt-3 hidden list-none flex-col gap-2">
+      <li class="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-800">
+        <span class="tnum shrink-0 font-bold text-brand-700">1.</span>
+        <span class="flex flex-wrap items-center gap-1">
+          画面下の
+          <AppIcon name="upload" size={18} class="text-brand-700" />
+          <b>共有</b>ボタンを押す
+        </span>
+      </li>
+      <li class="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-800">
+        <span class="tnum shrink-0 font-bold text-brand-700">2.</span>
+        <span class="flex flex-wrap items-center gap-1">
+          メニューを下にたどり
+          <AppIcon name="add" size={18} class="text-brand-700" />
+          <b>「ホーム画面に追加」</b>を選ぶ
+        </span>
+      </li>
+      <li class="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-800">
+        <span class="tnum shrink-0 font-bold text-brand-700">3.</span>
+        <span>右上の<b>「追加」</b>を押す</span>
+      </li>
+    </ol>
 
-  {/* iOS: 手順の案内 (プログラムからは追加できないため) */}
-  <ol id="a2hs-ios" class="mt-3 hidden list-none flex-col gap-2">
-    <li class="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-800">
-      <span class="tnum shrink-0 font-bold text-brand-700">1.</span>
-      <span class="flex flex-wrap items-center gap-1">
-        画面下の
-        <AppIcon name="upload" size={18} class="text-brand-700" />
-        <b>共有</b>ボタンを押す
-      </span>
-    </li>
-    <li class="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-800">
-      <span class="tnum shrink-0 font-bold text-brand-700">2.</span>
-      <span class="flex flex-wrap items-center gap-1">
-        メニューを下にたどり
-        <AppIcon name="add" size={18} class="text-brand-700" />
-        <b>「ホーム画面に追加」</b>を選ぶ
-      </span>
-    </li>
-    <li class="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-800">
-      <span class="tnum shrink-0 font-bold text-brand-700">3.</span>
-      <span>右上の<b>「追加」</b>を押す</span>
-    </li>
-  </ol>
-</section>
+    {/* Android: インストール導線をまだ受け取れていないとき用の手順 */}
+    <ol id="a2hs-android" class="mt-3 hidden list-none flex-col gap-2">
+      <li class="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-800">
+        <span class="tnum shrink-0 font-bold text-brand-700">1.</span>
+        <span>ブラウザ右上の<b>メニュー</b>（点が縦に 3 つ）を開く</span>
+      </li>
+      <li class="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-800">
+        <span class="tnum shrink-0 font-bold text-brand-700">2.</span>
+        <span><b>「ホーム画面に追加」</b>（または「アプリをインストール」）を選ぶ</span>
+      </li>
+      <li class="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-800">
+        <span class="tnum shrink-0 font-bold text-brand-700">3.</span>
+        <span><b>「追加」</b>（または「インストール」）を押す</span>
+      </li>
+    </ol>
+
+    {/* その他のブラウザ: メニュー名を断定しない */}
+    <p id="a2hs-generic" class="mt-3 hidden rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-800">
+      ブラウザのメニューから<b>「ホーム画面に追加」</b>を選んでください。
+    </p>
+
+    {/* モーダルのときだけ出す。閉じてもカードは残るので、あとから追加できる。 */}
+    <div id="a2hs-modal-actions" class="mt-3 hidden flex-col gap-1">
+      <button type="button" id="a2hs-close" class="btn-secondary w-full">閉じる</button>
+      <button type="button" id="a2hs-never" class="min-h-touch w-full text-base font-semibold text-slate-700 underline underline-offset-4">
+        このガイドを今後表示しない
+      </button>
+    </div>
+  </section>
+</div>
 
 <script>
   (() => {
-    const KEY = 'welltect.a2hs.dismissed';
-    const card    = document.getElementById('a2hs-card') as HTMLElement | null;
-    const install = document.getElementById('a2hs-install') as HTMLButtonElement | null;
-    const iosSteps = document.getElementById('a2hs-ios') as HTMLElement | null;
-    const dismiss = document.getElementById('a2hs-dismiss') as HTMLButtonElement | null;
-    if (!card || !install || !iosSteps || !dismiss) return;
+    const KEY_DISMISS = 'welltect.a2hs.dismissed';
+
+    /** 必要な要素をまとめて取る。1 つでも欠けたら何もしない。 */
+    const found = {
+      card:     document.getElementById('a2hs-card'),
+      slot:     document.getElementById('a2hs-slot'),
+      modal:    document.getElementById('a2hs-modal'),
+      panel:    document.getElementById('a2hs-panel'),
+      scrim:    document.getElementById('a2hs-scrim'),
+      install:  document.getElementById('a2hs-install') as HTMLButtonElement | null,
+      iosSteps: document.getElementById('a2hs-ios'),
+      andSteps: document.getElementById('a2hs-android'),
+      generic:  document.getElementById('a2hs-generic'),
+      dismiss:  document.getElementById('a2hs-dismiss') as HTMLButtonElement | null,
+      actions:  document.getElementById('a2hs-modal-actions'),
+      closeBtn: document.getElementById('a2hs-close') as HTMLButtonElement | null,
+      never:    document.getElementById('a2hs-never') as HTMLButtonElement | null,
+    };
+    if (Object.values(found).some((v) => !v)) return;
+    const { card, slot, modal, panel, scrim, install, iosSteps, andSteps, generic, dismiss, actions, closeBtn, never } =
+      found as { [K in keyof typeof found]: NonNullable<(typeof found)[K]> };
 
     /** ホーム画面から起動中か (= 追加済みで、案内は不要)。 */
     const launchedFromHome = () =>
@@ -95,21 +181,94 @@ import AppLogo from './AppLogo.astro';
       || (navigator as unknown as { standalone?: boolean }).standalone === true;
 
     /** localStorage が使えない環境 (プライベートブラウズ等) でも落ちないようにする。 */
-    const dismissed = () => {
-      try { return localStorage.getItem(KEY) === '1'; } catch { return false; }
+    const readFlag = (k: string) => {
+      try { return localStorage.getItem(k) === '1'; } catch { return false; }
     };
-    const remember = () => {
-      try { localStorage.setItem(KEY, '1'); } catch { /* 保存できなくても表示は消す */ }
-    };
-
-    const show = (which: 'install' | 'ios') => {
-      if (launchedFromHome() || dismissed()) return;
-      (which === 'install' ? install : iosSteps).classList.remove('hidden');
-      (which === 'install' ? install : iosSteps).classList.add('flex');
-      card.hidden = false;
+    const writeFlag = (k: string) => {
+      try { localStorage.setItem(k, '1'); } catch { /* 保存できなくても表示は消す */ }
     };
 
-    dismiss.addEventListener('click', () => { card.hidden = true; remember(); });
+    // 一度付いた恒久フラグを実機で解除する手段 (?a2hs=reset)。
+    // ホーム画面から削除しても localStorage は残るため、確認作業で必要になる。
+    try {
+      if (new URLSearchParams(location.search).get('a2hs') === 'reset') {
+        localStorage.removeItem(KEY_DISMISS);
+        console.log('[a2hs] 表示フラグを解除しました');
+      }
+    } catch { /* localStorage も URL も無い環境では何もしない */ }
+
+    const ua = navigator.userAgent;
+    const isIOS = /iPad|iPhone|iPod/.test(ua)
+      // iPadOS は UA が Mac を名乗るため、タッチ対応の Mac も iPad として扱う
+      || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    // Chrome/Firefox for iOS からはホーム画面に追加できないので Safari のときだけ手順を出す
+    const isIOSSafari = isIOS && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
+    const isAndroid = /Android/.test(ua);
+    // 文言が「ホーム画面」なので PC では出さない
+    const isMobile = isIOS || isAndroid || /Mobi/.test(ua);
+
+    const showBlock = (el: HTMLElement) => { el.classList.remove('hidden'); el.classList.add('flex'); };
+    const hideBlock = (el: HTMLElement) => { el.classList.add('hidden'); el.classList.remove('flex'); };
+
+    /** インストール導線をまだ受け取れていないときの代替 = 手順。 */
+    function showSteps() {
+      if (isIOSSafari) showBlock(iosSteps);
+      else if (isAndroid) showBlock(andSteps);
+      else generic.classList.remove('hidden');
+    }
+
+    // ── 出すかどうか ──
+    if (!isMobile || launchedFromHome() || readFlag(KEY_DISMISS)) return;
+    // iOS で Safari 以外 (追加できない) のときは案内しても意味がない
+    if (isIOS && !isIOSSafari) return;
+
+    showSteps();
+    card.hidden = false;
+
+    // ── モーダル (初回だけ) ──
+    let lastFocus: HTMLElement | null = null;
+
+    function openModal() {
+      lastFocus = document.activeElement as HTMLElement | null;
+      panel.appendChild(card);
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      actions.classList.remove('hidden');
+      actions.classList.add('flex');
+      document.documentElement.classList.add('overflow-hidden');
+      (install.classList.contains('hidden') ? dismiss : install).focus();
+    }
+
+    function closeModal() {
+      if (modal.classList.contains('hidden')) return;
+      slot.appendChild(card);
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      actions.classList.add('hidden');
+      actions.classList.remove('flex');
+      document.documentElement.classList.remove('overflow-hidden');
+      if (lastFocus && lastFocus.focus) lastFocus.focus();
+    }
+
+    // 毎回出す。止めるのは「今後表示しない」= 利用者の明示操作だけ
+    // (iOS は追加済みかを判定できないため、自動で止める条件を作れない)。
+    openModal();
+
+    scrim.addEventListener('click', closeModal);
+    closeBtn.addEventListener('click', closeModal);
+    never.addEventListener('click', () => {
+      closeModal();
+      card.hidden = true;
+      writeFlag(KEY_DISMISS);
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+    // ✕ は「いま閉じる」だけ。恒久フラグは書かない
+    // (「今後表示しない」を押したときだけ = 利用者が明示的に選んだときだけ)。
+    dismiss.addEventListener('click', () => {
+      if (!modal.classList.contains('hidden')) { closeModal(); return; }
+      card.hidden = true;
+    });
 
     // ── Android / Chromium: インストール導線 ──
     let deferred: (Event & { prompt: () => Promise<{ outcome: string }> }) | null = null;
@@ -117,24 +276,25 @@ import AppLogo from './AppLogo.astro';
       // 既定のミニ情報バーを止めて、こちらのボタンから出す (MDN の推奨手順)
       e.preventDefault();
       deferred = e as typeof deferred;
-      show('install');
+      // 手順より 1 タップのボタンの方が早いので差し替える。
+      hideBlock(andSteps);
+      generic.classList.add('hidden');
+      showBlock(install);
     });
     install.addEventListener('click', async () => {
       if (!deferred) return;
       install.disabled = true;
       try { await deferred.prompt(); } catch { /* ユーザーが閉じた等 */ }
       deferred = null;
+      closeModal();
       card.hidden = true;
     });
-    window.addEventListener('appinstalled', () => { card.hidden = true; remember(); });
-
-    // ── iOS / Safari: 手順の案内 ──
-    const ua = navigator.userAgent;
-    const isIOS = /iPad|iPhone|iPod/.test(ua)
-      // iPadOS は UA が Mac を名乗るため、タッチ対応の Mac も iPad として扱う
-      || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-    // Chrome/Firefox for iOS からはホーム画面に追加できないので Safari のときだけ出す
-    const isIOSSafari = isIOS && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
-    if (isIOSSafari) show('ios');
+    // 追加できたので、この表示は閉じる。**恒久フラグは書かない** —
+    // ホーム画面から削除しても localStorage は消えず、二度と案内できなくなるため。
+    // 次回以降は launchedFromHome() と beforeinstallprompt の有無で自然に決まる。
+    window.addEventListener('appinstalled', () => {
+      closeModal();
+      card.hidden = true;
+    });
   })();
 </script>
