@@ -639,6 +639,43 @@ export class InterviewEngine {
     this.answers.clear();
     this.seeded.clear();
   }
+
+  /** 中止時に退避するための状態スナップショット。 */
+  getState(): { answers: Answers; seeded: string[]; currentId: string | null } {
+    return {
+      answers: this.answersObj(),
+      seeded: [...this.seeded],
+      currentId: this.currentId,
+    };
+  }
+
+  /**
+   * 保存した途中経過から再開する。
+   *
+   * `currentId` が無い / 既に存在しない設問 id だった場合は、**未回答の最初の設問**へ寄せる
+   * (設問定義が更新されて id が消えても行き止まりにしない)。
+   * 復元後に提示すべき設問が無ければ null を返す (＝実質完了しているので呼び出し側で通常開始する)。
+   */
+  resume(state: {
+    answers: Answers;
+    seeded?: readonly string[];
+    currentId?: string | null;
+  }): QuestionDef | null {
+    this.answers.clear();
+    this.seeded.clear();
+    for (const [id, v] of Object.entries(state.answers ?? {})) {
+      if (!QUESTIONS[id]) continue; // 定義から消えた設問は捨てる
+      this.answers.set(id, v);
+    }
+    for (const id of state.seeded ?? []) {
+      if (QUESTIONS[id]) this.seeded.add(id);
+    }
+    const path = this.visiblePath();
+    const wanted = state.currentId && path.includes(state.currentId) ? state.currentId : null;
+    const nextId = wanted ?? path.find((id) => !this.answers.has(id)) ?? null;
+    this.currentId = nextId;
+    return nextId ? QUESTIONS[nextId] : null;
+  }
 }
 
 /** 表示用: 回答を人間が読める短い文字列にまとめる */

@@ -132,10 +132,10 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
             id="mic-btn"
             type="button"
             class="mic-fab compact shrink-0"
-            aria-label="問診を中断"
+            aria-label="問診を中止"
           >
-            <span class="mic-icon text-lg">⏸</span>
-            <span class="mic-label text-xs">中断</span>
+            <span class="mic-icon flex items-center justify-center"><AppIcon name="blocked" size={22} /></span>
+            <span class="mic-label text-xs">中止</span>
           </button>
           <button
             id="speaker-btn"

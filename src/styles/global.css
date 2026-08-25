@@ -288,18 +288,28 @@
   }
   .lp-root[data-layout='sheet'] .lp-head { @apply border-b-0 pt-3; }
   /* ヘッダは 2 種類を描いておき、ここで出し分ける (全画面への昇格を data-layout だけで行うため) */
-  .lp-root[data-layout='sheet'] .lp-bar,
-  .lp-root[data-layout='sheet'] .lp-title-bar { display: none; }
+  .lp-root[data-layout='sheet'] .lp-bar { display: none; }
   .lp-root:not([data-layout='sheet']) .sheet-handle,
   .lp-root:not([data-layout='sheet']) .sheet-backdrop,
-  .lp-root:not([data-layout='sheet']) .lp-title-sheet { display: none; }
+  .lp-root:not([data-layout='sheet']) .lp-sheet-head { display: none; }
+  .lp-sheet-head { @apply flex items-center gap-2; }
   .lp-bar { @apply flex items-center gap-1; }
   .lp-back {
     @apply -ml-2 grid h-11 w-11 shrink-0 place-items-center rounded-full text-slate-700;
   }
   .lp-back:hover { @apply bg-slate-100; }
   .lp-title { @apply flex-1 text-center text-base font-semibold text-slate-900; }
-  .lp-title-sheet { @apply text-left; }
+  .lp-title-sheet { @apply flex-1 text-left; }
+
+  /* 問診の「中止」。選択画面は画面を覆うので、ここからも中止できるようにする。 */
+  /* 枠は slate-500。slate-300 だと白地に 1.72:1 で WCAG 1.4.11 (3:1) に届かず、
+   * 「押せるもの」として輪郭が見えない (実測 2026-08)。 */
+  .lp-abort {
+    @apply inline-flex min-h-touch shrink-0 items-center gap-1 rounded-full border border-slate-500
+           bg-white px-3 text-sm font-medium text-slate-700;
+  }
+  .lp-abort:hover { @apply border-status-action text-status-action; }
+  .lp-abort svg { width: 18px; height: 18px; }
   /* 戻るボタン(44px)と釣り合いを取り、見出しを中央に置く */
   .lp-bar .lp-title { margin-right: 2.75rem; }
   .lp-sub { @apply mt-1 text-center text-sm text-slate-600; }
@@ -360,6 +370,17 @@
   .lp-item.on .lp-mark { @apply border-brand-600 bg-brand-600; }
 
   .lp-empty { @apply py-10 text-center text-base text-slate-600; }
+
+  /* アクションシート (中止の 3 択)。lp-item を流用し、右端は chevron。 */
+  .as-panel .lp-scroll { @apply pb-2; }
+  .as-item { @apply py-4; }
+  /* .lp-item と同じ 1 クラス同士だと Tailwind の生成順で負ける (実測: bg-white のまま) ため、
+   * 必ず .as-item と組にして詳細度を上げる。 */
+  .as-item.as-primary { @apply border-brand-600 bg-brand-50; }
+  .as-item.as-primary .lp-label { @apply font-semibold text-brand-800; }
+  .as-item.as-primary .lp-ico { @apply text-brand-700; }
+  .as-item.as-danger .lp-label { @apply font-semibold text-status-action; }
+  .as-item.as-danger .lp-ico { @apply text-status-action; }
 
   .lp-foot {
     @apply shrink-0 border-t border-slate-200 bg-white px-4 pt-2;

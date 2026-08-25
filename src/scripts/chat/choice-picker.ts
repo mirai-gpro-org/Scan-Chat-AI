@@ -55,6 +55,12 @@ export interface ListPickerArgs {
   multi?: boolean;
   /** 初期選択 (label の配列) */
   initial?: string[];
+  /**
+   * 「中止」を押したときの処理。渡すとヘッダ右上に中止ボタンを出す。
+   * 選択画面は全画面/シートで問診の中止ボタンを覆い隠すため、ここからも中止できるようにする
+   * (発注者指示 2026-08)。呼ばれた時点でこの選択画面は閉じている (キャンセル扱い)。
+   */
+  onAbort?: () => void;
 }
 
 /** レイアウトの切替しきい値 (件数)。 */
@@ -87,7 +93,7 @@ function normalize(s: string): string {
  * @returns 選択された label 配列。キャンセルは null。
  */
 export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
-  const { title, subtitle, options, multi = false } = args;
+  const { title, subtitle, options, multi = false, onAbort } = args;
   const layout = layoutFor(options.length);
   const selected = new Set(args.initial ?? []);
 
@@ -96,6 +102,10 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
     root.className = 'lp-root';
     root.dataset.layout = layout;
 
+    const abortBtn = onAbort
+      ? `<button type="button" class="lp-abort" data-lp-abort>${iconSvg('blocked')}<span>中止</span></button>`
+      : '';
+
     // ヘッダはシート用 / 全画面用の両方を描いておき、CSS が data-layout で出し分ける。
     // こうしておくと「入りきらないので全画面へ昇格」を data-layout の差し替えだけで行える。
     const headHtml = `
@@ -103,8 +113,12 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
       <div class="lp-bar">
         <button type="button" class="lp-back" data-lp-cancel aria-label="戻る">${iconSvg('prev')}</button>
         <h2 class="lp-title lp-title-bar">${escapeHtml(title)}</h2>
+        ${abortBtn}
       </div>
-      <h2 class="lp-title lp-title-sheet">${escapeHtml(title)}</h2>`;
+      <div class="lp-sheet-head">
+        <h2 class="lp-title lp-title-sheet">${escapeHtml(title)}</h2>
+        ${abortBtn}
+      </div>`;
 
     const searchHtml =
       layout === 'search'
@@ -344,6 +358,12 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
     root.querySelector('[data-lp-confirm]')?.addEventListener('click', () => {
       close([...selected]);
     });
+    root.querySelectorAll('[data-lp-abort]').forEach((b) =>
+      b.addEventListener('click', () => {
+        close(null); // 中止確認の裏に選択画面を残さない
+        onAbort?.();
+      }),
+    );
 
     // 1 フレーム目はまだレイアウトが落ち着いておらず、見切れの計算がずれる
     // (実測 2026-08: 高さ 588px に対し 626px を算出＝max-height が効かず切れない)。
@@ -360,6 +380,88 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
         updateMore();
       });
     });
+  });
+}
+
+// ── アクションシート (「中止」の 3 択など) ──────────────────────
+
+export interface SheetAction {
+  /** 呼び出し側が結果を判別するためのキー */
+  key: string;
+  label: string;
+  /** ラベルの下に出す 1 行の補足 */
+  note?: string;
+  /** icon-svg の意味名 */
+  icon?: string;
+  /** 見た目の強さ。'primary'=主操作 / 'danger'=消える操作 / 既定=通常 */
+  tone?: 'primary' | 'danger';
+}
+
+/**
+ * 選択肢を縦に並べただけのボトムシート。
+ * 中止の 3 択 (記憶して中止 / 全消しして中止 / 問診に戻る) に使う。
+ * 背景タップ・Esc は「何もしない」= null を返す (誤操作で回答を失わせない)。
+ */
+export function openActionSheet(args: {
+  title: string;
+  description?: string;
+  actions: SheetAction[];
+}): Promise<string | null> {
+  const { title, description, actions } = args;
+  return new Promise((resolve) => {
+    const root = document.createElement('div');
+    root.className = 'lp-root';
+    root.dataset.layout = 'sheet';
+    root.innerHTML = `
+      <div class="sheet-backdrop" data-as-cancel></div>
+      <div class="lp-panel as-panel" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
+        <div class="lp-head">
+          <div class="sheet-handle"></div>
+          <h2 class="lp-title lp-title-sheet">${escapeHtml(title)}</h2>
+          ${description ? `<p class="lp-sub">${escapeHtml(description)}</p>` : ''}
+        </div>
+        <div class="lp-scroll">
+          <div class="lp-items">
+            ${actions
+              .map(
+                (a) => `
+              <button type="button" class="lp-item as-item${a.tone ? ` as-${a.tone}` : ''}" data-as-key="${escapeAttr(a.key)}">
+                ${a.icon ? `<span class="lp-ico" aria-hidden="true">${iconSvg(a.icon)}</span>` : ''}
+                <span class="lp-text">
+                  <span class="lp-label">${escapeHtml(a.label)}</span>
+                  ${a.note ? `<span class="lp-note">${escapeHtml(a.note)}</span>` : ''}
+                </span>
+              </button>`,
+              )
+              .join('')}
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(root);
+    document.body.style.overflow = 'hidden';
+
+    let settled = false;
+    function close(key: string | null): void {
+      if (settled) return;
+      settled = true;
+      activeClosers.delete(forceClose);
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+      root.remove();
+      resolve(key);
+    }
+    const forceClose = (): void => close(null);
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') close(null); };
+    activeClosers.add(forceClose);
+    document.addEventListener('keydown', onKey);
+
+    root.querySelectorAll('[data-as-cancel]').forEach((b) =>
+      b.addEventListener('click', () => close(null)),
+    );
+    root.querySelectorAll<HTMLElement>('[data-as-key]').forEach((b) =>
+      b.addEventListener('click', () => close(b.dataset.asKey ?? null)),
+    );
   });
 }
 

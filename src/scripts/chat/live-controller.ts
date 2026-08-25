@@ -25,7 +25,10 @@ import { marked } from 'marked';
 import { LiveAudioManager } from './live-audio-manager';
 import {
   clearChatSession,
+  clearInterviewProgress,
   clearInterviewResult,
+  loadInterviewProgress,
+  saveInterviewProgress,
   createEmptySession,
   loadChatSession,
   saveChatSession,
@@ -39,7 +42,7 @@ import {
   type QuestionDef,
   type AnswerValue,
 } from './interview-script';
-import { openListPicker, openMatrixPicker, formatMatrix, closeAllPickers } from './choice-picker';
+import { openListPicker, openMatrixPicker, openActionSheet, formatMatrix, closeAllPickers } from './choice-picker';
 import { getOrCreateDiagnosticId } from '../../lib/diagnostic-id';
 
 export interface LiveRefs {
@@ -273,6 +276,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     closeAllPickers();
     clearChatSession(SESSION_ID);
     clearInterviewResult(SESSION_ID);
+    clearInterviewProgress(SESSION_ID);
     session = createEmptySession(SESSION_ID);
     currentQ = null;
     advancing = false;
@@ -288,8 +292,74 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
   // 開始: 大型 hero ボタン
   refs.startBtn.addEventListener('click', () => toggleSession());
-  // 中断: コンパクト top-right ボタン
-  refs.micBtn.addEventListener('click', () => toggleSession());
+  // 中止: コンパクト top-right ボタン
+  refs.micBtn.addEventListener('click', () => void confirmAbort());
+
+  /** 途中経過を localStorage へ退避する (再開用)。 */
+  function persistProgress(): void {
+    const st = engine.getState();
+    saveInterviewProgress({
+      id: SESSION_ID,
+      answers: st.answers as Record<string, string | string[] | number>,
+      seeded: st.seeded,
+      currentId: st.currentId,
+    });
+  }
+
+  /**
+   * 「中止」の 3 択 (発注者指示 2026-08)。
+   *   ① 回答済の問診を記憶して中止する … 途中経過を保存し、次回の開始で続きから
+   *   ② 回答を全てクリアして中止する   … 途中経過・履歴・結果を削除して最初から
+   *   ③ 問診に戻る                     … 何もしない
+   * 背景タップ・Esc も ③ 扱い (誤操作で回答を失わせない)。
+   */
+  async function confirmAbort(): Promise<void> {
+    const answered = Object.keys(engine.getAnswers()).length;
+    const picked = await openActionSheet({
+      title: '問診を中止しますか？',
+      description: answered > 0 ? `ここまで ${answered} 問にお答えいただいています。` : undefined,
+      actions: [
+        {
+          key: 'keep', label: '回答済の問診を記憶して中止する',
+          note: '次に開いたとき、続きから再開できます', icon: 'save', tone: 'primary',
+        },
+        {
+          key: 'clear', label: '回答を全てクリアして中止する',
+          note: 'ここまでの回答は削除されます', icon: 'ban', tone: 'danger',
+        },
+        { key: 'back', label: '問診に戻る', icon: 'prev' },
+      ],
+    });
+
+    if (picked === 'keep') {
+      persistProgress();
+      stopLive();
+      appendMessage({ role: 'system', text: '問診を中止しました。次に開いたとき、続きから再開できます。', ts: Date.now() });
+      saveChatSession(session);
+      return;
+    }
+    if (picked === 'clear') {
+      stopLive();
+      clearInterviewProgress(SESSION_ID);
+      clearChatSession(SESSION_ID);
+      clearInterviewResult(SESSION_ID);
+      session = createEmptySession(SESSION_ID);
+      currentQ = null;
+      advancing = false;
+      engine.reset();
+      refs.resumeBanner && (refs.resumeBanner.hidden = true);
+      renderHistory();
+      renderProgress(0, '準備中…');
+      renderSectionDots(-1);
+      refs.questionText.textContent = '…';
+      showWidget('voice');
+      return;
+    }
+    // 'back' / null: 問診に戻る。選択画面を開いていたなら開き直す。
+    if (picked === 'back' || picked === null) {
+      if (currentQ && mapKind(currentQ.answer_kind) === 'list') void openListForCurrent();
+    }
+  }
 
   // スピーカー ON/OFF（AI の音声出力のみ。テキスト/UI は影響なし）
   refs.speakerBtn.addEventListener('click', () => {
@@ -399,20 +469,10 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   function setConnected(state: boolean): void {
     refs.startHero.hidden = state;
     refs.qaArea.hidden = !state;
-    if (state) {
-      refs.micBtn.classList.add('active');
-      const lbl = refs.micBtn.querySelector('.mic-label') as HTMLElement | null;
-      const icn = refs.micBtn.querySelector('.mic-icon') as HTMLElement | null;
-      if (lbl) lbl.textContent = '中断';
-      if (icn) icn.textContent = '⏸';
-      refs.micBtn.setAttribute('aria-label', '問診を中断');
-    } else {
-      refs.micBtn.classList.remove('active');
-      const lbl = refs.micBtn.querySelector('.mic-label') as HTMLElement | null;
-      const icn = refs.micBtn.querySelector('.mic-icon') as HTMLElement | null;
-      if (lbl) lbl.textContent = '中断';
-      if (icn) icn.textContent = '⏸';
-    }
+    // ラベル・アイコンは markup 側 (chat.astro の AppIcon) が正。
+    // ここで textContent を書き換えると SVG が消えて絵文字に戻ってしまうので触らない。
+    refs.micBtn.classList.toggle('active', state);
+    refs.micBtn.setAttribute('aria-label', '問診を中止');
   }
 
   function applyModeUI(): void {
@@ -506,6 +566,8 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       options: optionsOf(q),
       multi,
       initial,
+      // 選択画面は画面を覆うため、上部の中止ボタンが隠れる。ここからも中止できるようにする。
+      onAbort: () => void confirmAbort(),
     });
     if (result === null) return; // キャンセル
     if (multi) {
@@ -554,8 +616,13 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
     const answerValue = toAnswerValue(cq, rawAnswer);
     const { next, isComplete } = engine.recordAndAdvance(answerValue);
+    // 1 問ごとに途中経過を退避しておく。中止ボタンを押さずに離脱 (タブを閉じる・
+    // 通信断・リロード) しても続きから再開できるようにするため。
+    persistProgress();
 
     if (isComplete || !next) {
+      // 完走したら途中経過は不要 (次回は最初から)。結果は saveInterviewResult 側で残る。
+      clearInterviewProgress(SESSION_ID);
       showCompletion();
       // 音声回答 (silent) では発話を注入しない。Live API の自発応答が唯一の話者。
       // (発話注入すると二重話者=二重復唱になる。§AI問診_仕様と設計原則 案1)
@@ -784,18 +851,35 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
           setConnected(true);
           // engine 起動: 最初の Q を画面に即表示 (AI を待たない)
           // EXAM-TYPE は申込情報から供給し設問を提示しない (空なら通常設問にフォールバック)。
-          const firstQ = engine.start(
+          //
+          // 「回答済の問診を記憶して中止する」で退避した途中経過があれば**続きから**再開する
+          // (発注者指示 2026-08)。復元できなければ通常どおり最初から。
+          const saved = loadInterviewProgress(SESSION_ID);
+          const resumedQ = saved ? engine.resume(saved) : null;
+          const isResume = resumedQ !== null;
+          const firstQ = resumedQ ?? engine.start(
             seededExamTypes.length > 0 ? { 'EXAM-TYPE': seededExamTypes } : {},
           );
           applyQuestionToUI(firstQ);
-          // AI には「挨拶 + Q1-1 の読み上げ」だけを依頼
+          const answeredCount = isResume ? Object.keys(engine.getAnswers()).length : 0;
+          if (isResume) {
+            appendMessage({
+              role: 'system',
+              text: `前回の続きから再開します（回答済 ${answeredCount} 問）。`,
+              ts: Date.now(),
+            });
+            saveChatSession(session);
+          }
+          // AI には「挨拶 + 次の質問の読み上げ」だけを依頼
           setTimeout(() => {
             try {
               liveSession?.sendClientContent({
                 turns: [{ role: 'user', parts: [{ text:
                   `問診を始めます。次の 2 文を発話してください:
-  ① 「こんにちは、ウェルフォートの AI 問診です。画面の質問に、タップでも音声でもお答えいただけます。」
-  ② 続けて画面に表示されている最初の質問を読み上げ: 「${firstQ.question}」
+  ① ${isResume
+                    ? '「おかえりなさい。前回の続きから問診を再開します。」'
+                    : '「こんにちは、ウェルフォートの AI 問診です。画面の質問に、タップでも音声でもお答えいただけます。」'}
+  ② 続けて画面に表示されている質問を読み上げ: 「${firstQ.question}」
 選択肢や入力例は読み上げないでください (画面に表示されています)。挨拶と質問を 1 回だけ、絶対に繰り返さないでください。`
                 } ] }],
                 turnComplete: true,
