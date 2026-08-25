@@ -288,54 +288,120 @@
            hover:border-brand-400 hover:bg-brand-50 active:scale-95;
   }
 
-  /* ─ ホイール (ドラム) ピッカー ─ */
+  /* ─ 選択肢リスト (ホイールの置換・2026-08) ─
+   *
+   * ホイールを廃止した理由と 3 段階レイアウトの根拠は
+   * `src/scripts/chat/choice-picker.ts` の冒頭コメントに書いてある。
+   *
+   * 【この構造を崩さないこと】.lp-panel = flex column /
+   *   .lp-scroll = flex:1 + min-height:0 + overflow-y:auto / .lp-foot = flex-shrink:0。
+   *   これで**固定フッターが最終行に被らない**(padding で逃がす必要がない)。
+   *   block レイアウトに戻すと最後の 1〜2 件が永久に選べなくなる。
+   */
 
-  .wheel-summary {
-    @apply mt-3 min-h-[1rem] text-center text-sm text-brand-700;
+  .lp-root { position: fixed; inset: 0; z-index: 40; }
+
+  /* 〜7 件: ボトムシート */
+  .lp-root[data-layout='sheet'] .lp-panel {
+    @apply fixed inset-x-0 bottom-0 z-50 mx-auto max-w-lg rounded-t-3xl border border-slate-200 bg-white;
+    max-height: 80vh;
+    animation: sheet-up 0.22s ease-out both;
+  }
+  /* 8 件〜: 全画面 */
+  .lp-root[data-layout='full'] .lp-panel,
+  .lp-root[data-layout='search'] .lp-panel {
+    @apply fixed inset-0 z-50 mx-auto max-w-lg border-slate-200 bg-white;
+    animation: sheet-up 0.2s ease-out both;
+  }
+  .lp-panel { display: flex; flex-direction: column; min-height: 0; }
+
+  .lp-head {
+    @apply shrink-0 border-b border-slate-200 px-4 pb-3;
+    padding-top: calc(env(safe-area-inset-top) + 0.75rem);
+  }
+  .lp-root[data-layout='sheet'] .lp-head { @apply border-b-0 pt-3; }
+  .lp-bar { @apply flex items-center gap-1; }
+  .lp-back {
+    @apply -ml-2 grid h-11 w-11 shrink-0 place-items-center rounded-full text-slate-700;
+  }
+  .lp-back:hover { @apply bg-slate-100; }
+  .lp-title { @apply flex-1 text-center text-base font-semibold text-slate-900; }
+  .lp-root[data-layout='sheet'] .lp-title { @apply text-left; }
+  /* 戻るボタン(44px)と釣り合いを取り、見出しを中央に置く */
+  .lp-bar .lp-title { margin-right: 2.75rem; }
+  .lp-sub { @apply mt-1 text-center text-sm text-slate-600; }
+  .lp-root[data-layout='sheet'] .lp-sub { @apply text-left; }
+
+  .lp-search { @apply relative mt-3; }
+  .lp-search-ico {
+    @apply pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500;
+  }
+  .lp-search-input {
+    @apply w-full rounded-xl border border-slate-300 bg-white py-3 pl-10 pr-3 text-slate-900
+           placeholder:text-slate-500;
+    font-size: 16px; /* iOS の自動ズームを防ぐ下限 */
+  }
+  .lp-search-input:focus {
+    @apply border-brand-500 outline-none ring-2 ring-brand-200;
   }
 
-  .wheel-viewport {
+  .lp-scroll {
+    /* position: relative は必須。これが無いと .lp-item の offsetParent が
+     * .lp-panel(fixed) になり、offsetTop にヘッダ高が乗って
+     * ①見切れ判定と③残数が壊れる (実測 2026-08: 7件で「あと2件」と誤表示)。 */
     position: relative;
-    height: 240px; /* 5 行 × 48px */
-    overflow-y: scroll;
-    scroll-snap-type: y mandatory;
-    -webkit-overflow-scrolling: touch;
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 78%, transparent 100%);
-    mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 78%, transparent 100%);
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    /* padding-top は置かない。sticky の吸着位置は padding 辺なので、
+     * ここに余白があるとその隙間から中身が見えてしまう。余白は中の要素に持たせる。 */
+    @apply px-4;
   }
-  .wheel-viewport::-webkit-scrollbar { display: none; }
+  .lp-count { @apply pb-1 pt-3 text-sm text-slate-600; }
+  .lp-items { @apply flex flex-col gap-2 pb-2 pt-2; }
 
-  .wheel-list { list-style: none; margin: 0; padding: 0; }
-  .wheel-pad { height: 96px; } /* (240 - 48) / 2 */
-
-  .wheel-highlight {
-    position: absolute;
-    left: 0.5rem;
-    right: 0.5rem;
-    top: 96px;
-    height: 48px;
-    border-radius: 0.75rem;
-    background: theme('colors.mist');
-    border-top: 1px solid theme('colors.brand.300');
-    border-bottom: 1px solid theme('colors.brand.300');
-    pointer-events: none;
-    z-index: 1;
+  /* ② 分類見出しは sticky。スクロール中に上端へ貼り付き、現在位置が分かる。 */
+  .lp-group {
+    @apply sticky top-0 z-10 -mx-4 bg-white px-4 pb-1 pt-3 text-sm font-semibold text-slate-700;
   }
 
-  .wheel-item {
-    height: 48px;
-    scroll-snap-align: center;
-    cursor: pointer;
-    @apply flex items-center justify-center gap-2 px-3 text-base text-slate-600;
+  .lp-item {
+    @apply flex min-h-touch w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white
+           px-4 py-3 text-left text-base text-slate-800 transition;
   }
-  .wheel-item .wheel-emoji { @apply inline-flex h-5 w-5 items-center justify-center; }
-  .wheel-item .wheel-check { width: 1.1rem; text-align: center; color: transparent; }
-  .wheel-item.centered { @apply text-lg font-semibold text-slate-900; }
-  .wheel-item.on .wheel-text { @apply font-semibold text-brand-700; }
-  .wheel-item.on .wheel-check { color: theme('colors.brand.600'); }
-  .wheel-item.on .wheel-check::before { content: '✓'; }
+  .lp-item:hover { @apply border-brand-400 bg-brand-50; }
+  .lp-item:active { transform: scale(0.995); }
+  .lp-item[hidden] { display: none; }
+  .lp-ico { @apply inline-flex h-6 w-6 shrink-0 items-center justify-center text-slate-600; }
+  .lp-text { @apply flex min-w-0 flex-1 flex-col; }
+  .lp-label { @apply font-medium; }
+  .lp-note { @apply text-sm text-slate-600; }
+  /* 未選択は「＋」相当の空丸、選択済みはブランド色のチェック */
+  .lp-mark {
+    @apply grid h-6 w-6 shrink-0 place-items-center rounded-full border border-slate-300 text-white;
+  }
+  .lp-mark svg { width: 16px; height: 16px; }
+  .lp-item.on { @apply border-brand-600 bg-brand-50; }
+  .lp-item.on .lp-label { @apply font-semibold text-brand-800; }
+  .lp-item.on .lp-ico { @apply text-brand-700; }
+  .lp-item.on .lp-mark { @apply border-brand-600 bg-brand-600; }
+
+  .lp-empty { @apply py-10 text-center text-base text-slate-600; }
+
+  .lp-foot {
+    @apply shrink-0 border-t border-slate-200 bg-white px-4 pt-2;
+    padding-bottom: calc(env(safe-area-inset-bottom) + 0.75rem);
+  }
+  /* ③ 残数。スクロールで最下部に達したら消える。 */
+  .lp-more {
+    @apply flex items-center justify-center gap-1 pb-2 text-sm font-medium text-brand-700;
+  }
+  .lp-more svg { width: 16px; height: 16px; }
+  .lp-more[hidden] { display: none; }
+  .lp-actions { @apply flex items-center gap-3; }
+  .lp-selected { @apply shrink-0 text-sm font-medium text-brand-700; }
+  .lp-confirm { @apply flex-1; }
+  .lp-cancel { @apply flex-1; }
 
   /* ─ マトリクス選択 (項目 × 頻度) ─ */
 

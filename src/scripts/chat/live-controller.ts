@@ -39,7 +39,7 @@ import {
   type QuestionDef,
   type AnswerValue,
 } from './interview-script';
-import { openWheelPicker, openMatrixPicker, formatMatrix, closeAllPickers } from './wheel-picker';
+import { openListPicker, openMatrixPicker, formatMatrix, closeAllPickers } from './choice-picker';
 import { getOrCreateDiagnosticId } from '../../lib/diagnostic-id';
 
 export interface LiveRefs {
@@ -67,7 +67,7 @@ export interface LiveRefs {
   uiVoice: HTMLElement;
   uiChip: HTMLElement;
   uiMulti: HTMLElement;
-  uiWheel: HTMLElement;
+  uiList: HTMLElement;
   uiMatrix: HTMLElement;
   uiSlider: HTMLElement;
   uiStepper: HTMLElement;
@@ -96,8 +96,8 @@ export interface LiveRefs {
   multiTitle: HTMLElement;
   multiConfirm: HTMLButtonElement;
 
-  wheelOpen: HTMLButtonElement;
-  wheelSummary: HTMLElement;
+  listOpen: HTMLButtonElement;
+  listSummary: HTMLElement;
   matrixOpen: HTMLButtonElement;
   matrixSummary: HTMLElement;
 
@@ -372,8 +372,8 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     }
   });
 
-  // wheel (ホイール選択モーダル)
-  refs.wheelOpen.addEventListener('click', () => void openWheelForCurrent());
+  // list (選択肢モーダル)
+  refs.listOpen.addEventListener('click', () => void openListForCurrent());
   // matrix (項目 × 頻度)
   refs.matrixOpen.addEventListener('click', () => void openMatrixForCurrent());
 
@@ -466,7 +466,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     switch (k) {
       case 'chip': return 'chip';
       case 'multi': return 'multi';
-      case 'wheel': return 'wheel';
+      case 'list': return 'list';
       case 'matrix': return 'matrix';
       case 'slider': return 'slider';
       case 'stepper': return 'stepper';
@@ -475,14 +475,14 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     }
   }
 
-  type WidgetKey = 'voice' | 'chip' | 'multi' | 'wheel' | 'matrix' | 'slider' | 'stepper' | 'text';
+  type WidgetKey = 'voice' | 'chip' | 'multi' | 'list' | 'matrix' | 'slider' | 'stepper' | 'text';
 
   function showWidget(key: WidgetKey): void {
     const map: Record<WidgetKey, HTMLElement> = {
       voice: refs.uiVoice,
       chip: refs.uiChip,
       multi: refs.uiMulti,
-      wheel: refs.uiWheel,
+      list: refs.uiList,
       matrix: refs.uiMatrix,
       slider: refs.uiSlider,
       stepper: refs.uiStepper,
@@ -495,7 +495,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     refs.fallbackZone.hidden = key === 'text';
     // 「音声でも・タップでも」ヒント: 選択式 widget の時に表示
     refs.dualHint.hidden = !(
-      key === 'chip' || key === 'multi' || key === 'wheel' ||
+      key === 'chip' || key === 'multi' || key === 'list' ||
       key === 'matrix' || key === 'slider' || key === 'stepper'
     );
   }
@@ -517,16 +517,19 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     document.body.style.overflow = '';
   }
 
-  /** 現在の wheel 設問でホイール選択モーダルを開く */
-  async function openWheelForCurrent(): Promise<void> {
+  /**
+   * 現在の list 設問で選択肢モーダルを開く。
+   * レイアウト (ボトムシート / 全画面 / 全画面+検索) は件数から choice-picker が決める。
+   */
+  async function openListForCurrent(): Promise<void> {
     const q = currentQ;
-    if (!q || q.answer_kind !== 'wheel') return;
+    if (!q || q.answer_kind !== 'list') return;
     const initial = q.multi
       ? (engine.getAnswers()[q.id] as string[] | undefined) ?? []
       : [];
-    const result = await openWheelPicker({
-      title: q.wheel_title ?? q.question,
-      options: q.wheel_options ?? [],
+    const result = await openListPicker({
+      title: q.list_title ?? q.question,
+      options: q.list_options ?? [],
       multi: !!q.multi,
       initial,
     });
@@ -654,7 +657,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
   /** UI に入る生文字列を engine が扱える型に変換 */
   function toAnswerValue(q: QuestionDef, raw: string): AnswerValue {
-    if (q.answer_kind === 'multi' || (q.answer_kind === 'wheel' && q.multi)) {
+    if (q.answer_kind === 'multi' || (q.answer_kind === 'list' && q.multi)) {
       return raw.split('、').map((s) => s.trim()).filter(Boolean);
     }
     if (q.answer_kind === 'slider') {
@@ -707,10 +710,10 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     const options =
       q.answer_kind === 'chip' ? (q.chips ?? [])
       : q.answer_kind === 'multi' ? (q.multi_options ?? [])
-      : (q.wheel_options ?? []);
+      : (q.list_options ?? []);
     if (options.length === 0) return null;
 
-    const isMulti = q.answer_kind === 'multi' || (q.answer_kind === 'wheel' && q.multi);
+    const isMulti = q.answer_kind === 'multi' || (q.answer_kind === 'list' && q.multi);
 
     const matched = options
       .map((o) => ({ label: o.label, core: normalizeVoice(o.label) }))
@@ -984,9 +987,11 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       renderChips(q.chips ?? []);
     } else if (kind === 'multi') {
       renderMulti(q.multi_options ?? [], q.multi_title ?? '該当するものをすべて選んでください');
-    } else if (kind === 'wheel') {
-      refs.wheelSummary.textContent = '';
-      refs.wheelOpen.textContent = q.multi ? '🎡 回して選ぶ（複数可）' : '🎡 回して選ぶ';
+    } else if (kind === 'list') {
+      refs.listSummary.textContent = '';
+      // アイコンは Lucide 一本 (絵文字を本番素材にしない)。
+      refs.listOpen.innerHTML =
+        `${iconSvg('check')}<span>${q.multi ? '選択肢から選ぶ（複数可）' : '選択肢から選ぶ'}</span>`;
     } else if (kind === 'matrix') {
       refs.matrixSummary.textContent = '';
     } else if (kind === 'slider') {
@@ -1015,8 +1020,8 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     // 選択肢が多い設問はモーダルを自動展開 (タップ一手間を省く)
     if (kind === 'multi') {
       setTimeout(() => openMultiModal(), 150);
-    } else if (kind === 'wheel') {
-      setTimeout(() => void openWheelForCurrent(), 150);
+    } else if (kind === 'list') {
+      setTimeout(() => void openListForCurrent(), 150);
     } else if (kind === 'matrix') {
       setTimeout(() => void openMatrixForCurrent(), 150);
     }

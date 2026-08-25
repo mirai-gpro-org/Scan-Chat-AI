@@ -202,12 +202,12 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
           <p id="multi-summary" class="text-center text-xs text-slate-500"></p>
         </div>
 
-        <!-- wheel ホイール選択 (選択肢が多い設問) -->
-        <div id="ui-wheel" class="flex flex-col gap-2" hidden>
-          <button id="wheel-open" type="button" class="btn-primary w-full">
-            <AppIcon name="wheel" size={20} /> 回して選ぶ
+        <!-- list 選択肢モーダル (件数で ボトムシート / 全画面 / 全画面+検索 に自動で切替) -->
+        <div id="ui-list" class="flex flex-col gap-2" hidden>
+          <button id="list-open" type="button" class="btn-primary w-full">
+            <AppIcon name="list" size={20} /> 選択肢から選ぶ
           </button>
-          <p id="wheel-summary" class="text-center text-xs text-slate-500"></p>
+          <p id="list-summary" class="text-center text-sm text-slate-600"></p>
         </div>
 
         <!-- matrix マトリクス選択 (項目 × 頻度) -->
@@ -335,7 +335,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
       uiVoice: $('ui-voice'),
       uiChip: $('ui-chip'),
       uiMulti: $('ui-multi'),
-      uiWheel: $('ui-wheel'),
+      uiList: $('ui-list'),
       uiMatrix: $('ui-matrix'),
       uiSlider: $('ui-slider'),
       uiStepper: $('ui-stepper'),
@@ -364,8 +364,8 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
       multiTitle: $('multi-title'),
       multiConfirm: $<HTMLButtonElement>('multi-confirm'),
 
-      wheelOpen: $<HTMLButtonElement>('wheel-open'),
-      wheelSummary: $('wheel-summary'),
+      listOpen: $<HTMLButtonElement>('list-open'),
+      listSummary: $('list-summary'),
       matrixOpen: $<HTMLButtonElement>('matrix-open'),
       matrixSummary: $('matrix-summary'),
 

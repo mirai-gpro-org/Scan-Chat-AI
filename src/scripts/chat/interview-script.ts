@@ -16,8 +16,10 @@
  *   - text   : 自由入力 (数値入力ヒント可)
  *   - chip   : 単一選択 (選択肢が少ない)
  *   - multi  : 複数選択 (ボトムシート・チェックリスト / 選択肢が少ない)
- *   - wheel  : ホイール (ドラム) 選択モーダル。選択肢が多い設問向け。
- *              multi:true で複数選択に対応 (タップでトグル)。
+ *   - list   : 選択肢モーダル。件数で 3 段階に自動で切り替わる
+ *              (〜7件=ボトムシート / 8〜12件=全画面 / 13件〜=全画面+検索+分類)。
+ *              multi:true で複数選択。**旧 wheel (ホイール) は 2026-08 に廃止**
+ *              — 経緯は choice-picker.ts の冒頭コメント。
  *   - slider : 1〜10 のスケール
  *   - matrix : 行 (項目) × 列 (頻度) のマトリクス選択 (Q 食品摂取頻度)
  *
@@ -40,9 +42,24 @@ export interface ChoiceOpt {
   label: string;
   /** AppIcon / icon-svg の意味名 (絵文字は本番素材にしない)。 */
   icon?: string;
+  /**
+   * 選ぶと他の選択を全て解除する (「なし」)。
+   * 逆に他を選ぶとこの項目が外れる。以前は排他処理が無く
+   * 「なし」と「高血圧」を同時に選べた (2026-08 修正)。
+   */
+  exclusive?: boolean;
+  /** ラベルの下に出す 1 行の補足。 */
+  note?: string;
+  /** 分類見出し (13 件以上の list で sticky 見出しになる)。 */
+  group?: string;
+  /**
+   * 検索用の読み (ひらがな)。漢字を打てない/読めない人のために持つ。
+   * ラベルと読みの**両方**に対して部分一致で照合する。
+   */
+  kana?: string;
 }
 
-export type AnswerKind = 'text' | 'chip' | 'multi' | 'wheel' | 'slider' | 'matrix';
+export type AnswerKind = 'text' | 'chip' | 'multi' | 'list' | 'slider' | 'matrix';
 
 export type AnswerValue = string | string[] | number;
 export type Answers = Record<string, AnswerValue>;
@@ -61,10 +78,10 @@ export interface QuestionDef {
   multi_options?: ChoiceOpt[];
   multi_title?: string;
 
-  /** wheel 用 */
-  wheel_options?: ChoiceOpt[];
-  wheel_title?: string;
-  /** wheel を複数選択にする */
+  /** list 用 (旧 wheel_options)。件数でレイアウトが決まるので指定は不要。 */
+  list_options?: ChoiceOpt[];
+  list_title?: string;
+  /** list を複数選択にする */
   multi?: boolean;
 
   /** slider 用 */
@@ -108,17 +125,60 @@ const SECTION_TITLE: Record<SectionId, string> = Object.fromEntries(
 
 const opt = (labels: string[]): ChoiceOpt[] => labels.map((label) => ({ label }));
 
-/** 疾患リスト (現病歴 / 既往歴 共通) */
-const DISEASES = opt([
-  'なし', '胃がん', '大腸がん', '肺がん', '乳がん', '肝臓がん',
-  '甲状腺機能低下症', '甲状腺機能亢進症', '高脂血症', '高血圧', '骨粗鬆症',
-  '脳梗塞', '脳卒中', '脳出血', '大動脈瘤', '不整脈', '心筋梗塞', '狭心症',
-  'アルツハイマー病', 'うつ病', '1型糖尿病', '2型糖尿病', '肺気腫', '喘息',
-  'COPD', '人工透析', 'その他',
-]);
+/**
+ * 既往・現病歴の選択肢 27 件 (H-CURRENT / H-PAST 共用)。
+ *
+ * ⚠️ **label は上流との契約**。この 27 件は問診で完結せず、
+ *   `docs/lab/questionnaire_to_lab_csv_spec.md §4` の「既往・現病歴」経由で
+ *   4 社の上りフォームへ流れる (リージャー 行25 / LAiF 行4 /
+ *   プリベント 行13-23 / Genoplan 行5-34)。**文字列を変えると CSV 生成が壊れる**ので、
+ *   改名する場合は先に各社フォームの実物で写像を確認すること。
+ *   (「高脂血症→脂質異常症」「脳卒中と脳梗塞/脳出血の重複」「肺気腫と COPD の重複」は
+ *    既知の論点だが、上流確認が済むまで**手を付けない**。)
+ *
+ * group / kana は**表示と検索のためだけ**に足したもの。並び順は分類が連続するよう
+ * 組み替えてあるが、label 自体は 1 文字も変えていない (件数も 27 のまま)。
+ */
+const DISEASES: ChoiceOpt[] = [
+  { label: 'なし', exclusive: true, note: 'ほかの選択を解除します', kana: 'なし' },
+
+  { label: '胃がん',   group: 'がん', kana: 'いがん' },
+  { label: '大腸がん', group: 'がん', kana: 'だいちょうがん' },
+  { label: '肺がん',   group: 'がん', kana: 'はいがん' },
+  { label: '乳がん',   group: 'がん', kana: 'にゅうがん' },
+  { label: '肝臓がん', group: 'がん', kana: 'かんぞうがん' },
+
+  { label: '心筋梗塞', group: '心臓', kana: 'しんきんこうそく' },
+  { label: '狭心症',   group: '心臓', kana: 'きょうしんしょう' },
+  { label: '不整脈',   group: '心臓', kana: 'ふせいみゃく' },
+
+  { label: '脳梗塞',     group: '脳・血管', kana: 'のうこうそく' },
+  { label: '脳出血',     group: '脳・血管', kana: 'のうしゅっけつ' },
+  { label: '脳卒中',     group: '脳・血管', kana: 'のうそっちゅう' },
+  { label: '大動脈瘤',   group: '脳・血管', kana: 'だいどうみゃくりゅう' },
+
+  { label: '高血圧',           group: '血圧・代謝・内分泌', kana: 'こうけつあつ' },
+  { label: '高脂血症',         group: '血圧・代謝・内分泌', kana: 'こうしけっしょう' },
+  { label: '1型糖尿病',        group: '血圧・代謝・内分泌', kana: 'いちがたとうにょうびょう' },
+  { label: '2型糖尿病',        group: '血圧・代謝・内分泌', kana: 'にがたとうにょうびょう' },
+  { label: '甲状腺機能低下症', group: '血圧・代謝・内分泌', kana: 'こうじょうせんきのうていかしょう' },
+  { label: '甲状腺機能亢進症', group: '血圧・代謝・内分泌', kana: 'こうじょうせんきのうこうしんしょう' },
+
+  { label: '喘息',   group: '呼吸器', kana: 'ぜんそく' },
+  { label: '肺気腫', group: '呼吸器', kana: 'はいきしゅ' },
+  { label: 'COPD',   group: '呼吸器', kana: 'こーぴーでぃー' },
+
+  { label: 'アルツハイマー病', group: '脳神経・精神', kana: 'あるつはいまーびょう' },
+  { label: 'うつ病',           group: '脳神経・精神', kana: 'うつびょう' },
+
+  { label: '骨粗鬆症', group: 'その他', kana: 'こつそしょうしょう' },
+  { label: '人工透析', group: 'その他', kana: 'じんこうとうせき' },
+  { label: 'その他',   group: 'その他', kana: 'そのた' },
+];
 
 const SYMPTOMS: ChoiceOpt[] = [
-  { label: 'なし', icon: 'ok' },
+  // 「なし」は排他。選ぶと他が全て外れ、他を選ぶとこれが外れる。
+  { label: 'なし', exclusive: true, note: 'ほかの選択を解除します' },
   { label: '頭痛', icon: 'headache' },
   { label: '肩こり', icon: 'shoulder' },
   { label: '腰痛', icon: 'back-pain' },
@@ -222,22 +282,22 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
 
   // ───── 健康状態、既往歴・現病歴 ─────
   {
-    id: 'H-SYMPTOMS', section_id: 'health', answer_kind: 'wheel', multi: true,
+    id: 'H-SYMPTOMS', section_id: 'health', answer_kind: 'list', multi: true,
     question: '現在気になる自覚症状を教えてください。',
-    wheel_title: '気になる自覚症状（複数選択可）',
-    wheel_options: SYMPTOMS,
+    list_title: '気になる自覚症状（複数選択可）',
+    list_options: SYMPTOMS,
   },
   {
-    id: 'H-CURRENT', section_id: 'health', answer_kind: 'wheel', multi: true,
+    id: 'H-CURRENT', section_id: 'health', answer_kind: 'list', multi: true,
     question: '現在罹患している疾患を教えてください。',
-    wheel_title: '現在罹患している疾患（複数選択可）',
-    wheel_options: DISEASES,
+    list_title: '現在罹患している疾患（複数選択可）',
+    list_options: DISEASES,
   },
   {
-    id: 'H-PAST', section_id: 'health', answer_kind: 'wheel', multi: true,
+    id: 'H-PAST', section_id: 'health', answer_kind: 'list', multi: true,
     question: '過去に罹患した疾患名を教えてください。',
-    wheel_title: '過去に罹患した疾患（複数選択可）',
-    wheel_options: DISEASES,
+    list_title: '過去に罹患した疾患（複数選択可）',
+    list_options: DISEASES,
   },
   {
     id: 'H-TREAT-STATUS', section_id: 'health', answer_kind: 'chip',
@@ -284,10 +344,10 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
 
   // ───── 飲酒習慣 ─────
   {
-    id: 'D-FREQ', section_id: 'drinking', answer_kind: 'wheel',
+    id: 'D-FREQ', section_id: 'drinking', answer_kind: 'list',
     question: '現在の飲酒習慣はありますか？',
-    wheel_title: '飲酒の頻度を選んでください',
-    wheel_options: opt([
+    list_title: '飲酒の頻度を選んでください',
+    list_options: opt([
       '毎日飲む', '週4〜5日飲む', '週2〜3日飲む', '月2〜4回飲む',
       '月1回以下飲む', '過去飲んでいたが、現在はまったく飲まない', '元々まったく飲まない',
     ]),
@@ -315,10 +375,10 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
 
   // ───── 食生活 ─────
   {
-    id: 'F-HABITS', section_id: 'diet', answer_kind: 'wheel', multi: true,
+    id: 'F-HABITS', section_id: 'diet', answer_kind: 'list', multi: true,
     question: '食事について、以下のうち該当するものを教えてください。',
-    wheel_title: '食事について該当するもの（複数選択可）',
-    wheel_options: opt([
+    list_title: '食事について該当するもの（複数選択可）',
+    list_options: opt([
       '朝食を抜くことが多い', '何でも食べる', '嚙みづらい', '噛めない',
       '食べる速度が早い', '食べる速度が遅い',
       '就寝2時間前以内の食事が週3回以上ある', '外食が多い',
@@ -389,10 +449,10 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
     chips: opt(['3時間未満', '3〜6時間', '6〜9時間', '9〜12時間', '12時間以上']),
   },
   {
-    id: 'E-TYPE', section_id: 'exercise', answer_kind: 'wheel',
+    id: 'E-TYPE', section_id: 'exercise', answer_kind: 'list',
     question: '主な運動の種類を教えてください。',
-    wheel_title: '主な運動の種類を選んでください',
-    wheel_options: EXERCISE_TYPES,
+    list_title: '主な運動の種類を選んでください',
+    list_options: EXERCISE_TYPES,
     when: (a) => a['E-FREQ'] !== 'ほとんどしない',
   },
 
@@ -450,10 +510,10 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
   // 通常は申込情報 (customer.lab_tests.test_type) から供給され、この設問は提示しない。
   // 申込情報が取れない場合のみフォールバックで提示する (複数検査可＝multi)。
   {
-    id: 'EXAM-TYPE', section_id: 'exam', answer_kind: 'wheel', multi: true,
+    id: 'EXAM-TYPE', section_id: 'exam', answer_kind: 'list', multi: true,
     question: '今回実施いただく／いただいた検査について、当てはまるものを教えてください。',
-    wheel_title: '実施する検査を選んでください（複数選択可）',
-    wheel_options: opt([T_WELLTECT, T_GENE, T_CANCER, T_BLOOD, T_AIPRED, T_AIPREV]),
+    list_title: '実施する検査を選んでください（複数選択可）',
+    list_options: opt([T_WELLTECT, T_GENE, T_CANCER, T_BLOOD, T_AIPRED, T_AIPREV]),
   },
 
   // ───── 検査別の詳細 (EXAM-TYPE で出し分け) ─────
@@ -583,7 +643,7 @@ export class InterviewEngine {
 
 /** 表示用: 回答を人間が読める短い文字列にまとめる */
 export function formatAnswerLabel(q: QuestionDef, a: AnswerValue): string {
-  if (q.answer_kind === 'multi' || (q.answer_kind === 'wheel' && q.multi)) {
+  if (q.answer_kind === 'multi' || (q.answer_kind === 'list' && q.multi)) {
     const arr = Array.isArray(a) ? a : [];
     return arr.length === 0 ? 'なし' : arr.join('、');
   }
