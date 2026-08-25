@@ -145,6 +145,7 @@ export async function inventoryElithSource(sourcePrefix: string): Promise<Invent
 export interface HealthAgeRecord {
   biological_age: number | null;   // 健康年齢
   chronological_age: number | null; // 実年齢
+  sex: 'male' | 'female' | null;   // 性別 (inputs.markers.sex 由来。subject.sex に載せる)
   test_date: string | null;        // 元データ取得日
   computed_at: string | null;      // 算出日時
   delta: number | null;            // biological - chronological
@@ -198,6 +199,12 @@ export interface AssembleOptions {
    * age は PII 除去済み元データから再計算できないため、算出済み(health_age_scores)を突合して載せる。
    */
   healthAgeByRef?: Record<string, HealthAgeRecord>;
+  /**
+   * 被験者情報リゾルバ (案B): clientId(=diagnostic_user_id) → {sex, dateOfBirth}。
+   * 指定時、全納品ファイルの subject.sex/age を顧客DB由来で充填する (年齢=生年月日×各ファイルの test_date)。
+   * DOB自体は出力しない (PII非送付)。未指定/該当顧客なしの場合は subject を変更しない。
+   */
+  resolveSubject?: SubjectResolver;
 }
 
 /** 本日 (UTC) を YYYY_MM_DD で返す。 */
@@ -206,6 +213,38 @@ function todayYmd(): string {
 }
 function randomUuid(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+}
+
+/** 被験者情報 (顧客DB由来)。PII非送付=性別と生年月日のみ受領し、出力は年齢に変換 (DOBは載せない)。 */
+export interface SubjectInfo {
+  sex: 'male' | 'female' | null;
+  dateOfBirth: string | null; // YYYY-MM-DD (customer.customer_profiles.date_of_birth)
+}
+/** clientId(=diagnostic_user_id) → 被験者情報 を解決する非同期リゾルバ (API層が customer schema を照会)。 */
+export type SubjectResolver = (diagnosticUserId: string) => Promise<SubjectInfo | null>;
+
+/** 生年月日(YYYY-MM-DD)と基準日(YYYY-MM-DD)から満年齢。算出不可は null。DOB自体は出力しない。 */
+function ageAt(dobIso: string | null, refIso: string | null): number | null {
+  if (!dobIso || !refIso) return null;
+  const b = dobIso.split('-').map(Number);
+  const r = refIso.split('-').map(Number);
+  if (b.length !== 3 || r.length !== 3 || b.some((n) => Number.isNaN(n)) || r.some((n) => Number.isNaN(n))) return null;
+  let age = r[0] - b[0];
+  if (r[1] < b[1] || (r[1] === b[1] && r[2] < b[2])) age--;
+  return age >= 0 && age < 150 ? age : null;
+}
+
+/**
+ * 納品JSONの subject に性別・年齢を充填 (顧客DB由来・案B)。
+ * 年齢 = 生年月日 × そのファイルの test_date で算出。顧客情報/検査日が無い項目は既存値を保持 (捏造しない)。
+ */
+function applySubject(obj: Record<string, unknown>, subj: SubjectInfo | null): void {
+  if (!subj) return;
+  const existing = obj.subject && typeof obj.subject === 'object' ? (obj.subject as Record<string, unknown>) : {};
+  const existingAge = typeof existing.age === 'number' ? existing.age : null;
+  const existingSex = existing.sex === 'male' || existing.sex === 'female' ? existing.sex : null;
+  const testDate = typeof obj.test_date === 'string' ? obj.test_date : null;
+  obj.subject = { sex: subj.sex ?? existingSex, age: ageAt(subj.dateOfBirth, testDate) ?? existingAge };
 }
 
 /** 検査を client_id 単位にグループ化 (各リストは検査日 desc)。複数日付 = 時系列。 */
@@ -224,9 +263,12 @@ function groupByClient(items: CatalogItem[]): Map<string, CatalogItem[]> {
 }
 
 /** 健康年齢の納品ファイル (エンベロープは他の検査ファイルに準拠)。 */
-function buildHealthAgeJson(userId: string, bundleDate: string, rec: HealthAgeRecord, sourceRef: string): string {
+function buildHealthAgeJson(userId: string, bundleDate: string, rec: HealthAgeRecord, sourceRef: string, subj: SubjectInfo | null): string {
   const testDate = rec.test_date && /^\d{4}-\d{2}-\d{2}$/.test(rec.test_date) ? rec.test_date : bundleDate.replace(/_/g, '-');
   const computedDate = rec.computed_at ? rec.computed_at.slice(0, 10) : null;
+  // subject: 案B=顧客DB由来で充填 (年齢=生年月日×test_date)。無ければ算出時の値にフォールバック。
+  const subjectSex = subj?.sex ?? rec.sex ?? null;
+  const subjectAge = ageAt(subj?.dateOfBirth ?? null, testDate) ?? rec.chronological_age;
   const obj = {
     format_id: 'HealthAgeData',
     schema_version: ELITH_HANDOFF_SCHEMA_VERSION,
@@ -235,7 +277,7 @@ function buildHealthAgeJson(userId: string, bundleDate: string, rec: HealthAgeRe
     diagnostic_id: randomUuid(),
     test_date: testDate,
     exported_at: new Date().toISOString(),
-    subject: { sex: null, age: rec.chronological_age }, // 実年齢は subject.age にも保持 (他ファイル準拠)
+    subject: { sex: subjectSex, age: subjectAge }, // 案B: 顧客DB由来(年齢=生年月日×test_date)。無ければ算出時の性別/実年齢
     source: {
       origin: 'scan-chat-ai',
       app: 'scan-chat-ai',
@@ -307,10 +349,11 @@ function sanitizeDelivery(obj: Record<string, unknown>): MeasurementAnomaly[] {
 }
 
 /** JSON テキストの client_id を new へ書き換え + 納品用サニタイズ (パース失敗時は素の置換にフォールバック)。 */
-function rewriteClientId(jsonText: string, newId: string, sourceKey: string): { text: string; anomalies: MeasurementAnomaly[] } {
+function rewriteClientId(jsonText: string, newId: string, sourceKey: string, subj: SubjectInfo | null): { text: string; anomalies: MeasurementAnomaly[] } {
   try {
     const obj = JSON.parse(jsonText) as Record<string, unknown>;
     obj.client_id = newId;
+    applySubject(obj, subj); // 案B: subject.sex/age を顧客DB由来で充填 (年齢=生年月日×test_date)
     // Elith 要望(2026-07): 納品物に監査メタ(assembled_from)を載せない。
     // トレース(元 sourceKey → 納品 newKey)は assemble の戻り値 sources[] に保持する。
     void sourceKey;
@@ -428,6 +471,15 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
   for (const p of plan) {
     const sources: AssembledUserSource[] = [];
     const files: S3PutFile[] = [];
+    // 案B: この被験者の性別・生年月日を顧客DB(customer_profiles)から解決 (代表=picks の元 clientId=diagnostic_user_id)。
+    // best-effort: 該当顧客が無ければ null (テストIDや未登録は subject 変更なし)。年齢は各ファイルの test_date で算出。
+    const srcClientId = Object.values(p.picks)
+      .map((it) => it?.clientId)
+      .find((c): c is string => typeof c === 'string' && c.length > 0) ?? null;
+    let subj: SubjectInfo | null = null;
+    if (srcClientId && opts.resolveSubject) {
+      try { subj = await opts.resolveSubject(srcClientId); } catch { subj = null; }
+    }
     for (const f of DELIVERY_FORMAT_IDS) {
       const item = p.picks[f];
       if (!item) continue;
@@ -439,7 +491,7 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
         for (const s of series) {
           const text = await fetchText(s.key);
           const dataItems = countDataItems(text);
-          const { text: rewritten, anomalies } = rewriteClientId(text, p.userId, s.key);
+          const { text: rewritten, anomalies } = rewriteClientId(text, p.userId, s.key, subj);
           const bd = /^\d{4}_\d{2}_\d{2}$/.test(s.date) ? s.date : bundleDate;
           const newKey = `${deliveryPrefix}user/${p.userId}/date/${bd}/${f}_date_${bd}_user_${p.userId}.json`;
           files.push({ key: newKey, contentType: 'application/json; charset=utf-8', body: rewritten, bytes: utf8Bytes(rewritten) });
@@ -449,7 +501,7 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
         // 単発 format (遺伝子/問診): 最新1件を統一日付へ。JSON 内の test_date は原本のまま。
         const text = await fetchText(item.key);
         const dataItems = countDataItems(text);
-        const { text: rewritten, anomalies } = rewriteClientId(text, p.userId, item.key);
+        const { text: rewritten, anomalies } = rewriteClientId(text, p.userId, item.key, subj);
         const newKey = `${deliveryPrefix}user/${p.userId}/date/${bundleDate}/${f}_date_${bundleDate}_user_${p.userId}.json`;
         files.push({ key: newKey, contentType: 'application/json; charset=utf-8', body: rewritten, bytes: utf8Bytes(rewritten) });
         sources.push({ formatId: f, sourceKey: item.key, sourceDate: item.date, deliveredDate: bundleDate, newKey, dataItems, ...(anomalies.length ? { anomalies } : {}) });
@@ -481,7 +533,7 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
         const rec = opts.healthAgeByRef[sourceKey];
         const stem = `HealthAgeData_date_${date}_user_${p.userId}`;
         const key = `${deliveryPrefix}user/${p.userId}/date/${date}/${stem}.json`;
-        const bodyStr = buildHealthAgeJson(p.userId, date, rec, sourceKey);
+        const bodyStr = buildHealthAgeJson(p.userId, date, rec, sourceKey, subj);
         files.push({ key, contentType: 'application/json; charset=utf-8', body: bodyStr, bytes: utf8Bytes(bodyStr) });
         sources.push({
           formatId: 'HealthAgeData', sourceKey, sourceDate: rec.test_date ?? date,
