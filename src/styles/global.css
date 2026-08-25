@@ -326,7 +326,7 @@
   .lp-progress-track { @apply h-1.5 w-full overflow-hidden rounded-full bg-slate-200; }
   .lp-progress-fill { @apply block h-full rounded-full bg-brand-600; transition: width 0.2s ease-out; }
   .lp-progress-text { @apply mt-1 flex items-center justify-between text-sm text-slate-600; }
-  .lp-progress-left { @apply font-medium text-brand-700; }
+  .lp-progress-pct { @apply font-medium text-brand-700; }
   .lp-root[data-layout='sheet'] .lp-sub { @apply text-left; }
 
   .lp-search { @apply relative mt-3; }

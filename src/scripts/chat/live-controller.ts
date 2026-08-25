@@ -300,11 +300,10 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
    * 全画面の選択画面は画面トップの進捗バーを隠すので、**一律でモーダル側にも出す**
    * (発注者指示 2026-08)。
    */
-  function progressSnapshot(): { percent: number; label: string; remaining: number } {
+  function progressSnapshot(): { percent: number; label: string } {
     return {
       percent: clamp(engine.currentPercent(), 0, 100),
       label: currentQ?.section_title ?? '',
-      remaining: engine.remainingCount(),
     };
   }
 
@@ -1094,6 +1093,13 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       setTimeout(() => void openListForCurrent(), 150);
     } else if (kind === 'matrix') {
       setTimeout(() => void openMatrixForCurrent(), 150);
+    } else if (kind === 'text') {
+      // 身長・体重のような入力欄は**カーソルを置いた状態**で出す (発注者指示 2026-08)。
+      // showWidget で hidden を外した直後だとフォーカスが乗らないので 1 フレーム待つ。
+      // preventScroll: 会話ログが飛ばないように (入力欄は画面下部に固定表示されている)。
+      requestAnimationFrame(() => {
+        try { refs.textInput.focus({ preventScroll: true }); } catch { refs.textInput.focus(); }
+      });
     }
   }
 

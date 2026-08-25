@@ -79,11 +79,13 @@ export interface PickerProgress {
   percent: number;
   /** セクション名など */
   label: string;
-  /** 残りの設問数 (表示中を含む)。分岐で変わるので現時点の見込み。 */
-  remaining: number;
 }
 
-/** 進捗バー + 「残り N 問」。スクロールしないヘッダ側に置く。 */
+/**
+ * 進捗バー + パーセント。スクロールしないヘッダ側に置く。
+ * **表記は画面トップのヘッダ (`#progress-text`) と同じパーセントに統一**する
+ * (発注者指示 2026-08。以前は「残り N 問」を出していて表記が割れていた)。
+ */
 function progressHtml(p?: PickerProgress): string {
   if (!p) return '';
   const pct = Math.max(0, Math.min(100, p.percent));
@@ -94,7 +96,7 @@ function progressHtml(p?: PickerProgress): string {
       </div>
       <p class="lp-progress-text">
         <span>${escapeHtml(p.label)}</span>
-        <span class="lp-progress-left">残り ${p.remaining} 問</span>
+        <span class="lp-progress-pct tnum">${Math.round(pct)}%</span>
       </p>
     </div>`;
 }
