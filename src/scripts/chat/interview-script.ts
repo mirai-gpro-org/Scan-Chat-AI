@@ -272,12 +272,12 @@ const RAW: Omit<QuestionDef, 'section_title'>[] = [
   {
     id: 'B-WEIGHT-CHANGE', section_id: 'basic', answer_kind: 'multi',
     question: 'ご自身の体重変化について、該当するものを教えてください。',
-    multi_title: '該当するものをすべて選んでください',
-    multi_options: opt([
-      '20歳の頃と比べて、今は10kg以上増加した',
-      'この1年間で体重の増加が3kg以上あった',
-      '該当するものはない',
-    ]),
+    multi_title: '体重の変化について',
+    multi_options: [
+      { label: '20歳の頃と比べて、今は10kg以上増加した' },
+      { label: 'この1年間で体重の増加が3kg以上あった' },
+      { label: '該当するものはない', exclusive: true, note: 'ほかの選択を解除します' },
+    ],
   },
 
   // ───── 健康状態、既往歴・現病歴 ─────

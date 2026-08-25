@@ -191,18 +191,12 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
           </p>
         </div>
 
-        <!-- chip 単一選択 -->
-        <div id="ui-chip" class="stagger flex flex-col gap-2" hidden></div>
-
-        <!-- multi 複数選択 -->
-        <div id="ui-multi" class="flex flex-col gap-2" hidden>
-          <button id="multi-open" type="button" class="btn-primary w-full">
-            ＋ 選択肢から選ぶ
-          </button>
-          <p id="multi-summary" class="text-center text-xs text-slate-500"></p>
-        </div>
-
-        <!-- list 選択肢モーダル (件数で ボトムシート / 全画面 / 全画面+検索 に自動で切替) -->
+        <!--
+          選択式 (chip 単一 / multi 複数 / list 多件数) は**すべて同じ選択画面**を使う。
+          件数と収まり具合で ボトムシート / 全画面 / 全画面+検索 に自動で切り替わる
+          (実装 src/scripts/chat/choice-picker.ts)。以前は chip だけインラインのカード、
+          multi だけ別のボトムシートで、デザイン案と見た目が揃っていなかった。
+        -->
         <div id="ui-list" class="flex flex-col gap-2" hidden>
           <button id="list-open" type="button" class="btn-primary w-full">
             <AppIcon name="list" size={20} /> 選択肢から選ぶ
@@ -281,20 +275,6 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
     </div>
   </main>
 
-  <!-- マルチ選択モーダル (ボトムシート) -->
-  <div id="multi-modal" hidden>
-    <div class="sheet-backdrop" data-close-modal></div>
-    <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="multi-title">
-      <div class="sheet-handle"></div>
-      <h2 id="multi-title" class="mb-3 text-base font-semibold">該当するものを選んでください</h2>
-      <p class="mb-4 text-xs text-slate-500">複数選択できます</p>
-      <div id="multi-options" class="space-y-2"></div>
-      <div class="mt-5 flex gap-2">
-        <button type="button" class="btn-secondary flex-1" data-close-modal>キャンセル</button>
-        <button id="multi-confirm" type="button" class="btn-primary flex-1">決定</button>
-      </div>
-    </div>
-  </div>
 </BaseLayout>
 
 <script>
@@ -333,8 +313,6 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
       questionText: $('question-text'),
 
       uiVoice: $('ui-voice'),
-      uiChip: $('ui-chip'),
-      uiMulti: $('ui-multi'),
       uiList: $('ui-list'),
       uiMatrix: $('ui-matrix'),
       uiSlider: $('ui-slider'),
@@ -357,12 +335,6 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
       textSubmit: $<HTMLButtonElement>('text-submit'),
       textExample: $('text-example'),
 
-      multiOpen: $<HTMLButtonElement>('multi-open'),
-      multiSummary: $('multi-summary'),
-      multiModal: $('multi-modal'),
-      multiOptions: $('multi-options'),
-      multiTitle: $('multi-title'),
-      multiConfirm: $<HTMLButtonElement>('multi-confirm'),
 
       listOpen: $<HTMLButtonElement>('list-open'),
       listSummary: $('list-summary'),

@@ -65,8 +65,6 @@ export interface LiveRefs {
   questionText: HTMLElement;
 
   uiVoice: HTMLElement;
-  uiChip: HTMLElement;
-  uiMulti: HTMLElement;
   uiList: HTMLElement;
   uiMatrix: HTMLElement;
   uiSlider: HTMLElement;
@@ -89,12 +87,6 @@ export interface LiveRefs {
   textSubmit: HTMLButtonElement;
   textExample: HTMLElement;
 
-  multiOpen: HTMLButtonElement;
-  multiSummary: HTMLElement;
-  multiModal: HTMLElement;
-  multiOptions: HTMLElement;
-  multiTitle: HTMLElement;
-  multiConfirm: HTMLButtonElement;
 
   listOpen: HTMLButtonElement;
   listSummary: HTMLElement;
@@ -279,7 +271,6 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     if (!confirm('問診をリセットしますか？（履歴が削除されます）')) return;
     stopLive();
     closeAllPickers();
-    closeMultiModal();
     clearChatSession(SESSION_ID);
     clearInterviewResult(SESSION_ID);
     session = createEmptySession(SESSION_ID);
@@ -344,33 +335,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     applyModeUI();
   });
 
-  // chip 選択
-  refs.uiChip.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-chip]');
-    if (!btn) return;
-    const label = btn.dataset.chip ?? '';
-    // フラッシュ視覚フィードバック
-    btn.classList.add('flash', 'selected');
-    submitAnswer(label);
-  });
 
-  // multi モーダル
-  refs.multiOpen.addEventListener('click', () => openMultiModal());
-  refs.multiModal.addEventListener('click', (e) => {
-    const target = e.target as HTMLElement;
-    if (target.closest('[data-close-modal]')) closeMultiModal();
-  });
-  refs.multiConfirm.addEventListener('click', () => {
-    const checked = refs.multiOptions.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked');
-    const labels = Array.from(checked).map((c) => c.value);
-    closeMultiModal();
-    if (labels.length === 0) {
-      submitAnswer('特になし');
-    } else {
-      refs.multiSummary.textContent = `選択: ${labels.join('、')}`;
-      submitAnswer(labels.join('、'));
-    }
-  });
 
   // list (選択肢モーダル)
   refs.listOpen.addEventListener('click', () => void openListForCurrent());
@@ -400,17 +365,23 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     refs.textInput.value = '';
     submitAnswer(t);
   });
+  // 改行キーで回答を確定する (身長・体重のような 1 行の入力で「送信」まで指を運ばせない)。
+  // 改行を入れたいときは Shift+Enter。Cmd/Ctrl+Enter も従来どおり確定。
+  // ※ iOS の数字キーパッドには改行キーが無いため、その環境では「送信」ボタンが確定手段になる。
+  //   だから送信ボタンは残す (実機で要確認)。
   refs.textInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      refs.textSubmit.click();
-    }
+    if (e.key !== 'Enter') return;
+    if (e.shiftKey) return; // 改行
+    // IME 変換中の Enter は確定操作なので拾わない
+    if (e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    refs.textSubmit.click();
   });
 
   // fallback (常時併設) — 自由入力、質問にしばられず会話可能
   refs.fallbackSend.addEventListener('click', () => sendFallback());
   refs.fallbackInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
       e.preventDefault();
       sendFallback();
     }
@@ -464,8 +435,9 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
   function mapKind(k?: string): WidgetKey {
     switch (k) {
-      case 'chip': return 'chip';
-      case 'multi': return 'multi';
+      // 選択式はすべて同じ選択画面 (件数と収まりでレイアウトが決まる)
+      case 'chip':
+      case 'multi':
       case 'list': return 'list';
       case 'matrix': return 'matrix';
       case 'slider': return 'slider';
@@ -475,13 +447,11 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     }
   }
 
-  type WidgetKey = 'voice' | 'chip' | 'multi' | 'list' | 'matrix' | 'slider' | 'stepper' | 'text';
+  type WidgetKey = 'voice' | 'list' | 'matrix' | 'slider' | 'stepper' | 'text';
 
   function showWidget(key: WidgetKey): void {
     const map: Record<WidgetKey, HTMLElement> = {
       voice: refs.uiVoice,
-      chip: refs.uiChip,
-      multi: refs.uiMulti,
       list: refs.uiList,
       matrix: refs.uiMatrix,
       slider: refs.uiSlider,
@@ -495,8 +465,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     refs.fallbackZone.hidden = key === 'text';
     // 「音声でも・タップでも」ヒント: 選択式 widget の時に表示
     refs.dualHint.hidden = !(
-      key === 'chip' || key === 'multi' || key === 'list' ||
-      key === 'matrix' || key === 'slider' || key === 'stepper'
+      key === 'list' || key === 'matrix' || key === 'slider' || key === 'stepper'
     );
   }
 
@@ -507,34 +476,39 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     refs.stepperValue.textContent = String(next);
   }
 
-  function openMultiModal(): void {
-    refs.multiModal.hidden = false;
-    document.body.style.overflow = 'hidden';
+
+  /** その設問が複数選択か (chip=常に単一 / multi=常に複数 / list は q.multi 次第)。 */
+  function isMultiQ(q: QuestionDef): boolean {
+    return q.answer_kind === 'multi' || (q.answer_kind === 'list' && !!q.multi);
   }
 
-  function closeMultiModal(): void {
-    refs.multiModal.hidden = true;
-    document.body.style.overflow = '';
+  /** その設問の選択肢 (chip / multi / list で置き場所が違うだけ)。 */
+  function optionsOf(q: QuestionDef): ChoiceOption[] {
+    if (q.answer_kind === 'chip') return q.chips ?? [];
+    if (q.answer_kind === 'multi') return q.multi_options ?? [];
+    return q.list_options ?? [];
   }
 
   /**
-   * 現在の list 設問で選択肢モーダルを開く。
-   * レイアウト (ボトムシート / 全画面 / 全画面+検索) は件数から choice-picker が決める。
+   * 現在の選択式設問で選択画面を開く (chip / multi / list 共通)。
+   * レイアウト (ボトムシート / 全画面 / 全画面+検索) は件数と収まり具合から
+   * choice-picker が決める。呼び出し側は指定しない。
    */
   async function openListForCurrent(): Promise<void> {
     const q = currentQ;
-    if (!q || q.answer_kind !== 'list') return;
-    const initial = q.multi
+    if (!q || mapKind(q.answer_kind) !== 'list') return;
+    const multi = isMultiQ(q);
+    const initial = multi
       ? (engine.getAnswers()[q.id] as string[] | undefined) ?? []
       : [];
     const result = await openListPicker({
-      title: q.list_title ?? q.question,
-      options: q.list_options ?? [],
-      multi: !!q.multi,
+      title: q.list_title ?? q.multi_title ?? q.question,
+      options: optionsOf(q),
+      multi,
       initial,
     });
     if (result === null) return; // キャンセル
-    if (q.multi) {
+    if (multi) {
       submitAnswer(result.length === 0 ? 'なし' : result.join('、'));
     } else {
       if (result.length === 0) return;
@@ -575,9 +549,8 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
     // 受付〜次設問表示までは音声の二重取り込みを止める
     advancing = true;
-    // 開いているモーダル (ホイール/マトリクス/複数選択) を閉じる
+    // 開いているモーダル (選択画面/マトリクス) を閉じる
     closeAllPickers();
-    closeMultiModal();
 
     const answerValue = toAnswerValue(cq, rawAnswer);
     const { next, isComplete } = engine.recordAndAdvance(answerValue);
@@ -657,7 +630,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
   /** UI に入る生文字列を engine が扱える型に変換 */
   function toAnswerValue(q: QuestionDef, raw: string): AnswerValue {
-    if (q.answer_kind === 'multi' || (q.answer_kind === 'list' && q.multi)) {
+    if (isMultiQ(q)) {
       return raw.split('、').map((s) => s.trim()).filter(Boolean);
     }
     if (q.answer_kind === 'slider') {
@@ -707,13 +680,10 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       return null; // マトリクスはタップ操作のみ
     }
 
-    const options =
-      q.answer_kind === 'chip' ? (q.chips ?? [])
-      : q.answer_kind === 'multi' ? (q.multi_options ?? [])
-      : (q.list_options ?? []);
+    const options = optionsOf(q);
     if (options.length === 0) return null;
 
-    const isMulti = q.answer_kind === 'multi' || (q.answer_kind === 'list' && q.multi);
+    const isMulti = isMultiQ(q);
 
     const matched = options
       .map((o) => ({ label: o.label, core: normalizeVoice(o.label) }))
@@ -983,15 +953,11 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     refs.skipBtn.hidden = true; // engine 版ではスキップ未対応 (将来追加)
 
     const kind = mapKind(q.answer_kind);
-    if (kind === 'chip') {
-      renderChips(q.chips ?? []);
-    } else if (kind === 'multi') {
-      renderMulti(q.multi_options ?? [], q.multi_title ?? '該当するものをすべて選んでください');
-    } else if (kind === 'list') {
+    if (kind === 'list') {
       refs.listSummary.textContent = '';
       // アイコンは Lucide 一本 (絵文字を本番素材にしない)。
       refs.listOpen.innerHTML =
-        `${iconSvg('check')}<span>${q.multi ? '選択肢から選ぶ（複数可）' : '選択肢から選ぶ'}</span>`;
+        `${iconSvg('check')}<span>${isMultiQ(q) ? '選択肢から選ぶ（複数可）' : '選択肢から選ぶ'}</span>`;
     } else if (kind === 'matrix') {
       refs.matrixSummary.textContent = '';
     } else if (kind === 'slider') {
@@ -1007,7 +973,11 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     } else if (kind === 'text') {
       refs.textInput.value = '';
       refs.textInput.placeholder = q.placeholder ?? '自由にお答えください';
-      refs.textInput.setAttribute('inputmode', q.numeric ? 'numeric' : 'text');
+      refs.textInput.setAttribute('inputmode', q.numeric ? 'decimal' : 'text');
+      // 改行キーのラベルを「完了」にして、押せば確定すると分かるようにする
+      refs.textInput.setAttribute('enterkeyhint', 'done');
+      // 1 行で足りる設問 (身長・体重など) は入力欄も 1 行にする
+      refs.textInput.rows = q.numeric ? 1 : 2;
       if (q.example) {
         refs.textExample.textContent = `入力例：${q.example}`;
         refs.textExample.hidden = false;
@@ -1017,10 +987,9 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     }
     showWidget(kind);
 
-    // 選択肢が多い設問はモーダルを自動展開 (タップ一手間を省く)
-    if (kind === 'multi') {
-      setTimeout(() => openMultiModal(), 150);
-    } else if (kind === 'list') {
+    // 選択式は自動展開 (タップ一手間を省く)。単一選択はタップ 1 回で回答が確定するので、
+    // インラインのカードだった頃とタップ数は変わらない。
+    if (kind === 'list') {
       setTimeout(() => void openListForCurrent(), 150);
     } else if (kind === 'matrix') {
       setTimeout(() => void openMatrixForCurrent(), 150);
@@ -1105,39 +1074,6 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     });
   }
 
-  function renderChips(chips: ChoiceOption[]): void {
-    refs.uiChip.innerHTML = '';
-    for (const c of chips) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'choice-card';
-      btn.dataset.chip = c.label;
-      btn.innerHTML = `${c.icon ? `<span class="emoji">${iconSvg(c.icon)}</span>` : ''}<span class="flex-1">${escapeHtml(c.label)}</span><span class="text-slate-400" aria-hidden="true">›</span>`;
-      refs.uiChip.appendChild(btn);
-    }
-    // stagger アニメーション再トリガ
-    refs.uiChip.classList.remove('stagger');
-    void refs.uiChip.offsetWidth;
-    refs.uiChip.classList.add('stagger');
-  }
-
-  function renderMulti(opts: ChoiceOption[], title: string): void {
-    refs.multiTitle.textContent = title;
-    refs.multiSummary.textContent = '';
-    refs.multiOptions.innerHTML = '';
-    for (const o of opts) {
-      const id = `m-${Math.random().toString(36).slice(2, 8)}`;
-      const wrap = document.createElement('label');
-      wrap.className = 'choice-card cursor-pointer';
-      wrap.setAttribute('for', id);
-      wrap.innerHTML = `
-        <input id="${id}" type="checkbox" value="${escapeAttr(o.label)}" class="h-5 w-5 accent-brand-600" />
-        ${o.icon ? `<span class="emoji">${iconSvg(o.icon)}</span>` : ''}
-        <span class="flex-1">${escapeHtml(o.label)}</span>
-      `;
-      refs.multiOptions.appendChild(wrap);
-    }
-  }
 
   // ── 進捗 / セクション dots ───────────────────────
 

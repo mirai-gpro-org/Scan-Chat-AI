@@ -96,14 +96,15 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
     root.className = 'lp-root';
     root.dataset.layout = layout;
 
-    const headHtml =
-      layout === 'sheet'
-        ? `<div class="sheet-handle"></div>
-           <h2 class="lp-title">${escapeHtml(title)}</h2>`
-        : `<div class="lp-bar">
-             <button type="button" class="lp-back" data-lp-cancel aria-label="戻る">${iconSvg('prev')}</button>
-             <h2 class="lp-title">${escapeHtml(title)}</h2>
-           </div>`;
+    // ヘッダはシート用 / 全画面用の両方を描いておき、CSS が data-layout で出し分ける。
+    // こうしておくと「入りきらないので全画面へ昇格」を data-layout の差し替えだけで行える。
+    const headHtml = `
+      <div class="sheet-handle"></div>
+      <div class="lp-bar">
+        <button type="button" class="lp-back" data-lp-cancel aria-label="戻る">${iconSvg('prev')}</button>
+        <h2 class="lp-title lp-title-bar">${escapeHtml(title)}</h2>
+      </div>
+      <h2 class="lp-title lp-title-sheet">${escapeHtml(title)}</h2>`;
 
     const searchHtml =
       layout === 'search'
@@ -115,7 +116,7 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
         : '';
 
     root.innerHTML = `
-      ${layout === 'sheet' ? '<div class="sheet-backdrop" data-lp-cancel></div>' : ''}
+      <div class="sheet-backdrop" data-lp-cancel></div>
       <div class="lp-panel" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
         <div class="lp-head">
           ${headHtml}
@@ -155,6 +156,9 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
 
     // ── 描画 (分類見出しは 13 件以上のときだけ出す) ───────────────
     const useGroups = layout === 'search' && options.some((o) => o.group);
+    // 1 つでもアイコンを持つ選択肢があれば、全行にアイコン枠を確保してラベルの頭を揃える
+    // (一部だけアイコンがあると、その行だけ文字が右へずれる)。
+    const anyIcon = options.some((o) => o.icon);
     let lastGroup = '';
     options.forEach((o, i) => {
       if (useGroups && o.group && o.group !== lastGroup) {
@@ -176,7 +180,7 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
       btn.setAttribute('aria-checked', String(selected.has(o.label)));
       if (selected.has(o.label)) btn.classList.add('on');
       btn.innerHTML = `
-        ${o.icon ? `<span class="lp-ico" aria-hidden="true">${iconSvg(o.icon)}</span>` : ''}
+        ${anyIcon ? `<span class="lp-ico" aria-hidden="true">${o.icon ? iconSvg(o.icon) : ''}</span>` : ''}
         <span class="lp-text">
           <span class="lp-label">${escapeHtml(o.label)}</span>
           ${o.note ? `<span class="lp-note">${escapeHtml(o.note)}</span>` : ''}
@@ -212,13 +216,30 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
     // 行ピッチから逆算しない。分類見出しが挟まると行間が一定でなくなり、
     // 見切れ量が狂う (実測 2026-08: 27件で 0.89＝ほぼ切れていない)。
     // **実際に下端をまたぐ行を見つけ、その行が PEEK 割合だけ見える高さ**に直接合わせる。
+    /**
+     * 「はみ出し」とみなす余白 (px)。リスト下端の padding だけで 2〜8px 溢れることがあり、
+     * それで全画面へ昇格したり見切れを付けたりすると、全部見えているのに画面が切り替わる。
+     */
+    const OVERFLOW_TOLERANCE = 12;
+
+    /**
+     * 入りきらないボトムシートは全画面へ昇格する (発注者指示 2026-08)。
+     * 件数が少なくてもラベルが長いと 2 行になり、シートの 80vh に収まらないことがある。
+     * その場合はシートで狭く見せず、最初から全画面で開く。
+     */
+    function promoteIfNeeded(): void {
+      if (root.dataset.layout !== 'sheet') return;
+      scroll.style.maxHeight = '';
+      if (scroll.scrollHeight > scroll.clientHeight + OVERFLOW_TOLERANCE) root.dataset.layout = 'full';
+    }
+
     const PEEK = 0.45;
     function applyPeek(): void {
       scroll.style.maxHeight = '';
       const els = itemEls().filter((el) => !el.hidden);
       if (els.length < 2) return;
       const avail = scroll.clientHeight;
-      if (scroll.scrollHeight <= avail + 1) return; // 収まっている＝何もしない
+      if (scroll.scrollHeight <= avail + OVERFLOW_TOLERANCE) return; // 収まっている＝何もしない
 
       // 下端をまたぐ行。無ければ (行の境界がちょうど下端の場合) その次の行を使う。
       let cut = els.find((el) => el.offsetTop < avail && el.offsetTop + el.offsetHeight > avail);
@@ -311,7 +332,7 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
     activeClosers.add(forceClose);
 
     const onScroll = (): void => updateMore();
-    const onResize = (): void => { applyPeek(); updateMore(); };
+    const onResize = (): void => { promoteIfNeeded(); applyPeek(); updateMore(); };
     const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') close(null); };
     scroll.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('resize', onResize);
@@ -329,10 +350,12 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
     // applyPeek は毎回 max-height を空にして測り直す = 何度呼んでも同じ結果になるので、
     // 2 フレーム待ってからもう一度当てる。
     requestAnimationFrame(() => {
+      promoteIfNeeded();
       applyPeek();
       updateMore();
       panel.focus?.();
       requestAnimationFrame(() => {
+        promoteIfNeeded();
         applyPeek();
         updateMore();
       });

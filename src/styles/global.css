@@ -176,39 +176,6 @@
   .speaker-fab.muted .speaker-ico-off { display: block; @apply text-status-action; }
   .speaker-fab.muted .speaker-label { @apply text-slate-600; }
 
-  .choice-card {
-    @apply flex min-h-touch w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white
-           px-4 py-3.5 text-left text-base font-medium text-slate-800 transition
-           hover:border-brand-400 hover:bg-brand-50 active:scale-[0.995];
-  }
-  /* 選択肢の先頭アイコン枠。絵文字ではなく SVG アイコンが入る。 */
-  .choice-card .emoji {
-    @apply inline-flex h-6 w-6 shrink-0 items-center justify-center text-slate-600;
-  }
-  .choice-card.selected {
-    @apply border-brand-600 bg-brand-50 text-brand-800 ring-2 ring-brand-300;
-  }
-  .choice-card.selected .emoji { @apply text-brand-700; }
-  .choice-card.flash { animation: card-flash 0.4s ease-out; }
-  @keyframes card-flash {
-    0%   { background-color: theme('colors.brand.100'); }
-    100% { background-color: transparent; }
-  }
-
-  .stagger > * {
-    opacity: 0;
-    animation: chip-in 0.28s ease-out forwards;
-  }
-  .stagger > *:nth-child(1) { animation-delay: 0.02s; }
-  .stagger > *:nth-child(2) { animation-delay: 0.06s; }
-  .stagger > *:nth-child(3) { animation-delay: 0.10s; }
-  .stagger > *:nth-child(4) { animation-delay: 0.14s; }
-  .stagger > *:nth-child(5) { animation-delay: 0.18s; }
-  .stagger > *:nth-child(6) { animation-delay: 0.22s; }
-  .stagger > *:nth-child(7) { animation-delay: 0.26s; }
-  .stagger > *:nth-child(8) { animation-delay: 0.30s; }
-  @keyframes chip-in { to { opacity: 1; } }
-
   .bubble-in { animation: bubble-in 0.24s ease-out both; }
   @keyframes bubble-in {
     from { opacity: 0; transform: translateY(6px); }
@@ -320,13 +287,19 @@
     padding-top: calc(env(safe-area-inset-top) + 0.75rem);
   }
   .lp-root[data-layout='sheet'] .lp-head { @apply border-b-0 pt-3; }
+  /* ヘッダは 2 種類を描いておき、ここで出し分ける (全画面への昇格を data-layout だけで行うため) */
+  .lp-root[data-layout='sheet'] .lp-bar,
+  .lp-root[data-layout='sheet'] .lp-title-bar { display: none; }
+  .lp-root:not([data-layout='sheet']) .sheet-handle,
+  .lp-root:not([data-layout='sheet']) .sheet-backdrop,
+  .lp-root:not([data-layout='sheet']) .lp-title-sheet { display: none; }
   .lp-bar { @apply flex items-center gap-1; }
   .lp-back {
     @apply -ml-2 grid h-11 w-11 shrink-0 place-items-center rounded-full text-slate-700;
   }
   .lp-back:hover { @apply bg-slate-100; }
   .lp-title { @apply flex-1 text-center text-base font-semibold text-slate-900; }
-  .lp-root[data-layout='sheet'] .lp-title { @apply text-left; }
+  .lp-title-sheet { @apply text-left; }
   /* 戻るボタン(44px)と釣り合いを取り、見出しを中央に置く */
   .lp-bar .lp-title { margin-right: 2.75rem; }
   .lp-sub { @apply mt-1 text-center text-sm text-slate-600; }
