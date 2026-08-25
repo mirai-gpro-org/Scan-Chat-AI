@@ -623,6 +623,17 @@ export class InterviewEngine {
     return Math.round((idx / (path.length - 1)) * 100);
   }
 
+  /**
+   * 残りの設問数 (いま表示している設問を含む)。
+   * `when` 分岐で経路が変わるため**現時点の見込み**であり、進捗率 (currentPercent) と同じ性質。
+   */
+  remainingCount(): number {
+    if (!this.currentId) return 0;
+    const path = this.visiblePath();
+    const idx = path.indexOf(this.currentId);
+    return idx < 0 ? 0 : path.length - idx;
+  }
+
   /** 回答済の設問を { id: value, ... } として返す */
   getAnswers(): Answers {
     return this.answersObj();

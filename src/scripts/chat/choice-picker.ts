@@ -56,11 +56,47 @@ export interface ListPickerArgs {
   /** 初期選択 (label の配列) */
   initial?: string[];
   /**
+   * 問診の進行状況。渡すと選択画面のヘッダに進捗バーと「残り N 問」を出す。
+   * 全画面の選択画面は画面トップの進捗バーを覆い隠してしまうため
+   * (「あとどのくらいで終わるか」が見えなくなる・発注者指摘 2026-08)。
+   */
+  progress?: PickerProgress;
+  /**
    * 「中止」を押したときの処理。渡すとヘッダ右上に中止ボタンを出す。
    * 選択画面は全画面/シートで問診の中止ボタンを覆い隠すため、ここからも中止できるようにする
    * (発注者指示 2026-08)。呼ばれた時点でこの選択画面は閉じている (キャンセル扱い)。
    */
   onAbort?: () => void;
+}
+
+/**
+ * 問診の進行状況。**画面を覆うモーダルには一律でこれを出す** (発注者指示 2026-08)。
+ * 全画面の選択画面は画面トップの進捗バーを覆い隠すため、
+ * 「あとどのくらいで終わるか」が分からなくなっていた。
+ */
+export interface PickerProgress {
+  /** 0-100 */
+  percent: number;
+  /** セクション名など */
+  label: string;
+  /** 残りの設問数 (表示中を含む)。分岐で変わるので現時点の見込み。 */
+  remaining: number;
+}
+
+/** 進捗バー + 「残り N 問」。スクロールしないヘッダ側に置く。 */
+function progressHtml(p?: PickerProgress): string {
+  if (!p) return '';
+  const pct = Math.max(0, Math.min(100, p.percent));
+  return `<div class="lp-progress">
+      <div class="lp-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+           aria-valuenow="${Math.round(pct)}" aria-label="問診の進行状況">
+        <span class="lp-progress-fill" style="width:${pct}%"></span>
+      </div>
+      <p class="lp-progress-text">
+        <span>${escapeHtml(p.label)}</span>
+        <span class="lp-progress-left">残り ${p.remaining} 問</span>
+      </p>
+    </div>`;
 }
 
 /** レイアウトの切替しきい値 (件数)。 */
@@ -93,7 +129,7 @@ function normalize(s: string): string {
  * @returns 選択された label 配列。キャンセルは null。
  */
 export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
-  const { title, subtitle, options, multi = false, onAbort } = args;
+  const { title, subtitle, options, multi = false, onAbort, progress } = args;
   const layout = layoutFor(options.length);
   const selected = new Set(args.initial ?? []);
 
@@ -134,6 +170,7 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
       <div class="lp-panel" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
         <div class="lp-head">
           ${headHtml}
+          ${progressHtml(progress)}
           <p class="lp-sub">${escapeHtml(subtitle ?? (multi ? 'あてはまるものをすべて選んでください' : 'タップすると回答して次へ進みます'))}</p>
           ${searchHtml}
         </div>
@@ -406,8 +443,9 @@ export function openActionSheet(args: {
   title: string;
   description?: string;
   actions: SheetAction[];
+  progress?: PickerProgress;
 }): Promise<string | null> {
-  const { title, description, actions } = args;
+  const { title, description, actions, progress } = args;
   return new Promise((resolve) => {
     const root = document.createElement('div');
     root.className = 'lp-root';
@@ -418,6 +456,7 @@ export function openActionSheet(args: {
         <div class="lp-head">
           <div class="sheet-handle"></div>
           <h2 class="lp-title lp-title-sheet">${escapeHtml(title)}</h2>
+          ${progressHtml(progress)}
           ${description ? `<p class="lp-sub">${escapeHtml(description)}</p>` : ''}
         </div>
         <div class="lp-scroll">
@@ -473,6 +512,9 @@ export interface MatrixPickerArgs {
   cols: ChoiceItem[];
   /** 初期値 row -> col label */
   initial?: Record<string, string>;
+  progress?: PickerProgress;
+  /** 「中止」を押したときの処理。渡すとヘッダ右端に中止ボタンを出す。 */
+  onAbort?: () => void;
 }
 
 /**
@@ -480,12 +522,15 @@ export interface MatrixPickerArgs {
  * @returns row -> col label の Record。キャンセルは null。
  */
 export function openMatrixPicker(args: MatrixPickerArgs): Promise<Record<string, string> | null> {
-  const { title, rows, cols } = args;
+  const { title, rows, cols, progress, onAbort } = args;
   const picked: Record<string, string> = { ...(args.initial ?? {}) };
 
   return new Promise((resolve) => {
     const root = document.createElement('div');
     root.className = 'lp-root';
+    // data-layout を付けないと CSS の出し分け (:not([data-layout='sheet'])) に当たって
+    // ハンドル・見出し・中止ボタン・スクリムが全部消える (実測 2026-08)。
+    root.dataset.layout = 'sheet';
     const rowsHtml = rows
       .map((r, ri) => {
         const colsHtml = cols
@@ -506,8 +551,12 @@ export function openMatrixPicker(args: MatrixPickerArgs): Promise<Record<string,
       <div class="sheet-backdrop" data-lp-cancel></div>
       <div class="sheet-panel" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
         <div class="sheet-handle"></div>
-        <h2 class="mb-1 text-base font-semibold">${escapeHtml(title)}</h2>
-        <p class="mb-3 text-sm text-slate-600">各項目の頻度をタップで選んでください</p>
+        <div class="lp-sheet-head">
+          <h2 class="lp-title lp-title-sheet">${escapeHtml(title)}</h2>
+          ${onAbort ? `<button type="button" class="lp-abort" data-lp-abort>${iconSvg('blocked')}<span>中止</span></button>` : ''}
+        </div>
+        ${progressHtml(progress)}
+        <p class="mb-3 mt-1 text-sm text-slate-600">各項目の頻度をタップで選んでください</p>
         <div class="matrix-wrap" data-matrix>${rowsHtml}</div>
         <div class="mt-4 flex gap-2">
           <button type="button" class="btn-secondary flex-1" data-lp-cancel>キャンセル</button>
@@ -544,6 +593,9 @@ export function openMatrixPicker(args: MatrixPickerArgs): Promise<Record<string,
     activeClosers.add(forceClose);
     root.querySelectorAll('[data-lp-cancel]').forEach((b) =>
       b.addEventListener('click', () => close(null)),
+    );
+    root.querySelectorAll('[data-lp-abort]').forEach((b) =>
+      b.addEventListener('click', () => { close(null); onAbort?.(); }),
     );
     root.querySelector('[data-lp-confirm]')!.addEventListener('click', () => close(picked));
   });

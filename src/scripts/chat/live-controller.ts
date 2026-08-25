@@ -295,6 +295,19 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   // 中止: コンパクト top-right ボタン
   refs.micBtn.addEventListener('click', () => void confirmAbort());
 
+  /**
+   * 画面を覆うモーダルへ渡す進行状況。
+   * 全画面の選択画面は画面トップの進捗バーを隠すので、**一律でモーダル側にも出す**
+   * (発注者指示 2026-08)。
+   */
+  function progressSnapshot(): { percent: number; label: string; remaining: number } {
+    return {
+      percent: clamp(engine.currentPercent(), 0, 100),
+      label: currentQ?.section_title ?? '',
+      remaining: engine.remainingCount(),
+    };
+  }
+
   /** 途中経過を localStorage へ退避する (再開用)。 */
   function persistProgress(): void {
     const st = engine.getState();
@@ -318,6 +331,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     const picked = await openActionSheet({
       title: '問診を中止しますか？',
       description: answered > 0 ? `ここまで ${answered} 問にお答えいただいています。` : undefined,
+      progress: progressSnapshot(),
       actions: [
         {
           key: 'keep', label: '回答済の問診を記憶して中止する',
@@ -566,6 +580,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       options: optionsOf(q),
       multi,
       initial,
+      progress: progressSnapshot(),
       // 選択画面は画面を覆うため、上部の中止ボタンが隠れる。ここからも中止できるようにする。
       onAbort: () => void confirmAbort(),
     });
@@ -586,6 +601,8 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       title: q.question,
       rows: q.matrix_rows ?? [],
       cols: q.matrix_cols ?? [],
+      progress: progressSnapshot(),
+      onAbort: () => void confirmAbort(),
     });
     if (result === null) return;
     submitAnswer(formatMatrix(result));
