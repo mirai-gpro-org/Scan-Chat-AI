@@ -78,7 +78,7 @@ const data = !result || hasError ? null : (result as Exclude<typeof result, { er
 const latest = data ? await getLatestMeasurements(data.resultUid) : null;
 const metricTrend = data ? await getMeasurementTrend(data.resultUid) : [];
 
-// 健康年齢 (選択ユーザー本人の diagnostic_user_id で取得)
+// ウェルネス年齢 (選択ユーザー本人の diagnostic_user_id で取得)
 const healthAge = data ? await getHealthAge(data.diagnosticUserId) : null;
 
 const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;
@@ -185,12 +185,12 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
         {/* ① 注意項目 — 非表示 (緊急受診勧告 URGENT ALERT): {urgentAlert && <UrgentAlertBanner alert={urgentAlert} />} */}
 
         {/*
-          ② 健康年齢 ＋ ②-2 AI 診断結果。
-          健康年齢だけを全幅で置くと PC / タブレットで横に間延びするため、
+          ② ウェルネス年齢 ＋ ②-2 AI 診断結果。
+          ウェルネス年齢だけを全幅で置くと PC / タブレットで横に間延びするため、
           sm 以上では 2 カラムにして右に AI 診断結果を並べる。
-          健康年齢が無い (算出前) ときは AI 診断結果を全幅の帯で出す。
+          ウェルネス年齢が無い (算出前) ときは AI 診断結果を全幅の帯で出す。
           items-start にして**高さは揃えない** — AI 診断結果は中身が少ないので、
-          健康年齢の高さまで引き伸ばすと中央が大きく空いて「未完成の箱」に見える。
+          ウェルネス年齢の高さまで引き伸ばすと中央が大きく空いて「未完成の箱」に見える。
         */}
         {healthAge?.latest ? (
           <div class="grid grid-cols-1 items-start gap-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,16rem)] xl:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
@@ -232,7 +232,7 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
 
         {/*
           PC (lg 以上) は 2 カラム。左＝閲覧の主軸 (検査結果 / 推移 / 履歴)、
-          右＝状況の参照 (キット / コーチ)。健康年齢と主要導線は上に全幅で残し、
+          右＝状況の参照 (キット / コーチ)。ウェルネス年齢と主要導線は上に全幅で残し、
           モバイルの優先順位 (行動を促す順) をそのまま保つ。
         */}
         <div class="flex flex-col gap-5 lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start lg:gap-6 xl:grid-cols-[minmax(0,1fr)_23rem]">

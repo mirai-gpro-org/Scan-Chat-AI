@@ -120,8 +120,8 @@
 - 未受領のアラート／再督促。受領=そのキット行を「検査結果受領」へ前進。
 
 ### 4.3 Elith データ作成指示 管理
-- 全必要データ（当該回の検査結果＋問診＋健康年齢等）が揃った時点で、**Elith 形式 JSON 生成＋S3受渡を指示**（`docs/elith/elith_batch_centralization_design.md`／`elith_assembly_wrapping_spec.md`）。
-- 健康年齢・AI疾病予測も §該当仕様どおり同梱（検査日毎の時系列）。作成/受渡の状態を記録。
+- 全必要データ（当該回の検査結果＋問診＋ウェルネス年齢等）が揃った時点で、**Elith 形式 JSON 生成＋S3受渡を指示**（`docs/elith/elith_batch_centralization_design.md`／`elith_assembly_wrapping_spec.md`）。
+- ウェルネス年齢・AI疾病予測も §該当仕様どおり同梱（検査日毎の時系列）。作成/受渡の状態を記録。
 
 ---
 

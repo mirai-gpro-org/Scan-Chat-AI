@@ -6,7 +6,7 @@
 | 対象 | ①血液検査（リージャー）②がんリスク検査・尿（プリベント）③AI疾病発症予測（LAiF）④遺伝子検査（Genoplan）。※健診・人間ドックは会員がアプリでAIスキャンするため本書対象外。 |
 | 版 | 2026-08-12（Draft・プリベント提案反映） |
 | 上位文書 | **本書は「受取方式（各社別）」に特化した詳細。EC購入→キット→問診→受取→Elith→表示の E2E 全体像は `docs/lab/lab_data_pipeline_master_spec.md`（総合仕様書）が正本。** |
-| 関連 | `docs/lab/demecal_rpa_operation_design.md` / `docs/lab/demecal_auto_download_overview_spec.md`（血液RPA）、`docs/elith/elith_assembly_wrapping_spec.md`（LAiF/健康年齢のラップ）、`docs/lab/lab_integration_workflow.md`（割当・PII）、`docs/lab/kit_progress_management.md`（進捗）、`docs/lab/wellfort_admin_lab_upload_spec.md`（admin取込） |
+| 関連 | `docs/lab/demecal_rpa_operation_design.md` / `docs/lab/demecal_auto_download_overview_spec.md`（血液RPA）、`docs/elith/elith_assembly_wrapping_spec.md`（LAiF/ウェルネス年齢のラップ）、`docs/lab/lab_integration_workflow.md`（割当・PII）、`docs/lab/kit_progress_management.md`（進捗）、`docs/lab/wellfort_admin_lab_upload_spec.md`（admin取込） |
 
 ---
 
@@ -30,7 +30,7 @@
   2. **日付重複なく**新規分の血液CSVをダウンロード（状態は `/api/admin/demecal-state` で管理）。
   3. admin 取込API `/api/admin/elith-blood-csv` へ投入 → **決定論パース**で `BloodTestData` JSON 化 → S3。
 - **鍵管理**: AWS/Gemini 等の鍵は **Vercel 本番 env のみ**。専用PCには据え置きの鍵を置かない（CLAUDE.md）。取込は専用キー `x-intake-key`。
-- **特記**: 血液のみ **CSV＝決定論パース**（画像AIスキャン不要）。健康年齢（CABA）の主要マーカー源。
+- **特記**: 血液のみ **CSV＝決定論パース**（画像AIスキャン不要）。ウェルネス年齢（CABA）の主要マーカー源。
 - **④ 構造照合（実装済）**: CSV↔JSON の**漏れゼロ/捏造ゼロ/コード解決/PII非混入**を固定検証する fixture。
   `scripts/verify-blood-csv-structure.ts`＋`scripts/blood-csv-fixtures/demecal_sample_v1.csv`。実行 `npm run verify:blood-csv`（決定論・鍵不要・26チェック全PASS）。
 - **DL画面手順（確定済）**: 動画・提供資料から `demecal_auto_download_overview_spec.md §2.1` と

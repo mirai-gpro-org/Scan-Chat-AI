@@ -87,7 +87,7 @@ export const POST: APIRoute = async ({ request }) => {
   try {
     if (mode === 'inventory') {
       const inv = await inventoryElithSource(sourcePrefix);
-      // 健康年齢: 算出済みスコア(source_ref)が既存の元ファイルに一致する数 = 納品で HealthAgeData が付く見込み数。
+      // ウェルネス年齢: 算出済みスコア(source_ref)が既存の元ファイルに一致する数 = 納品で HealthAgeData が付く見込み数。
       const haByRef = await fetchHealthAgeByRef();
       const sourceKeys = new Set<string>();
       for (const f of DELIVERY_FORMAT_IDS) for (const c of inv.byFormat[f]) sourceKeys.add(c.key);
@@ -134,7 +134,7 @@ export const POST: APIRoute = async ({ request }) => {
       return s && /^\d{4}_\d{2}_\d{2}$/.test(s) ? s : undefined;
     })();
 
-    // 健康年齢: 算出済みスコア (health_age_scores) を source_ref(元S3キー)で引けるよう Map 化。
+    // ウェルネス年齢: 算出済みスコア (health_age_scores) を source_ref(元S3キー)で引けるよう Map 化。
     // 採用元に対応するスコアがあれば assemble が HealthAgeData を納品に追加する。
     const healthAgeByRef = await fetchHealthAgeByRef();
 
@@ -260,7 +260,7 @@ async function fetchHealthAgeByRef(): Promise<Record<string, HealthAgeRecord>> {
       };
     }
   } catch {
-    /* テーブル未生成/未設定時は健康年齢を載せないだけ (assemble は継続) */
+    /* テーブル未生成/未設定時はウェルネス年齢を載せないだけ (assemble は継続) */
   }
   return out;
 }

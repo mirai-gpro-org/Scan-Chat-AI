@@ -334,9 +334,9 @@ Elith 指定の `format_id` 6 種と、Wellfort 側のデータソース・既�
 }
 ```
 
-### 7.3.1 `HealthAgeData` (健康年齢・CABA) — 納品時に生成
+### 7.3.1 `HealthAgeData` (ウェルネス年齢・CABA) — 納品時に生成
 
-健康年齢は元データ(人間ドック/血液)から算出済みのスコア(`diagnosis.health_age_scores`)を持つ。
+ウェルネス年齢は元データ(人間ドック/血液)から算出済みのスコア(`diagnosis.health_age_scores`)を持つ。
 PII 除去済みの納品データからは age を再計算できないため、**納品セット アセンブリ時に**算出済みスコアを
 `source_ref`(元S3キー)で突合し、`HealthAgeData_date_{YYYY_MM_DD}_user_{client_id}.json` として生成する。
 命名・エンベロープは他の検査ファイルに準拠。
@@ -351,9 +351,9 @@ PII 除去済みの納品データからは age を再計算できないため�
   "test_date": "2026-03-10",          // 元データ取得日
   "exported_at": "…",
   "subject": { "sex": null, "age": 52 },  // age=実年齢 (他ファイル準拠)
-  "source": { "origin": "scan-chat-ai", "app": "scan-chat-ai", "model": "CABA-v4d", "note": "健康年齢(CABA)", "lab_name": null },
+  "source": { "origin": "scan-chat-ai", "app": "scan-chat-ai", "model": "CABA-v4d", "note": "ウェルネス年齢(CABA)", "lab_name": null },
   "data": {
-    "health_age": 48.3,    // 健康年齢 (生物学的年齢)
+    "health_age": 48.3,    // ウェルネス年齢 (生物学的年齢)
     "actual_age": 52,      // 実年齢
     "computed_date": "2026-03-15", // 算出計算日付
     "delta": -3.7,         // health_age - actual_age
@@ -363,8 +363,8 @@ PII 除去済みの納品データからは age を再計算できないため�
 }
 ```
 
-> 算出済みスコアが無い回(未計算)は HealthAgeData を出さない。先に admin の健康年齢算出を実行しておく。
-> **【2026-08 変更】時系列化を採用 (発注者判断・旧「1ユーザー1件」を撤回)**: 健康年齢は「血液検査ごとに
+> 算出済みスコアが無い回(未計算)は HealthAgeData を出さない。先に admin のウェルネス年齢算出を実行しておく。
+> **【2026-08 変更】時系列化を採用 (発注者判断・旧「1ユーザー1件」を撤回)**: ウェルネス年齢は「血液検査ごとに
 > 最新を算出」する運用に合わせ、**検査日毎に納品**する。血液がある回は血液日、無ければ健診日に同梱し、
 > 各 `date/{YYYY_MM_DD}/` に `HealthAgeData_date_..._user_....json` を置く(同一dateは人間ドック優先)。
 > 疑似データ(プラン時系列生成)も同様に、血液(幹部9)/健診(ミドル3)の各回でその回の合成値から算出して同梱する。

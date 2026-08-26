@@ -141,9 +141,9 @@ export async function inventoryElithSource(sourcePrefix: string): Promise<Invent
 }
 
 // ── アセンブリ ──────────────────────────────────────────────────
-/** 健康年齢 (CABA) の算出済みスコア。health_age_scores を source_ref で突合して納品に載せる。 */
+/** ウェルネス年齢 (CABA) の算出済みスコア。health_age_scores を source_ref で突合して納品に載せる。 */
 export interface HealthAgeRecord {
-  biological_age: number | null;   // 健康年齢
+  biological_age: number | null;   // ウェルネス年齢
   chronological_age: number | null; // 実年齢
   sex: 'male' | 'female' | null;   // 性別 (inputs.markers.sex 由来。subject.sex に載せる)
   test_date: string | null;        // 元データ取得日
@@ -194,7 +194,7 @@ export interface AssembleOptions {
    */
   bundleDate?: string;
   /**
-   * 健康年齢スコア: source_ref(元S3キー) → 算出済みスコア。
+   * ウェルネス年齢スコア: source_ref(元S3キー) → 算出済みスコア。
    * 採用元(人間ドック優先→血液)に対応するスコアがあれば HealthAgeData を納品に追加する。
    * age は PII 除去済み元データから再計算できないため、算出済み(health_age_scores)を突合して載せる。
    */
@@ -262,7 +262,7 @@ function groupByClient(items: CatalogItem[]): Map<string, CatalogItem[]> {
   return m;
 }
 
-/** 健康年齢の納品ファイル (エンベロープは他の検査ファイルに準拠)。 */
+/** ウェルネス年齢の納品ファイル (エンベロープは他の検査ファイルに準拠)。 */
 function buildHealthAgeJson(userId: string, bundleDate: string, rec: HealthAgeRecord, sourceRef: string, subj: SubjectInfo | null): string {
   const testDate = rec.test_date && /^\d{4}-\d{2}-\d{2}$/.test(rec.test_date) ? rec.test_date : bundleDate.replace(/_/g, '-');
   const computedDate = rec.computed_at ? rec.computed_at.slice(0, 10) : null;
@@ -282,11 +282,11 @@ function buildHealthAgeJson(userId: string, bundleDate: string, rec: HealthAgeRe
       origin: 'scan-chat-ai',
       app: 'scan-chat-ai',
       model: rec.model_version ?? 'CABA-v4d',
-      note: '健康年齢 (CABA)。実年齢との差 delta を含む。',
+      note: 'ウェルネス年齢 (旧称: 健康年齢 / CABA)。実年齢との差 delta を含む。JSON のキー名 health_age / format_id HealthAgeData は互換のため据え置き。',
       lab_name: null,
     },
     data: {
-      health_age: rec.biological_age, // 健康年齢
+      health_age: rec.biological_age, // ウェルネス年齢
       actual_age: rec.chronological_age, // 実年齢
       computed_date: computedDate, // 算出計算日付
       delta: rec.delta,
@@ -508,8 +508,8 @@ export async function assembleElithDeliverySet(opts: AssembleOptions): Promise<A
       }
     }
 
-    // 健康年齢: Elith 要望で正式に納品。**検査日毎に**算出済みスコア(source_ref 突合)を載せる
-    // (健康年齢は血液検査毎に最新を算出する運用に一致)。同一 date は 人間ドック(検診)優先→血液。
+    // ウェルネス年齢: Elith 要望で正式に納品。**検査日毎に**算出済みスコア(source_ref 突合)を載せる
+    // (ウェルネス年齢は血液検査毎に最新を算出する運用に一致)。同一 date は 人間ドック(検診)優先→血液。
     // 算出済みスコアが無い回は載せない(age は PII で再計算不可・捏造しない)。
     if (opts.healthAgeByRef) {
       const byDate = new Map<string, string>(); // deliveredDate(YYYY_MM_DD) → 採用元 source_ref
