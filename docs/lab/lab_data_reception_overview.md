@@ -4,7 +4,7 @@
 |---|---|
 | 目的 | Wellfort が外部検査会社から受け取る **4 検査**のデータ受取方式・経路・現状・課題を一枚に集約する。各検査は最終的に **Elith 形式 JSON（`elith-handoff-v0.1`）へ変換し S3 経由で Elith へ受け渡す**（詳細=`docs/elith/elith_s3_data_handoff_spec.md` / `docs/elith/elith_assembly_wrapping_spec.md`）。 |
 | 対象 | ①血液検査（リージャー）②がんリスク検査・尿（プリベント）③AI疾病発症予測（LAiF）④遺伝子検査（Genoplan）。※健診・人間ドックは会員がアプリでAIスキャンするため本書対象外。 |
-| 版 | **2026-08-26（Draft・LAiF 実データ疎通の結果と ID 連携仕様を追記）** |
+| 版 | **2026-08-26（Draft・LAiF 実データ疎通の結果／ID 連携仕様／問診データの渡し方マトリクスを追記）** |
 | 上位文書 | **本書は「受取方式（各社別）」に特化した詳細。EC購入→キット→問診→受取→Elith→表示の E2E 全体像は `docs/lab/lab_data_pipeline_master_spec.md`（総合仕様書）が正本。** |
 | 関連 | `docs/lab/demecal_rpa_operation_design.md` / `docs/lab/demecal_auto_download_overview_spec.md`（血液RPA）、`docs/elith/elith_assembly_wrapping_spec.md`（LAiF/ウェルネス年齢のラップ）、`docs/lab/lab_integration_workflow.md`（割当・PII）、`docs/lab/kit_progress_management.md`（進捗）、`docs/lab/wellfort_admin_lab_upload_spec.md`（admin取込） |
 
@@ -12,12 +12,33 @@
 
 ## 0. 一覧表
 
+### 0.1 受取方式（下り：検査会社 → Wellfort）
+
 | # | 検査 | 検査会社 | 受取方式 | 取得データ | Elith format_id | 変換方法 | ステータス |
 |---|---|---|---|---|---|---|---|
 | 1 | 血液検査 | 株式会社リージャー（Leisure／デメカル DSS） | **デスクトップRPA**（Power Automate Desktop 本命 / UiPath / WinAutomation） | CSV | `BloodTestData` | **決定論パース**（CSV→JSON・LLM不使用） | 自動アクセス承認済・サーバ側実装済／PC側RPA(DL部)構築中 |
 | 2 | がんリスク検査（尿） | プリベント社（ALA-PDS） | **専用ポータル＋AWS S3＋パスキー方式を提案中**（LAiF流用）／現状：メール＋フォルダ共有の手動 | PDF/報告書 | `CancerRiskAssessmentData` | **admin バッチ AIスキャン**（画像→JSON） | **方式を提案中（プレゼン段階）**。現状は手動 |
 | 3 | AI疾病発症予測 | LAiF社 | **AWS S3 専用バケット**（URLで受渡） | PDF | `Other`（`kind:"ai_prediction"`） | **admin バッチ AIスキャン**（多ページ・LLM構造化） | 受取方式確定・スキャン対応実装済／**2026-08-26 上り(弊社→LAiF)疎通OK・下り(返送)は未検証** |
 | 4 | 遺伝子検査 | Genoplan社（ジェノプランジャパン） | **デスクトップRPA**（Power Automate Desktop / UiPath / WinAutomation） | PDF | `GeneticTestResultData` | **admin バッチ AIスキャン**（多ページ・LLM構造化） | 受取方式=RPA方針／スキャン対応実装済 |
+
+### 0.2 問診データの渡し方（上り：Wellfort/ユーザー → 検査会社）— **確定 2026-08-26・発注者確認**
+
+**下り（受取）とは経路も担い手も別**。AI問診（アプリ）を経由するのは **②がんリスクと③AI疾病発症予測の 2 検査だけ**で、①血液と④遺伝子は**ユーザーが検査会社へ直接届ける**ため**弊社の実装対象外**。
+
+| # | 検査 | 問診の取得方法 | 渡し方（経路） | 形式 | 弊社の実装要否 |
+|---|---|---|---|---|---|
+| 1 | 血液検査（リージャー） | **ユーザーが専用用紙へ記入** | **郵送**（検体と共に検査会社へ返送） | 紙 | **なし**（弊社を経由しない） |
+| 2 | がんリスク検査・尿（プリベント） | **AI問診**（アプリ） | **専用ポータル＋AWS S3＋パスキー方式**（提案中） | **CSV** | **あり**（AI問診→CSV変換＋ポータル配置） |
+| 3 | AI疾病発症予測（LAiF） | **AI問診**（アプリ） | **専用ポータル＋AWS S3＋パスキー方式** | **所定 Excel フォーム**（`input_format_new_202312.xlsx`・約158項目）※ | **あり**（AI問診→所定フォーム変換＋ポータル配置） |
+| 4 | 遺伝子検査（Genoplan） | **ユーザーが Genoplan 社の検査専用 Web へ直接入力** | **弊社は渡さない**（検査会社が直接取得） | — | **なし**（弊社を経由しない） |
+
+> ※ **③の形式について**: 発注者ご指示は「AI問診→CSV」ですが、**LAiF 社は「CSV」表記を避け、所定の Excel フォーム
+> `input_format_new_202312.xlsx` での受渡を要望**しており（2026-08 に行き違いを是正済・`docs/lab/partner_demo_confirmation_request_laif.md`）、
+> 現行実装（`scripts/build-laif-input.py`）もこの Excel を出力します。**本表は実装に合わせて「所定 Excel フォーム」と記載**しています。
+> 「CSV で確定」の意図であれば先方合意の取り直しが必要なため、**ご確認ください**。
+>
+> **本確定により `docs/lab/questionnaire_to_lab_csv_spec.md` の未確定事項が 2 件解消**します
+> （§7-7 血液への問診受渡＝**不要**で確定／§4.4・§6 の Genoplan 列＝**対象外**）。同仕様書も追随して更新済み。
 
 ---
 
@@ -31,6 +52,8 @@
   3. admin 取込API `/api/admin/elith-blood-csv` へ投入 → **決定論パース**で `BloodTestData` JSON 化 → S3。
 - **鍵管理**: AWS/Gemini 等の鍵は **Vercel 本番 env のみ**。専用PCには据え置きの鍵を置かない（CLAUDE.md）。取込は専用キー `x-intake-key`。
 - **特記**: 血液のみ **CSV＝決定論パース**（画像AIスキャン不要）。ウェルネス年齢（CABA）の主要マーカー源。
+- **問診データ（上り）**: **ユーザーが専用用紙へ記入し、検体と共に郵送**（§0.2）。**弊社を経由しない＝実装対象外**。
+  ※ 旧検討の「Wellfort→デメカルへ問診CSVを渡す」方向は**不要で確定**（`questionnaire_to_lab_csv_spec §7-7` を解消）。
 - **④ 構造照合（実装済）**: CSV↔JSON の**漏れゼロ/捏造ゼロ/コード解決/PII非混入**を固定検証する fixture。
   `scripts/verify-blood-csv-structure.ts`＋`scripts/blood-csv-fixtures/demecal_sample_v1.csv`。実行 `npm run verify:blood-csv`（決定論・鍵不要・26チェック全PASS）。
 - **DL画面手順（確定済）**: 動画・提供資料から `demecal_auto_download_overview_spec.md §2.1` と
@@ -60,6 +83,7 @@
   6. プリベント社が報告書を同フォルダへ格納。
   7. プリベント社が格納した旨をメールでウェルフォート社へ連絡。
   8. ウェルフォート社が報告書を確認し、その旨を返信して完了。
+- **問診データ（上り）**: **AI問診（アプリ）→ CSV** を、**専用ポータル＋AWS S3＋パスキー方式**で受渡（§0.2）。項目は `questionnaire_to_lab_csv_spec §4.2`（主要33項目）。**弊社の実装対象**。
 - **変換**: 受領した報告書（PDF/画像）を **admin バッチAIスキャン** → `CancerRiskAssessmentData` JSON → S3（🎯ゴールデン照合対応済）。
 - **課題（提案で解消を狙う）**:
   - リンク共有＝手動・往復メール多く、リードタイム長い → **専用ポータル＋S3で双方向自動化**。
@@ -76,6 +100,7 @@
 - **データ内容**（実サンプル準拠）: 疾患ごとに **5年発症率(%)・10年発症率(%)・相対リスク比・昨年の相対リスク比**、カテゴリ（生活習慣病/循環器/悪性腫瘍/神経疾患）、リスク因子・予防策（AIアドバイス）。
 - **変換/ラップ仕様**: `docs/elith/elith_assembly_wrapping_spec.md §5`（`Other`/`ai_prediction`・命名・data.items・時系列疑似データ提案）。
 - **セキュア受渡方式（設計正本）**: `docs/lab/laif_s3_secure_handoff_spec.md`（**ポータル共有型ゼロトラスト**：Passkey認証＋IP制限＋Presigned直転送＋GuardDuty検疫＋Gemini File API丸投げ＋決定論検証＋Object Lock。Gemini/ChatGPT統合）。
+- **問診データ（上り）**: **AI問診（アプリ）→ 所定 Excel フォーム**（`input_format_new_202312.xlsx`・約158項目）を、**専用ポータル＋AWS S3＋パスキー方式**で受渡（§0.2）。写像仕様＝`kit_lifecycle_and_handoff_management_spec §4.1.1`、生成＝`scripts/build-laif-input.py`。**名前欄(G1)＝整理番号（空欄不可）**。**弊社の実装対象**。
 - **ステータス**: 受取方式確定。スキャン→JSON化 実装済（admin「🔮 AI疾病発症予測(LAiF)」）。**Elith 側の `Other`/`ai_prediction` 受領仕様は §5.6 で確認中**。**セキュア受渡は設計確定（実装/LAiF確認は上記spec §12-13）**。
 
 ### 3.1 実データ疎通の結果（2026-08-26・メール往復の記録）
@@ -110,6 +135,8 @@
 - **検査会社**: Genoplan社（ジェノプランジャパン／GenePlanet）。
 - **受取方式**: **デスクトップRPA**（Power Automate Desktop / UiPath / WinAutomation）。
 - **フロー**: RPAがGenoplanポータル等からレポートPDFを取得 → **admin バッチAIスキャン（多ページ・LLM構造化）** → `GeneticTestResultData` JSON → S3。
+- **問診データ（上り）**: **ユーザーが Genoplan 社の検査専用 Web へ直接入力**（§0.2）。**弊社は渡さない＝実装対象外**
+  （`questionnaire_to_lab_csv_spec §4.4` の 70 項目マッピングは**対象外で確定**）。
 - **データ内容**: 疾患ごとの**発症リスク倍率**＋発症率（％/定性）。🎯倍率ゴールデン照合（220項目）対応済。
 - **ステータス**: 受取方式=RPA方針。スキャン→JSON化 実装済（admin「🧬 遺伝子検査」・ページ範囲指定）。
 
