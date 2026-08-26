@@ -295,18 +295,6 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   // 中止: コンパクト top-right ボタン
   refs.micBtn.addEventListener('click', () => void confirmAbort());
 
-  /**
-   * 画面を覆うモーダルへ渡す進行状況。
-   * 全画面の選択画面は画面トップの進捗バーを隠すので、**一律でモーダル側にも出す**
-   * (発注者指示 2026-08)。
-   */
-  function progressSnapshot(): { percent: number; label: string } {
-    return {
-      percent: clamp(engine.currentPercent(), 0, 100),
-      label: currentQ?.section_title ?? '',
-    };
-  }
-
   /** 途中経過を localStorage へ退避する (再開用)。 */
   function persistProgress(): void {
     const st = engine.getState();
@@ -330,7 +318,6 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     const picked = await openActionSheet({
       title: '問診を中止しますか？',
       description: answered > 0 ? `ここまで ${answered} 問にお答えいただいています。` : undefined,
-      progress: progressSnapshot(),
       actions: [
         {
           key: 'keep', label: '回答済の問診を記憶して中止する',
@@ -579,7 +566,6 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       options: optionsOf(q),
       multi,
       initial,
-      progress: progressSnapshot(),
       // 選択画面は画面を覆うため、上部の中止ボタンが隠れる。ここからも中止できるようにする。
       onAbort: () => void confirmAbort(),
     });
@@ -600,7 +586,6 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       title: q.question,
       rows: q.matrix_rows ?? [],
       cols: q.matrix_cols ?? [],
-      progress: progressSnapshot(),
       onAbort: () => void confirmAbort(),
     });
     if (result === null) return;
@@ -1184,8 +1169,15 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
   // ── 進捗 / セクション dots ───────────────────────
 
+  /**
+   * 進捗表記は **「問診完了まであと N%」** (発注者指示 2026-08)。
+   * N は**残り**なので 100 - percent。バーの塗り (= 済み) と数字 (= 残り) で
+   * 役割が分かれるため、単に「42%」と出していた頃より意味が読み取りやすい。
+   * 完了時は「あと 0%」が不自然なので文言ごと切り替える。
+   */
   function renderProgress(percent: number, sectionTitle: string): void {
-    refs.progressText.textContent = `${percent}%`;
+    const left = clamp(100 - percent, 0, 100);
+    refs.progressText.textContent = left <= 0 ? '問診完了' : `問診完了まであと ${left}%`;
     refs.sectionLabel.textContent = sectionTitle ? sectionTitle : '進行中…';
   }
 

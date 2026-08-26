@@ -10,7 +10,12 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
 ---
 
 <BaseLayout title="AI 問診 | Welltect" width="flow">
-  <header class="hero-gradient relative px-5 pt-5 pb-3">
+  <!--
+    進行状況を常に見せるため sticky。選択画面 (choice-picker) はこのヘッダの
+    高さを測って**その下から**開くので、全画面の選択中も進捗バーが隠れない。
+    z-30 = スクリム(z-40)/パネル(z-50) より下だが、幾何的に重ならないので問題ない。
+  -->
+  <header id="chat-header" class="hero-gradient sticky top-0 z-30 px-5 pt-5 pb-3">
     <div class="flex items-center justify-between">
       <a href={diagnosticUserId ? `/?u=${encodeURIComponent(diagnosticUserId)}` : '/'} class="text-sm text-slate-600 hover:text-slate-900">
         ‹ メニュー
@@ -35,9 +40,10 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
       <!-- セクション dot は問診定義 (SECTIONS) に合わせて動的生成 -->
     </div>
 
-    <div class="mt-2 flex items-center justify-between text-xs">
+    <div class="mt-2 flex items-center justify-between gap-3 text-xs">
       <span id="section-label" class="font-medium text-slate-700">準備中…</span>
-      <span id="progress-text" class="text-slate-500">0%</span>
+      <!-- 表記は「問診完了まであと N%」(N=残り)。文言は live-controller の renderProgress が正。 -->
+      <span id="progress-text" class="shrink-0 font-medium text-brand-700">問診完了まであと 100%</span>
     </div>
   </header>
 

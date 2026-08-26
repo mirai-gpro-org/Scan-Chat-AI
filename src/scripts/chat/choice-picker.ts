@@ -56,12 +56,6 @@ export interface ListPickerArgs {
   /** 初期選択 (label の配列) */
   initial?: string[];
   /**
-   * 問診の進行状況。渡すと選択画面のヘッダに進捗バーと「残り N 問」を出す。
-   * 全画面の選択画面は画面トップの進捗バーを覆い隠してしまうため
-   * (「あとどのくらいで終わるか」が見えなくなる・発注者指摘 2026-08)。
-   */
-  progress?: PickerProgress;
-  /**
    * 「中止」を押したときの処理。渡すとヘッダ右上に中止ボタンを出す。
    * 選択画面は全画面/シートで問診の中止ボタンを覆い隠すため、ここからも中止できるようにする
    * (発注者指示 2026-08)。呼ばれた時点でこの選択画面は閉じている (キャンセル扱い)。
@@ -70,35 +64,23 @@ export interface ListPickerArgs {
 }
 
 /**
- * 問診の進行状況。**画面を覆うモーダルには一律でこれを出す** (発注者指示 2026-08)。
- * 全画面の選択画面は画面トップの進捗バーを覆い隠すため、
- * 「あとどのくらいで終わるか」が分からなくなっていた。
+ * 画面上部に残す領域 (問診ヘッダ) の高さを測り、CSS 変数 `--lp-top` に入れる。
+ *
+ * 【なぜ】全画面の選択画面を `inset: 0` で開くと**画面トップの進捗バーごと隠れて**
+ *   「あとどのくらいで終わるか」が分からなくなる。これは仕様上の制約ではなく
+ *   こちらのレイアウトの選択なので、**ヘッダの下から開く**ようにして実物を見せる。
+ *   モーダル側に進捗バーを複製する案は、**回答選択肢の上に別の進捗が出て紛らわしい**ため
+ *   撤回した (発注者判断 2026-08)。
+ *
+ * スクリムにも同じ offset を掛けるのでヘッダは暗くならず、数値がそのまま読める。
+ * アンカーが無いページでは 0 (=従来どおり全面) にフォールバックする。
  */
-export interface PickerProgress {
-  /** 0-100 */
-  percent: number;
-  /** セクション名など */
-  label: string;
-}
+const TOP_ANCHOR_SELECTOR = '#chat-header';
 
-/**
- * 進捗バー + パーセント。スクロールしないヘッダ側に置く。
- * **表記は画面トップのヘッダ (`#progress-text`) と同じパーセントに統一**する
- * (発注者指示 2026-08。以前は「残り N 問」を出していて表記が割れていた)。
- */
-function progressHtml(p?: PickerProgress): string {
-  if (!p) return '';
-  const pct = Math.max(0, Math.min(100, p.percent));
-  return `<div class="lp-progress">
-      <div class="lp-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100"
-           aria-valuenow="${Math.round(pct)}" aria-label="問診の進行状況">
-        <span class="lp-progress-fill" style="width:${pct}%"></span>
-      </div>
-      <p class="lp-progress-text">
-        <span>${escapeHtml(p.label)}</span>
-        <span class="lp-progress-pct tnum">${Math.round(pct)}%</span>
-      </p>
-    </div>`;
+function applyTopAnchor(root: HTMLElement): void {
+  const anchor = document.querySelector<HTMLElement>(TOP_ANCHOR_SELECTOR);
+  const top = anchor ? Math.max(0, Math.round(anchor.getBoundingClientRect().bottom)) : 0;
+  root.style.setProperty('--lp-top', `${top}px`);
 }
 
 /** レイアウトの切替しきい値 (件数)。 */
@@ -131,7 +113,7 @@ function normalize(s: string): string {
  * @returns 選択された label 配列。キャンセルは null。
  */
 export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
-  const { title, subtitle, options, multi = false, onAbort, progress } = args;
+  const { title, subtitle, options, multi = false, onAbort } = args;
   const layout = layoutFor(options.length);
   const selected = new Set(args.initial ?? []);
 
@@ -172,7 +154,6 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
       <div class="lp-panel" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
         <div class="lp-head">
           ${headHtml}
-          ${progressHtml(progress)}
           <p class="lp-sub">${escapeHtml(subtitle ?? (multi ? 'あてはまるものをすべて選んでください' : 'タップすると回答して次へ進みます'))}</p>
           ${searchHtml}
         </div>
@@ -196,6 +177,7 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
         </div>
       </div>
     `;
+    applyTopAnchor(root);
     document.body.appendChild(root);
     document.body.style.overflow = 'hidden';
 
@@ -385,7 +367,7 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
     activeClosers.add(forceClose);
 
     const onScroll = (): void => updateMore();
-    const onResize = (): void => { promoteIfNeeded(); applyPeek(); updateMore(); };
+    const onResize = (): void => { applyTopAnchor(root); promoteIfNeeded(); applyPeek(); updateMore(); };
     const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') close(null); };
     scroll.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('resize', onResize);
@@ -445,9 +427,8 @@ export function openActionSheet(args: {
   title: string;
   description?: string;
   actions: SheetAction[];
-  progress?: PickerProgress;
 }): Promise<string | null> {
-  const { title, description, actions, progress } = args;
+  const { title, description, actions } = args;
   return new Promise((resolve) => {
     const root = document.createElement('div');
     root.className = 'lp-root';
@@ -458,7 +439,6 @@ export function openActionSheet(args: {
         <div class="lp-head">
           <div class="sheet-handle"></div>
           <h2 class="lp-title lp-title-sheet">${escapeHtml(title)}</h2>
-          ${progressHtml(progress)}
           ${description ? `<p class="lp-sub">${escapeHtml(description)}</p>` : ''}
         </div>
         <div class="lp-scroll">
@@ -479,6 +459,7 @@ export function openActionSheet(args: {
         </div>
       </div>
     `;
+    applyTopAnchor(root);
     document.body.appendChild(root);
     document.body.style.overflow = 'hidden';
 
@@ -514,7 +495,6 @@ export interface MatrixPickerArgs {
   cols: ChoiceItem[];
   /** 初期値 row -> col label */
   initial?: Record<string, string>;
-  progress?: PickerProgress;
   /** 「中止」を押したときの処理。渡すとヘッダ右端に中止ボタンを出す。 */
   onAbort?: () => void;
 }
@@ -524,7 +504,7 @@ export interface MatrixPickerArgs {
  * @returns row -> col label の Record。キャンセルは null。
  */
 export function openMatrixPicker(args: MatrixPickerArgs): Promise<Record<string, string> | null> {
-  const { title, rows, cols, progress, onAbort } = args;
+  const { title, rows, cols, onAbort } = args;
   const picked: Record<string, string> = { ...(args.initial ?? {}) };
 
   return new Promise((resolve) => {
@@ -557,7 +537,6 @@ export function openMatrixPicker(args: MatrixPickerArgs): Promise<Record<string,
           <h2 class="lp-title lp-title-sheet">${escapeHtml(title)}</h2>
           ${onAbort ? `<button type="button" class="lp-abort" data-lp-abort>${iconSvg('blocked')}<span>中止</span></button>` : ''}
         </div>
-        ${progressHtml(progress)}
         <p class="mb-3 mt-1 text-sm text-slate-600">各項目の頻度をタップで選んでください</p>
         <div class="matrix-wrap" data-matrix>${rowsHtml}</div>
         <div class="mt-4 flex gap-2">
@@ -566,6 +545,7 @@ export function openMatrixPicker(args: MatrixPickerArgs): Promise<Record<string,
         </div>
       </div>
     `;
+    applyTopAnchor(root);
     document.body.appendChild(root);
     document.body.style.overflow = 'hidden';
 

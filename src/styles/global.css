@@ -266,7 +266,11 @@
    *   block レイアウトに戻すと最後の 1〜2 件が永久に選べなくなる。
    */
 
-  .lp-root { position: fixed; inset: 0; z-index: 40; }
+  /* --lp-top = 画面上部に残す高さ (問診ヘッダ)。choice-picker が実測して入れる。
+   * これにより**全画面の選択中も進捗バーが隠れない**。スクリムにも同じ offset を掛けるので
+   * ヘッダは暗くならない。アンカーが無ければ 0 = 従来どおり全面。 */
+  .lp-root { position: fixed; inset: 0; z-index: 40; --lp-top: 0px; }
+  .lp-root .sheet-backdrop { top: var(--lp-top); }
 
   /* 〜7 件: ボトムシート */
   .lp-root[data-layout='sheet'] .lp-panel {
@@ -277,15 +281,13 @@
   /* 8 件〜: 全画面 */
   .lp-root[data-layout='full'] .lp-panel,
   .lp-root[data-layout='search'] .lp-panel {
-    @apply fixed inset-0 z-50 mx-auto max-w-lg border-slate-200 bg-white;
+    @apply fixed inset-x-0 bottom-0 z-50 mx-auto max-w-lg border-slate-200 bg-white;
+    top: var(--lp-top);
     animation: sheet-up 0.2s ease-out both;
   }
   .lp-panel { display: flex; flex-direction: column; min-height: 0; }
 
-  .lp-head {
-    @apply shrink-0 border-b border-slate-200 px-4 pb-3;
-    padding-top: calc(env(safe-area-inset-top) + 0.75rem);
-  }
+  .lp-head { @apply shrink-0 border-b border-slate-200 px-4 pb-3 pt-3; }
   .lp-root[data-layout='sheet'] .lp-head { @apply border-b-0 pt-3; }
   /* ヘッダは 2 種類を描いておき、ここで出し分ける (全画面への昇格を data-layout だけで行うため) */
   .lp-root[data-layout='sheet'] .lp-bar { display: none; }
@@ -313,21 +315,6 @@
   /* 戻るボタン(44px)と釣り合いを取り、見出しを中央に置く */
   .lp-bar .lp-title { margin-right: 2.75rem; }
   .lp-sub { @apply mt-1 text-center text-sm text-slate-600; }
-
-  /* 進行状況。画面を覆うモーダルには一律で出す (画面トップのバーが隠れるため)。
-   *
-   * トラックは slate-200 のまま。**情報を担うのは「塗り vs トラック」の差**で、
-   * これは brand-600 対 slate-200 = 3.50:1 (WCAG 1.4.11 の 3:1 を満たす)。
-   * トラックを濃くすると白地との差は上がるが塗りとの差が 2.73:1 (slate-300) /
-   * 1.78:1 (slate-400) まで落ちて**肝心の進捗が読めなくなる**ので上げない。
-   * 0% でバーが見えない件は、常に出る「残り N 問」(brand-700 = 7.09:1) が
-   * テキストで同じ情報を伝えるため許容する (バーは冗長な補強)。 */
-  .lp-progress { @apply mt-2; }
-  .lp-progress-track { @apply h-1.5 w-full overflow-hidden rounded-full bg-slate-200; }
-  .lp-progress-fill { @apply block h-full rounded-full bg-brand-600; transition: width 0.2s ease-out; }
-  .lp-progress-text { @apply mt-1 flex items-center justify-between text-sm text-slate-600; }
-  .lp-progress-pct { @apply font-medium text-brand-700; }
-  .lp-root[data-layout='sheet'] .lp-sub { @apply text-left; }
 
   .lp-search { @apply relative mt-3; }
   .lp-search-ico {
