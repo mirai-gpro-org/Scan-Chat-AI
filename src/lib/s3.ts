@@ -84,8 +84,10 @@ export interface UploadedObject {
   uri: string;
 }
 
-function makeClient(cfg: S3Config): S3Client {
+/** S3Client を生成する。Partner Portal(presigned) からも使うため export する。 */
+export function makeS3Client(cfg: S3Config, extra: Record<string, unknown> = {}): S3Client {
   return new S3Client({
+    ...extra,
     region: cfg.region,
     ...(cfg.endpoint ? { endpoint: cfg.endpoint, forcePathStyle: true } : {}),
     ...(cfg.accessKeyId && cfg.secretAccessKey
@@ -93,6 +95,8 @@ function makeClient(cfg: S3Config): S3Client {
       : {}),
   });
 }
+
+const makeClient = makeS3Client;
 
 export interface S3ObjectRef {
   key: string;

@@ -99,6 +99,21 @@ LAiF 様の回答（`20260806_laif_spec_confirm` §6）を反映。要点と設�
 
 ## 4. 転送方式（ブラウザ⇄S3 直接・Vercel中継しない）
 
+> **実装状況（2026-08-27・本節のうち上りを実装）**
+> - **実装済**: 上り(PDF提出) の **Presigned PUT**。`src/lib/laif-portal.ts` ＋ API `src/pages/api/partner/laif-upload.ts`
+>   （中継は wellfort-site `src/pages/api/partner/upload.ts`）。ポータル画面 `partner-portal-preview.astro` の
+>   アップロードは**本物の転送**に置き換え済み（従来は画面上の演出のみで、ファイルは保存されていなかった）。
+>   着弾は必ず `quarantine/{partner}/{YYYY}/{MM}/{DD}/{uuid}.pdf`。**キー・Content-Type・Content-Length を署名に固定**・期限5分。
+>   元ファイル名は S3 メタデータ（`x-amz-meta-filename` / 非ASCII は `-b64`）に保持。
+> - **実装時に踏んだ罠**: AWS SDK v3 は既定で **署名時に空ボディの CRC32 を計算して URL に載せる**ため
+>   （`x-amz-checksum-crc32=AAAAAA==`）、実ファイルを PUT した瞬間に S3 がチェックサム不一致で拒否する。
+>   presigned PUT では `requestChecksumCalculation: 'WHEN_REQUIRED'` を必ず指定すること。
+> - **未実装**: §3 認証(Supabase Auth + Passkey)・§6 GuardDuty 検疫・§8 EventBridge。
+>   認証が無い間はこの口が**公開の書き込み口**になるため、**env `LAIF_PORTAL_UPLOAD=on` のときだけ有効**（既定 off＝503）。
+>   **本番公開の前に §3 を実装すること。**
+> - **下り(入力ファイル取得)は未実装**（画面は同梱サンプルの静的配布のまま）。
+
+
 - **アプリがストリーム中継しない**：Vercelの60s/メモリ制約で巨大PDF・Zip爆弾を引くと即死。→ **ブラウザとS3を直接通信**させる。
 - **下り（CSV取得）**：認証後、サーバが**Presigned GET URL**を発行（**有効期限5分**・`aws:SourceIp` でLAiF固定IP限定・GETのみ）。ブラウザが直接DL。
 - **上り（PDF提出）**：サーバが**Presigned POST**を発行（**ファイルサイズ上限・`Content-Type=application/pdf`・キー(quarantine/UUIDv7)を署名に固定**）。ブラウザが直接 `quarantine/` へPUT。
