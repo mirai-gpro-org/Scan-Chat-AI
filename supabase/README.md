@@ -106,7 +106,7 @@ http://127.0.0.1:54323 にアクセス → `customer` / `diagnosis` schema を�
 | diagnosis.user_notices     |  4 | 個別の重要なお知らせ。真鍋 (未読2/既読1) + 田中 (未読1)。お知らせページ用 |
 | diagnosis.announcements    | 10 | 一般のお知らせ 5 + ニュース 5 (全ユーザー共通)。お知らせページ用 |
 | diagnosis.measurement_values | 275 | 検査値 (seed_measurements.sql)。血液 12 回 x 22 項目 + 健診 11 項目 |
-| diagnosis.health_age_scores | 12 | 健康年齢の時系列 3 パターン (横ばい/改善/悪化) |
+| diagnosis.health_age_scores | 12 | ウェルネス年齢の時系列 3 パターン (横ばい/改善/悪化) |
 | customer.kit_shipments (追加分) | +4 | 6 段階を網羅するための表示確認用 (seed_kit_demo.sql) |
 
 ### 主な人物像

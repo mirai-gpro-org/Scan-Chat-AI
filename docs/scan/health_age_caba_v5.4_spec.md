@@ -1,4 +1,11 @@
-# 健康年齢（CABA v5.4）仕様・確定事項
+# ウェルネス年齢（CABA v5.4・正規版）仕様・確定事項
+
+> **名称変更（2026-08・発注者指示）**: 「健康年齢」→ **「ウェルネス年齢」**。表示名のみ変更で、
+> 内部識別子（`HealthAgeData` / `data.health_age` / `health_age_scores` / `ui.health_age_followup` /
+> ファイル名）は**据え置き**。詳細は `docs/scan/health_age_simple_v7.0_spec.md` §0。
+>
+> **本書は①正規版の仕様**。正規版で算出できない検体は **②簡易版（CABA v7.0）へフォールバック**する
+> （`docs/scan/health_age_simple_v7.0_spec.md`）。段階の全体像は `src/lib/wellness-age.ts`。
 
 - **実装**: `src/lib/health-age.ts`（決定論・LLM不使用）／表示 `src/components/dashboard/HealthAgeCard.astro`／API `src/pages/api/admin/health-age.ts`
 - **モデル**: Levine 2018 PhenoAge（PMID 30596641）本体 ＋ Wellfort 拡張。`HEALTH_AGE_MODEL_VERSION='CABA-v5.4'`
@@ -50,13 +57,22 @@ Wellfort への確認依頼（2026-08-03）に対し、以下の回答を受領�
 - 補完した項目は結果の `imputed_markers` に載せ、カードに「参考値」バッジ＋注記を表示。
 - 最終クランプ 18–95 歳。BMI は v5.4 では計算に使わず参考表示のみ。
 
-## 算出不能（必須マーカー不足）の扱い（確定・2026-08）
+## 算出不能（必須マーカー不足）の扱い（確定・2026-08／**簡易版フォールバック追加で改訂**）
+
+**改訂（2026-08・発注者指示）**: 正規版で必須が揃わない場合、**即座に算出不能とせず②簡易版を試す**。
+判定順は `src/lib/wellness-age.ts` の `computeWellnessAge`（①正規版 → ②簡易版 → ③算出不能）。
+
 - ハード必須が欠けると `computeHealthAge` は `biological_age:null / delta:null / ok:false` を返す（`missing_required` に欠落項目）。
-- **算出前にハードゲート（＝適合チェックを run でも強制）**: `mode=run`（`api/admin/health-age.ts`）は算出の**前に** `requiredCoverage(normalized)` を実行し、
-  `computable=false`（必須不足）なら **422 `not_computable`（`missing_required` 付き）で算出せず終了**する。
-  → **算出不能な入力からは health_age を作らせない**（＝null は構造的に生じない）。`mode=check` の ✅/⚠️ と同一判定（同じ `requiredCoverage`・同じ `normalizeMarkers`）。
+  → その結果を受けて **②簡易版（`computeSimpleHealthAge`）を試行**する。
+- **③（①②とも不能）でハードゲート**: `mode=run`（`api/admin/health-age.ts`）は `method==='unavailable'` のとき
+  **422 `not_computable` で算出せず終了**し、`message` に発注者指定の定型文
+  「算出に必要なデータが不足しています。詳細は事務局へお問合せ下さい。」を返す（定数 `WELLNESS_AGE_UNAVAILABLE_MESSAGE`）。
+  → **算出不能な入力からは health_age を作らせない**（＝null は構造的に生じない）。
+  `mode=check` は同じ `wellnessAgeCoverage` を使い `method`（full / simple / unavailable）を返すので、run と判定が一致する。
   - 補足: **適合チェック（`mode=check`）は lymph を含む全必須を見る**（CRP/RDW は補完前提で対象外）。従来 `mode=check` は ✅/⚠️ の**表示のみ**で
     `mode=run` を止めていなかった（⚠️でも算出実行可能）。本ゲートで run 側にも同じ判定を効かせた。
+  - **どの版で算出したかは必ず残す**: API 応答 `method` / `health_age_scores.inputs.method` /
+    `model_version`（`CABA-v5.4` or `CABA-SIMPLE-v7.0`）/ ダッシュボード見出し右のラベル。
 - **算出不能は納品しない（防御多重化）**: assemble（`elith-assemble.ts`）は `biological_age==null` の回の **HealthAgeData を書き出さない**
   （万一 null 行が既存でも `health_age:null` を Elith へ渡さない＝"載せない"原則・捏造ゼロ）。
 - 実障害（2026-08）: `elith-test-002`（2025-01-23）で必須マーカー不足（適合チェックなら⚠️）のまま `mode=run` が実行され、

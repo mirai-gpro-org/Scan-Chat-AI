@@ -85,9 +85,9 @@
 
 - **受領チェック（週次案）**: 各社の受領方式ごとに**受領予定と実績を管理**し、未受領はアラート／再督促。受領でキット行を「検査結果受領」へ前進。〔チェック頻度＝**仮に週次**。確定は §確認事項。〕
 - **変換（会社別）**: 血液＝**CSV決定論パース**（LLM不使用）／がん・遺伝子・AI疾病予測＝**画像AIスキャン**（Gemini・サーバ側 admin バッチ）。納品整形は決定論（`sanitizeMeasurementsForDelivery`）に集約。
-- **Elith データ作成指示**: 当該回の**全必要データ（検査結果＋問診＋健康年齢等）が揃った時点**で、**Elith 形式 JSON 生成＋S3受渡を指示**。
+- **Elith データ作成指示**: 当該回の**全必要データ（検査結果＋問診＋ウェルネス年齢等）が揃った時点**で、**Elith 形式 JSON 生成＋S3受渡を指示**。
   - S3 パス `user/{client_id}/date/{YYYY_MM_DD}/{format_id}_date_{YYYY_MM_DD}_user_{client_id}.json`（`client_id=diagnostic_user_id` 仮名）。
-  - 健康年齢（CABA）・AI疾病予測も**検査日毎の時系列**で同梱（`elith_assembly_wrapping_spec`）。
+  - ウェルネス年齢（CABA）・AI疾病予測も**検査日毎の時系列**で同梱（`elith_assembly_wrapping_spec`）。
 - **正本**: (c)§4.2・§4.3／`docs/elith/elith_s3_data_handoff_spec.md`・`elith_batch_centralization_design.md`・`elith_assembly_wrapping_spec.md`。
 
 ## ⑥ Elith の AI 診断結果を S3 から受取 → Webアプリへ表示 UP

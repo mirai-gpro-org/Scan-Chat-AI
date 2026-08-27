@@ -26,4 +26,4 @@
 - `consult_humandock_v2_rereview.md` — 再レビュー
 - `consult_humandock_variance_20260803.md` — run 間ばらつきの相談
 
-> 補足: Wellfort 宛の確認依頼ドラフト（健康年齢 v5.4 等）は本フォルダ対象外（確定版は `docs/scan/health_age_caba_v5.4_spec.md`）。
+> 補足: Wellfort 宛の確認依頼ドラフト（ウェルネス年齢 v5.4 等）は本フォルダ対象外（確定版は `docs/scan/health_age_caba_v5.4_spec.md`）。

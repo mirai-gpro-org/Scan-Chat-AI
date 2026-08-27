@@ -146,7 +146,7 @@
       "additionalProperties": false,
       "required": ["health_age", "actual_age", "computed_date", "delta", "model_version"],
       "properties": {
-        "health_age": { "type": ["number", "null"], "description": "健康年齢（生物学的年齢）。" },
+        "health_age": { "type": ["number", "null"], "description": "ウェルネス年齢（生物学的年齢）。" },
         "actual_age": { "type": ["integer", "null"], "description": "実年齢。" },
         "computed_date": { "type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "算出計算日付。" },
         "delta": { "type": ["number", "null"], "description": "health_age - actual_age。" },

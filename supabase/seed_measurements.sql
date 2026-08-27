@@ -1,5 +1,5 @@
 -- 検査値テストレコード (STEP 2 / 発注者承認 2026-08-20)。
--- 目的: 時系列グラフ・健康年齢カード・空状態を、実データ経路で確認できるようにする。
+-- 目的: 時系列グラフ・ウェルネス年齢カード・空状態を、実データ経路で確認できるようにする。
 --
 -- 【原則1】Elith と各検査機関が実際に返すものだけを入れる。判定レベル・生活指導文は入れない
 --          (アプリが作るものではないため。入れられない=UIにも作れない)。
@@ -505,7 +505,7 @@ select ta.id, ta.diagnostic_user_id, ta.test_type, ta.test_date, v.seq, v.item_n
   ) as v(seq, item_name, canonical_name, value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag)
  where ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='health_checkup' and ta.test_date='2025-06-15';
 
--- ── ④ 健康年齢スコア (現状 0 行 = カードが何も表示できない状態の解消) ────
+-- ── ④ ウェルネス年齢スコア (現状 0 行 = カードが何も表示できない状態の解消) ────
 -- biological_age は UI 表示検証用の固定値であり CABA の実計算結果ではない。
 -- 本番では src/lib/health-age.ts が算出して書き込む。
 -- 3パターンを用意: 真鍋=横ばい(実年齢+) / 田中=改善(実年齢-) / 山田=悪化(実年齢+大)

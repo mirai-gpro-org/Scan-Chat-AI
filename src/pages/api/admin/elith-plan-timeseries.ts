@@ -15,7 +15,8 @@ import { getS3Config, isS3Configured, listObjects, getObjectText, putFiles } fro
 import { ELITH_HANDOFF_SCHEMA_VERSION } from '../../../lib/elith-export';
 import { PLANS, expandPlanSchedule } from '../../../lib/elith-plan';
 import { buildSnapshot } from '../../../lib/elith-synthetic';
-import { computeHealthAge, normalizeMarkers, type RawItem } from '../../../lib/health-age';
+import { normalizeMarkers, type RawItem } from '../../../lib/health-age';
+import { computeWellnessAge } from '../../../lib/wellness-age';
 
 export const prerender = false;
 
@@ -65,7 +66,7 @@ function buildSyntheticHealthAge(
     subject: { sex: sex ?? null, age: ha.chronological_age },
     source: {
       origin: 'scan-chat-ai', app: 'scan-chat-ai', model: ha.model_version,
-      note: '健康年齢(CABA)。合成: 血液(なければ健診)の合成値から算出。', lab_name: null, seed_ref: seedRef ?? null,
+      note: 'ウェルネス年齢(旧称: 健康年齢 / CABA)。合成: 血液(なければ健診)の合成値から算出。', lab_name: null, seed_ref: seedRef ?? null,
     },
     data: {
       health_age: ha.biological_age,
@@ -92,7 +93,7 @@ interface Body {
   seedPrefix?: unknown;   // 種の探索先 prefix (既定=sourcePrefix。UI は納品層 'user/' を渡す)
   sourcePrefix?: unknown; // 生成物の出力先 prefix (既定 scan-accuracy-test/)
   deliveryPrefix?: unknown; // mode=list: 納品(assembled)層の走査 prefix (既定 'user/')
-  age?: unknown;          // 合成ペルソナの D0 時点実年齢 (健康年齢算出に必須)
+  age?: unknown;          // 合成ペルソナの D0 時点実年齢 (ウェルネス年齢算出に必須)
   sex?: unknown;          // 'male' | 'female' (クレアチニン性別正規化に使用・任意)
   dryRun?: unknown;
 }
@@ -226,10 +227,10 @@ export const POST: APIRoute = async ({ request }) => {
     }
   }
 
-  // 健康年齢(HealthAgeData)の生成設定。
+  // ウェルネス年齢(HealthAgeData)の生成設定。
   //   - 「血液検査毎に最新を算出」→ 生成の数/タイミングは **血液(あれば)/無ければ健診** の各回に一致。
   //     幹部=血液9回→9本 / ミドル=血液なし→健診3回→3本。
-  //   - 算出には実年齢が必須。age 未指定なら健康年齢は生成しない(捏造しない)。
+  //   - 算出には実年齢が必須。age 未指定ならウェルネス年齢は生成しない(捏造しない)。
   const haSourceFormat = plan.formats.some((f) => f.formatId === 'BloodTestData')
     ? 'BloodTestData'
     : plan.formats.some((f) => f.formatId === 'HealthCheckupData')
@@ -295,12 +296,13 @@ export const POST: APIRoute = async ({ request }) => {
     folder.files.push({ format_id: occ.formatId, file: fileName });
     byFolder.set(dateFolder, folder);
 
-    // 健康年齢: 血液(なければ健診)の各回に、その回の合成値から算出して同日フォルダへ同梱。
+    // ウェルネス年齢: 血液(なければ健診)の各回に、その回の合成値から算出して同日フォルダへ同梱。
     if (haSourceFormat && occ.formatId === haSourceFormat && Number.isFinite(personaAge)) {
       const meas = (snap.obj as { data?: { measurements?: unknown } }).data?.measurements;
       const ageAt = Math.round(personaAge) + Math.floor(occ.monthsFromBase / 12); // 経年で実年齢も進む
       const markers = { ...normalizeMarkers(Array.isArray(meas) ? (meas as RawItem[]) : []), age: ageAt, sex: personaSex };
-      const ha = computeHealthAge(markers);
+      // ①正規版 → ②簡易版 の順に算出 (wellness-age.ts)。③(算出不能)は捏造せずスキップ。
+      const ha = computeWellnessAge(markers);
       if (ha.ok && ha.biological_age != null) {
         const haFile = `HealthAgeData_date_${dateFolder}_user_${clientId}.json`;
         const haKey = `${cleanPrefix}user/${clientId}/date/${dateFolder}/${haFile}`;
@@ -315,7 +317,7 @@ export const POST: APIRoute = async ({ request }) => {
         folder.files.push({ format_id: 'HealthAgeData', file: haFile });
         haGenerated++;
       } else {
-        haSkipped++; // 必要マーカー不足 → 捏造せずスキップ (種の血液に CABA 必須項目が無い等)
+        haSkipped++; // 正規版・簡易版とも必要マーカー不足 → 捏造せずスキップ
       }
     }
   }

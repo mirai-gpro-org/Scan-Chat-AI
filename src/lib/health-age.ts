@@ -1,5 +1,5 @@
 /**
- * 健康年齢 (生物学的年齢) の決定論計算 — CABA v5.4 (Levine 2018 PhenoAge ベース)。
+ * ウェルネス年齢 (生物学的年齢) の決定論計算 — CABA v5.4 (Levine 2018 PhenoAge ベース)。
  *
  * ロジックは `biological_age_calculator_v5.4.html` (PMID 30596641 / Levine 2018) をそのまま移植。
  * LLM は使わない (血液CSVパーサ `elith-blood-csv.ts` と同思想)。
@@ -37,6 +37,17 @@ export interface HealthAgeMarkers {
   sbp?: number | null;        // mmHg (収縮期・オーバーレイ)
   fev1fvc?: number | null;    // % (1秒率・オーバーレイ)
   bmi?: number | null;        // kg/m^2 (参考表示のみ・計算に使わない)
+  // ── 以下は正規版 (v5.4) では使わない。簡易版 (health-age-simple.ts) の
+  //    補助オーバーレイ用に normalizeMarkers が拾えるようにするための枠。
+  hba1c?: number | null;      // % (NGSP)。血糖欠測時の eAG 推定にも使う
+  ua?: number | null;         // mg/dL 尿酸
+  egfr?: number | null;       // mL/分/1.73m^2
+  ldl?: number | null;        // mg/dL
+  tg?: number | null;         // mg/dL 中性脂肪
+  ggt?: number | null;        // U/L γ-GT
+  bun?: number | null;        // mg/dL 尿素窒素
+  waist?: number | null;      // cm 腹囲
+  dbp?: number | null;        // mmHg 拡張期
 }
 
 export interface HealthAgeResult {
@@ -106,8 +117,11 @@ function resolveCRP(m: HealthAgeMarkers): { crp: number; source: 'measured' | 'n
   return { crp: CRP_MEDIAN_MGDL, source: 'imputed' };
 }
 
-/** PhenoAge本体 (v5.4 定数)。入力: albumin g/dL, creat mg/dL, glucose mg/dL, crp mg/dL, 他は表示単位。 */
-function phenoAgeCore(v: {
+/**
+ * PhenoAge本体 (v5.4 定数)。入力: albumin g/dL, creat mg/dL, glucose mg/dL, crp mg/dL, 他は表示単位。
+ * 簡易版 (`health-age-simple.ts`) も同じ本体を使う (係数は移植元 HTML と一致することを確認済) ため export する。
+ */
+export function phenoAgeCore(v: {
   albumin: number; creatinine: number; glucose: number; crp: number;
   lymph: number; mcv: number; rdw: number; alp: number; wbc: number; age: number;
 }): { pheno: number; mortality: number } {
@@ -243,6 +257,17 @@ const SYNONYMS: Record<Exclude<keyof HealthAgeMarkers, 'age' | 'sex'>, string[]>
   sbp: ['収縮期血圧', '収縮期', '最高血圧', '大血圧', '来院時', '診察室血圧', '家庭血圧', 'sbp', '血圧上'],
   fev1fvc: ['fev1/fvc', 'fev1.0%', '1秒率', 'fev1fvc'],
   bmi: ['bmi', '体格指数'],
+  // ── 簡易版 (health-age-simple.ts) の補助オーバーレイ項目 ──
+  // 正規版 (v5.4) の計算には一切使わないので、ここへの追加で既存の算出結果は変わらない。
+  hba1c: ['hba1c', 'ヘモグロビンa1c', 'グリコヘモグロビン'],
+  ua: ['尿酸', 'uricacid'],
+  egfr: ['egfr', 'e-gfr', '推算gfr', '推算糸球体濾過量'],
+  ldl: ['ldlコレステロール', 'ldl-c', 'ldl'],
+  tg: ['中性脂肪', 'トリグリセライド', 'トリグリセリド', 'tg'],
+  ggt: ['γ-gtp', 'γ-gt', 'γgtp', 'γgt', 'gtp', 'γ-グルタミルトランスペプチダーゼ'],
+  bun: ['尿素窒素', 'bun'],
+  waist: ['腹囲', 'ウエスト', 'ウェスト', 'waist'],
+  dbp: ['拡張期血圧', '拡張期', '最低血圧', '小血圧', 'dbp', '血圧下'],
 };
 /**
  * WBC を PhenoAge 式が要求する ×10³/μL へスケール正規化する。
@@ -340,8 +365,8 @@ export function normalizeMarkers(items: RawItem[]): Partial<HealthAgeMarkers> {
       }
     }
   }
-  // SBP fallback: 「NNN / NN」(収縮期/拡張期) 形式の値を、血圧文脈の行から収縮期として拾う。
-  if (out.sbp == null) {
+  // SBP/DBP fallback: 「NNN / NN」(収縮期/拡張期) 形式の値を、血圧文脈の行から拾う。
+  if (out.sbp == null || out.dbp == null) {
     for (const it of items) {
       const v = typeof it.value === 'string' ? it.value : '';
       const m = v.match(/^\s*(\d{2,3})\s*[/／]\s*(\d{2,3})\s*$/);
@@ -349,7 +374,10 @@ export function normalizeMarkers(items: RawItem[]): Partial<HealthAgeMarkers> {
       const ctx = canon(it.name) + canon(it.name_detail) + canon(it.category) + canon(it.region);
       if (ctx.includes('血圧') || ctx.includes('来院時') || ctx.includes('診察室') || ctx.includes('脈波')) {
         const sys = parseFloat(m[1]);
-        if (Number.isFinite(sys) && sys >= 60 && sys <= 260) { out.sbp = sys; break; }
+        const dia = parseFloat(m[2]);
+        if (out.sbp == null && Number.isFinite(sys) && sys >= 60 && sys <= 260) out.sbp = sys;
+        if (out.dbp == null && Number.isFinite(dia) && dia >= 30 && dia <= 160) out.dbp = dia;
+        if (out.sbp != null && out.dbp != null) break;
       }
     }
   }
