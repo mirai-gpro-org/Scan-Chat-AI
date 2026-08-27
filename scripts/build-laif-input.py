@@ -10,8 +10,11 @@ LAiF 上り入力フォーム（AI疾病発症予測）生成 — 決定論ビ�
 
 確定ルール(LAiF回答 2026-08):
   ・**名前欄(G1)＝識別番号(仮名ID)を必ずセット**(空欄不可＝JOBRUNNER解析不能)。実氏名は載せない=PII非送付。
-  ・No.0 識別番号 も同一の仮名ID。
   ・**識別番号は英字を1文字以上含む**(数字のみは解析不可・大小不問。LAiF回答 2026-08-26)。
+  ・**黒枠セル＝LAiF側の自動計算項目。書き込まない**(LAiF指摘 2026-08-27
+    「最初の識別番号は入力しないでください。その後の黒い色の枠は自動計算項目です」)。
+    → No.0 識別番号(行4)・年齢(行8)・BMI(行11)・服薬情報(処方薬品)・心電図/各エコー所見 は空のまま。
+    識別番号は G1 だけに入れる(旧「No.0 にも同値を入れる」は撤回)。判定=塗りのテーマ色1(黒)。
 
 記入ルールはテンプレート自身から読む (2026-08-27・LAiF指摘を受けた改修):
   フォームには入力規則(プルダウン/数値範囲)が24個定義済みで、これが唯一の正解。
@@ -40,7 +43,7 @@ import openpyxl
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from laif_form_rules import (  # noqa: E402
-    read_rules, normalize_value, validate, parent_child_map,
+    read_rules, normalize_value, validate, parent_child_map, readonly_rows,
     check_client_id, item_name, COL_INPUT,
 )
 
@@ -150,14 +153,22 @@ def cmd_repair(src, out, client_id=None):
     """既存ファイルを、ビルダーと同一の正規化ロジックで修正して書き出す。"""
     wb, ws = _open(src)
     rules = read_rules(ws)
+    # 識別番号は **名前欄(G1) だけ**。No.0 の行は黒枠(自動計算)なので書かない
+    # (LAiF 指摘 2026-08-27「最初の識別番号は入力しないでください」)。
     if client_id:
         ws.cell(1, COL_INPUT).value = client_id
-        for r in range(3, ws.max_row + 1):
-            if norm_exact(ws.cell(r, 4).value or ws.cell(r, 3).value or '') == '識別番号':
-                ws.cell(r, COL_INPUT).value = client_id
-                break
     notes = []
+    # 黒枠＝自動計算セルに入っている値を消す（LAiF 指摘 2026-08-27）。
+    for r in sorted(readonly_rows(ws)):
+        v = ws.cell(r, COL_INPUT).value
+        if v is not None and str(v).strip() != '':
+            ws.cell(r, COL_INPUT).value = None
+            notes.append((r, item_name(ws, r), f'自動計算項目のため空にした（元値 {v!r}）'))
+
+    ro = readonly_rows(ws)
     for r in sorted(rules):
+        if r in ro:
+            continue
         v = ws.cell(r, COL_INPUT).value
         if v is None or str(v).strip() == '':
             continue
@@ -190,6 +201,7 @@ def cmd_build(a):
 
     wb, ws = _open(a.template)
     rules = read_rules(ws)
+    ro_rows = readonly_rows(ws)
     notes = []
 
     # フィールド行の索引を 2 系統で作る。No列は数式のため項目名(C/D列)で検出。
@@ -233,6 +245,10 @@ def cmd_build(a):
         r = resolve_row(raw_name)
         if not r:
             return False
+        if r in ro_rows:
+            # 黒枠＝自動計算セル。値があっても**書かない**（LAiF 指摘 2026-08-27）。
+            notes.append((r, item_name(ws, r), f'自動計算項目のため記入せず（元値 {value!r}）'))
+            return True
         nv, note = normalize_value(ws, r, value, rules)
         if note:
             notes.append((r, item_name(ws, r), note))
@@ -244,9 +260,10 @@ def cmd_build(a):
     audit = {'name_id': client_id, 'basic': 0, 'measurements_matched': [], 'measurements_unmatched': [],
              'questionnaire_matched': 0, 'questionnaire_unmatched': []}
 
-    # 1) 名前欄(G1)＝識別番号(仮名ID)【確定ルール】・No.0 識別番号
+    # 1) 識別番号は **名前欄(G1) だけ**に入れる。
+    #    No.0「識別番号」(行4) は**黒枠＝自動計算のため記入しない**
+    #    (LAiF 指摘 2026-08-27:「最初の識別番号は入力しないでください」)。
     ws.cell(1, COL_INPUT).value = client_id
-    put('識別番号', client_id)
 
     # 2) 基本情報
     prof = data.get('profile') or {}

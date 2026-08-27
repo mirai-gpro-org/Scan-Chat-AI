@@ -82,6 +82,29 @@ def read_rules(ws):
     return rules
 
 
+# ── 自動計算セル（書き込み禁止）──────────────────────────────
+# LAiF 指摘 (2026-08-27):
+#   「最初の識別番号は入力しないでください。その後の黒い色の枠は自動計算項目です。」
+# テンプレートは **入力フィールド列(G) の塗りが黒 (テーマ色 1) のセル = 自動計算/記入不可**
+# という規約になっている（入力欄は別の淡い塗り）。行番号を直書きせず、この塗りで判定する。
+#   実測 (2026-08-27 時点のフォーム): 行4 識別番号 / 行8 年齢 / 行11 BMI /
+#   行44 服薬情報（処方薬品）/ 行112-118 各エコー所見・心電図所見 の計 11 セル。
+READONLY_FILL_THEME = 1   # テーマ色 1 = 黒
+
+
+def readonly_rows(ws):
+    """G列が黒塗り＝自動計算(書き込み禁止)の行番号 set。テンプレートの塗りから導出する。"""
+    out = set()
+    for r in range(1, ws.max_row + 1):
+        fill = ws.cell(r, COL_INPUT).fill
+        if not fill or fill.patternType != 'solid':
+            continue
+        fg = fill.fgColor
+        if fg is not None and fg.type == 'theme' and fg.theme == READONLY_FILL_THEME:
+            out.add(r)
+    return out
+
+
 def parent_child_map(ws, rules=None):
     """
     「有/無」の親行 → その配下の「有」のみ行のリスト。
@@ -201,6 +224,12 @@ def validate(ws, rules=None):
 
     def add(r, kind, msg, value):
         out.append({'row': r, 'name': item_name(ws, r), 'kind': kind, 'value': value, 'message': msg})
+
+    # 自動計算セル（黒枠）に値が入っていないか。LAiF 指摘の再発防止。
+    for r in sorted(readonly_rows(ws)):
+        v = ws.cell(r, COL_INPUT).value
+        if v is not None and str(v).strip() != '':
+            add(r, 'readonly', '自動計算項目（黒枠）のため記入してはいけない', v)
 
     for r, rule in sorted(rules.items()):
         v = ws.cell(r, COL_INPUT).value
