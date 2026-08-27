@@ -99,3 +99,51 @@ export function clearInterviewResult(id = 'default'): void {
   if (!store) return;
   store.removeItem(`${KEY_PREFIX}result:${id}`);
 }
+
+/**
+ * 問診の途中経過 (中止して再開するため)。
+ *
+ * `InterviewResult` は**完了時にだけ**書かれるので、途中で中止すると回答が消えていた。
+ * 「回答済の問診を記憶して中止する」を選んだときにここへ退避し、次回の開始時に復元する。
+ * 「回答を全てクリアして中止する」を選んだときは削除する。
+ *
+ * PII は入れない (問診の回答 id → 値だけ。氏名・生年月日は customer 側にのみ存在する)。
+ */
+export interface InterviewProgress {
+  id: string;
+  /** 設問 id → 回答値 */
+  answers: Record<string, string | string[] | number>;
+  /** 申込情報等から供給済でユーザーに提示しない設問 id (例 EXAM-TYPE) */
+  seeded: string[];
+  /** 中止した時点で表示していた設問 id。null なら先頭から。 */
+  currentId: string | null;
+  updatedAt: number;
+}
+
+export function saveInterviewProgress(progress: Omit<InterviewProgress, 'updatedAt'>): void {
+  const store = safeStorage();
+  if (!store) return;
+  const next: InterviewProgress = { ...progress, updatedAt: Date.now() };
+  store.setItem(`${KEY_PREFIX}progress:${progress.id}`, JSON.stringify(next));
+}
+
+export function loadInterviewProgress(id = 'default'): InterviewProgress | null {
+  const store = safeStorage();
+  if (!store) return null;
+  const raw = store.getItem(`${KEY_PREFIX}progress:${id}`);
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw) as InterviewProgress;
+    // 壊れた値で復元して落ちないよう最低限だけ検証する
+    if (!p || typeof p !== 'object' || typeof p.answers !== 'object' || p.answers === null) return null;
+    return { ...p, seeded: Array.isArray(p.seeded) ? p.seeded : [] };
+  } catch {
+    return null;
+  }
+}
+
+export function clearInterviewProgress(id = 'default'): void {
+  const store = safeStorage();
+  if (!store) return;
+  store.removeItem(`${KEY_PREFIX}progress:${id}`);
+}

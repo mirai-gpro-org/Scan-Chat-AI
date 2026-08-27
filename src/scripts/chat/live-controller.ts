@@ -25,7 +25,10 @@ import { marked } from 'marked';
 import { LiveAudioManager } from './live-audio-manager';
 import {
   clearChatSession,
+  clearInterviewProgress,
   clearInterviewResult,
+  loadInterviewProgress,
+  saveInterviewProgress,
   createEmptySession,
   loadChatSession,
   saveChatSession,
@@ -39,7 +42,7 @@ import {
   type QuestionDef,
   type AnswerValue,
 } from './interview-script';
-import { openWheelPicker, openMatrixPicker, formatMatrix, closeAllPickers } from './wheel-picker';
+import { openListPicker, openMatrixPicker, openActionSheet, formatMatrix, closeAllPickers } from './choice-picker';
 import { getOrCreateDiagnosticId } from '../../lib/diagnostic-id';
 
 export interface LiveRefs {
@@ -65,9 +68,7 @@ export interface LiveRefs {
   questionText: HTMLElement;
 
   uiVoice: HTMLElement;
-  uiChip: HTMLElement;
-  uiMulti: HTMLElement;
-  uiWheel: HTMLElement;
+  uiList: HTMLElement;
   uiMatrix: HTMLElement;
   uiSlider: HTMLElement;
   uiStepper: HTMLElement;
@@ -89,15 +90,9 @@ export interface LiveRefs {
   textSubmit: HTMLButtonElement;
   textExample: HTMLElement;
 
-  multiOpen: HTMLButtonElement;
-  multiSummary: HTMLElement;
-  multiModal: HTMLElement;
-  multiOptions: HTMLElement;
-  multiTitle: HTMLElement;
-  multiConfirm: HTMLButtonElement;
 
-  wheelOpen: HTMLButtonElement;
-  wheelSummary: HTMLElement;
+  listOpen: HTMLButtonElement;
+  listSummary: HTMLElement;
   matrixOpen: HTMLButtonElement;
   matrixSummary: HTMLElement;
 
@@ -279,9 +274,9 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     if (!confirm('問診をリセットしますか？（履歴が削除されます）')) return;
     stopLive();
     closeAllPickers();
-    closeMultiModal();
     clearChatSession(SESSION_ID);
     clearInterviewResult(SESSION_ID);
+    clearInterviewProgress(SESSION_ID);
     session = createEmptySession(SESSION_ID);
     currentQ = null;
     advancing = false;
@@ -297,8 +292,74 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
   // 開始: 大型 hero ボタン
   refs.startBtn.addEventListener('click', () => toggleSession());
-  // 中断: コンパクト top-right ボタン
-  refs.micBtn.addEventListener('click', () => toggleSession());
+  // 中止: コンパクト top-right ボタン
+  refs.micBtn.addEventListener('click', () => void confirmAbort());
+
+  /** 途中経過を localStorage へ退避する (再開用)。 */
+  function persistProgress(): void {
+    const st = engine.getState();
+    saveInterviewProgress({
+      id: SESSION_ID,
+      answers: st.answers as Record<string, string | string[] | number>,
+      seeded: st.seeded,
+      currentId: st.currentId,
+    });
+  }
+
+  /**
+   * 「中止」の 3 択 (発注者指示 2026-08)。
+   *   ① 回答済の問診を記憶して中止する … 途中経過を保存し、次回の開始で続きから
+   *   ② 回答を全てクリアして中止する   … 途中経過・履歴・結果を削除して最初から
+   *   ③ 問診に戻る                     … 何もしない
+   * 背景タップ・Esc も ③ 扱い (誤操作で回答を失わせない)。
+   */
+  async function confirmAbort(): Promise<void> {
+    const answered = Object.keys(engine.getAnswers()).length;
+    const picked = await openActionSheet({
+      title: '問診を中止しますか？',
+      description: answered > 0 ? `ここまで ${answered} 問にお答えいただいています。` : undefined,
+      actions: [
+        {
+          key: 'keep', label: '回答済の問診を記憶して中止する',
+          note: '次に開いたとき、続きから再開できます', icon: 'save', tone: 'primary',
+        },
+        {
+          key: 'clear', label: '回答を全てクリアして中止する',
+          note: 'ここまでの回答は削除されます', icon: 'ban', tone: 'danger',
+        },
+        { key: 'back', label: '問診に戻る', icon: 'prev' },
+      ],
+    });
+
+    if (picked === 'keep') {
+      persistProgress();
+      stopLive();
+      appendMessage({ role: 'system', text: '問診を中止しました。次に開いたとき、続きから再開できます。', ts: Date.now() });
+      saveChatSession(session);
+      return;
+    }
+    if (picked === 'clear') {
+      stopLive();
+      clearInterviewProgress(SESSION_ID);
+      clearChatSession(SESSION_ID);
+      clearInterviewResult(SESSION_ID);
+      session = createEmptySession(SESSION_ID);
+      currentQ = null;
+      advancing = false;
+      engine.reset();
+      refs.resumeBanner && (refs.resumeBanner.hidden = true);
+      renderHistory();
+      renderProgress(0, '準備中…');
+      renderSectionDots(-1);
+      refs.questionText.textContent = '…';
+      showWidget('voice');
+      return;
+    }
+    // 'back' / null: 問診に戻る。選択画面を開いていたなら開き直す。
+    if (picked === 'back' || picked === null) {
+      if (currentQ && mapKind(currentQ.answer_kind) === 'list') void openListForCurrent();
+    }
+  }
 
   // スピーカー ON/OFF（AI の音声出力のみ。テキスト/UI は影響なし）
   refs.speakerBtn.addEventListener('click', () => {
@@ -344,36 +405,10 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     applyModeUI();
   });
 
-  // chip 選択
-  refs.uiChip.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-chip]');
-    if (!btn) return;
-    const label = btn.dataset.chip ?? '';
-    // フラッシュ視覚フィードバック
-    btn.classList.add('flash', 'selected');
-    submitAnswer(label);
-  });
 
-  // multi モーダル
-  refs.multiOpen.addEventListener('click', () => openMultiModal());
-  refs.multiModal.addEventListener('click', (e) => {
-    const target = e.target as HTMLElement;
-    if (target.closest('[data-close-modal]')) closeMultiModal();
-  });
-  refs.multiConfirm.addEventListener('click', () => {
-    const checked = refs.multiOptions.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked');
-    const labels = Array.from(checked).map((c) => c.value);
-    closeMultiModal();
-    if (labels.length === 0) {
-      submitAnswer('特になし');
-    } else {
-      refs.multiSummary.textContent = `選択: ${labels.join('、')}`;
-      submitAnswer(labels.join('、'));
-    }
-  });
 
-  // wheel (ホイール選択モーダル)
-  refs.wheelOpen.addEventListener('click', () => void openWheelForCurrent());
+  // list (選択肢モーダル)
+  refs.listOpen.addEventListener('click', () => void openListForCurrent());
   // matrix (項目 × 頻度)
   refs.matrixOpen.addEventListener('click', () => void openMatrixForCurrent());
 
@@ -400,17 +435,23 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     refs.textInput.value = '';
     submitAnswer(t);
   });
+  // 改行キーで回答を確定する (身長・体重のような 1 行の入力で「送信」まで指を運ばせない)。
+  // 改行を入れたいときは Shift+Enter。Cmd/Ctrl+Enter も従来どおり確定。
+  // ※ iOS の数字キーパッドには改行キーが無いため、その環境では「送信」ボタンが確定手段になる。
+  //   だから送信ボタンは残す (実機で要確認)。
   refs.textInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      refs.textSubmit.click();
-    }
+    if (e.key !== 'Enter') return;
+    if (e.shiftKey) return; // 改行
+    // IME 変換中の Enter は確定操作なので拾わない
+    if (e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    refs.textSubmit.click();
   });
 
   // fallback (常時併設) — 自由入力、質問にしばられず会話可能
   refs.fallbackSend.addEventListener('click', () => sendFallback());
   refs.fallbackInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
       e.preventDefault();
       sendFallback();
     }
@@ -428,20 +469,10 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   function setConnected(state: boolean): void {
     refs.startHero.hidden = state;
     refs.qaArea.hidden = !state;
-    if (state) {
-      refs.micBtn.classList.add('active');
-      const lbl = refs.micBtn.querySelector('.mic-label') as HTMLElement | null;
-      const icn = refs.micBtn.querySelector('.mic-icon') as HTMLElement | null;
-      if (lbl) lbl.textContent = '中断';
-      if (icn) icn.textContent = '⏸';
-      refs.micBtn.setAttribute('aria-label', '問診を中断');
-    } else {
-      refs.micBtn.classList.remove('active');
-      const lbl = refs.micBtn.querySelector('.mic-label') as HTMLElement | null;
-      const icn = refs.micBtn.querySelector('.mic-icon') as HTMLElement | null;
-      if (lbl) lbl.textContent = '中断';
-      if (icn) icn.textContent = '⏸';
-    }
+    // ラベル・アイコンは markup 側 (chat.astro の AppIcon) が正。
+    // ここで textContent を書き換えると SVG が消えて絵文字に戻ってしまうので触らない。
+    refs.micBtn.classList.toggle('active', state);
+    refs.micBtn.setAttribute('aria-label', '問診を中止');
   }
 
   function applyModeUI(): void {
@@ -464,9 +495,10 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
   function mapKind(k?: string): WidgetKey {
     switch (k) {
-      case 'chip': return 'chip';
-      case 'multi': return 'multi';
-      case 'wheel': return 'wheel';
+      // 選択式はすべて同じ選択画面 (件数と収まりでレイアウトが決まる)
+      case 'chip':
+      case 'multi':
+      case 'list': return 'list';
       case 'matrix': return 'matrix';
       case 'slider': return 'slider';
       case 'stepper': return 'stepper';
@@ -475,14 +507,12 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     }
   }
 
-  type WidgetKey = 'voice' | 'chip' | 'multi' | 'wheel' | 'matrix' | 'slider' | 'stepper' | 'text';
+  type WidgetKey = 'voice' | 'list' | 'matrix' | 'slider' | 'stepper' | 'text';
 
   function showWidget(key: WidgetKey): void {
     const map: Record<WidgetKey, HTMLElement> = {
       voice: refs.uiVoice,
-      chip: refs.uiChip,
-      multi: refs.uiMulti,
-      wheel: refs.uiWheel,
+      list: refs.uiList,
       matrix: refs.uiMatrix,
       slider: refs.uiSlider,
       stepper: refs.uiStepper,
@@ -495,8 +525,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     refs.fallbackZone.hidden = key === 'text';
     // 「音声でも・タップでも」ヒント: 選択式 widget の時に表示
     refs.dualHint.hidden = !(
-      key === 'chip' || key === 'multi' || key === 'wheel' ||
-      key === 'matrix' || key === 'slider' || key === 'stepper'
+      key === 'list' || key === 'matrix' || key === 'slider' || key === 'stepper'
     );
   }
 
@@ -507,31 +536,41 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     refs.stepperValue.textContent = String(next);
   }
 
-  function openMultiModal(): void {
-    refs.multiModal.hidden = false;
-    document.body.style.overflow = 'hidden';
+
+  /** その設問が複数選択か (chip=常に単一 / multi=常に複数 / list は q.multi 次第)。 */
+  function isMultiQ(q: QuestionDef): boolean {
+    return q.answer_kind === 'multi' || (q.answer_kind === 'list' && !!q.multi);
   }
 
-  function closeMultiModal(): void {
-    refs.multiModal.hidden = true;
-    document.body.style.overflow = '';
+  /** その設問の選択肢 (chip / multi / list で置き場所が違うだけ)。 */
+  function optionsOf(q: QuestionDef): ChoiceOption[] {
+    if (q.answer_kind === 'chip') return q.chips ?? [];
+    if (q.answer_kind === 'multi') return q.multi_options ?? [];
+    return q.list_options ?? [];
   }
 
-  /** 現在の wheel 設問でホイール選択モーダルを開く */
-  async function openWheelForCurrent(): Promise<void> {
+  /**
+   * 現在の選択式設問で選択画面を開く (chip / multi / list 共通)。
+   * レイアウト (ボトムシート / 全画面 / 全画面+検索) は件数と収まり具合から
+   * choice-picker が決める。呼び出し側は指定しない。
+   */
+  async function openListForCurrent(): Promise<void> {
     const q = currentQ;
-    if (!q || q.answer_kind !== 'wheel') return;
-    const initial = q.multi
+    if (!q || mapKind(q.answer_kind) !== 'list') return;
+    const multi = isMultiQ(q);
+    const initial = multi
       ? (engine.getAnswers()[q.id] as string[] | undefined) ?? []
       : [];
-    const result = await openWheelPicker({
-      title: q.wheel_title ?? q.question,
-      options: q.wheel_options ?? [],
-      multi: !!q.multi,
+    const result = await openListPicker({
+      title: q.list_title ?? q.multi_title ?? q.question,
+      options: optionsOf(q),
+      multi,
       initial,
+      // 選択画面は画面を覆うため、上部の中止ボタンが隠れる。ここからも中止できるようにする。
+      onAbort: () => void confirmAbort(),
     });
     if (result === null) return; // キャンセル
-    if (q.multi) {
+    if (multi) {
       submitAnswer(result.length === 0 ? 'なし' : result.join('、'));
     } else {
       if (result.length === 0) return;
@@ -547,6 +586,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       title: q.question,
       rows: q.matrix_rows ?? [],
       cols: q.matrix_cols ?? [],
+      onAbort: () => void confirmAbort(),
     });
     if (result === null) return;
     submitAnswer(formatMatrix(result));
@@ -572,14 +612,18 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
     // 受付〜次設問表示までは音声の二重取り込みを止める
     advancing = true;
-    // 開いているモーダル (ホイール/マトリクス/複数選択) を閉じる
+    // 開いているモーダル (選択画面/マトリクス) を閉じる
     closeAllPickers();
-    closeMultiModal();
 
     const answerValue = toAnswerValue(cq, rawAnswer);
     const { next, isComplete } = engine.recordAndAdvance(answerValue);
+    // 1 問ごとに途中経過を退避しておく。中止ボタンを押さずに離脱 (タブを閉じる・
+    // 通信断・リロード) しても続きから再開できるようにするため。
+    persistProgress();
 
     if (isComplete || !next) {
+      // 完走したら途中経過は不要 (次回は最初から)。結果は saveInterviewResult 側で残る。
+      clearInterviewProgress(SESSION_ID);
       showCompletion();
       // 音声回答 (silent) では発話を注入しない。Live API の自発応答が唯一の話者。
       // (発話注入すると二重話者=二重復唱になる。§AI問診_仕様と設計原則 案1)
@@ -654,7 +698,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
   /** UI に入る生文字列を engine が扱える型に変換 */
   function toAnswerValue(q: QuestionDef, raw: string): AnswerValue {
-    if (q.answer_kind === 'multi' || (q.answer_kind === 'wheel' && q.multi)) {
+    if (isMultiQ(q)) {
       return raw.split('、').map((s) => s.trim()).filter(Boolean);
     }
     if (q.answer_kind === 'slider') {
@@ -704,13 +748,10 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       return null; // マトリクスはタップ操作のみ
     }
 
-    const options =
-      q.answer_kind === 'chip' ? (q.chips ?? [])
-      : q.answer_kind === 'multi' ? (q.multi_options ?? [])
-      : (q.wheel_options ?? []);
+    const options = optionsOf(q);
     if (options.length === 0) return null;
 
-    const isMulti = q.answer_kind === 'multi' || (q.answer_kind === 'wheel' && q.multi);
+    const isMulti = isMultiQ(q);
 
     const matched = options
       .map((o) => ({ label: o.label, core: normalizeVoice(o.label) }))
@@ -811,18 +852,35 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
           setConnected(true);
           // engine 起動: 最初の Q を画面に即表示 (AI を待たない)
           // EXAM-TYPE は申込情報から供給し設問を提示しない (空なら通常設問にフォールバック)。
-          const firstQ = engine.start(
+          //
+          // 「回答済の問診を記憶して中止する」で退避した途中経過があれば**続きから**再開する
+          // (発注者指示 2026-08)。復元できなければ通常どおり最初から。
+          const saved = loadInterviewProgress(SESSION_ID);
+          const resumedQ = saved ? engine.resume(saved) : null;
+          const isResume = resumedQ !== null;
+          const firstQ = resumedQ ?? engine.start(
             seededExamTypes.length > 0 ? { 'EXAM-TYPE': seededExamTypes } : {},
           );
           applyQuestionToUI(firstQ);
-          // AI には「挨拶 + Q1-1 の読み上げ」だけを依頼
+          const answeredCount = isResume ? Object.keys(engine.getAnswers()).length : 0;
+          if (isResume) {
+            appendMessage({
+              role: 'system',
+              text: `前回の続きから再開します（回答済 ${answeredCount} 問）。`,
+              ts: Date.now(),
+            });
+            saveChatSession(session);
+          }
+          // AI には「挨拶 + 次の質問の読み上げ」だけを依頼
           setTimeout(() => {
             try {
               liveSession?.sendClientContent({
                 turns: [{ role: 'user', parts: [{ text:
                   `問診を始めます。次の 2 文を発話してください:
-  ① 「こんにちは、ウェルフォートの AI 問診です。画面の質問に、タップでも音声でもお答えいただけます。」
-  ② 続けて画面に表示されている最初の質問を読み上げ: 「${firstQ.question}」
+  ① ${isResume
+                    ? '「おかえりなさい。前回の続きから問診を再開します。」'
+                    : '「こんにちは、ウェルフォートの AI 問診です。画面の質問に、タップでも音声でもお答えいただけます。」'}
+  ② 続けて画面に表示されている質問を読み上げ: 「${firstQ.question}」
 選択肢や入力例は読み上げないでください (画面に表示されています)。挨拶と質問を 1 回だけ、絶対に繰り返さないでください。`
                 } ] }],
                 turnComplete: true,
@@ -980,13 +1038,11 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     refs.skipBtn.hidden = true; // engine 版ではスキップ未対応 (将来追加)
 
     const kind = mapKind(q.answer_kind);
-    if (kind === 'chip') {
-      renderChips(q.chips ?? []);
-    } else if (kind === 'multi') {
-      renderMulti(q.multi_options ?? [], q.multi_title ?? '該当するものをすべて選んでください');
-    } else if (kind === 'wheel') {
-      refs.wheelSummary.textContent = '';
-      refs.wheelOpen.textContent = q.multi ? '🎡 回して選ぶ（複数可）' : '🎡 回して選ぶ';
+    if (kind === 'list') {
+      refs.listSummary.textContent = '';
+      // アイコンは Lucide 一本 (絵文字を本番素材にしない)。
+      refs.listOpen.innerHTML =
+        `${iconSvg('check')}<span>${isMultiQ(q) ? '選択肢から選ぶ（複数可）' : '選択肢から選ぶ'}</span>`;
     } else if (kind === 'matrix') {
       refs.matrixSummary.textContent = '';
     } else if (kind === 'slider') {
@@ -1002,7 +1058,11 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     } else if (kind === 'text') {
       refs.textInput.value = '';
       refs.textInput.placeholder = q.placeholder ?? '自由にお答えください';
-      refs.textInput.setAttribute('inputmode', q.numeric ? 'numeric' : 'text');
+      refs.textInput.setAttribute('inputmode', q.numeric ? 'decimal' : 'text');
+      // 改行キーのラベルを「完了」にして、押せば確定すると分かるようにする
+      refs.textInput.setAttribute('enterkeyhint', 'done');
+      // 1 行で足りる設問 (身長・体重など) は入力欄も 1 行にする
+      refs.textInput.rows = q.numeric ? 1 : 2;
       if (q.example) {
         refs.textExample.textContent = `入力例：${q.example}`;
         refs.textExample.hidden = false;
@@ -1012,13 +1072,19 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     }
     showWidget(kind);
 
-    // 選択肢が多い設問はモーダルを自動展開 (タップ一手間を省く)
-    if (kind === 'multi') {
-      setTimeout(() => openMultiModal(), 150);
-    } else if (kind === 'wheel') {
-      setTimeout(() => void openWheelForCurrent(), 150);
+    // 選択式は自動展開 (タップ一手間を省く)。単一選択はタップ 1 回で回答が確定するので、
+    // インラインのカードだった頃とタップ数は変わらない。
+    if (kind === 'list') {
+      setTimeout(() => void openListForCurrent(), 150);
     } else if (kind === 'matrix') {
       setTimeout(() => void openMatrixForCurrent(), 150);
+    } else if (kind === 'text') {
+      // 身長・体重のような入力欄は**カーソルを置いた状態**で出す (発注者指示 2026-08)。
+      // showWidget で hidden を外した直後だとフォーカスが乗らないので 1 フレーム待つ。
+      // preventScroll: 会話ログが飛ばないように (入力欄は画面下部に固定表示されている)。
+      requestAnimationFrame(() => {
+        try { refs.textInput.focus({ preventScroll: true }); } catch { refs.textInput.focus(); }
+      });
     }
   }
 
@@ -1100,44 +1166,18 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     });
   }
 
-  function renderChips(chips: ChoiceOption[]): void {
-    refs.uiChip.innerHTML = '';
-    for (const c of chips) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'choice-card';
-      btn.dataset.chip = c.label;
-      btn.innerHTML = `${c.icon ? `<span class="emoji">${iconSvg(c.icon)}</span>` : ''}<span class="flex-1">${escapeHtml(c.label)}</span><span class="text-slate-400" aria-hidden="true">›</span>`;
-      refs.uiChip.appendChild(btn);
-    }
-    // stagger アニメーション再トリガ
-    refs.uiChip.classList.remove('stagger');
-    void refs.uiChip.offsetWidth;
-    refs.uiChip.classList.add('stagger');
-  }
-
-  function renderMulti(opts: ChoiceOption[], title: string): void {
-    refs.multiTitle.textContent = title;
-    refs.multiSummary.textContent = '';
-    refs.multiOptions.innerHTML = '';
-    for (const o of opts) {
-      const id = `m-${Math.random().toString(36).slice(2, 8)}`;
-      const wrap = document.createElement('label');
-      wrap.className = 'choice-card cursor-pointer';
-      wrap.setAttribute('for', id);
-      wrap.innerHTML = `
-        <input id="${id}" type="checkbox" value="${escapeAttr(o.label)}" class="h-5 w-5 accent-brand-600" />
-        ${o.icon ? `<span class="emoji">${iconSvg(o.icon)}</span>` : ''}
-        <span class="flex-1">${escapeHtml(o.label)}</span>
-      `;
-      refs.multiOptions.appendChild(wrap);
-    }
-  }
 
   // ── 進捗 / セクション dots ───────────────────────
 
+  /**
+   * 進捗表記は **「問診完了まであと N%」** (発注者指示 2026-08)。
+   * N は**残り**なので 100 - percent。バーの塗り (= 済み) と数字 (= 残り) で
+   * 役割が分かれるため、単に「42%」と出していた頃より意味が読み取りやすい。
+   * 完了時は「あと 0%」が不自然なので文言ごと切り替える。
+   */
   function renderProgress(percent: number, sectionTitle: string): void {
-    refs.progressText.textContent = `${percent}%`;
+    const left = clamp(100 - percent, 0, 100);
+    refs.progressText.textContent = left <= 0 ? '問診完了' : `問診完了まであと ${left}%`;
     refs.sectionLabel.textContent = sectionTitle ? sectionTitle : '進行中…';
   }
 

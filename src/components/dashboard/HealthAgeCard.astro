@@ -2,6 +2,8 @@
 import AppIcon from '../AppIcon.astro';
 /**
  * ウェルネス年齢 (生物学的年齢 / 旧称「健康年齢」・2026-08 改称) カード。
+ * 改称は顧客向けの呼称だけで、内部の識別子
+ * (health_age_scores / ui.health_age_followup / HealthAgeLatest) は変えない。
  *
  * 【位置づけ】クライアントからの要望で途中から追加した機能で、算出ロジック自体が
  *   専門医の協力のもとテスト中。ダッシュボード最上位に置くのは暫定の扱い。
@@ -42,13 +44,30 @@ if (delta != null) {
 }
 const deltaIcon = delta == null ? 'flat' : delta > 2 ? 'up' : delta < -2 ? 'down' : 'flat';
 
+/*
+ * 実年齢との比較を数直線で見せる (発注者指示 2026-08「横のバーグラフ等でビジュアルに」)。
+ * 出すのは CABA が返した 2 値と、その差だけ。判定のゾーン塗り分けはしない (ミッション④)。
+ * 目盛りは 30〜80 歳の固定。値がその外に出る検体でも切れないよう、10 歳単位で外側にだけ広げる
+ * (狭めない = 回によって物差しが伸縮しない)。
+ */
+const AXIS_STEP = 10;
+const axisLo = Math.min(30, Math.floor(Math.min(bio ?? 30, latest.chronologicalAge) / AXIS_STEP) * AXIS_STEP);
+const axisHi = Math.max(80, Math.ceil(Math.max(bio ?? 80, latest.chronologicalAge) / AXIS_STEP) * AXIS_STEP);
+const axisTicks: number[] = [];
+for (let v = axisLo; v <= axisHi; v += AXIS_STEP) axisTicks.push(v);
+const axisPos = (v: number) => ((v - axisLo) / (axisHi - axisLo)) * 100;
+const bioPos = bio != null ? axisPos(bio) : 0;
+const agePos = axisPos(latest.chronologicalAge);
+const bandLeft = Math.min(bioPos, agePos);
+const bandWidth = Math.abs(agePos - bioPos);
+
 const carried = latest.carried ?? [];
 const imputed = latest.imputed ?? [];
 const missing = latest.missing ?? [];
 const markerLabel: Record<string, string> = {
   crp: 'CRP', mcv: 'MCV', albumin: 'アルブミン', creatinine: 'クレアチニン',
   glucose: '空腹時血糖', lymph: 'リンパ球%', alp: 'ALP', sbp: '収縮期血圧',
-  rdw: 'RDW', wbc: '白血球数',
+  rdw: 'RDW', wbc: '白血球数', fev1: '1 秒量 (FEV1)',
   // 簡易版 (v7.0) で使う項目
   hba1c: 'HbA1c', ua: '尿酸', egfr: 'eGFR', ldl: 'LDL-C', tg: '中性脂肪',
   ggt: 'γ-GT', bun: '尿素窒素', waist: '腹囲', dbp: '拡張期血圧',
@@ -71,16 +90,52 @@ const isReference = imputed.length > 0 || carried.length > 0;
   </header>
 
   {bio != null ? (
-    <div class="flex flex-wrap items-end justify-between gap-4">
-      <div>
+    <div class="flex flex-col gap-5 lg:flex-row lg:items-center lg:gap-6">
+      <div class="flex shrink-0 items-end gap-3">
         <p class="tnum text-6xl font-bold leading-none text-navy-800">
           {bio.toFixed(1)}<span class="ml-1.5 text-xl font-medium text-slate-600">歳</span>
         </p>
-        <p class="mt-2 text-base text-slate-700">
-          生物学的年齢 ／ 実年齢 <span class="tnum">{latest.chronologicalAge}</span> 歳
-        </p>
+        <p class="mb-1.5 max-w-[7rem] text-sm leading-snug text-slate-600">生物学的年齢<br />（推定）</p>
       </div>
-      <span class="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-slate-300 bg-slate-50 px-3.5 py-1.5 text-base font-medium text-slate-800">
+
+      {/* 実年齢との比較。数直線の上に 2 点を打ち、間を帯で結ぶ。 */}
+      <div
+        class="min-w-0 flex-1 px-2"
+        role="img"
+        aria-label={`${WELLNESS_AGE_LABEL} ${bio.toFixed(1)} 歳、実年齢 ${latest.chronologicalAge} 歳。目盛りは ${axisLo} 歳から ${axisHi} 歳。`}
+      >
+        <div class="relative h-7">
+          <span
+            class="tnum absolute bottom-0 -translate-x-1/2 whitespace-nowrap text-sm font-bold text-brand-700"
+            style={`left:${bioPos.toFixed(2)}%`}
+          >{WELLNESS_AGE_LABEL} {bio.toFixed(1)}</span>
+        </div>
+        <div class="relative h-4 rounded-full bg-slate-100">
+          {axisTicks.slice(1, -1).map((v) => (
+            <span class="absolute inset-y-0 w-px bg-slate-200" style={`left:${axisPos(v).toFixed(2)}%`}></span>
+          ))}
+          <span class="absolute inset-y-0 bg-mist" style={`left:${bandLeft.toFixed(2)}%;width:${bandWidth.toFixed(2)}%`}></span>
+          <span
+            class="absolute top-1/2 -ml-2 -mt-2 h-4 w-4 rounded-full border-[3px] border-white bg-brand-600"
+            style={`left:${bioPos.toFixed(2)}%`}
+          ></span>
+          <span
+            class="absolute top-1/2 -ml-2 -mt-2 h-4 w-4 rounded-full border-[3px] border-white bg-navy-800"
+            style={`left:${agePos.toFixed(2)}%`}
+          ></span>
+        </div>
+        <div class="relative mt-1.5 h-11">
+          {axisTicks.map((v) => (
+            <span class="tnum absolute -translate-x-1/2 text-sm text-slate-600" style={`left:${axisPos(v).toFixed(2)}%`}>{v}</span>
+          ))}
+          <span
+            class="tnum absolute top-5 -translate-x-1/2 whitespace-nowrap text-sm font-bold text-navy-800"
+            style={`left:${agePos.toFixed(2)}%`}
+          >実年齢 {latest.chronologicalAge}</span>
+        </div>
+      </div>
+
+      <span class="inline-flex shrink-0 items-center gap-1.5 self-start rounded-full border border-slate-300 bg-slate-50 px-3.5 py-1.5 text-base font-medium text-slate-800 lg:self-center">
         <AppIcon name={deltaIcon} size={16} class="text-slate-600" />
         {deltaText}
       </span>

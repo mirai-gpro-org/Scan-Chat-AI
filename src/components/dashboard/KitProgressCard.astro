@@ -5,6 +5,14 @@ import { shipmentLabel, testTypeLabel, formatJpDate, SHIPMENT_STAGES } from '../
 
 /**
  * ホーム用のキット進捗サマリ。詳細は /kit ページ。
+ *
+ * 【レイアウト】v1.0 で**横長**にして検査結果セクションの下へ移した (発注者指示 2026-08)。
+ * 右カラムの縦積みカードだった頃の名残で 1 件ずつ縦に伸びると、全幅に置いたとき
+ * 右半分が空くため、**1 件 = 全幅 1 行**に畳む。2 列にすると 1 列 ≒ 610px となり、
+ * 発送日と伝票番号が入りきらず省略される (実測 1440px) ので 2 列にはしない。スマホは
+ *   1 行目 = アイコン / 検査名 / 状態、2 行目 = 進捗バーと日付、3 行目 = 操作
+ * に折り返す (390px に横 1 行では入らない)。並べ替えは order-* で行い、DOM の順序は
+ * スマホの読み上げ順に合わせてある。
  * 段階 5/6 は本番で値が入らない (bridge-queries.ts:70-87 が null 固定) ため、
  * 到達済みの塗り分けだけを行い、完了扱いにはしない。
  */
@@ -19,18 +27,27 @@ interface Props {
 }
 const { shipments, nextTestAt, planName, diagnosticUserId, detailHref = '/kit' } = Astro.props as Props;
 const active = shipments.filter((s) => !s.lab_completed_at).slice(0, 2);
+
+/* 横 1 行に畳むので、日付から曜日を落とす (formatJpDate は「2026年8月25日 (火)」を返す)。 */
+const shortJpDate = (iso: string | null | undefined) => formatJpDate(iso).replace(/\s*\(.\)$/, '');
 ---
 
 <section class="card">
-  <header class="mb-3 flex flex-wrap items-center justify-between gap-2">
+  <header class="mb-3.5 flex flex-wrap items-center justify-between gap-2">
     <h2 class="flex shrink-0 items-center gap-2 text-base font-bold text-navy-800">
       <AppIcon name="kit" size={20} class="text-brand-700" /><span class="whitespace-nowrap">検査キットの進捗</span>
     </h2>
-    {planName && (
-      <span class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
-        {planName}
-      </span>
-    )}
+    <div class="flex flex-wrap items-center gap-3">
+      {planName && (
+        <span class="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-medium text-slate-700">
+          {planName}
+        </span>
+      )}
+      <a href={detailHref} class="inline-flex min-h-touch items-center gap-1.5 text-base font-semibold text-brand-700 hover:underline">
+        進捗の詳細を見る
+        <AppIcon name="next" size={18} />
+      </a>
+    </div>
   </header>
 
   {active.length === 0 ? (
@@ -43,44 +60,48 @@ const active = shipments.filter((s) => !s.lab_completed_at).slice(0, 2);
       )}
     </div>
   ) : (
-    <div class="space-y-3">
+    <div class="grid grid-cols-1 gap-3">
       {active.map((s) => {
         const tt = testTypeLabel(s.test_type);
         const status = shipmentLabel(s);
         return (
-          <article class="rounded-xl border border-slate-200 bg-white p-3">
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-2">
-                <AppIcon name={tt.icon} size={24} class="text-slate-600" />
-                <div>
-                  <h3 class="text-base font-semibold text-navy-800">{tt.name}</h3>
-                  <p class="text-sm text-slate-600">{s.lab_name ?? '検査会社未定'}</p>
-                </div>
-              </div>
-              <span class={`status-pill ${status.tone === 'ok' ? 'status-ok' : status.tone === 'active' ? 'status-active' : 'status-unknown'}`}>
-                <AppIcon name={status.icon} size={14} />{status.label}
-              </span>
-            </div>
+          <article class="flex flex-wrap items-center gap-x-3 gap-y-2.5 rounded-xl border border-slate-200 bg-white p-3 xl:flex-nowrap xl:gap-4">
+            <span class="order-1 grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-mist text-navy-800">
+              <AppIcon name={tt.icon} size={20} />
+            </span>
+
+            <span class="order-2 flex min-w-0 flex-1 flex-col xl:w-32 xl:flex-none">
+              <span class="text-base font-semibold text-navy-800">{tt.name}</span>
+              <span class="truncate text-sm text-slate-600">{s.lab_name ?? '検査会社未定'}</span>
+            </span>
+
+            <span class={`order-3 shrink-0 xl:order-5 status-pill ${status.tone === 'ok' ? 'status-ok' : status.tone === 'active' ? 'status-active' : 'status-unknown'}`}>
+              <AppIcon name={status.icon} size={14} />{status.label}
+            </span>
 
             {/* 6 段階ステッパー (詳細は /kit) */}
-            <div class="mt-3 grid grid-cols-6 gap-1" role="img" aria-label={`全 6 段階のうち ${status.step} 段階目 (${status.label})`}>
-              {SHIPMENT_STAGES.map((st) => (
-                <div class={`h-1.5 rounded-full ${status.step >= st.step ? 'bg-brand-600' : 'bg-slate-200'}`}></div>
-              ))}
-            </div>
-
-            <div class="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">
-              <span>{formatJpDate(s.shipped_at)} 発送</span>
-              {s.tracking_no && (
-                s.carrier_tracking_url ? (
-                  <a href={s.carrier_tracking_url} target="_blank" rel="noopener" class="inline-flex items-center gap-1 font-medium text-brand-700 hover:underline">
-                    <AppIcon name="location" size={16} />追跡 {s.tracking_no}
-                  </a>
-                ) : (
-                  <span class="inline-flex items-center gap-1"><AppIcon name="location" size={16} />{s.tracking_no}</span>
-                )
-              )}
-            </div>
+            <span class="order-4 flex min-w-0 basis-full flex-col gap-1.5 xl:basis-auto xl:flex-1">
+              <span class="grid grid-cols-6 gap-1" role="img" aria-label={`全 6 段階のうち ${status.step} 段階目 (${status.label})`}>
+                {SHIPMENT_STAGES.map((st) => (
+                  <span class={`h-1.5 rounded-full ${status.step >= st.step ? 'bg-brand-600' : 'bg-slate-200'}`}></span>
+                ))}
+              </span>
+              {/* 1 行に留める (溢れたら省略)。伝票番号を含む全文は /kit にある。 */}
+              <span class="truncate text-sm text-slate-600">
+                {s.shipped_at
+                  ? <><span class="tnum">{shortJpDate(s.shipped_at)}</span> 発送</>
+                  : '発送準備中'}
+                {s.tracking_no && (
+                  s.carrier_tracking_url ? (
+                    <> ・ <a href={s.carrier_tracking_url} target="_blank" rel="noopener" class="font-medium text-brand-700 hover:underline">
+                      追跡 <span class="tnum">{s.tracking_no}</span>
+                    </a></>
+                  ) : (
+                    <> ・ <span class="tnum">{s.tracking_no}</span></>
+                  )
+                )}
+              </span>
+            </span>
 
             {/* 自己申告ボタン */}
             {!s.user_received_at && s.shipped_at && (
@@ -89,7 +110,7 @@ const active = shipments.filter((s) => !s.lab_completed_at).slice(0, 2);
                 data-self-report
                 data-shipment-id={s.id}
                 data-action="received"
-                class="mt-3 flex min-h-touch w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base font-medium text-slate-800 transition hover:border-brand-400 hover:bg-brand-50 disabled:cursor-wait disabled:opacity-60"
+                class="order-5 flex min-h-touch shrink-0 items-center justify-center gap-2 rounded-xl border border-navy-400 bg-white px-3.5 text-base font-semibold text-slate-800 transition hover:bg-brand-50 disabled:cursor-wait disabled:opacity-60 xl:order-6"
               >
                 <AppIcon name="kit" size={18} />受け取りました
               </button>
@@ -100,7 +121,7 @@ const active = shipments.filter((s) => !s.lab_completed_at).slice(0, 2);
                 data-self-report
                 data-shipment-id={s.id}
                 data-action="returned"
-                class="mt-3 flex min-h-touch w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base font-medium text-slate-800 transition hover:border-brand-400 hover:bg-brand-50 disabled:cursor-wait disabled:opacity-60"
+                class="order-5 flex min-h-touch shrink-0 items-center justify-center gap-2 rounded-xl border border-navy-400 bg-white px-3.5 text-base font-semibold text-slate-800 transition hover:bg-brand-50 disabled:cursor-wait disabled:opacity-60 xl:order-6"
               >
                 <AppIcon name="send" size={18} />返送しました
               </button>
@@ -116,11 +137,6 @@ const active = shipments.filter((s) => !s.lab_completed_at).slice(0, 2);
       次回検査予定: <span class="font-medium text-slate-800">{formatJpDate(nextTestAt)}</span>
     </p>
   )}
-
-  <a href={detailHref} class="mt-3 inline-flex min-h-touch items-center gap-1.5 text-base font-medium text-brand-700 hover:underline">
-    進捗の詳細を見る
-    <AppIcon name="next" size={18} />
-  </a>
 </section>
 
 <script is:inline define:vars={{ diagnosticUserId }}>

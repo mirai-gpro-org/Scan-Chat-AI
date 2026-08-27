@@ -15,6 +15,7 @@ import { getOriginalSignedUrl } from './originals-storage';
 import type { TestArtifact, DiagnosisResult } from '../types/supabase';
 import { findSection, type ElithSection } from './elith-parser';
 import { demoArtifacts, demoFallbackEnabled } from './demo-data';
+import { AI_PREDICTION_REPORT_LABEL } from './display-names';
 
 export interface ResultData {
   artifact: TestArtifact;
@@ -34,6 +35,12 @@ export interface ResultData {
   samplePdfLabel: string | null;
   /** true = 実際の原本 / false = サンプルへのフォールバック */
   isOriginal: boolean;
+  /**
+   * 同じ人の**同じ検査種別**の全回分 (test_date 降順・この artifact 自身を含む)。
+   * 「過去データ」の切替に使う。ダッシュボードには置かず、
+   * 「データ」を押した先のこのページに置く (発注者指示 2026-08)。
+   */
+  siblings: { id: string; testDate: string | null }[];
 }
 
 /**
@@ -47,7 +54,7 @@ const SAMPLE_PDF_MAP: Record<string, { url: string; label: string }> = {
   blood:         { url: '/kensa_sample/blood.pdf',         label: '血液検査 (リージャー)' },
   cancer_urine:  { url: '/kensa_sample/cancer_urine.pdf',  label: 'がんリスク検査 (PREVENT)' },
   genetics:      { url: '/kensa_sample/genetics.pdf',      label: '遺伝子検査 (Genoplan My Book, 207pg)' },
-  ai_prediction: { url: '/kensa_sample/ai_prediction.pdf', label: 'AI 疾病予測' },
+  ai_prediction: { url: '/kensa_sample/ai_prediction.pdf', label: AI_PREDICTION_REPORT_LABEL },
 };
 
 /** Wellfort UI 表示順 (c) 全編で使用) */
@@ -106,10 +113,10 @@ export async function loadResult(
   /*
    * この画面は「この検査 1 件」を見る場所なので、**その検査の原本 (PDF/CSV) を主役にする**。
    *
-   * Elith の AI 診断結果 (diagnosis_results) は **アカウント単位** の成果物で、
+   * Elith の AI疾病予防報告書 (diagnosis_results) は **アカウント単位** の成果物で、
    * artifact とは紐付いていない (Phase 1.0 で直接の関連が無い)。ここに載せると
    * 検査履歴のどれを開いても同じ AI 診断レポートが出てしまうため、載せない。
-   * AI 診断結果は /report が正。検査種別ごとの読み物サンプル (elith-samples) も
+   * AI疾病予防報告書は /report が正。検査種別ごとの読み物サンプル (elith-samples) も
    * 「この検査の結果」ではないので同様に出さない。
    */
   const sections: ElithSection[] = [];
@@ -125,6 +132,17 @@ export async function loadResult(
   // ── 原本の解決 ───────────────────────────────────────────────
   // 実データ (test_artifact_files) があれば署名 URL を発行して使う。
   // 無ければ従来のサンプル PDF にフォールバックする。
+  // 同一種別の他の回 (過去データ)。id と日付だけ引く。
+  const { data: siblingRows } = await sb
+    .schema('diagnosis')
+    .from('test_artifacts')
+    .select('id, test_date')
+    .eq('diagnostic_user_id', artifact.diagnostic_user_id)
+    .eq('test_type', artifact.test_type)
+    .order('test_date', { ascending: false })
+    .limit(24);
+  const siblings = (siblingRows ?? []).map((r) => ({ id: r.id, testDate: r.test_date }));
+
   const original = await resolveOriginal(sb, artifact.id);
   const samplePdf = SAMPLE_PDF_MAP[artifact.test_type] ?? null;
   const pdfUrl = original?.url ?? samplePdf?.url ?? null;
@@ -145,6 +163,7 @@ export async function loadResult(
     samplePdfUrl: pdfUrl,
     samplePdfLabel: pdfLabel,
     isOriginal: original != null,
+    siblings,
   };
 }
 
@@ -193,6 +212,11 @@ function demoResult(artifactId: string): ResultData | { error: string } {
   const artifact = demoArtifacts('').find((a) => a.id === artifactId);
   if (!artifact) return { error: '検査結果が見つかりません。' };
   const samplePdf = SAMPLE_PDF_MAP[artifact.test_type] ?? null;
+  // デモ層も同じ種別の全回分を「過去データ」に出す (テストフェーズの表示確認用)。
+  const siblings = demoArtifacts('')
+    .filter((a) => a.test_type === artifact.test_type)
+    .sort((a, b) => String(b.test_date).localeCompare(String(a.test_date)))
+    .map((a) => ({ id: a.id, testDate: a.test_date }));
   return {
     artifact,
     latestResult: null,
@@ -204,5 +228,6 @@ function demoResult(artifactId: string): ResultData | { error: string } {
     samplePdfUrl: samplePdf?.url ?? null,
     samplePdfLabel: samplePdf ? `${samplePdf.label}（サンプル）` : null,
     isOriginal: false,
+    siblings,
   };
 }

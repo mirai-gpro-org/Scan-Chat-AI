@@ -1,7 +1,7 @@
 /**
  * AI ヘルスコーチ用のユーザー文脈生成。
  *
- * AI 診断結果 (Elith JSON 全 10 セクション) を「丸ごと」context として LLM に
+ * AI疾病予防報告書 (Elith JSON 全 10 セクション) を「丸ごと」context として LLM に
  * 渡すことで、コーチが結果を引用しながら回答できるようにする。
  *
  * セキュリティ:
@@ -11,6 +11,7 @@
 
 import { getServerSupabase } from './supabase';
 import { extractMetricCards, extractUrgentAlert, type ElithSection } from './elith-parser';
+import { AI_PREDICTION_REPORT_LABEL } from './display-names';
 
 export interface CoachContext {
   /** 表示用の氏名 (「真鍋様」等) */
@@ -173,7 +174,7 @@ function testTypeLabel(type: string): string {
     blood: '血液検査',
     genetics: '遺伝子検査',
     cancer_urine: 'がんリスク検査',
-    ai_prediction: 'AI 疾病予測',
+    ai_prediction: AI_PREDICTION_REPORT_LABEL,
   };
   return map[type] ?? type;
 }
