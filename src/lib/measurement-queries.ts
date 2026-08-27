@@ -179,11 +179,17 @@ export async function getLatestMeasurements(
 /**
  * 指定項目の時系列を取得する。
  * 各系列には検査票由来の基準値をそのまま添える (グラフの基準線に使う)。
+ *
+ * `testType` を渡すと、その検査種別 (health_checkup / blood / …) の測定値だけに絞る。
+ * 検査結果セクションの「グラフ」は 1 種別ずつ開くので、その絞り込みに使う。
+ * 絞り込んだ結果が空になったときは**デモへフォールバックしない** — 別種別のサンプルが
+ * 出ると「この検査の推移」を誤って見せることになるため。
  */
 export async function getMeasurementTrend(
   diagnosticUserId: string,
   canonicalNames: readonly string[] = DEFAULT_TREND_ITEMS,
   maxPoints = 12,
+  testType?: string,
 ): Promise<MetricTrendSeries[]> {
   const sb = getServerSupabase();
   // 旧 getMetricTrend が持っていたデモフォールバックを踏襲する
@@ -202,8 +208,12 @@ export async function getMeasurementTrend(
       .order('test_date', { ascending: true })
       .limit(600);
 
-    const rows = (data ?? []) as unknown as Row[];
-    if (error || rows.length === 0) return demoFallbackEnabled() ? demoMetricTrend() : [];
+    const all = (data ?? []) as unknown as Row[];
+    const rows = testType ? all.filter((r) => r.test_type === testType) : all;
+    if (error || rows.length === 0) {
+      if (testType) return [];
+      return demoFallbackEnabled() ? demoMetricTrend() : [];
+    }
 
     const byName = new Map<string, Row[]>();
     for (const r of rows) {
@@ -243,9 +253,10 @@ export async function getMeasurementTrend(
         points,
       });
     }
-    if (out.length === 0 && demoFallbackEnabled()) return demoMetricTrend();
+    if (out.length === 0 && !testType && demoFallbackEnabled()) return demoMetricTrend();
     return out;
   } catch {
+    if (testType) return [];
     return demoFallbackEnabled() ? demoMetricTrend() : [];
   }
 }

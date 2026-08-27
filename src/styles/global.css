@@ -88,6 +88,26 @@
            hover:border-brand-400 hover:bg-brand-50 active:scale-[0.99];
   }
 
+  /* ─ 検査カードの操作ボタン (データ / グラフ) ─
+     「データ」と「グラフ」は同格。どちらかを優先させる意図は無い (発注者指示 2026-08) ので、
+     塗り(brand-600)と白の主従をやめ、面積・高さ・太さを揃えて**色相だけ**で分ける。
+     brand 塗りは画面に 1 つ (AI疾病予防レポート) だけ残す。
+     枠は navy-400 以上にする — slate-300 は白地に 1.72:1 で
+     非文字コントラスト WCAG 1.4.11 (3:1) に届かない (中止ボタンで受けた指摘と同型)。
+     実測: データ 文字 6.48:1 / 枠 4.70:1、グラフ 文字 12.10:1 / 枠 4.22:1。 */
+  .btn-pair {
+    @apply flex min-h-touch items-center justify-center gap-1.5 rounded-xl border
+           px-2 text-base font-semibold transition;
+    /* 和文はどこでも折れるので、5 列に並べたときラベルが「デー／タ」と割れる (実測 1440px)。 */
+    white-space: nowrap;
+  }
+  .btn-data  { @apply border-brand-600 bg-brand-50 text-brand-700 hover:bg-brand-100; }
+  .btn-graph { @apply border-navy-400  bg-mist     text-navy-800  hover:bg-navy-100; }
+  /* 未実施などで押せないとき。色は持たせず、押せないことだけを示す。 */
+  .btn-pair-off {
+    @apply cursor-not-allowed border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-50;
+  }
+
   /* カードの内側。スマホは 16px、sm 以上で 20px (画面が狭いほど本文に幅を回す)。 */
   .card {
     @apply rounded-2xl border border-slate-200 bg-white p-4 sm:p-5;

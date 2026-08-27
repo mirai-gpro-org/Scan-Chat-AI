@@ -1,0 +1,72 @@
+---
+import AppIcon from '../components/AppIcon.astro';
+import AppNav from '../components/AppNav.astro';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import MetricTrendChart from '../components/dashboard/MetricTrendChart.astro';
+import { loadDashboard, testTypeLabel } from '../lib/dashboard-queries';
+import { getMeasurementTrend } from '../lib/measurement-queries';
+import { countUnreadImportant } from '../lib/notice-queries';
+import { refreshConfig, cfg } from '../lib/app-config';
+
+/**
+ * 検査値の推移 (グラフ)。ダッシュボードの検査カードにある「グラフ」の遷移先。
+ *
+ * v1.0 でダッシュボードから推移グラフを外し、検査種別ごとにこのページで見せる形にした
+ * (発注者指示 2026-08)。`?type=` が無ければ全種別をまとめて出す。
+ *
+ * 【未実装 (仕様未確定)】モックにある「表示項目の設定 (20 項目から 8 つ選ぶ)」は入れていない。
+ *   どの項目を既定で出すかの選定基準が未決のため。現状は
+ *   `measurement-queries.ts` の `DEFAULT_TREND_ITEMS` を出す。
+ */
+export const prerender = false;
+
+const url = new URL(Astro.request.url);
+const u = url.searchParams.get('u');
+const type = url.searchParams.get('type');
+
+const authEnabled = !!import.meta.env.PUBLIC_GOOGLE_CLIENT_ID;
+const needsSignIn = authEnabled && !u;
+
+const result = needsSignIn ? null : await loadDashboard(u);
+const hasError = result ? 'error' in result : false;
+const data = !result || hasError ? null : (result as Exclude<typeof result, { error: string }>);
+
+const series = data
+  ? await getMeasurementTrend(data.resultUid, undefined, 12, type ?? undefined)
+  : [];
+
+const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;
+await refreshConfig();
+const supportContact = cfg('ui.support_contact');
+
+const typeName = type ? testTypeLabel(type).name : null;
+const q = u ? `?u=${encodeURIComponent(u)}` : '';
+---
+
+<BaseLayout title={`検査値の推移 | Welltect`} width="app">
+  <AppNav u={u} current="/dashboard" unreadNotices={unreadNotices} supportContact={supportContact} />
+
+  <header class="hero-gradient px-5 py-4">
+    <a href={`/dashboard${q}`} class="inline-flex min-h-touch items-center gap-1.5 text-base font-semibold text-brand-700 hover:underline">
+      <AppIcon name="prev" size={18} />ダッシュボードへ戻る
+    </a>
+    <h1 class="mt-1 text-2xl font-bold tracking-tight text-navy-800">
+      検査値の推移{typeName && <span class="ml-2 text-lg font-medium text-slate-700">{typeName}</span>}
+    </h1>
+  </header>
+
+  <main class="flex flex-1 flex-col gap-5 px-5 pb-12 pt-5">
+    {needsSignIn ? (
+      <p class="card text-base text-slate-700">ダッシュボードからお進みください。</p>
+    ) : series.length === 0 ? (
+      <p class="card text-base text-slate-700">
+        この検査の推移グラフはまだありません。
+        <span class="mt-2 block text-sm text-slate-600">
+          推移は 2 回目の検査から表示されます。
+        </span>
+      </p>
+    ) : (
+      <MetricTrendChart series={series} title={typeName ? `${typeName}の推移` : '検査値の推移'} />
+    )}
+  </main>
+</BaseLayout>

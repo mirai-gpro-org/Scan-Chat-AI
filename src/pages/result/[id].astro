@@ -39,6 +39,21 @@ function md(text: string): string {
   return renderReportMarkdown(text, { u });
 }
 
+/*
+ * 「過去データ」。同じ検査種別の他の回へ切り替える。
+ * ダッシュボードには置かず「データ」を押した先のここに置く (発注者指示 2026-08)。
+ * 1 回分しか無いときは出さない (切替先が無いので押しても何も起きない)。
+ */
+const siblings = data?.siblings ?? [];
+const hasPast = siblings.length > 1;
+const siblingHref = (sid: string) => {
+  const qs = new URLSearchParams();
+  if (u) qs.set('u', u);
+  if (mode !== 'summary') qs.set('mode', mode);
+  const query = qs.toString();
+  return `/result/${sid}${query ? `?${query}` : ''}`;
+};
+
 const pdfSrcWithPage = data?.samplePdfUrl
   ? `${data.samplePdfUrl}#page=${initialPage}`
   : null;
@@ -78,6 +93,42 @@ const pdfSrcWithPage = data?.samplePdfUrl
             <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">自分でUP</span>
           )}
         </div>
+
+        {/* 過去データ (同じ検査の他の回)。<details> で畳んでおき、開くと日付が並ぶ。 */}
+        {hasPast && (
+          <details class="mt-3 rounded-xl border border-navy-400 bg-white">
+            <summary class="flex min-h-touch cursor-pointer items-center gap-2 px-3 text-base font-semibold text-navy-800">
+              <AppIcon name="clock" size={18} />
+              過去データ
+              <span class="tnum text-sm font-medium text-slate-600">全 {siblings.length} 回</span>
+              <AppIcon name="expand" size={18} class="ml-auto text-slate-600" />
+            </summary>
+            <ul class="border-t border-slate-200 p-2">
+              {siblings.map((sib) => {
+                const current = sib.id === data.artifact.id;
+                return (
+                  <li>
+                    {current ? (
+                      <span class="flex min-h-touch items-center gap-2 rounded-lg bg-mist px-3 text-base font-semibold text-navy-800">
+                        <AppIcon name="check" size={18} />
+                        <span class="tnum">{formatJpDate(sib.testDate)}</span>
+                        <span class="ml-auto text-sm font-medium text-slate-700">表示中</span>
+                      </span>
+                    ) : (
+                      <a
+                        href={siblingHref(sib.id)}
+                        class="flex min-h-touch items-center gap-2 rounded-lg px-3 text-base text-slate-800 hover:bg-brand-50"
+                      >
+                        <span class="tnum">{formatJpDate(sib.testDate)}</span>
+                        <AppIcon name="next" size={18} class="ml-auto text-slate-600" />
+                      </a>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </details>
+        )}
 
         {/* 原本 PDF へのクイックアクセス (kensa_sample) */}
         {data.samplePdfUrl && (

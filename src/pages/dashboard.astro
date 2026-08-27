@@ -4,20 +4,17 @@ import AppNav from '../components/AppNav.astro';
 import SignInPanel from '../components/SignInPanel.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import UrgentAlertBanner from '../components/dashboard/UrgentAlertBanner.astro';
-import MetricCard from '../components/dashboard/MetricCard.astro';
 import DailyQuests from '../components/dashboard/DailyQuests.astro';
-import HealthCoachPreview from '../components/dashboard/HealthCoachPreview.astro';
 import OnlineConsultCard from '../components/dashboard/OnlineConsultCard.astro';
 import SituationalCards from '../components/dashboard/SituationalCards.astro';
 import KitProgressCard from '../components/dashboard/KitProgressCard.astro';
+import TestResultsSection from '../components/dashboard/TestResultsSection.astro';
 import HealthInsightCard from '../components/dashboard/HealthInsightCard.astro';
-import MetricTrendChart from '../components/dashboard/MetricTrendChart.astro';
 import HealthAgeCard from '../components/dashboard/HealthAgeCard.astro';
 import ReportLinkCard from '../components/dashboard/ReportLinkCard.astro';
 import AddToHomeCard from '../components/AddToHomeCard.astro';
-import TestHistoryList from '../components/dashboard/TestHistoryList.astro';
 import { loadDashboard, formatGreeting, getHealthAge, formatJpDate, testTypeLabel } from '../lib/dashboard-queries';
-import { getLatestMeasurements, getMeasurementTrend } from '../lib/measurement-queries';
+import { getLatestMeasurements } from '../lib/measurement-queries';
 import { countUnreadImportant } from '../lib/notice-queries';
 import { refreshConfig, cfg } from '../lib/app-config';
 import { isBridgeConfigured } from '../lib/supabase';
@@ -76,7 +73,6 @@ const data = !result || hasError ? null : (result as Exclude<typeof result, { er
 // ── 実データ (STEP 1/2 で作った diagnosis.measurement_values から読む) ──
 // 判定・助言はアプリで作らない。検査票の値・基準値と、検査機関が付けた flag のみを渡す。
 const latest = data ? await getLatestMeasurements(data.resultUid) : null;
-const metricTrend = data ? await getMeasurementTrend(data.resultUid) : [];
 
 // 健康年齢 (選択ユーザー本人の diagnostic_user_id で取得)
 const healthAge = data ? await getHealthAge(data.diagnosticUserId) : null;
@@ -96,15 +92,8 @@ const situations  = data ? extractSituationalCards(sections) : [];
 const abstract    = findSection(sections, 'アブストラクト');
 const totalChars  = sections.reduce((sum, s) => sum + (s.char_count || 0), 0);
 
-// 直近の検査結果カード: 検査機関が印を付けた項目を先に、最大 6 件まで。
-// 「どれを先に出すか」は既にある印での並べ替えであって、アプリによる判定ではない。
-const CARD_LIMIT = 6;
-const latestItems = latest?.items.slice(0, CARD_LIMIT) ?? [];
+// あいさつ帯に出す「最新の検査」の種別名。
 const latestTypeName = latest ? testTypeLabel(latest.testType).name : '';
-const resultHref = (() => {
-  if (!latest || !u) return null;
-  return `/result/${latest.artifactId}?u=${encodeURIComponent(u)}&mode=full&page=1#pdf-viewer`;
-})();
 
 // OEM 相手先ブランド向けデモ顧客 (山田太郎 / da000001) はロゴを差し替える
 const DEMO_OEM_UID = 'da000001-0000-0000-0000-000000000000';
@@ -164,20 +153,27 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
         </div>
       )}
 
-      <header class="hero-gradient px-5 pb-5 pt-5">
-        <h1 class="text-2xl font-bold tracking-tight text-navy-800">
+      {/*
+        あいさつ帯は 1 列 (PC は 1 行) に畳む (発注者指示 2026-08)。
+        3 行積むと本題 (ウェルネス年齢 / 検査結果) が下へ押し出されるため。
+        スマホは 390px に横 1 行で入らないので、そのまま縦に折り返す。
+        区切りの「／」は 1 行に並ぶ lg 以上でだけ出す (折り返すと行末に取り残される)。
+      */}
+      <header class="hero-gradient flex flex-col gap-1.5 px-5 py-4 lg:flex-row lg:flex-wrap lg:items-baseline lg:justify-between lg:gap-x-5">
+        <h1 class="text-2xl font-bold tracking-tight text-navy-800 lg:whitespace-nowrap">
           {greeting}、こんにちは。
         </h1>
-        {latest?.testDate && (
-          <p class="mt-1.5 text-base text-slate-700">
-            最新の検査: {latestTypeName} ・ {formatJpDate(latest.testDate)}
-          </p>
-        )}
-        {data?.latestResult?.received_at && (
-          <p class="mt-1 text-sm text-slate-600">
-            最新の AI 診断: {formatJpDate(data.latestResult.received_at)}
-          </p>
-        )}
+        <p class="flex flex-col gap-1 text-base text-slate-700 lg:flex-row lg:items-baseline lg:gap-2.5">
+          {latest?.testDate && (
+            <span class="tnum whitespace-nowrap">最新の検査: {latestTypeName} {formatJpDate(latest.testDate)}</span>
+          )}
+          {latest?.testDate && data?.latestResult?.received_at && (
+            <span aria-hidden="true" class="hidden text-slate-300 lg:inline">／</span>
+          )}
+          {data?.latestResult?.received_at && (
+            <span class="tnum whitespace-nowrap">最新の AI 診断: {formatJpDate(data.latestResult.received_at)}</span>
+          )}
+        </p>
       </header>
 
       <main class="flex flex-1 flex-col gap-5 px-5 pb-12 pt-5">
@@ -185,100 +181,32 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
         {/* ① 注意項目 — 非表示 (緊急受診勧告 URGENT ALERT): {urgentAlert && <UrgentAlertBanner alert={urgentAlert} />} */}
 
         {/*
-          ② 健康年齢 ＋ ②-2 AI 診断結果。
-          健康年齢だけを全幅で置くと PC / タブレットで横に間延びするため、
-          sm 以上では 2 カラムにして右に AI 診断結果を並べる。
-          健康年齢が無い (算出前) ときは AI 診断結果を全幅の帯で出す。
-          items-start にして**高さは揃えない** — AI 診断結果は中身が少ないので、
-          健康年齢の高さまで引き伸ばすと中央が大きく空いて「未完成の箱」に見える。
+          ② ウェルネス年齢 ＋ ②-2 AI疾病予防レポート。
+          レポートのタイルは**検査カードと同寸 (17rem)** に固定し、余った幅はウェルネス年齢に回す
+          (発注者指示 2026-08)。タイルは brand 塗りで、この画面で塗りはこの 1 枚だけ。
+          items-stretch で高さを揃える (v0.5 の items-start から変更 — タイルが同寸になり、
+          中身が少なくて間延びする問題が消えたため)。
+          ウェルネス年齢が無い (算出前) ときはレポートを全幅の帯で出す。
         */}
         {healthAge?.latest ? (
-          <div class="grid grid-cols-1 items-start gap-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,16rem)] xl:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
+          <div class="grid grid-cols-1 items-stretch gap-5 lg:grid-cols-[minmax(0,1fr)_17rem]">
             <HealthAgeCard latest={healthAge.latest} followup={healthAgeFollowup} />
-            <ReportLinkCard href={`/report${q}`} layout="stack" />
+            <ReportLinkCard href={`/report${q}`} receivedAt={data?.latestResult?.received_at} />
           </div>
         ) : (
-          <ReportLinkCard href={`/report${q}`} />
+          <ReportLinkCard href={`/report${q}`} receivedAt={data?.latestResult?.received_at} />
         )}
 
         {/* ③ 次にすること — 非表示 (本日の健康クエスト): <DailyQuests quests={quests} /> */}
 
-        {/* ④ 主要導線 */}
-        <section aria-label="主要な操作">
-          <h2 class="sr-only">主要な操作</h2>
-          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <a
-              href={`/scan${q}`}
-              class="flex min-h-touch items-center gap-3 rounded-2xl bg-brand-600 px-4 py-4 text-white transition hover:bg-brand-700"
-            >
-              <AppIcon name="scan" size={28} />
-              <span class="flex flex-col">
-                <span class="text-base font-semibold">AI スキャン</span>
-                <span class="text-sm opacity-90">検診・人間ドックの結果を読み取る</span>
-              </span>
-            </a>
-            <a
-              href={`/chat${q}`}
-              class="flex min-h-touch items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-4 text-slate-800 transition hover:border-brand-400"
-            >
-              <AppIcon name="interview" size={28} class="text-brand-700" />
-              <span class="flex flex-col">
-                <span class="text-base font-semibold">AI 問診</span>
-                <span class="text-sm text-slate-600">生活習慣を記録する</span>
-              </span>
-            </a>
-          </div>
-        </section>
-
         {/*
-          PC (lg 以上) は 2 カラム。左＝閲覧の主軸 (検査結果 / 推移 / 履歴)、
-          右＝状況の参照 (キット / コーチ)。健康年齢と主要導線は上に全幅で残し、
-          モバイルの優先順位 (行動を促す順) をそのまま保つ。
+          ④ 検査結果 (検査 5 種)。
+          v1.0 で「直近の検査結果 (項目カード)」「検査値の推移」「検査履歴」をここに統合した。
+          推移グラフは種別ごとに /trend へ切り出し、履歴は「データ」の遷移先 (結果ページ) に置く。
         */}
-        <div class="flex flex-col gap-5 lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start lg:gap-6 xl:grid-cols-[minmax(0,1fr)_23rem]">
-        <div class="flex min-w-0 flex-col gap-5">
+        <TestResultsSection artifacts={data?.artifacts ?? []} q={q} />
 
-        {/* ⑤ 直近の検査結果 */}
-        {latestItems.length > 0 && (
-          <section>
-            <header class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-              <h2 class="flex items-center gap-2 text-base font-bold text-navy-800">
-                <AppIcon name="result" size={20} class="text-brand-700" />
-                直近の検査結果
-              </h2>
-              <span class="text-sm text-slate-600">
-                {latestTypeName}
-                {latest?.testDate && ` ・ ${formatJpDate(latest.testDate)}`}
-              </span>
-            </header>
-            {latest && latest.flaggedCount > 0 && (
-              <p class="mb-3 text-sm text-slate-700">
-                検査機関が基準値外として印を付けた項目が {latest.flaggedCount} 件あります。先頭に表示しています。
-              </p>
-            )}
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {latestItems.map((item) => <MetricCard item={item} href={resultHref} />)}
-            </div>
-            {latest && latest.items.length > CARD_LIMIT && resultHref && (
-              <a
-                href={resultHref}
-                class="mt-3 inline-flex min-h-touch items-center gap-1.5 text-base font-medium text-brand-700 hover:underline"
-              >
-                すべての検査値 {latest.items.length} 件を見る
-                <AppIcon name="next" size={18} />
-              </a>
-            )}
-          </section>
-        )}
-
-        {/* ⑥ 推移 */}
-        <MetricTrendChart series={metricTrend} />
-
-        {/* ⑥ 推移 までが左カラム。ここから右カラム。 */}
-        </div>
-        <aside class="flex min-w-0 flex-col gap-5 lg:sticky lg:top-16">
-
-        {/* ⑦ キット要約 */}
+        {/* ⑤ キット進捗 (横長・検査結果の下) */}
         <KitProgressCard
           shipments={data?.shipments ?? []}
           nextTestAt={data?.subscription?.next_test_at}
@@ -287,24 +215,43 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
           detailHref={`/kit${q}`}
         />
 
-        {/* ⑧ コーチ (AI) */}
-        <HealthCoachPreview
-          greeting={greeting}
-          summaryHint={data?.latestResult?.summary_text}
-          diagnosticUserId={data?.diagnosticUserId}
-        />
+        {/*
+          ⑥ 主要導線。AI スキャンと AI 問診は**同格**なので同じ淡色にする
+          (発注者指示 2026-08: AI 問診の白 →「データ」ボタンと同色)。
+          brand 塗りは AI疾病予防レポートのタイルに寄せてあるので、ここでは使わない。
+        */}
+        <section aria-label="主要な操作">
+          <h2 class="sr-only">主要な操作</h2>
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <a
+              href={`/scan${q}`}
+              class="flex min-h-touch items-center gap-3 rounded-2xl border border-brand-600 bg-brand-50 px-4 py-4 transition hover:bg-brand-100"
+            >
+              <AppIcon name="scan" size={28} class="text-brand-700" />
+              <span class="flex flex-col">
+                <span class="text-base font-semibold text-brand-700">AI スキャン</span>
+                <span class="text-sm text-slate-600">検診・人間ドックの結果を読み取る</span>
+              </span>
+            </a>
+            <a
+              href={`/chat${q}`}
+              class="flex min-h-touch items-center gap-3 rounded-2xl border border-brand-600 bg-brand-50 px-4 py-4 transition hover:bg-brand-100"
+            >
+              <AppIcon name="interview" size={28} class="text-brand-700" />
+              <span class="flex flex-col">
+                <span class="text-base font-semibold text-brand-700">AI 問診</span>
+                <span class="text-sm text-slate-600">生活習慣を記録する</span>
+              </span>
+            </a>
+          </div>
+        </section>
 
-        {/* ⑧-2 オンライン相談 (人)。AI コーチとは相手が違うので枠を分ける。 */}
+        {/* ⑦ 医師との面談 (オプション)。AI コーチとは相手が違うので枠を分ける。 */}
         <OnlineConsultCard />
 
         {/* 非表示 (今日の気付き): <HealthInsightCard diagnosticUserId={data?.diagnosticUserId ?? ''} /> */}
         {/* 非表示 (シチュエーション別アドバイス): {situations.length > 0 && <SituationalCards cards={situations} />} */}
-
-        </aside>
-        </div>
-
-        {/* ⑨ 履歴 (全幅) */}
-        <TestHistoryList artifacts={data?.artifacts ?? []} diagnosticUserId={data?.diagnosticUserId} />
+        {/* 非表示 (AI ヘルスコーチ)。1st ローンチ見送り (発注者判断 2026-08)。 */}
 
         {/* ⑩ ホーム画面への追加 (追加済み / 閉じたあとは出ない。判定はクライアント側) */}
         <AddToHomeCard />
@@ -318,7 +265,6 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
             <div class="flex justify-between gap-3"><dt>diagnostic_user_id:</dt><dd class="font-mono break-all">{data?.diagnosticUserId}</dd></div>
             <div class="flex justify-between gap-3"><dt>検査アーティファクト:</dt><dd class="tnum">{data?.artifacts.length} 件</dd></div>
             <div class="flex justify-between gap-3"><dt>検査値 (最新回):</dt><dd class="tnum">{latest?.items.length ?? 0} 件</dd></div>
-            <div class="flex justify-between gap-3"><dt>推移グラフ:</dt><dd class="tnum">{metricTrend.length} 系列</dd></div>
             <div class="flex justify-between gap-3"><dt>キット出荷:</dt><dd class="tnum">{data?.shipments.length} 件</dd></div>
             <div class="flex justify-between gap-3"><dt>Elith sections:</dt><dd class="tnum">{sections.length} 件 / {totalChars.toLocaleString()} 字</dd></div>
             <div class="flex justify-between gap-3"><dt>abstract:</dt><dd>{abstract ? `${abstract.char_count}字` : 'なし'}</dd></div>

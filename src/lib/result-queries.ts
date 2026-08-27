@@ -34,6 +34,12 @@ export interface ResultData {
   samplePdfLabel: string | null;
   /** true = 実際の原本 / false = サンプルへのフォールバック */
   isOriginal: boolean;
+  /**
+   * 同じ人の**同じ検査種別**の全回分 (test_date 降順・この artifact 自身を含む)。
+   * 「過去データ」の切替に使う。ダッシュボードには置かず、
+   * 「データ」を押した先のこのページに置く (発注者指示 2026-08)。
+   */
+  siblings: { id: string; testDate: string | null }[];
 }
 
 /**
@@ -125,6 +131,17 @@ export async function loadResult(
   // ── 原本の解決 ───────────────────────────────────────────────
   // 実データ (test_artifact_files) があれば署名 URL を発行して使う。
   // 無ければ従来のサンプル PDF にフォールバックする。
+  // 同一種別の他の回 (過去データ)。id と日付だけ引く。
+  const { data: siblingRows } = await sb
+    .schema('diagnosis')
+    .from('test_artifacts')
+    .select('id, test_date')
+    .eq('diagnostic_user_id', artifact.diagnostic_user_id)
+    .eq('test_type', artifact.test_type)
+    .order('test_date', { ascending: false })
+    .limit(24);
+  const siblings = (siblingRows ?? []).map((r) => ({ id: r.id, testDate: r.test_date }));
+
   const original = await resolveOriginal(sb, artifact.id);
   const samplePdf = SAMPLE_PDF_MAP[artifact.test_type] ?? null;
   const pdfUrl = original?.url ?? samplePdf?.url ?? null;
@@ -145,6 +162,7 @@ export async function loadResult(
     samplePdfUrl: pdfUrl,
     samplePdfLabel: pdfLabel,
     isOriginal: original != null,
+    siblings,
   };
 }
 
@@ -193,6 +211,11 @@ function demoResult(artifactId: string): ResultData | { error: string } {
   const artifact = demoArtifacts('').find((a) => a.id === artifactId);
   if (!artifact) return { error: '検査結果が見つかりません。' };
   const samplePdf = SAMPLE_PDF_MAP[artifact.test_type] ?? null;
+  // デモ層も同じ種別の全回分を「過去データ」に出す (テストフェーズの表示確認用)。
+  const siblings = demoArtifacts('')
+    .filter((a) => a.test_type === artifact.test_type)
+    .sort((a, b) => String(b.test_date).localeCompare(String(a.test_date)))
+    .map((a) => ({ id: a.id, testDate: a.test_date }));
   return {
     artifact,
     latestResult: null,
@@ -204,5 +227,6 @@ function demoResult(artifactId: string): ResultData | { error: string } {
     samplePdfUrl: samplePdf?.url ?? null,
     samplePdfLabel: samplePdf ? `${samplePdf.label}（サンプル）` : null,
     isOriginal: false,
+    siblings,
   };
 }

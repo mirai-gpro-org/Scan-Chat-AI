@@ -1,0 +1,129 @@
+---
+import AppIcon from '../AppIcon.astro';
+import type { TestArtifact } from '../../types/supabase';
+import { testTypeLabel, formatJpDate } from '../../lib/dashboard-queries';
+
+/**
+ * 検査結果セクション。検査 5 種を 1 種 1 枚のカードで出す (v1.0 レイアウト・発注者指示 2026-08)。
+ *
+ * 旧「直近の検査結果 (項目カード 6 枚)」「検査値の推移」「検査履歴」を、このセクションに統合した。
+ * 1 枚に付く操作は 2 つだけ:
+ *   データ  … 直近回の結果ページ (/result/{id})
+ *   グラフ  … これまでの推移 (/trend?type=…)
+ * この 2 つは**同格**。どちらかを優先させる意図は無いので、塗りの主従をやめて
+ * 色相だけで分ける (.btn-data / .btn-graph — 定義と根拠は global.css)。
+ *
+ * 【出す内容はミッション④の範囲】検査の種類・実施日・提供元・記録回数だけ。
+ * 値の解釈や「良い/悪い」は出さない。
+ */
+
+interface Props {
+  artifacts: TestArtifact[];
+  /** ?u= を引き継ぐためのクエリ文字列 ('' か '?u=…')。 */
+  q?: string;
+}
+const { artifacts, q = '' } = Astro.props as Props;
+
+/**
+ * 画面に並べる検査 5 種と、その並び順。データが 1 件も無い種別も枠だけ出す
+ * (「この検査がある」ことがユーザーに伝わるようにするため)。
+ *
+ * trend=false は**推移グラフを作らない検査**。遺伝子検査は判定のみで
+ * 経時変化する測定値を持たない (docs/elith/elith_s3_data_handoff_spec.md の
+ * GeneticTestResultData) ため、グラフのボタン自体を置かない。
+ */
+const TEST_TYPES: { type: string; label: string; trend: boolean }[] = [
+  { type: 'health_checkup', label: '人間ドック / 健康診断', trend: true },
+  { type: 'blood',          label: '血液検査',              trend: true },
+  { type: 'cancer_urine',   label: 'がんリスク検査',        trend: true },
+  { type: 'ai_prediction',  label: 'AI疾病予測',            trend: true },
+  { type: 'genetics',       label: '遺伝子検査',            trend: false },
+];
+
+/*
+ * カードは 5 列に並ぶと 1 枚 ≒ 230px しかないので、日付から曜日を落として 1 行に収める
+ * (formatJpDate は「2026年3月20日 (金)」を返す)。日付そのものは変えない。
+ */
+const shortJpDate = (iso: string | null | undefined) => formatJpDate(iso).replace(/\s*\(.\)$/, '');
+
+const cards = TEST_TYPES.map((t) => {
+  // artifacts は test_date の降順で渡ってくる (dashboard-queries.ts の order 指定)。
+  const mine = artifacts.filter((a) => a.test_type === t.type);
+  const newest = mine[0] ?? null;
+  return {
+    ...t,
+    icon: testTypeLabel(t.type).icon,
+    newest,
+    count: mine.length,
+    // 推移は 2 回目の検査から。1 回分しか無いと線が引けない。
+    canGraph: t.trend && mine.length >= 2,
+  };
+});
+---
+
+<section aria-labelledby="tests-title">
+  <header class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+    <h2 id="tests-title" class="flex items-center gap-2 text-base font-bold text-navy-800">
+      <AppIcon name="result" size={20} class="text-brand-700" />
+      検査結果
+    </h2>
+    <span class="text-sm text-slate-600">データ＝直近の結果 ／ グラフ＝これまでの推移</span>
+  </header>
+
+  <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+    {cards.map((c) => (
+      <article class="card flex flex-col gap-3">
+        <div class="flex items-center gap-3">
+          <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-mist text-navy-800">
+            <AppIcon name={c.icon} size={20} />
+          </span>
+          <span class="flex min-w-0 flex-col">
+            <span class="text-base font-bold text-navy-800">{c.label}</span>
+            {c.newest ? (
+              <>
+                <span class="tnum text-sm text-slate-600">最新 {shortJpDate(c.newest.test_date)}</span>
+                <span class="text-sm text-slate-600">{c.newest.lab_name ?? (c.newest.source === 'user_upload' ? '自分でアップロード' : c.newest.source)}</span>
+              </>
+            ) : (
+              <span class="text-sm text-slate-600">まだ結果がありません</span>
+            )}
+          </span>
+        </div>
+
+        <div class={`grid gap-2 ${c.trend ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          {c.newest ? (
+            <a href={`/result/${c.newest.id}${q}`} class="btn-pair btn-data">
+              <AppIcon name="report" size={18} />データ
+            </a>
+          ) : (
+            <span class="btn-pair btn-pair-off" aria-disabled="true">
+              <AppIcon name="report" size={18} />データ
+            </span>
+          )}
+
+          {c.trend && (
+            c.canGraph ? (
+              <a href={`/trend${q ? `${q}&` : '?'}type=${c.type}`} class="btn-pair btn-graph">
+                <AppIcon name="trend" size={18} />グラフ
+              </a>
+            ) : (
+              <span class="btn-pair btn-pair-off" aria-disabled="true">
+                <AppIcon name="trend" size={18} />グラフ
+              </span>
+            )
+          )}
+        </div>
+
+        <span class="text-sm text-slate-600">
+          {!c.trend
+            ? 'グラフ表示なし（判定のみの検査）'
+            : c.canGraph
+              ? `推移グラフ：記録 ${c.count} 回分`
+              : c.count === 1
+                ? '推移グラフは 2 回目の検査から'
+                : '推移グラフはまだありません'}
+        </span>
+      </article>
+    ))}
+  </div>
+</section>
