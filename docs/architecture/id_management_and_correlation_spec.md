@@ -70,7 +70,7 @@
 |---|---|---|
 | `client_id` | **＝`diagnostic_user_id`**（`elith_s3_data_handoff_spec §2`） | 顧客の唯一識別（PIIなし）。パス `user/{client_id}/date/{YYYY_MM_DD}/` |
 | `format_id` | HealthCheckupData / BloodTestData / CancerRiskAssessmentData / GeneticTestResultData / LifestyleQuestionnaireData / Other | 検査種別（＋日付フォルダで「いつの回か」を分離） |
-| `source_ref` | 元S3キー | 突合（健康年齢等の派生生成時） |
+| `source_ref` | 元S3キー | 突合（ウェルネス年齢等の派生生成時） |
 
 ---
 

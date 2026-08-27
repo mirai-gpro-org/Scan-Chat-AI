@@ -32,8 +32,8 @@ export const CONFIG_SPECS: ConfigSpec[] = [
   // 既定は**空**。空のあいだは UI 側に何も出さない (架空の連絡先や文言を作らない)。
   { key: 'ui.support_contact', type: 'string', group: '画面表示', label: 'サポート窓口', default: '',
     description: 'メニューやエラー画面に出す問い合わせ先 (例: support@example.co.jp / 0120-000-000)。空なら非表示。' },
-  { key: 'ui.health_age_followup', type: 'string', group: '画面表示', label: '健康年齢のフォローアップ文', default: '',
-    description: '健康年齢が実年齢より高いときに添える案内文。空なら非表示。'
+  { key: 'ui.health_age_followup', type: 'string', group: '画面表示', label: 'ウェルネス年齢のフォローアップ文', default: '',
+    description: 'ウェルネス年齢が実年齢より高いときに添える案内文。空なら非表示。'
       + ' **診断・治療の助言にならない範囲で書くこと** (アプリは独自に解釈しない方針)。'
       + ' 例: 「気になる点は次回の検査時に医師へご相談ください。」' },
 

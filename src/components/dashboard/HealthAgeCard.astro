@@ -1,18 +1,22 @@
 ---
 import AppIcon from '../AppIcon.astro';
 /**
- * ウェルネス年齢 (生物学的年齢 / CABA v5.4) カード。
- * 旧称「健康年齢」。顧客向けの呼称は **ウェルネス年齢** に統一 (発注者指示 2026-08)。
- * 内部の識別子 (health_age_scores / ui.health_age_followup / HealthAgeLatest) は変えない。
+ * ウェルネス年齢 (生物学的年齢 / 旧称「健康年齢」・2026-08 改称) カード。
+ * 改称は顧客向けの呼称だけで、内部の識別子
+ * (health_age_scores / ui.health_age_followup / HealthAgeLatest) は変えない。
  *
  * 【位置づけ】クライアントからの要望で途中から追加した機能で、算出ロジック自体が
  *   専門医の協力のもとテスト中。ダッシュボード最上位に置くのは暫定の扱い。
+ *
+ * 【算出の段階 (wellness-age.ts)】①正規版 CABA v5.4 → ②簡易版 v7.0 → ③算出不能。
+ *   ③ のときは値を作らず `WELLNESS_AGE_UNAVAILABLE_MESSAGE` をそのまま出す。
  *
  * 【表示の原則】アプリは独自に分析・解釈しない。ここで出すのは算出値・実年齢との差・
  *   算出条件 (補完/据え置き/不足) だけで、生活指導や受診勧奨の文言は付けない。
  *   実年齢より高い結果でも警告調にせず、事実と但し書きに留める。
  */
 import type { HealthAgeLatest } from '../../lib/dashboard-queries';
+import { WELLNESS_AGE_LABEL, WELLNESS_AGE_UNAVAILABLE_MESSAGE } from '../../lib/wellness-age';
 
 interface Props {
   latest: HealthAgeLatest;
@@ -28,6 +32,9 @@ const { latest, followup = null } = Astro.props;
 const bio = latest.biologicalAge;
 const delta = latest.delta;
 const sourceLabel = latest.sourceKind === 'blood' ? '血液検査' : '人間ドック';
+// 算出に使った版。旧データ (method 未記録) は版を断定せず出さない。
+const methodLabel =
+  latest.method === 'simple' ? '簡易版 v7.0' : latest.method === 'full' ? 'CABA v5.4' : null;
 
 // 実年齢との差。判定ではなく差の提示に留めるため、状態色は使わず中立色で示す。
 let deltaText = '実年齢と同程度です';
@@ -61,6 +68,10 @@ const markerLabel: Record<string, string> = {
   crp: 'CRP', mcv: 'MCV', albumin: 'アルブミン', creatinine: 'クレアチニン',
   glucose: '空腹時血糖', lymph: 'リンパ球%', alp: 'ALP', sbp: '収縮期血圧',
   rdw: 'RDW', wbc: '白血球数', fev1: '1 秒量 (FEV1)',
+  // 簡易版 (v7.0) で使う項目
+  hba1c: 'HbA1c', ua: '尿酸', egfr: 'eGFR', ldl: 'LDL-C', tg: '中性脂肪',
+  ggt: 'γ-GT', bun: '尿素窒素', waist: '腹囲', dbp: '拡張期血圧',
+  'glucose|hba1c': '空腹時血糖 または HbA1c',
 };
 const jp = (ks: string[]) => ks.map((k) => markerLabel[k] ?? k).join('・');
 const isReference = imputed.length > 0 || carried.length > 0;
@@ -70,12 +81,12 @@ const isReference = imputed.length > 0 || carried.length > 0;
   <header class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
     <h2 class="flex items-center gap-2 text-base font-bold text-navy-800">
       <AppIcon name="health-age" size={20} class="text-brand-700" />
-      ウェルネス年齢
+      {WELLNESS_AGE_LABEL}
       {isReference && bio != null && (
         <span class="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">参考値</span>
       )}
     </h2>
-    <span class="text-sm text-slate-600">CABA v5.4 ／ {sourceLabel}</span>
+    <span class="text-sm text-slate-600">{methodLabel ? `${methodLabel} ／ ` : ''}{sourceLabel}</span>
   </header>
 
   {bio != null ? (
@@ -91,13 +102,13 @@ const isReference = imputed.length > 0 || carried.length > 0;
       <div
         class="min-w-0 flex-1 px-2"
         role="img"
-        aria-label={`ウェルネス年齢 ${bio.toFixed(1)} 歳、実年齢 ${latest.chronologicalAge} 歳。目盛りは ${axisLo} 歳から ${axisHi} 歳。`}
+        aria-label={`${WELLNESS_AGE_LABEL} ${bio.toFixed(1)} 歳、実年齢 ${latest.chronologicalAge} 歳。目盛りは ${axisLo} 歳から ${axisHi} 歳。`}
       >
         <div class="relative h-7">
           <span
             class="tnum absolute bottom-0 -translate-x-1/2 whitespace-nowrap text-sm font-bold text-brand-700"
             style={`left:${bioPos.toFixed(2)}%`}
-          >ウェルネス年齢 {bio.toFixed(1)}</span>
+          >{WELLNESS_AGE_LABEL} {bio.toFixed(1)}</span>
         </div>
         <div class="relative h-4 rounded-full bg-slate-100">
           {axisTicks.slice(1, -1).map((v) => (
@@ -130,9 +141,11 @@ const isReference = imputed.length > 0 || carried.length > 0;
       </span>
     </div>
   ) : (
+    /* ③ 正規版でも簡易版でも算出できなかった場合。文言は発注者指定の定型文をそのまま出す
+       (値は作らない = 捏造ゼロ)。不足項目は補足として小さく添えるだけに留める。 */
     <p class="text-base text-slate-700">
-      必須項目が不足しているため算出できませんでした。
-      {missing.length > 0 && <span class="text-slate-600">（不足: {jp(missing)}）</span>}
+      {WELLNESS_AGE_UNAVAILABLE_MESSAGE}
+      {missing.length > 0 && <span class="block mt-1 text-sm text-slate-600">（不足: {jp(missing)}）</span>}
     </p>
   )}
 
@@ -144,21 +157,24 @@ const isReference = imputed.length > 0 || carried.length > 0;
     </p>
   )}
 
-  {bio != null && isReference && (
+  {bio != null && (isReference || latest.glucoseSource === 'eag') && (
     <p class="mt-4 border-t border-slate-200 pt-3 text-sm leading-relaxed text-slate-600">
       {imputed.length > 0 && <span>※ {jp(imputed)} は測定値が無いため標準値で補完した参考値です。</span>}
       {carried.length > 0 && <span>※ {jp(carried)} は直近の人間ドック値を据え置いて再計算しています。</span>}
+      {latest.glucoseSource === 'eag' && (
+        <span>※ 空腹時血糖の測定値が無いため、HbA1c から推定した平均血糖 (eAG) を代用しています。</span>
+      )}
     </p>
   )}
 
   {/* 出典と免責 (Wellfort 確認 2026-08・対外表記に明記・必須)。 */}
   <details class="mt-4 border-t border-slate-200 pt-3">
     <summary class="min-h-touch cursor-pointer text-sm font-medium text-slate-700">
-      ウェルネス年齢の算出方法について
+      {WELLNESS_AGE_LABEL}の算出方法について
     </summary>
     <div class="mt-2 space-y-2 text-sm leading-relaxed text-slate-600">
       <p>
-        「ウェルネス年齢」は、以下の 2 論文に基づく生物学的年齢評価手法を基礎とし、
+        「{WELLNESS_AGE_LABEL}」は、以下の 2 論文に基づく生物学的年齢評価手法を基礎とし、
         当社が実務利用向けに独自の改変を加えて算出しています。
       </p>
       <ul class="ml-5 list-disc space-y-1">
@@ -172,6 +188,14 @@ const isReference = imputed.length > 0 || carried.length > 0;
           Aging (Albany NY). 2018;10(4):573–591. doi:10.18632/aging.101414 (PMID: 29676998)
         </li>
       </ul>
+      {latest.method === 'simple' && (
+        <p>
+          今回の検査書式には血球分画 (リンパ球比率・MCV・RDW)・ALP・白血球数・hs-CRP が
+          含まれないため、<b>簡易版</b>で算出しています。これらの項目は集団の中央値で補完しており
+          (寄与は中立)、尿酸・eGFR・HbA1c・LDL・中性脂肪・γ-GT・尿素窒素・BMI・腹囲・血圧は
+          原著の構成要素ではない補助的な補正として加えています (係数は暫定値)。
+        </p>
+      )}
       <p>
         診断・治療の根拠にしないでください。本結果は、検査結果に基づく理論値です。<br />
         本数値は、原著に基づきウェルフォート社が改変したものです。

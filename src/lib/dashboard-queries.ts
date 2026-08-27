@@ -316,15 +316,19 @@ export interface HealthAgeLatest {
   carried: string[];          // 据え置きしたマーカー (血液回など)
   imputed: string[];          // 標準値で補完したマーカー (crp 等 → 参考値)
   missing: string[];          // 欠落した必須マーカー
+  /** どの版で算出したか ('full'=正規版 CABA v5.4 / 'simple'=簡易版 v7.0)。旧データは null。 */
+  method: 'full' | 'simple' | null;
+  /** 簡易版で血糖を HbA1c から推定した場合 'eag'。 */
+  glucoseSource: 'measured' | 'eag' | null;
 }
 export interface HealthAgeSummary {
   latest: HealthAgeLatest | null;
-  /** 健康年齢の時系列 (MetricTrendChart にそのまま渡せる) */
+  /** ウェルネス年齢の時系列 (MetricTrendChart にそのまま渡せる) */
   trend: MetricTrendSeries | null;
 }
 
 /**
- * diagnosis.health_age_scores から健康年齢の最新値と時系列を取得。
+ * diagnosis.health_age_scores からウェルネス年齢 (旧称: 健康年齢) の最新値と時系列を取得。
  * getMetricTrend と同じくスタンドアロン (diagnosis_results が無くても表示できる)。
  */
 export async function getHealthAge(diagnosticUserId: string): Promise<HealthAgeSummary> {
@@ -359,9 +363,16 @@ export async function getHealthAge(diagnosticUserId: string): Promise<HealthAgeS
       carried: arr('carried_markers').length ? arr('carried_markers') : arr('carried'),
       imputed: arr('imputed_markers'),
       missing: arr('missing_required'),
+      // method は簡易版フォールバック導入 (2026-08) 以降の行にだけ入る。旧行は null=正規版扱いにしない
+      // (どちらか分からないものを断定しない)。
+      method: inputs.method === 'full' || inputs.method === 'simple' ? inputs.method : null,
+      glucoseSource:
+        inputs.glucose_source === 'eag' || inputs.glucose_source === 'measured'
+          ? inputs.glucose_source
+          : null,
     };
     const trend: MetricTrendSeries | null =
-      points.length > 0 ? { label: '健康年齢', unit: '歳', points } : null;
+      points.length > 0 ? { label: 'ウェルネス年齢', unit: '歳', points } : null;
     return { latest, trend };
   } catch {
     return demoHealthAge();
@@ -369,10 +380,10 @@ export async function getHealthAge(diagnosticUserId: string): Promise<HealthAgeS
 }
 
 /**
- * 健康年齢のダミー (テストフェーズの表示確認用)。
+ * ウェルネス年齢のダミー (テストフェーズの表示確認用)。
  *
  * health_age_scores が空 / Supabase 未接続でも、ダッシュボードの並び
- * (健康年齢 → AI 診断結果 → AI スキャン/AI 問診) を確認できるようにする。
+ * (ウェルネス年齢 → AI 診断結果 → AI スキャン/AI 問診) を確認できるようにする。
  * demo-data.ts の他のダミーと同じ扱いで、`PUBLIC_DEMO_FALLBACK=false` で切れる。
  * **値は CABA で算出したものではなく固定のダミー**。DB に実データが入れば自動で消える。
  */
@@ -394,8 +405,10 @@ function demoHealthAge(): HealthAgeSummary {
       carried: ['fev1'],
       imputed: ['crp'],
       missing: [],
+      method: 'full',
+      glucoseSource: null,
     },
-    trend: { label: '健康年齢', unit: '歳', points },
+    trend: { label: 'ウェルネス年齢', unit: '歳', points },
   };
 }
 

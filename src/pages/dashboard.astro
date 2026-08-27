@@ -74,7 +74,7 @@ const data = !result || hasError ? null : (result as Exclude<typeof result, { er
 // 判定・助言はアプリで作らない。検査票の値・基準値と、検査機関が付けた flag のみを渡す。
 const latest = data ? await getLatestMeasurements(data.resultUid) : null;
 
-// 健康年齢 (選択ユーザー本人の diagnostic_user_id で取得)
+// ウェルネス年齢 (選択ユーザー本人の diagnostic_user_id で取得)
 const healthAge = data ? await getHealthAge(data.diagnosticUserId) : null;
 
 const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;

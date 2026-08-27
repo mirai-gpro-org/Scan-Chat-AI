@@ -93,7 +93,7 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
       Preview=`gemini-3-flash-preview`。**末尾-preview無しの `gemini-3-flash` は Gemini API に存在しない** (設定すると全スキャン失敗)。
     - **前提**: 3.x 系は **Tier1 (課金有効化) + 当該キーでのモデルアクセス** が必要。未開通のまま 3.x を指すと
       全スキャン (検診/がん/血液image/遺伝子) が失敗する → その場合は env で 2.5 に戻す。
-    - スキャン精度は **検診 numeric → 健康年齢 (CABA)** に直結。モデル切替時は代表ページで再検証すること。
+    - スキャン精度は **検診 numeric → ウェルネス年齢 (CABA)** に直結。モデル切替時は代表ページで再検証すること。
   - **Live (AI問診)**: 既定 `gemini-3.1-flash-live-preview` (REST 非対応の専用プレビュー)。`live.model` で追従。
     経路: `chat` 画面 (`live-controller.ts`) → `POST /api/live-token` → `MODELS.liveChat`
     → `getLiveModel()` → `cfg('live.model')`。**実際に何が使われているかは DB の値次第**なので、
@@ -362,6 +362,28 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
   - 実データ経路の目視確認は `supabase/seed_elith_report.sql` (既定では読み込まない・手で流す)。
   - **受取仕様は未確定** (`docs/lab/lab_data_pipeline_master_spec.md:98`)。命名規則・出力トリガ・
     世代管理・ひも付け・受領確認が決まったら自動受信へ差し替える。
+
+### ウェルネス年齢 (旧称: 健康年齢・2026-08 確定・発注者指示)
+- **名称は「ウェルネス年齢」**。画面・帳票・ドキュメントの表示名は全部これ。
+  **内部識別子は据え置き** (`HealthAgeData` / `data.health_age` / `diagnosis.health_age_scores` /
+  `ui.health_age_followup` / `src/lib/health-age*.ts` 等)。`HealthAgeData` は **Elith との受け渡し
+  format_id なので勝手に変えない** (変更には Elith 合意が要る)。納品 JSON の `source.note` にだけ
+  「ウェルネス年齢 (旧称: 健康年齢 / CABA)」と両名を書いて先方が気づけるようにしてある。
+  ※ wellfort-site の企業サイト側スローガン「定年は『健康年齢』で決める」は**アプリの機能名ではない**
+    ので今回の改称対象外 (`HealthManagement.astro` / `InvestmentRisk.astro`)。
+- **算出は 3 段階フォールバック**。入口は `src/lib/wellness-age.ts` の `computeWellnessAge` **だけ**
+  (`computeHealthAge` を直接呼ばない)。
+  1. **①正規版 CABA v5.4** (`health-age.ts`)。不足項目は合理的に補填してから算出 (MCV=赤血球+Ht /
+     RDW=13.0 / CRP=NLR推定→0.15 / WBC 桁正規化 / BMI=身長体重)。正本 `docs/scan/health_age_caba_v5.4_spec.md`。
+  2. **②簡易版 CABA v7.0** (`health-age-simple.ts`)。血球分画・ALP・WBC・hs-CRP を持たない簡易書式向け。
+     必須= 実年齢・アルブミン・クレアチニン ＋ (血糖 **または** HbA1c。血糖欠測時は eAG=28.7×HbA1c−46.7 で代用)。
+     正本 `docs/scan/health_age_simple_v7.0_spec.md` (係数表・移植の復元手順・実ブラウザとの数値照合9件全一致)。
+  3. **③算出不能** → 値を作らず定型文 `WELLNESS_AGE_UNAVAILABLE_MESSAGE`
+     =「算出に必要なデータが不足しています。詳細は事務局へお問合せ下さい。」を提示。**文言を変えない**。
+     API は 422・**保存しない** (`health_age_scores` に null 行を作らない=捏造ゼロ)。
+- **どの版で出したかを必ず残す**: API 応答 `method` / `inputs.method` / `model_version`
+  (`CABA-v5.4` or `CABA-SIMPLE-v7.0`) / ダッシュボード見出し右。**簡易版は係数が暫定・血糖が eAG 推定に
+  なり得る**ため、版を伏せて数値だけ比較しない (①②で同じ検体でも値は一致しない=②だけ tanh 圧縮がある)。
 
 ### UI / デザイン (2026-08 刷新)
 - **ブランド**: 顧客向け主ブランド = **Welltect** / 運営 = Wellfort。主な利用者は 50〜65 代の経営者・役員。
@@ -668,7 +690,7 @@ Supabase database linter の指摘を棚卸しした結果。**テストフェ�
 | `docs/architecture/system_architecture_overview.md` | 全体構成・**Vercel/タイムアウト**・データフロー |
 | `docs/elith/elith_s3_data_handoff_spec.md` | **Elith S3 受け渡し仕様** (パス/命名/format_id/JSON) |
 | `docs/elith/elith_batch_centralization_design.md` | Elith バッチ**一元化設計**(キーは Vercel・役割分担・admin バッチ) |
-| `docs/elith/elith_assembly_wrapping_spec.md` | **納品セット アセンブリのラップ仕様(Elith向け説明)**。フォルダ/命名/健康年齢の時系列化(検査日毎・旧1件を撤回)・疑似データも同様に時系列生成・**LAiF AI疾病発症予測(Other/ai_prediction)のファイル仕様=Elith承諾により確定(§5・2026-08)。合成は data.items[] の発症率%/相対リスク比のみジッタ・昨年比は前年の相対リスク比を引継ぎ(実装済)**・manifest不一致の確認事項 |
+| `docs/elith/elith_assembly_wrapping_spec.md` | **納品セット アセンブリのラップ仕様(Elith向け説明)**。フォルダ/命名/ウェルネス年齢の時系列化(検査日毎・旧1件を撤回)・疑似データも同様に時系列生成・**LAiF AI疾病発症予測(Other/ai_prediction)のファイル仕様=Elith承諾により確定(§5・2026-08)。合成は data.items[] の発症率%/相対リスク比のみジッタ・昨年比は前年の相対リスク比を引継ぎ(実装済)**・manifest不一致の確認事項 |
 | `docs/elith/batch_scan_to_elith_usage.md` | サンプル一括スキャン→S3 バッチ手順 (`scripts/batch-scan-to-elith.mjs`) |
 | `docs/lab/lab_data_pipeline_master_spec.md` | **検査データ・パイプライン 総合仕様書(E2E正本・上位文書)**。EC購入→キット/タイミング→発送指示/進捗→AI問診/検体返送→各社受渡→受領チェック(週次)→Elithラップ/S3書出→AI診断PDF受取/表示 を6ステップで連結。詳細は(a)(b)(c)へ委譲(二重管理しない) |
 | `docs/lab/lab_data_reception_overview.md` | **4検査のデータ受取 詳細**(血液=リージャー/RPA・がん=プリベント/専用ポータル+S3を提案中・AI疾病予測=LAiF/S3 URL・遺伝子=Genoplan/RPA。方式/経路/現状/課題/次アクション)。E2E全体像は上記 master_spec が上位 |
@@ -686,7 +708,8 @@ Supabase database linter の指摘を棚卸しした結果。**テストフェ�
 | `docs/architecture/id_management_and_correlation_spec.md` | **ID体系の正本**(顧客ID/診断ユーザーID=diagnostic_user_id/注文/契約/出荷/検査/各社上りID/Elith client_id を層別整理・採番=現状全てWellfort・相関マップ・PII境界・**将来の各社独自ID/キット物理ID(POS/バーコード)連携=受け皿カラム`lab_tests.external_test_id`/`external_barcode`実在**) |
 | `docs/architecture/diagnostic_session_data_spec.md` | 診断セッションのデータ構造 |
 | `docs/scan/scan_feature_requirements.md` / `docs/scan/scan_s3_export.md` | AIスキャン機能要件 / S3書き出し |
-| `docs/scan/health_age_caba_v5.4_spec.md` | **健康年齢(CABA v5.4)確定事項** (免責2文/WBC桁正規化/補完定数/SBP・FEV補正・Wellfort確認2026-08) |
+| `docs/scan/health_age_caba_v5.4_spec.md` | **ウェルネス年齢 ①正規版(CABA v5.4)確定事項** (免責2文/WBC桁正規化/補完定数/SBP・FEV補正・Wellfort確認2026-08) |
+| `docs/scan/health_age_simple_v7.0_spec.md` | **ウェルネス年齢 ②簡易版(CABA v7.0)** = 血球分画/ALP/WBC/CRP を持たない簡易書式向けフォールバック。**改称(健康年齢→ウェルネス年齢)の適用範囲・段階フォールバック①②③・移植元の復元手順と数値照合表**もここ |
 | `docs/scan/scan_canonicalization_standard_format_design.md` | **戦略正本: 検査票→標準フォーマット正準化(2層戦略)**。①読取=native multimodal維持 / ②正準化=健診標準フォーマット(KMAT)への決定論マッピング新規 |
 | `docs/ai_reviews/` | Gemini/ChatGPT へのレビュー依頼・相談ドラフト集(開発経緯の記録。確定仕様は各 spec が正本) |
 

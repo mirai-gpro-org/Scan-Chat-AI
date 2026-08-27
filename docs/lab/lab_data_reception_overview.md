@@ -4,20 +4,41 @@
 |---|---|
 | 目的 | Wellfort が外部検査会社から受け取る **4 検査**のデータ受取方式・経路・現状・課題を一枚に集約する。各検査は最終的に **Elith 形式 JSON（`elith-handoff-v0.1`）へ変換し S3 経由で Elith へ受け渡す**（詳細=`docs/elith/elith_s3_data_handoff_spec.md` / `docs/elith/elith_assembly_wrapping_spec.md`）。 |
 | 対象 | ①血液検査（リージャー）②がんリスク検査・尿（プリベント）③AI疾病発症予測（LAiF）④遺伝子検査（Genoplan）。※健診・人間ドックは会員がアプリでAIスキャンするため本書対象外。 |
-| 版 | 2026-08-12（Draft・プリベント提案反映） |
+| 版 | **2026-08-26（Draft・LAiF 実データ疎通の結果／ID 連携仕様／問診データの渡し方マトリクスを追記）** |
 | 上位文書 | **本書は「受取方式（各社別）」に特化した詳細。EC購入→キット→問診→受取→Elith→表示の E2E 全体像は `docs/lab/lab_data_pipeline_master_spec.md`（総合仕様書）が正本。** |
-| 関連 | `docs/lab/demecal_rpa_operation_design.md` / `docs/lab/demecal_auto_download_overview_spec.md`（血液RPA）、`docs/elith/elith_assembly_wrapping_spec.md`（LAiF/健康年齢のラップ）、`docs/lab/lab_integration_workflow.md`（割当・PII）、`docs/lab/kit_progress_management.md`（進捗）、`docs/lab/wellfort_admin_lab_upload_spec.md`（admin取込） |
+| 関連 | `docs/lab/demecal_rpa_operation_design.md` / `docs/lab/demecal_auto_download_overview_spec.md`（血液RPA）、`docs/elith/elith_assembly_wrapping_spec.md`（LAiF/ウェルネス年齢のラップ）、`docs/lab/lab_integration_workflow.md`（割当・PII）、`docs/lab/kit_progress_management.md`（進捗）、`docs/lab/wellfort_admin_lab_upload_spec.md`（admin取込） |
 
 ---
 
 ## 0. 一覧表
 
+### 0.1 受取方式（下り：検査会社 → Wellfort）
+
 | # | 検査 | 検査会社 | 受取方式 | 取得データ | Elith format_id | 変換方法 | ステータス |
 |---|---|---|---|---|---|---|---|
 | 1 | 血液検査 | 株式会社リージャー（Leisure／デメカル DSS） | **デスクトップRPA**（Power Automate Desktop 本命 / UiPath / WinAutomation） | CSV | `BloodTestData` | **決定論パース**（CSV→JSON・LLM不使用） | 自動アクセス承認済・サーバ側実装済／PC側RPA(DL部)構築中 |
 | 2 | がんリスク検査（尿） | プリベント社（ALA-PDS） | **専用ポータル＋AWS S3＋パスキー方式を提案中**（LAiF流用）／現状：メール＋フォルダ共有の手動 | PDF/報告書 | `CancerRiskAssessmentData` | **admin バッチ AIスキャン**（画像→JSON） | **方式を提案中（プレゼン段階）**。現状は手動 |
-| 3 | AI疾病発症予測 | LAiF社 | **AWS S3 専用バケット**（URLで受渡） | PDF | `Other`（`kind:"ai_prediction"`） | **admin バッチ AIスキャン**（多ページ・LLM構造化） | 受取方式確定・スキャン対応実装済 |
+| 3 | AI疾病発症予測 | LAiF社 | **AWS S3 専用バケット**（URLで受渡） | PDF | `Other`（`kind:"ai_prediction"`） | **admin バッチ AIスキャン**（多ページ・LLM構造化） | 受取方式確定・スキャン対応実装済／**2026-08-26 上り(弊社→LAiF)疎通OK・下り(返送)は未検証** |
 | 4 | 遺伝子検査 | Genoplan社（ジェノプランジャパン） | **デスクトップRPA**（Power Automate Desktop / UiPath / WinAutomation） | PDF | `GeneticTestResultData` | **admin バッチ AIスキャン**（多ページ・LLM構造化） | 受取方式=RPA方針／スキャン対応実装済 |
+
+### 0.2 問診データの渡し方（上り：Wellfort/ユーザー → 検査会社）— **確定 2026-08-26・発注者確認**
+
+**下り（受取）とは経路も担い手も別**。AI問診（アプリ）を経由するのは **②がんリスクと③AI疾病発症予測の 2 検査だけ**で、①血液と④遺伝子は**ユーザーが検査会社へ直接届ける**ため**弊社の実装対象外**。
+
+| # | 検査 | 問診の取得方法 | 渡し方（経路） | 形式 | 弊社の実装要否 |
+|---|---|---|---|---|---|
+| 1 | 血液検査（リージャー） | **ユーザーが専用用紙へ記入** | **郵送**（検体と共に検査会社へ返送） | 紙 | **なし**（弊社を経由しない） |
+| 2 | がんリスク検査・尿（プリベント） | **AI問診**（アプリ） | **専用ポータル＋AWS S3＋パスキー方式**（提案中） | **CSV** | **あり**（AI問診→CSV変換＋ポータル配置） |
+| 3 | AI疾病発症予測（LAiF） | **AI問診**（アプリ） | **専用ポータル＋AWS S3＋パスキー方式** | **所定 Excel フォーム**（`input_format_new_202312.xlsx`・約158項目）※ | **あり**（AI問診→所定フォーム変換＋ポータル配置） |
+| 4 | 遺伝子検査（Genoplan） | **ユーザーが Genoplan 社の検査専用 Web へ直接入力** | **弊社は渡さない**（検査会社が直接取得） | — | **なし**（弊社を経由しない） |
+
+> ※ **③の形式について**: 発注者ご指示は「AI問診→CSV」ですが、**LAiF 社は「CSV」表記を避け、所定の Excel フォーム
+> `input_format_new_202312.xlsx` での受渡を要望**しており（2026-08 に行き違いを是正済・`docs/lab/partner_demo_confirmation_request_laif.md`）、
+> 現行実装（`scripts/build-laif-input.py`）もこの Excel を出力します。**本表は実装に合わせて「所定 Excel フォーム」と記載**しています。
+> 「CSV で確定」の意図であれば先方合意の取り直しが必要なため、**ご確認ください**。
+>
+> **本確定により `docs/lab/questionnaire_to_lab_csv_spec.md` の未確定事項が 2 件解消**します
+> （§7-7 血液への問診受渡＝**不要**で確定／§4.4・§6 の Genoplan 列＝**対象外**）。同仕様書も追随して更新済み。
 
 ---
 
@@ -30,7 +51,9 @@
   2. **日付重複なく**新規分の血液CSVをダウンロード（状態は `/api/admin/demecal-state` で管理）。
   3. admin 取込API `/api/admin/elith-blood-csv` へ投入 → **決定論パース**で `BloodTestData` JSON 化 → S3。
 - **鍵管理**: AWS/Gemini 等の鍵は **Vercel 本番 env のみ**。専用PCには据え置きの鍵を置かない（CLAUDE.md）。取込は専用キー `x-intake-key`。
-- **特記**: 血液のみ **CSV＝決定論パース**（画像AIスキャン不要）。健康年齢（CABA）の主要マーカー源。
+- **特記**: 血液のみ **CSV＝決定論パース**（画像AIスキャン不要）。ウェルネス年齢（CABA）の主要マーカー源。
+- **問診データ（上り）**: **ユーザーが専用用紙へ記入し、検体と共に郵送**（§0.2）。**弊社を経由しない＝実装対象外**。
+  ※ 旧検討の「Wellfort→デメカルへ問診CSVを渡す」方向は**不要で確定**（`questionnaire_to_lab_csv_spec §7-7` を解消）。
 - **④ 構造照合（実装済）**: CSV↔JSON の**漏れゼロ/捏造ゼロ/コード解決/PII非混入**を固定検証する fixture。
   `scripts/verify-blood-csv-structure.ts`＋`scripts/blood-csv-fixtures/demecal_sample_v1.csv`。実行 `npm run verify:blood-csv`（決定論・鍵不要・26チェック全PASS）。
 - **DL画面手順（確定済）**: 動画・提供資料から `demecal_auto_download_overview_spec.md §2.1` と
@@ -60,11 +83,14 @@
   6. プリベント社が報告書を同フォルダへ格納。
   7. プリベント社が格納した旨をメールでウェルフォート社へ連絡。
   8. ウェルフォート社が報告書を確認し、その旨を返信して完了。
+- **問診データ（上り）**: **AI問診（アプリ）→ CSV** を、**専用ポータル＋AWS S3＋パスキー方式**で受渡（§0.2）。項目は `questionnaire_to_lab_csv_spec §4.2`（主要33項目）。**弊社の実装対象**。
 - **変換**: 受領した報告書（PDF/画像）を **admin バッチAIスキャン** → `CancerRiskAssessmentData` JSON → S3（🎯ゴールデン照合対応済）。
 - **課題（提案で解消を狙う）**:
   - リンク共有＝手動・往復メール多く、リードタイム長い → **専用ポータル＋S3で双方向自動化**。
   - **アクセス権未設定リンクの送付**はセキュリティ/PII 面で要見直し（`docs/architecture/data_integration_requirements.md` の PII 分離方針との整合）→ **パスキー認証＋暗号化保管**で担保。
   - **提案の合意取り付け**（方式・IP有無・担当者/通知先・同意前提）が次アクション。
+- **デモ画面ご確認依頼（2026-08 作成済・送付待ち）**: 文面＝`docs/lab/partner_demo_confirmation_request_prevent.md`／送付用PDF作成済。
+  **送付前提＝デモURLが実際に開けること**（本番デプロイの鮮度を要確認）。
 
 ## 3. AI疾病発症予測（LAiF社）
 
@@ -74,36 +100,142 @@
 - **データ内容**（実サンプル準拠）: 疾患ごとに **5年発症率(%)・10年発症率(%)・相対リスク比・昨年の相対リスク比**、カテゴリ（生活習慣病/循環器/悪性腫瘍/神経疾患）、リスク因子・予防策（AIアドバイス）。
 - **変換/ラップ仕様**: `docs/elith/elith_assembly_wrapping_spec.md §5`（`Other`/`ai_prediction`・命名・data.items・時系列疑似データ提案）。
 - **セキュア受渡方式（設計正本）**: `docs/lab/laif_s3_secure_handoff_spec.md`（**ポータル共有型ゼロトラスト**：Passkey認証＋IP制限＋Presigned直転送＋GuardDuty検疫＋Gemini File API丸投げ＋決定論検証＋Object Lock。Gemini/ChatGPT統合）。
+- **問診データ（上り）**: **AI問診（アプリ）→ 所定 Excel フォーム**（`input_format_new_202312.xlsx`・約158項目）を、**専用ポータル＋AWS S3＋パスキー方式**で受渡（§0.2）。写像仕様＝`kit_lifecycle_and_handoff_management_spec §4.1.1`、生成＝`scripts/build-laif-input.py`。**名前欄(G1)＝整理番号（空欄不可）**。**弊社の実装対象**。
 - **ステータス**: 受取方式確定。スキャン→JSON化 実装済（admin「🔮 AI疾病発症予測(LAiF)」）。**Elith 側の `Other`/`ai_prediction` 受領仕様は §5.6 で確認中**。**セキュア受渡は設計確定（実装/LAiF確認は上記spec §12-13）**。
+
+### 3.1 実データ疎通の結果（2026-08-26・メール往復の記録）
+
+**上り（弊社→LAiF）は疎通しました。下り（LAiF→弊社）は未検証のまま止まっています。**
+
+| 時刻 | 主体 | 内容 |
+|---|---|---|
+| 10:55 | Wellfort | 動作確認用の手順書を送付し確認依頼 |
+| 11:37 | LAiF | 手順は問題なし。ただし **URL が not found** |
+| 14:02 | Wellfort | リンク修正・動作確認済み、再確認依頼 |
+| 14:45 | LAiF | **データ受領**。ただし「**ID に英字を入れてほしい。数字のみだと解析できない**」／今回は便宜上 LAiF 側で末尾に **W** を付与／**システム改修中のため時間がかかる** |
+| 14:58 | Wellfort | 英字の大小区別を照会／**ダミーデータでのアップロードを依頼** |
+| 15:01 | LAiF | 今後は Wellfort 側で任意の文字を付与／**大文字小文字どちらでも可**／解析終了後にアップ |
+| — | Wellfort | 了解。解析後のデータ返送と、返送時のメール一報を依頼 |
+
+**判明した仕様制約（重要）**
+- **LAiF の解析システムは、ID に英字を 1 文字以上含む必要がある**（数字のみは解析不可）。**大文字・小文字は不問／文字の位置・内容は任意**。
+- この制約は **§5 の「②各社上りID（LAiF 整理番号）」の採番規則**にかかるもの。**Elith の `client_id`（＝`diagnostic_user_id`）を変更する必要はない**。
+
+**未解決（次アクション）**
+1. **今回分の ID 突合**: LAiF が独自に末尾へ `W` を付けたため、**返送される結果の ID は送信した ID と一致しない**（`…0001` → `…0001W`）。受領時の読み替えが必要（本来は §5 の `external_test_id` に格納して突合する対象）。
+2. **ダミーでの往復テストが未確約**: 弊社の依頼に対する回答は「解析終了後にアップ」のみ。**下り経路（LAiF がサーバへ上げる→弊社が取得）は一度も検証できていない**。
+3. **返送時のメール一報**の了承が未取得（最新メールが弊社発信）。
+4. **LAiF 側の桁数上限**が未確認（採番規則の桁決めに必要）。
+5. **経年で同一人物として突合する必要があるか**が未確認（レポートに「昨年比」欄があるため。§5.3 の単位決定に必要）。
+
+> 【未確認の仮説】11:37 の `not found` は、`wellfort.co.jp` の本番デプロイが古く一部ページが 404 を返す事象と症状が一致するが、**該当 URL がメールから特定できないため同一原因かは未確認**。同じ原因であれば手順書内の他リンクも同様に落ちうるため、本番デプロイの鮮度確認が望ましい。
 
 ## 4. 遺伝子検査（Genoplan社）
 
 - **検査会社**: Genoplan社（ジェノプランジャパン／GenePlanet）。
 - **受取方式**: **デスクトップRPA**（Power Automate Desktop / UiPath / WinAutomation）。
 - **フロー**: RPAがGenoplanポータル等からレポートPDFを取得 → **admin バッチAIスキャン（多ページ・LLM構造化）** → `GeneticTestResultData` JSON → S3。
+- **問診データ（上り）**: **ユーザーが Genoplan 社の検査専用 Web へ直接入力**（§0.2）。**弊社は渡さない＝実装対象外**
+  （`questionnaire_to_lab_csv_spec §4.4` の 70 項目マッピングは**対象外で確定**）。
 - **データ内容**: 疾患ごとの**発症リスク倍率**＋発症率（％/定性）。🎯倍率ゴールデン照合（220項目）対応済。
 - **ステータス**: 受取方式=RPA方針。スキャン→JSON化 実装済（admin「🧬 遺伝子検査」・ページ範囲指定）。
 
 ---
 
-## 5. 共通事項（4検査共通）
+## 5. ID 連携仕様（検査会社ID ↔ 内部ID の同期）
+
+> 正本＝`docs/architecture/id_management_and_correlation_spec.md`。本章はその**受取側の実務断面**を抜き出したもの。
+> **検査会社とのやり取りに使う ID は、Elith へ渡す ID とは別物**であり、`customer.lab_tests` で対応づける。
+
+### 5.1 ID は 3 層ある（混同しないこと）
+
+| 層 | 実体 | 採番 | 用途 |
+|---|---|---|---|
+| **① 内部の軸** | `diagnostic_user_id`（uuid・非PII） | Wellfort | PII と診断系を結ぶ**唯一の連携キー**。**Elith の `client_id` はこれ**（`elith_s3_data_handoff_spec §2`） |
+| **② 各社への上りID** | LAiF＝**整理番号（識別番号 No.0）**／プリベント＝会員ID／Genoplan＝整理番号系 | **Wellfort 採番の仮名ID** | 検査会社へ渡す ID。**会社ごとに別体系**。LAiF は「**自社連番は使わない・Wellfort 整理番号で突合**」で確定（2026-08） |
+| **③ 検査会社の独自ID** | `lab_tests.external_test_id`／`external_barcode` | **検査会社** | 検査会社が結果に付す固有ID・キット物理ID。**受領時に格納して①と対応づける**（照合・突合用） |
+
+**原則**: **内部 `diagnostic_user_id` を軸に、②③は補助照合キーとして持つ**。②③を軸にしない。
+
+### 5.2 同期テーブル（`customer.lab_tests`）
+
+`supabase/migrations/20260601000010_schemas_and_tables.sql:143-162`（実在）。
+
+| カラム | 層 | 状態 |
+|---|---|---|
+| `diagnostic_user_id` | ① | **実在**（`lab_companies` / `kit_shipments` と併せて 1 検査＝1 行） |
+| `external_test_id`（`unique (lab_company_id, external_test_id)`） | ③ | **実在**。ただし**受領時に書き込む処理は未実装** |
+| `external_barcode` | ③ | **実在**（キット物理ID・POS/バーコード用）。未実装 |
+| **②の上りIDを入れる列** | ② | **存在しない → 新規カラムが必要**（例 `upstream_ref text` ＋ `unique (lab_company_id, upstream_ref)`） |
+
+会社ごとの様式差は **`customer.lab_companies.external_id_label` / `external_id_pattern`（regex）** で吸収する設計（実在・未登録）。
+
+### 5.3 上りID（②）の採番規則 — **未確定・要決定**
+
+LAiF の条件は「**英字を 1 文字以上含む／大小不問／文字は任意**」のみ。**先頭を英字にすると「数字のみ」が構造的に起こらない**。
+
+**書式の案**
+
+| 案 | 形式 | 例 | 正規表現 | 評価 |
+|---|---|---|---|---|
+| A-1 接頭辞＋通番 | `WF-` ＋6桁 | `WF-000123` | `^WF-[0-9]{6}$` | **推奨**。短く読みやすい。電話・メール照合が楽 |
+| A-2 短縮ID | `W`＋Base32 7桁 | `W7K9Q2M4` | `^W[0-9A-HJ-NP-Z]{7}$` | 採番テーブル不要（`lab_tests.id` から導出）・推測困難。読み上げにくい |
+| A-3 年＋通番 | `WF`＋年2桁＋通番 | `WF26-000123` | `^WF[0-9]{2}-[0-9]{6}$` | 年が目視で分かる。桁が長い（**LAiF の桁数上限が未確認**） |
+
+**単位の案（要 LAiF 確認）**
+
+| 案 | 中身 | 評価 |
+|---|---|---|
+| B-1 検査（回）単位 | 1 検体＝1 ID | `lab_tests` の一意制約と素直に整合。**LAiF 側からは毎回「別人」に見える** |
+| B-2 顧客単位 | 1 顧客＝1 ID | 同一人物として扱えるが、**どの回か ID だけでは判別不可** |
+| B-3 顧客＋回（折衷） | `WF-000123-01` | **推奨**。前方一致で同一人物・末尾で回を判別 |
+
+> B は **「LAiF が経年で同一人物として突合する必要があるか」**（レポートに昨年比欄あり）の回答待ち。**不要なら B-1 が最もシンプル**。
+
+**保存方式**: **DB に保存する（`upstream_ref`）**。「いつ・誰に・どの ID で送ったか」の証跡が残り、今回の「先方が `W` を付加」のような差異も突合できる。都度導出（保存しない）方式は、規則変更時に過去分と不整合になり証跡も残らないため不採用。
+
+### 5.4 実装ギャップ（設計に追いついていない箇所）
+
+| # | 状態 | 根拠 |
+|---|---|---|
+| 1 | **整理番号（②）の採番機構が未実装**。`src/` `scripts/` に「整理番号」のヒット **0 件** | 実測 grep |
+| 2 | そのため LAiF 上りビルダーは、入力 JSON の `client_id`（①）を**そのまま名前欄 G1 と No.0 に書いている** | `scripts/build-laif-input.py:103-104`（`671bd91`） |
+| 3 | ③の受領時格納（`external_test_id`）が未実装 | 実測 |
+| 4 | `lab_companies.external_id_label` / `external_id_pattern` に各社様式が未登録 | 実測 |
+
+### 5.5 実装の最小セット
+
+1. **マイグレーション** — `lab_tests.upstream_ref text` 追加＋`unique (lab_company_id, upstream_ref)`
+2. **マスタ登録** — `lab_companies` の LAiF 行に `external_id_label='整理番号'` と決定した `external_id_pattern` を設定
+3. **採番処理** — 決定した規則で発番し `upstream_ref` に保存
+4. **ビルダー修正** — `build-laif-input.py` を「**整理番号を受け取る**」に変更（①を渡さない）。**pattern 違反は出力前にエラーで落とす**
+5. **受領側** — ③（`external_test_id`）の記録（当面は admin からの手入力でも可）
+6. **暫定処理** — 今回の 1 件（`…0001` ↔ `…0001W`）を手動で対応表に記録
+
+---
+
+## 6. 共通事項（4検査共通）
 
 - **最終受け渡し**: いずれも **Elith 形式 JSON へ変換 → S3 `user/{client_id}/date/{YYYY_MM_DD}/{format_id}_..._user_{client_id}.json`**（`docs/elith/elith_s3_data_handoff_spec.md`）。
 - **鍵一元管理**: AWS/Gemini の鍵は **Vercel 本番 env のみ**。専用PC・operator・クライアントに鍵を置かない（CLAUDE.md）。
-- **PII 分離**: 外部・S3・診断系には氏名/住所/生年月日を載せない。`client_id`＝`diagnostic_user_id`（仮名）のみで橋渡し（`docs/architecture/data_integration_requirements.md` / `docs/lab/lab_integration_workflow.md`）。氏名OCRのみでの割当確定は禁止。
+- **PII 分離**: 外部・S3・診断系には氏名/住所/生年月日を載せない。**Elith へは `client_id`＝`diagnostic_user_id`（仮名）のみ**で橋渡し（`docs/architecture/data_integration_requirements.md` / `docs/lab/lab_integration_workflow.md`）。氏名OCRのみでの割当確定は禁止。
+- **ID の使い分け**: **検査会社へ渡す ID は Elith の `client_id` とは別物**（§5）。会社別の上りID（②）と会社採番の独自ID（③）を `customer.lab_tests` で①に対応づける。**②③を軸にしない**。
 - **変換の別**: 血液＝**CSV決定論パース**（LLM不使用）／がん・遺伝子・AI疾病予測＝**画像AIスキャン**（Gemini・サーバ側 admin バッチ）。
 - **進捗管理**: キット発送〜完了は `docs/lab/kit_progress_management.md`、割当は `docs/lab/lab_integration_workflow.md`。
 
-## 6. ステータス早見 & 次アクション
+## 7. ステータス早見 & 次アクション
 
 | 検査 | 受取自動化 | 主な次アクション |
 |---|---|---|
-| 血液（リージャー） | RPA構築中 | PC側 PAD の**DL画面部**を Wellfort 提供のスクショ/録画で作り込み（フェーズ2） |
-| がんリスク（プリベント） | **専用ポータル＋S3方式を提案中**（現状は手動） | **提案の合意取り付け**（デモURL/提案PDF/サンプルCSVは用意済）＋固定IP有無・担当者/通知先・生年月日提供の同意前提を確認 |
-| AI疾病予測（LAiF） | S3 URL（確定） | Elith へ `Other`/`ai_prediction` の**受領仕様確認**（`docs/elith/elith_assembly_wrapping_spec.md §5.6`） |
+| 血液（リージャー） | RPA構築中／**attended 手動取込は運用可**（admin 独立メニュー `/admin/demecal-csv`・手順書 v1.1） | PC側 PAD の**DL画面部**を Wellfort 提供のスクショ/録画で作り込み（フェーズ2） |
+| がんリスク（プリベント） | **専用ポータル＋S3方式を提案中**（現状は手動） | **デモ画面ご確認依頼の送付**（文面・PDF作成済／**デモURLが開けることの確認が前提**）＋固定IP有無・担当者/通知先・生年月日提供の同意前提を確認 |
+| AI疾病予測（LAiF） | S3 URL（確定）／**上り疎通OK・下り未検証** | ①**上りID採番規則の決定**（§5.3・英字必須）②**ダミーでの往復テスト**を再依頼（下り経路の検証）③今回分 `…0001W` の突合記録 ④Elith へ `Other`/`ai_prediction` の**受領仕様確認**（`elith_assembly_wrapping_spec §5.6`） |
 | 遺伝子（Genoplan） | RPA方針 | RPA(DL部)の構築（血液PADの枠組みを流用可） |
 
-## 7. 確認事項
+## 8. 確認事項
 1. **がんリスク（プリベント・提案中）**: 専用ポータル＋S3方式の合意可否。固定グローバルIPの有無（IP許可制の採否判断）。ご利用担当者／通知先。上りCSVに含める**生年月日の外部提供・同意前提**の可否。合意までの暫定手動運用の継続可否とアクセス権未設定リンクの是正。
 2. **AI疾病予測（LAiF）**: S3 専用バケットの命名/URL発行ルール、Elith の `Other`/`ai_prediction` 受領仕様。
-3. **RPA（血液・遺伝子）**: 専用PC台数・保守主体（UNFIX構築/Wellfort運用）・Pマーク運用の最終確認。
+   **2026-08-26 追加**: ① ID の**桁数上限**（採番規則の桁決めに必要）② **経年で同一人物として突合する必要があるか**（レポートの昨年比欄・§5.3 の単位決定に必要）③ **ダミーデータでの往復テスト**の可否 ④ 返送時のメール一報の可否 ⑤ 今回 LAiF 側で付与された `W` 付き ID の**返送時の表記**。
+3. **上りID（②）の採番規則の決定**（§5.3）: 書式（A-1/A-2/A-3）と単位（B-1/B-2/B-3）。**4 社共通の枠組みとして一度に決めるのが望ましい**（LAiF だけ個別対応しない）。
+4. **RPA（血液・遺伝子）**: 専用PC台数・保守主体（UNFIX構築/Wellfort運用）・Pマーク運用の最終確認。
+5. **各社独自ID（③）の運用**: `external_test_id`/`external_barcode` の**採番タイミング・スキャン工程・突合ルール**（`id_management_and_correlation_spec §7-3` の未確定事項）。

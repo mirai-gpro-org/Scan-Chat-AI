@@ -33,3 +33,4 @@ pnpm-debug.log*
 # supabase CLI (local-only working dirs)
 supabase/.branches/
 supabase/.temp/
+__pycache__/
