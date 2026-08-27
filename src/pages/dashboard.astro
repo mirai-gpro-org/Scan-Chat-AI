@@ -181,12 +181,12 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
         {/* ① 注意項目 — 非表示 (緊急受診勧告 URGENT ALERT): {urgentAlert && <UrgentAlertBanner alert={urgentAlert} />} */}
 
         {/*
-          ② ウェルネス年齢 ＋ ②-2 AI疾病予防レポート。
-          レポートのタイルは**検査カードと同寸 (17rem)** に固定し、余った幅はウェルネス年齢に回す
+          ② ウェルネス年齢 ＋ ②-2 AI疾病予防報告書。
+          報告書のタイルは**検査カードと同寸 (17rem)** に固定し、余った幅はウェルネス年齢に回す
           (発注者指示 2026-08)。タイルは brand 塗りで、この画面で塗りはこの 1 枚だけ。
           items-stretch で高さを揃える (v0.5 の items-start から変更 — タイルが同寸になり、
           中身が少なくて間延びする問題が消えたため)。
-          ウェルネス年齢が無い (算出前) ときはレポートを全幅の帯で出す。
+          ウェルネス年齢が無い (算出前) ときは報告書を全幅の帯で出す。
         */}
         {healthAge?.latest ? (
           <div class="grid grid-cols-1 items-stretch gap-5 lg:grid-cols-[minmax(0,1fr)_17rem]">
@@ -218,7 +218,7 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
         {/*
           ⑥ 主要導線。AI スキャンと AI 問診は**同格**なので同じ淡色にする
           (発注者指示 2026-08: AI 問診の白 →「データ」ボタンと同色)。
-          brand 塗りは AI疾病予防レポートのタイルに寄せてあるので、ここでは使わない。
+          brand 塗りは AI疾病予防報告書のタイルに寄せてあるので、ここでは使わない。
         */}
         <section aria-label="主要な操作">
           <h2 class="sr-only">主要な操作</h2>

@@ -1,9 +1,10 @@
 ---
 import AppIcon from '../AppIcon.astro';
 import { formatJpDate } from '../../lib/dashboard-queries';
+import { AI_PREVENTION_REPORT_LABEL } from '../../lib/display-names';
 
 /**
- * AI疾病予防レポート (Elith 診断結果) への導線タイル。
+ * AI疾病予防報告書 (Elith 診断結果) への導線タイル。
  *
  * 【優先度】Welltect の売りの一つなので、他の検査セクションより優先して見せる
  *   (発注者指示 2026-08)。大きさは検査カードと同寸のまま、**面を brand 塗り**にして
@@ -13,7 +14,7 @@ import { formatJpDate } from '../../lib/dashboard-queries';
  * 【コントラスト実測】白文字 on brand-600 = 4.70:1 (AA 4.5 ✓) /
  *   白ボタンの brand-700 文字 = 7.09:1。文字を薄くしない (opacity を掛けない)。
  *
- * ページ数などレポート固有のメタは、型に無い列を推測で出さない (ミッション④)。
+ * ページ数など報告書固有のメタは、型に無い列を推測で出さない (ミッション④)。
  * 出すのは受領日だけ。
  */
 interface Props {
@@ -30,7 +31,7 @@ const { href, receivedAt = null } = Astro.props as Props;
       <AppIcon name="report" size={20} />
     </span>
     <span class="flex min-w-0 flex-col">
-      <span class="text-base font-bold">AI疾病予防レポート</span>
+      <span class="text-base font-bold">{AI_PREVENTION_REPORT_LABEL}</span>
       {receivedAt && <span class="tnum whitespace-nowrap text-sm">{formatJpDate(receivedAt)}</span>}
     </span>
   </div>
@@ -39,7 +40,7 @@ const { href, receivedAt = null } = Astro.props as Props;
     href={href}
     class="flex min-h-touch items-center justify-center gap-1.5 rounded-xl bg-white px-3 text-base font-semibold text-brand-700 transition hover:bg-brand-50"
   >
-    レポートを読む<AppIcon name="next" size={18} />
+    報告書を読む<AppIcon name="next" size={18} />
   </a>
 
   <span class="text-sm">

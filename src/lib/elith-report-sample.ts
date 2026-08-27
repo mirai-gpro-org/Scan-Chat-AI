@@ -1,5 +1,5 @@
 /**
- * Elith AI 診断結果レポートのサンプル (⑥ 下り受取の表示確認用)。
+ * Elith の AI疾病予防報告書のサンプル (⑥ 下り受取の表示確認用)。
  *
  * 【出所】Elith 社提供「健康アドバイスレポート」2026-08-06 Stage2 版 (17 ページ)。
  *   原本 PDF = public/kensa_sample/elith_report.pdf
@@ -20,11 +20,12 @@
  */
 
 import type { ElithSection } from './elith-parser';
+import { AI_PREVENTION_REPORT_LABEL } from './display-names';
 
 /** 原本 PDF (public 配下)。 */
 export const ELITH_REPORT_PDF = {
   url: '/kensa_sample/elith_report.pdf',
-  label: 'AI 診断結果レポート (Elith)',
+  label: `${AI_PREVENTION_REPORT_LABEL} (Elith)`,
   pageCount: 17,
   issuedOn: '2026-08-07',
 } as const;

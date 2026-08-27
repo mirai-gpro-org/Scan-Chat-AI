@@ -4,6 +4,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import { loadResult } from '../../lib/result-queries';
 import { testTypeLabel, formatJpDate } from '../../lib/dashboard-queries';
 import { renderReportMarkdown } from '../../lib/report-view';
+import { AI_PREVENTION_REPORT_LABEL } from '../../lib/display-names';
 
 export const prerender = false;
 
@@ -186,7 +187,7 @@ const pdfSrcWithPage = data?.samplePdfUrl
             <p class="text-sm text-slate-600">
               {data.artifact.source === 'user_upload'
                 ? 'スキャン処理中、または LLM 解析待ちです。少し時間を置いて再度ご確認ください。'
-                : '検査会社からのレポート受信待ちです。'}
+                : '検査会社からの結果受信待ちです。'}
             </p>
             <p class="mt-2 text-xs text-slate-500">
               ステータス: {data.artifact.status} / 取込: {formatJpDate(data.artifact.imported_at)}
@@ -195,8 +196,8 @@ const pdfSrcWithPage = data?.samplePdfUrl
         )}
 
         {/*
-          AI 診断結果 (アカウント単位) への導線。
-          この画面は検査 1 件の原本を見せる場所なので、レポート本体は /report に置く。
+          AI疾病予防報告書 (アカウント単位) への導線。
+          この画面は検査 1 件の原本を見せる場所なので、報告書の本体は /report に置く。
         */}
         <a
           href={u ? `/report?u=${encodeURIComponent(u)}` : '/report'}
@@ -204,8 +205,8 @@ const pdfSrcWithPage = data?.samplePdfUrl
         >
           <AppIcon name="report" size={24} class="shrink-0 text-brand-700" />
           <span class="flex min-w-0 flex-col">
-            <span class="text-base font-semibold text-navy-800">AI 診断結果を見る</span>
-            <span class="text-sm text-slate-700">検査全体をまとめた Elith のレポート</span>
+            <span class="text-base font-semibold text-navy-800">{AI_PREVENTION_REPORT_LABEL}を見る</span>
+            <span class="text-sm text-slate-700">検査全体をまとめた Elith の報告書</span>
           </span>
           <AppIcon name="next" size={20} class="ml-auto shrink-0 text-brand-700" />
         </a>
@@ -290,10 +291,10 @@ const pdfSrcWithPage = data?.samplePdfUrl
             <div class="card border-slate-300 bg-slate-50">
               <header class="mb-2 flex items-center gap-2">
                 <span class="text-base"><AppIcon name="report" size={20} /></span>
-                <h2 class="text-sm font-bold text-slate-800">全編レポート</h2>
+                <h2 class="text-sm font-bold text-slate-800">全編</h2>
                 <span class="ml-auto text-xs text-slate-500">{data.fullSections.length} セクション</span>
               </header>
-              <p class="text-xs text-slate-600">Elith AI 診断の全レポートです。原本 PDF と LLM 解析の全テキストを併載しています。</p>
+              <p class="text-xs text-slate-600">AI疾病予防報告書の全編です。原本 PDF と LLM 解析の全テキストを併載しています。</p>
             </div>
 
             {/* 原本 PDF を iframe で */}

@@ -2,6 +2,7 @@
 import AppIcon from '../AppIcon.astro';
 import type { TestArtifact } from '../../types/supabase';
 import { testTypeLabel, formatJpDate } from '../../lib/dashboard-queries';
+import { AI_PREDICTION_REPORT_LABEL } from '../../lib/display-names';
 
 /**
  * 検査結果セクション。検査 5 種を 1 種 1 枚のカードで出す (v1.0 レイアウト・発注者指示 2026-08)。
@@ -36,7 +37,7 @@ const TEST_TYPES: { type: string; label: string; trend: boolean }[] = [
   { type: 'health_checkup', label: '人間ドック / 健康診断', trend: true },
   { type: 'blood',          label: '血液検査',              trend: true },
   { type: 'cancer_urine',   label: 'がんリスク検査',        trend: true },
-  { type: 'ai_prediction',  label: 'AI疾病予測',            trend: true },
+  { type: 'ai_prediction',  label: AI_PREDICTION_REPORT_LABEL, trend: true },
   { type: 'genetics',       label: '遺伝子検査',            trend: false },
 ];
 

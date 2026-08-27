@@ -15,6 +15,7 @@ import { getOriginalSignedUrl } from './originals-storage';
 import type { TestArtifact, DiagnosisResult } from '../types/supabase';
 import { findSection, type ElithSection } from './elith-parser';
 import { demoArtifacts, demoFallbackEnabled } from './demo-data';
+import { AI_PREDICTION_REPORT_LABEL } from './display-names';
 
 export interface ResultData {
   artifact: TestArtifact;
@@ -53,7 +54,7 @@ const SAMPLE_PDF_MAP: Record<string, { url: string; label: string }> = {
   blood:         { url: '/kensa_sample/blood.pdf',         label: '血液検査 (リージャー)' },
   cancer_urine:  { url: '/kensa_sample/cancer_urine.pdf',  label: 'がんリスク検査 (PREVENT)' },
   genetics:      { url: '/kensa_sample/genetics.pdf',      label: '遺伝子検査 (Genoplan My Book, 207pg)' },
-  ai_prediction: { url: '/kensa_sample/ai_prediction.pdf', label: 'AI 疾病予測' },
+  ai_prediction: { url: '/kensa_sample/ai_prediction.pdf', label: AI_PREDICTION_REPORT_LABEL },
 };
 
 /** Wellfort UI 表示順 (c) 全編で使用) */
@@ -112,10 +113,10 @@ export async function loadResult(
   /*
    * この画面は「この検査 1 件」を見る場所なので、**その検査の原本 (PDF/CSV) を主役にする**。
    *
-   * Elith の AI 診断結果 (diagnosis_results) は **アカウント単位** の成果物で、
+   * Elith の AI疾病予防報告書 (diagnosis_results) は **アカウント単位** の成果物で、
    * artifact とは紐付いていない (Phase 1.0 で直接の関連が無い)。ここに載せると
    * 検査履歴のどれを開いても同じ AI 診断レポートが出てしまうため、載せない。
-   * AI 診断結果は /report が正。検査種別ごとの読み物サンプル (elith-samples) も
+   * AI疾病予防報告書は /report が正。検査種別ごとの読み物サンプル (elith-samples) も
    * 「この検査の結果」ではないので同様に出さない。
    */
   const sections: ElithSection[] = [];
