@@ -6,7 +6,7 @@
 | 所要時間 | **3 分**（うち実行は 30 秒ほど） |
 | 実行する方 | 専用PCを操作できる方（**専門知識は不要**です） |
 | 目的 | 血液検査CSVの取得を**自動化できる方式**を決めるための事前確認 |
-| 配布物 | `scripts/デメカル接続チェック.bat`（PowerShell を内蔵した 1 ファイル。元は `scripts/demecal-probe.ps1`） |
+| 配布物 | `デメカル接続チェック.bat`（PowerShell を内蔵した 1 ファイル。元は `scripts/demecal-probe.ps1`）。**URL でダウンロードしていただく**（.bat はメール添付も ChatWork も弾かれるため・2026-08-28 実測） |
 | 関連 | `docs/lab/demecal_rpa_operation_design.md` / `demecal_pad_setup_guide.md` |
 
 ---
@@ -40,11 +40,16 @@
 
 ## 手順（3 ステップ・ダブルクリックだけ）
 
-### STEP 1　ファイルを保存する
+### STEP 1　ファイルをダウンロードする
 
-別途お送りする **`デメカル接続チェック.bat`** を、**デスクトップ**に保存します。
+別途お送りする **URL** をブラウザで開くと、`デメカル接続チェック.bat` のダウンロードが始まります。
+**デスクトップ**に保存してください。
 
-> メールの添付が `.txt` に変わっている場合は、**ファイル名の末尾を `.bat` に直して**ください。
+> **「このファイルは一般的にダウンロードされていません」** のような警告が出たら、
+> `…` （または「詳細」）→ **「保存」／「継続」** を選んでください。
+> Windows がプログラムファイルに対して必ず出す確認です。
+
+> ファイル名が `.txt` などに変わってしまった場合は、**末尾を `.bat` に直して**ください。
 > 拡張子が見えないときは、エクスプローラーの「表示」→「ファイル名拡張子」にチェックを入れると出ます。
 
 ### STEP 2　ダブルクリックする
@@ -74,6 +79,7 @@ demecal_login_page.html     ← ログイン画面の作り
 
 | 症状 | 対処 |
 |---|---|
+| ダウンロードが警告で止まる | 「…」→「保存」／「継続」を選んでください |
 | 青い警告画面が出る | 「詳細情報」→「実行」を押してください |
 | 一瞬で閉じてしまう | ファイル名が `.bat` で終わっているか確認してください（`.txt` になっていることがあります） |
 | 文字が化けている | **そのままで構いません**。ファイルの中身は正しく保存されています |
@@ -90,25 +96,37 @@ demecal_login_page.html     ← ログイン画面の作り
 
 | | |
 |---|---|
-| 受け口 | `POST /api/ops/probe-upload` (Scan-Chat-AI)。**テキストのみ・書き込み専用**（読み出す API は作らない） |
-| 認可 | ヘッダ `x-probe-token` = env `PROBE_UPLOAD_TOKEN`。**`ADMIN_API_KEY` は使わない**（配布物に埋めるため、漏れてもこの口だけに閉じる使い捨てにする） |
+| 配布口 | `GET /api/ops/probe-bat?k=<token>`。`.ps1` をその場で bat に包み、トークンを注入して返す |
+| 受け口 | `POST /api/ops/probe-upload`。**テキストのみ・書き込み専用**（読み出す API は作らない） |
+| 認可 | どちらも env `PROBE_UPLOAD_TOKEN`（配布=`?k=` / 受取=ヘッダ `x-probe-token`）。**`ADMIN_API_KEY` は使わない** — 配布物に埋まるので、漏れてもこの 2 口だけに閉じる使い捨てにする |
 | 保存先 | S3 `{AWS_S3_PREFIX}ops/probe/{YYYY-MM-DD}/{label}-{PC名}-{uuid}/report.txt`（HTML があれば `page.html`） |
 | 上限 | report 256KB / page 2MB |
+
+**env 1 つで配布と回収の両方が開閉する。** 消せば配布は 503、送信も 503 になる（後始末が 1 手）。
 
 手順:
 
 1. Vercel (Scan-Chat-AI) の env に `PROBE_UPLOAD_TOKEN` を追加して再デプロイ。値は使い捨ての乱数
    （例: `openssl rand -hex 24`）。
-2. 配布用の bat をトークン入りで生成する。**トークンはリポジトリに置かない**（`.ps1` は
-   プレースホルダ `__PROBE_TOKEN__` のまま commit されている）:
+2. Wellfort へ URL を渡す:
    ```
-   python3 scripts/build-demecal-probe-bat.py --token <PROBE_UPLOAD_TOKEN>
+   https://scan-chat-ai.vercel.app/api/ops/probe-bat?k=<PROBE_UPLOAD_TOKEN>
    ```
-   トークンを省略すると送信なし版が出る（bat は `[5] 自動送信は無効です` と表示し、
-   デスクトップのファイルだけを残す）。
-3. 生成された bat を Wellfort へ渡す。
-4. 実行後、S3 の `ops/probe/` を見る。
-5. **済んだら Vercel の env を削除**して閉じる（以後の送信は 503）。
+3. 実行後、S3 の `ops/probe/` を見る。
+4. **済んだら Vercel の env を削除**して閉じる。
+
+**トークンはリポジトリに置かない。** `.ps1` はプレースホルダ `__PROBE_TOKEN__` のまま commit されており、
+注入は配布時（上記 API か下記スクリプト）に行う。
+
+オフラインで bat を作る場合（URL を使わないとき）:
+
+```
+python3 scripts/build-demecal-probe-bat.py --token <PROBE_UPLOAD_TOKEN>
+python3 scripts/build-demecal-probe-bat.py     # 送信なし版
+```
+
+包み方の本体は `src/lib/probe-bat.ts` と上記 python の**2 か所**にある（API 用とオフライン用）。
+**同じ bat を出す必要があるので、片方を直したらもう片方も直すこと**（2026-08-28 時点でバイト一致を確認済み）。
 
 PII: 送られるのは「証明書の件名/発行者/有効期限・PC名・ログイン**前**ページの HTML」だけで、
 氏名・ID・パスワード・検査値は含まれない（スクリプトがログインしないため）。
