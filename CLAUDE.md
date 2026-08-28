@@ -362,6 +362,27 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
   - 実データ経路の目視確認は `supabase/seed_elith_report.sql` (既定では読み込まない・手で流す)。
   - **受取仕様は未確定** (`docs/lab/lab_data_pipeline_master_spec.md:98`)。命名規則・出力トリガ・
     世代管理・ひも付け・受領確認が決まったら自動受信へ差し替える。
+  - **【仕様変更 2026-08-28・発注者指示】報告書は「Elith の PDF を見せる」から
+    「受領 JSON からアプリが生成する」へ変わる。正本 `docs/elith/ai_prevention_report_generation_spec.md`。**
+    目的は**フォーマット変換ではなく可読化** (Elith の出力は文章の羅列で一般ユーザーが読み通せない)。
+    見本 PDF は**様式のお手本**であって埋める項目の一覧ではない。
+    - 受領は **1 件 = 3 ファイル** (`report_text.json` 10 セクション+`health_age` /
+      `health_checkup.json` 40 項目 / 組版済み PDF)。**PDF は JSON の部分集合**で固有情報ゼロ
+      (実測: JSON 19,870 字 / PDF 19,827 字)。しかも **PDF は箇条書き構造を潰す**ので
+      **JSON のほうが素材として上位**。PDF は原本として保管し表示の主役から外す。
+    - 出力は **HTML が正・印刷は `@media print`**。**サーバ側 PDF 生成はしない**
+      (Vercel で Chromium=関数サイズと 60s に直撃)。証跡/外部配布の要件が固まったら Phase 2。
+    - **`elith-report-highlights.ts` は新形式で無言で空になる**。`（判定区分：X）` 依存 (L20) だが
+      新データに **0 件**。検出を「基準範囲を上回っています」等の Elith 自身の判定文へ差し替える。
+      `[pN]` も 0 件 → **原本 PDF へのページジャンプは廃止**。
+    - **作れないもの (発注者判断: 受領に無いものは作らない)**: ①要注意/良好=Elith 判定文のある
+      5 ブロックのみ ②原理/原因/疾患/予後/症状 = **原理のみ**取れる ③がんリスク = 全文に
+      「がん」0 件で**不可** ④基準値比較 = 散文中の 8 件のみ (`health_checkup.json` に基準値が無い)。
+      **これは欠損でなく方針の相違** — Elith は病名・原因・予後を意図的に書かない (ミッション④と一致)。
+    - **受領データの既知不具合**: 同名別値 9 組 (総コレステロール 210/251 等・**自動採用しない**)、
+      本文が使う**ヘマトクリットが JSON に無い** (2 ファイルは包含関係でない)、誤字「上上回っており」
+      (**アプリで直さない**=原文改変)。
+    - **`health_age`(Elith) と ウェルネス年齢(CABA) は別物**。混ぜない・どちらを出すか要確認。
 
 ### ウェルネス年齢 (旧称: 健康年齢・2026-08 確定・発注者指示)
 - **名称は「ウェルネス年齢」**。画面・帳票・ドキュメントの表示名は全部これ。
@@ -521,6 +542,7 @@ Supabase database linter の指摘を棚卸しした結果。**テストフェ�
 | `docs/elith/elith_s3_data_handoff_spec.md` | **Elith S3 受け渡し仕様** (パス/命名/format_id/JSON) |
 | `docs/elith/elith_batch_centralization_design.md` | Elith バッチ**一元化設計**(キーは Vercel・役割分担・admin バッチ) |
 | `docs/elith/elith_assembly_wrapping_spec.md` | **納品セット アセンブリのラップ仕様(Elith向け説明)**。フォルダ/命名/ウェルネス年齢の時系列化(検査日毎・旧1件を撤回)・疑似データも同様に時系列生成・**LAiF AI疾病発症予測(Other/ai_prediction)のファイル仕様=Elith承諾により確定(§5・2026-08)。合成は data.items[] の発症率%/相対リスク比のみジッタ・昨年比は前年の相対リスク比を引継ぎ(実装済)**・manifest不一致の確認事項 |
+| `docs/elith/ai_prevention_report_generation_spec.md` | **AI疾病予防報告書 生成機能の仕様 (パイプライン⑥・2026-08-28)**。受領 JSON 3 点 → アプリが可読な報告書を生成。入力仕様/出力は HTML+印刷CSS(PDF生成しない)/章立て/決定論の変換規則/**作れないもの①〜④と捏造ゼロの境界**/受領データの既知不具合/実装計画/Elith 確認事項 |
 | `docs/elith/batch_scan_to_elith_usage.md` | サンプル一括スキャン→S3 バッチ手順 (`scripts/batch-scan-to-elith.mjs`) |
 | `docs/lab/lab_data_pipeline_master_spec.md` | **検査データ・パイプライン 総合仕様書(E2E正本・上位文書)**。EC購入→キット/タイミング→発送指示/進捗→AI問診/検体返送→各社受渡→受領チェック(週次)→Elithラップ/S3書出→AI診断PDF受取/表示 を6ステップで連結。詳細は(a)(b)(c)へ委譲(二重管理しない) |
 | `docs/lab/lab_data_reception_overview.md` | **4検査のデータ受取 詳細**(血液=リージャー/RPA・がん=プリベント/専用ポータル+S3を提案中・AI疾病予測=LAiF/S3 URL・遺伝子=Genoplan/RPA。方式/経路/現状/課題/次アクション)。E2E全体像は上記 master_spec が上位 |
