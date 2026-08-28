@@ -622,6 +622,84 @@ insert into diagnosis.health_age_scores
   ('d0000003-0000-0000-0000-000000000000', 'blood', '2026-07-15', 68.0, 75.6, 7.6, 'seed-fixture', '{"used_markers": ["albumin", "creatinine", "glucose", "crp", "lymph", "mcv", "rdw", "alp", "wbc"], "carried_markers": [], "imputed_markers": ["rdw", "lymph"], "note": "seed: UI表示検証用の固定値。CABA実計算ではない。"}'::jsonb)
 on conflict (diagnostic_user_id, test_date, source_kind) do nothing;
 
+
+-- ── ⑥ がんリスク検査 (真鍋 d0000001・ALA-PDS) : canonical_name が付かない経路 ────
+-- 項目名・単位・値のレンジは docs/scan/golden/scan_golden_cancer_alapds_20251226.md の
+-- 実測 (元 PDF page2 から人手確定) に合わせる。
+--
+-- 【canonical_name は null のまま】standard-master.ts は健診標準フォーマット(KMAT)の
+-- starter なので ALA-PDS の項目は収録されていない。当て推量で埋めない (捏造ゼロ)。
+-- 推移グラフ側は **テストフェーズの暫定措置**として item_name をキーに拾う
+-- (src/lib/measurement-queries.ts の seriesKey)。
+--
+-- 【インデックス値】ポルフィリン量からの算出式は検査機関の非公開仕様なので、こちらでは
+-- 式を作らない。ゴールデンの実測ペア (972 → 0.8) の比をそのまま保った値を置いている
+-- =表示確認用のテスト値であって、検査機関の算出結果ではない。
+-- 【基準値・判定は入れない】「A: <2.0 / B: 2.0〜4.9 …」の目安表はゴールデンでも
+-- 説明文 (非測定値) 扱い。アプリが基準値や判定を決めないため ref/flag は null。
+
+insert into diagnosis.test_artifacts
+  (diagnostic_user_id, source, test_type, test_date, external_test_id, lab_name,
+   schema_version, age_at_test, sex, display_mode, page_count, imported_at, imported_by, status) values
+  ('d0000001-0000-0000-0000-000000000000', 'wellfort_lab', 'cancer_urine', '2024-01-16', 'K0871', 'PREVENT メディカル', '1.0', 54, 'male', 'single', 3, '2024-01-16 10:00+09', 'wellfort_batch', 'active'),
+  ('d0000001-0000-0000-0000-000000000000', 'wellfort_lab', 'cancer_urine', '2025-01-14', 'K0975', 'PREVENT メディカル', '1.0', 55, 'male', 'single', 3, '2025-01-14 10:00+09', 'wellfort_batch', 'active'),
+  ('d0000001-0000-0000-0000-000000000000', 'wellfort_lab', 'cancer_urine', '2026-01-12', 'K1079', 'PREVENT メディカル', '1.0', 56, 'male', 'single', 3, '2026-01-12 10:00+09', 'wellfort_batch', 'active')
+on conflict (diagnostic_user_id, source, test_type, test_date, external_test_id) do nothing;
+
+-- 2024-01-16
+update diagnosis.test_artifacts set measurements = '[{"name": "尿中ポルフィリン量", "value": "852", "value_num": 852.0, "unit": "nmol/g・CRE", "ref_low": null, "ref_high": null, "flag": null}, {"name": "インデックス値", "value": "0.7", "value_num": 0.7, "unit": null, "ref_low": null, "ref_high": null, "flag": null}, {"name": "リスクランク", "value": "A", "value_num": null, "unit": null, "ref_low": null, "ref_high": null, "flag": null}]'::jsonb
+ where diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and test_type = 'cancer_urine' and test_date = '2024-01-16';
+delete from diagnosis.measurement_values mv using diagnosis.test_artifacts ta
+ where mv.artifact_id = ta.id and ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='cancer_urine' and ta.test_date='2024-01-16';
+insert into diagnosis.measurement_values
+  (artifact_id, diagnostic_user_id, test_type, test_date, seq, item_name, canonical_name,
+   value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag, source_file_kind)
+select ta.id, ta.diagnostic_user_id, ta.test_type, ta.test_date, v.seq, v.item_name, v.canonical_name,
+       v.value, v.value_num, v.unit, v.ref_low, v.ref_high, v.ref_low_num, v.ref_high_num, v.flag, 'scan_md'
+  from diagnosis.test_artifacts ta,
+  (values
+    (0, '尿中ポルフィリン量', null, '852', 852.0, 'nmol/g・CRE', null, null, null::numeric, null::numeric, null),
+    (1, 'インデックス値', null, '0.7', 0.7, null, null, null, null::numeric, null::numeric, null),
+    (2, 'リスクランク', null, 'A', null, null, null, null, null::numeric, null::numeric, null)
+  ) as v(seq, item_name, canonical_name, value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag)
+ where ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='cancer_urine' and ta.test_date = '2024-01-16';
+
+-- 2025-01-14
+update diagnosis.test_artifacts set measurements = '[{"name": "尿中ポルフィリン量", "value": "972", "value_num": 972.0, "unit": "nmol/g・CRE", "ref_low": null, "ref_high": null, "flag": null}, {"name": "インデックス値", "value": "0.8", "value_num": 0.8, "unit": null, "ref_low": null, "ref_high": null, "flag": null}, {"name": "リスクランク", "value": "A", "value_num": null, "unit": null, "ref_low": null, "ref_high": null, "flag": null}]'::jsonb
+ where diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and test_type = 'cancer_urine' and test_date = '2025-01-14';
+delete from diagnosis.measurement_values mv using diagnosis.test_artifacts ta
+ where mv.artifact_id = ta.id and ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='cancer_urine' and ta.test_date='2025-01-14';
+insert into diagnosis.measurement_values
+  (artifact_id, diagnostic_user_id, test_type, test_date, seq, item_name, canonical_name,
+   value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag, source_file_kind)
+select ta.id, ta.diagnostic_user_id, ta.test_type, ta.test_date, v.seq, v.item_name, v.canonical_name,
+       v.value, v.value_num, v.unit, v.ref_low, v.ref_high, v.ref_low_num, v.ref_high_num, v.flag, 'scan_md'
+  from diagnosis.test_artifacts ta,
+  (values
+    (0, '尿中ポルフィリン量', null, '972', 972.0, 'nmol/g・CRE', null, null, null::numeric, null::numeric, null),
+    (1, 'インデックス値', null, '0.8', 0.8, null, null, null, null::numeric, null::numeric, null),
+    (2, 'リスクランク', null, 'A', null, null, null, null, null::numeric, null::numeric, null)
+  ) as v(seq, item_name, canonical_name, value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag)
+ where ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='cancer_urine' and ta.test_date = '2025-01-14';
+
+-- 2026-01-12
+update diagnosis.test_artifacts set measurements = '[{"name": "尿中ポルフィリン量", "value": "1094", "value_num": 1094.0, "unit": "nmol/g・CRE", "ref_low": null, "ref_high": null, "flag": null}, {"name": "インデックス値", "value": "0.9", "value_num": 0.9, "unit": null, "ref_low": null, "ref_high": null, "flag": null}, {"name": "リスクランク", "value": "A", "value_num": null, "unit": null, "ref_low": null, "ref_high": null, "flag": null}]'::jsonb
+ where diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and test_type = 'cancer_urine' and test_date = '2026-01-12';
+delete from diagnosis.measurement_values mv using diagnosis.test_artifacts ta
+ where mv.artifact_id = ta.id and ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='cancer_urine' and ta.test_date='2026-01-12';
+insert into diagnosis.measurement_values
+  (artifact_id, diagnostic_user_id, test_type, test_date, seq, item_name, canonical_name,
+   value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag, source_file_kind)
+select ta.id, ta.diagnostic_user_id, ta.test_type, ta.test_date, v.seq, v.item_name, v.canonical_name,
+       v.value, v.value_num, v.unit, v.ref_low, v.ref_high, v.ref_low_num, v.ref_high_num, v.flag, 'scan_md'
+  from diagnosis.test_artifacts ta,
+  (values
+    (0, '尿中ポルフィリン量', null, '1094', 1094.0, 'nmol/g・CRE', null, null, null::numeric, null::numeric, null),
+    (1, 'インデックス値', null, '0.9', 0.9, null, null, null, null::numeric, null::numeric, null),
+    (2, 'リスクランク', null, 'A', null, null, null, null, null::numeric, null::numeric, null)
+  ) as v(seq, item_name, canonical_name, value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag)
+ where ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='cancer_urine' and ta.test_date = '2026-01-12';
+
 -- ── ⑤ 空状態は既存 seed のまま (追加しない) ─────────────────────────────
 --   鈴木 一郎  d0000004… : 契約直後・検査なし        → 「データが無いとき」の画面
 --   中村 さくら d0000009… : 検査中 (lab_received・結果未) → 「進行中」の画面

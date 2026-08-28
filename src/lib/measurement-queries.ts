@@ -177,12 +177,36 @@ export async function getLatestMeasurements(
 }
 
 /**
+ * 系列のキー。原則は `canonical_name`。
+ *
+ * **【テストフェーズの暫定措置 2026-08・発注者指示】**
+ * canonical_name が無い行は `item_name` をキーに使う。標準マスタ (standard-master.ts) は
+ * 健診標準フォーマット(KMAT) の starter なので、がんリスク検査の「尿中ポルフィリン量」
+ * 「インデックス値」等は収録されておらず canonical_name が null になり、グラフの候補に
+ * 一切乗らなかった。デモ・テストで各検査の推移を見せるために暫定で許容する。
+ *
+ * **恒久策ではない**。item_name は run ごとに表記が揺れうるので、同じ項目が別系列に
+ * 割れることがある (canonical_name はまさにそれを吸収するために在る)。完全マスタを
+ * 受領して canonical_name が全項目に付くようになったら、このフォールバックは外す。
+ * 外す場合はここ (seriesKey) を `r.canonical_name` だけに戻せばよい。
+ */
+function seriesKey(r: { canonical_name: string | null; item_name?: string | null }): string | null {
+  const canonical = r.canonical_name?.trim();
+  if (canonical) return canonical;
+  const raw = r.item_name?.trim();
+  return raw ? raw : null;
+}
+
+/**
  * 「表示項目の設定」で選べる候補を返す。
  *
  * **候補はマスタではなく実データから作る**。この人の measurement_values に実在し、
- * かつ**日付の違う点が 2 つ以上ある** (＝線が引ける) canonical_name だけを返す。
+ * かつ**日付の違う点が 2 つ以上ある** (＝線が引ける) 項目だけを返す。
  * どの項目を既定にするかの選定基準は未確定なので、こちらで 20 項目のマスタを
  * でっち上げない (ミッション④・捏造ゼロ)。
+ *
+ * 項目の同一性は `seriesKey()` = canonical_name、無ければ item_name で見る
+ * (**テストフェーズの暫定措置**。seriesKey のコメント参照)。
  *
  * 並び順は DEFAULT_TREND_ITEMS の順 → 残りを名前順。回ごとに並びが揺れないようにする。
  */
@@ -197,14 +221,14 @@ export async function getTrendCandidates(
     let q = sb
       .schema('diagnosis')
       .from('measurement_values')
-      .select('canonical_name, test_type, test_date, value_num')
+      .select('canonical_name, item_name, test_type, test_date, value_num')
       .eq('diagnostic_user_id', diagnosticUserId)
-      .not('canonical_name', 'is', null)
       .not('value_num', 'is', null)
       .limit(4000);
     if (testType) q = q.eq('test_type', testType);
     const { data, error } = await q;
-    const rows = (data ?? []) as unknown as { canonical_name: string | null; test_date: string | null }[];
+    const rows = (data ?? []) as unknown as
+      { canonical_name: string | null; item_name: string | null; test_date: string | null }[];
     if (error || rows.length === 0) {
       if (testType) return [];
       return demoFallbackEnabled() ? demoMetricTrend().map((x) => x.label) : [];
@@ -212,10 +236,11 @@ export async function getTrendCandidates(
 
     const dates = new Map<string, Set<string>>();
     for (const r of rows) {
-      if (!r.canonical_name || !r.test_date) continue;
-      const set = dates.get(r.canonical_name) ?? new Set<string>();
+      const key = seriesKey(r);
+      if (!key || !r.test_date) continue;
+      const set = dates.get(key) ?? new Set<string>();
       set.add(String(r.test_date));
-      dates.set(r.canonical_name, set);
+      dates.set(key, set);
     }
     const drawable = [...dates.entries()].filter(([, d]) => d.size >= 2).map(([name]) => name);
 
@@ -231,6 +256,9 @@ export async function getTrendCandidates(
 /**
  * 指定項目の時系列を取得する。
  * 各系列には検査票由来の基準値をそのまま添える (グラフの基準線に使う)。
+ *
+ * 項目の指定は `seriesKey()` の基準で突合する — つまり canonical_name、
+ * 無ければ item_name (テストフェーズの暫定措置。seriesKey のコメント参照)。
  *
  * `testType` を渡すと、その検査種別 (health_checkup / blood / …) の測定値だけに絞る。
  * 検査結果セクションの「グラフ」は 1 種別ずつ開くので、その絞り込みに使う。
@@ -255,13 +283,20 @@ export async function getMeasurementTrend(
         'artifact_id, test_type, test_date, seq, item_name, canonical_name, value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag, assessment',
       )
       .eq('diagnostic_user_id', diagnosticUserId)
-      .in('canonical_name', canonicalNames as string[])
       .not('value_num', 'is', null)
       .order('test_date', { ascending: true })
-      .limit(600);
+      // 項目の絞り込みは JS 側で行う (下)。canonical_name が null の行も対象にする必要があり、
+      // PostgREST の or フィルタは和文の値 (カンマ・括弧を含む) のエスケープが壊れやすいため。
+      // 1 人分の測定値なので件数は限定的 (実測: 血液 22 項目 x 12 回 = 264 行)。
+      .limit(4000);
 
+    const want = new Set(canonicalNames as string[]);
     const all = (data ?? []) as unknown as Row[];
-    const rows = testType ? all.filter((r) => r.test_type === testType) : all;
+    const rows = all.filter((r) => {
+      if (testType && r.test_type !== testType) return false;
+      const key = seriesKey(r);
+      return key != null && want.has(key);
+    });
     if (error || rows.length === 0) {
       if (testType) return [];
       return demoFallbackEnabled() ? demoMetricTrend() : [];
@@ -269,10 +304,11 @@ export async function getMeasurementTrend(
 
     const byName = new Map<string, Row[]>();
     for (const r of rows) {
-      if (!r.canonical_name || !r.test_date) continue;
-      const list = byName.get(r.canonical_name) ?? [];
+      const key = seriesKey(r);
+      if (!key || !r.test_date) continue;
+      const list = byName.get(key) ?? [];
       list.push(r);
-      byName.set(r.canonical_name, list);
+      byName.set(key, list);
     }
 
     const out: MetricTrendSeries[] = [];
