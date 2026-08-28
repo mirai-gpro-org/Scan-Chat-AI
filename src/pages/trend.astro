@@ -3,8 +3,9 @@ import AppIcon from '../components/AppIcon.astro';
 import AppNav from '../components/AppNav.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import MetricTrendChart from '../components/dashboard/MetricTrendChart.astro';
+import TrendItemsDialog from '../components/dashboard/TrendItemsDialog.astro';
 import { loadDashboard, testTypeLabel } from '../lib/dashboard-queries';
-import { getMeasurementTrend } from '../lib/measurement-queries';
+import { getMeasurementTrend, getTrendCandidates, DEFAULT_TREND_ITEMS } from '../lib/measurement-queries';
 import { countUnreadImportant } from '../lib/notice-queries';
 import { refreshConfig, cfg } from '../lib/app-config';
 
@@ -14,11 +15,16 @@ import { refreshConfig, cfg } from '../lib/app-config';
  * v1.0 でダッシュボードから推移グラフを外し、検査種別ごとにこのページで見せる形にした
  * (発注者指示 2026-08)。`?type=` が無ければ全種別をまとめて出す。
  *
- * 【未実装 (仕様未確定)】モックにある「表示項目の設定 (20 項目から 8 つ選ぶ)」は入れていない。
- *   どの項目を既定で出すかの選定基準が未決のため。現状は
- *   `measurement-queries.ts` の `DEFAULT_TREND_ITEMS` を出す。
+ * 【表示項目の設定】候補は**実データ由来** (`getTrendCandidates`) で、
+ * 「この方の検査値に実在し、線が引ける項目」だけ。20 項目のマスタはこちらで作らない
+ * (選定基準が未確定・ミッション④)。
+ * サーバは**候補を全部描き**、クライアントが選択に応じて出し分ける (リロードしない)。
+ * 既定は `DEFAULT_TREND_ITEMS` のうち実在するもの (従来の表示と同じ) を上限 8 件まで。
  */
 export const prerender = false;
+
+/** 同時に表示できる項目数の上限 (モックの既定 8 件に合わせる)。 */
+const MAX_ITEMS = 8;
 
 const url = new URL(Astro.request.url);
 const u = url.searchParams.get('u');
@@ -31,8 +37,20 @@ const result = needsSignIn ? null : await loadDashboard(u);
 const hasError = result ? 'error' in result : false;
 const data = !result || hasError ? null : (result as Exclude<typeof result, { error: string }>);
 
+const candidates = data ? await getTrendCandidates(data.resultUid, type ?? undefined) : [];
+
+// 既定の選択: 従来出していた項目のうち実在するもの → 足りなければ候補の先頭から補う。
+const preferred = candidates.filter((n) => (DEFAULT_TREND_ITEMS as readonly string[]).includes(n));
+const defaults = (preferred.length > 0 ? preferred : candidates).slice(0, MAX_ITEMS);
+
+// カードは候補を全部描く (出し分けはクライアント)。候補が無ければ従来どおり既定で引く。
 const series = data
-  ? await getMeasurementTrend(data.resultUid, undefined, 12, type ?? undefined)
+  ? await getMeasurementTrend(
+      data.resultUid,
+      candidates.length > 0 ? candidates : undefined,
+      12,
+      type ?? undefined,
+    )
   : [];
 
 const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;
@@ -43,16 +61,26 @@ const typeName = type ? testTypeLabel(type).name : null;
 const q = u ? `?u=${encodeURIComponent(u)}` : '';
 ---
 
-<BaseLayout title={`検査値の推移 | Welltect`} width="app">
+<BaseLayout title="検査値の推移 | Welltect" width="app">
   <AppNav u={u} current="/dashboard" unreadNotices={unreadNotices} supportContact={supportContact} />
 
   <header class="hero-gradient px-5 py-4">
     <a href={`/dashboard${q}`} class="inline-flex min-h-touch items-center gap-1.5 text-base font-semibold text-brand-700 hover:underline">
       <AppIcon name="prev" size={18} />ダッシュボードへ戻る
     </a>
-    <h1 class="mt-1 text-2xl font-bold tracking-tight text-navy-800">
-      検査値の推移{typeName && <span class="ml-2 text-lg font-medium text-slate-700">{typeName}</span>}
-    </h1>
+    <div class="mt-1 flex flex-wrap items-center justify-between gap-3">
+      <h1 class="text-2xl font-bold tracking-tight text-navy-800">
+        検査値の推移{typeName && <span class="ml-2 text-lg font-medium text-slate-700">{typeName}</span>}
+      </h1>
+      {candidates.length > 0 && (
+        <TrendItemsDialog
+          candidates={candidates}
+          defaults={defaults}
+          scope={type ?? 'all'}
+          max={MAX_ITEMS}
+        />
+      )}
+    </div>
   </header>
 
   <main class="flex flex-1 flex-col gap-5 px-5 pb-12 pt-5">
@@ -66,7 +94,13 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
         </span>
       </p>
     ) : (
-      <MetricTrendChart series={series} title={typeName ? `${typeName}の推移` : '検査値の推移'} />
+      <>
+        {/* 全部外したときの行き止まり防止。既定では隠しておき、0 件になったら出す。 */}
+        <p id="trend-empty-selection" hidden class="card text-base text-slate-700">
+          表示する項目が選ばれていません。右上の「表示項目の設定」から選んでください。
+        </p>
+        <MetricTrendChart series={series} title={typeName ? `${typeName}の推移` : '検査値の推移'} />
+      </>
     )}
   </main>
 </BaseLayout>

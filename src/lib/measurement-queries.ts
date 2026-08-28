@@ -177,6 +177,58 @@ export async function getLatestMeasurements(
 }
 
 /**
+ * 「表示項目の設定」で選べる候補を返す。
+ *
+ * **候補はマスタではなく実データから作る**。この人の measurement_values に実在し、
+ * かつ**日付の違う点が 2 つ以上ある** (＝線が引ける) canonical_name だけを返す。
+ * どの項目を既定にするかの選定基準は未確定なので、こちらで 20 項目のマスタを
+ * でっち上げない (ミッション④・捏造ゼロ)。
+ *
+ * 並び順は DEFAULT_TREND_ITEMS の順 → 残りを名前順。回ごとに並びが揺れないようにする。
+ */
+export async function getTrendCandidates(
+  diagnosticUserId: string,
+  testType?: string,
+): Promise<string[]> {
+  const sb = getServerSupabase();
+  // 実データ層が無いテストフェーズでは、デモの系列名をそのまま候補にする。
+  if (!sb) return demoFallbackEnabled() ? demoMetricTrend().map((x) => x.label) : [];
+  try {
+    let q = sb
+      .schema('diagnosis')
+      .from('measurement_values')
+      .select('canonical_name, test_type, test_date, value_num')
+      .eq('diagnostic_user_id', diagnosticUserId)
+      .not('canonical_name', 'is', null)
+      .not('value_num', 'is', null)
+      .limit(4000);
+    if (testType) q = q.eq('test_type', testType);
+    const { data, error } = await q;
+    const rows = (data ?? []) as unknown as { canonical_name: string | null; test_date: string | null }[];
+    if (error || rows.length === 0) {
+      if (testType) return [];
+      return demoFallbackEnabled() ? demoMetricTrend().map((x) => x.label) : [];
+    }
+
+    const dates = new Map<string, Set<string>>();
+    for (const r of rows) {
+      if (!r.canonical_name || !r.test_date) continue;
+      const set = dates.get(r.canonical_name) ?? new Set<string>();
+      set.add(String(r.test_date));
+      dates.set(r.canonical_name, set);
+    }
+    const drawable = [...dates.entries()].filter(([, d]) => d.size >= 2).map(([name]) => name);
+
+    const head = DEFAULT_TREND_ITEMS.filter((n) => drawable.includes(n)) as string[];
+    const rest = drawable.filter((n) => !head.includes(n)).sort((a, b) => a.localeCompare(b, 'ja'));
+    return [...head, ...rest];
+  } catch {
+    if (testType) return [];
+    return demoFallbackEnabled() ? demoMetricTrend().map((x) => x.label) : [];
+  }
+}
+
+/**
  * 指定項目の時系列を取得する。
  * 各系列には検査票由来の基準値をそのまま添える (グラフの基準線に使う)。
  *

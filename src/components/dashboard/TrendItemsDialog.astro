@@ -1,0 +1,174 @@
+---
+import AppIcon from '../AppIcon.astro';
+
+/**
+ * 「表示項目の設定」ダイアログ (推移グラフ)。
+ *
+ * 【候補はマスタでなく実データ】`measurement-queries.getTrendCandidates()` が返す
+ * 「この人の検査値に実在し、線が引ける (日付違いの点が 2 つ以上ある) 項目」だけを並べる。
+ * どの項目を既定にするかの選定基準が未確定なので、20 項目のマスタをこちらで作らない。
+ *
+ * 【保存先はこの端末 (localStorage)】選択は表示の好みであって診断データではないので
+ * DB には入れない。キーは検査種別ごと。PII は持たない。
+ * 反映は**リロードせずクライアントで出し分ける** — サーバは候補を全部描いてある。
+ */
+interface Props {
+  /** 選べる項目 (実データ由来)。 */
+  candidates: string[];
+  /** 既定の選択 (サーバが決めた初期表示)。 */
+  defaults: string[];
+  /** localStorage のキーに使う検査種別。省略時は 'all'。 */
+  scope?: string;
+  /** 同時に表示できる上限。 */
+  max?: number;
+}
+const { candidates, defaults, scope = 'all', max = 8 } = Astro.props as Props;
+const storageKey = `welltect.trend.items.${scope}`;
+---
+
+<button
+  type="button"
+  id="trend-settings-open"
+  class="flex min-h-touch items-center justify-center gap-1.5 rounded-xl border border-navy-400 bg-white px-3.5 text-base font-semibold text-slate-800 transition hover:bg-brand-50"
+  aria-haspopup="dialog"
+>
+  <AppIcon name="settings" size={18} />表示項目の設定
+</button>
+
+<div id="trend-settings" hidden class="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-labelledby="trend-settings-title">
+  <div data-trend-settings-close class="sheet-backdrop"></div>
+
+  <div class="relative z-50 flex max-h-[85vh] w-full max-w-xl flex-col rounded-t-2xl bg-white sm:rounded-2xl">
+    <header class="flex flex-shrink-0 items-center gap-3 border-b border-slate-200 px-5 py-4">
+      <h2 id="trend-settings-title" class="flex-1 text-base font-bold text-navy-800">表示項目の設定</h2>
+      <button type="button" data-trend-settings-close class="grid h-11 w-11 place-items-center rounded-xl text-slate-600 hover:bg-slate-100" aria-label="閉じる">
+        <AppIcon name="close" size={20} />
+      </button>
+    </header>
+
+    <p class="flex-shrink-0 px-5 pt-3 text-sm text-slate-600">
+      グラフに出す項目を選びます（最大 <span class="tnum">{max}</span> 件）。
+      並んでいるのは、この方の検査値に実在して<strong class="font-semibold">推移が引ける</strong>項目だけです。
+    </p>
+
+    {candidates.length === 0 ? (
+      <p class="px-5 py-6 text-base text-slate-700">選べる項目がまだありません。検査が 2 回以上完了すると表示されます。</p>
+    ) : (
+      <div class="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+        <ul class="flex flex-col gap-1">
+          {candidates.map((name) => (
+            <li>
+              <label class="flex min-h-touch cursor-pointer items-center gap-3 rounded-xl px-3 py-1 hover:bg-brand-50">
+                <input
+                  type="checkbox"
+                  name="trend-item"
+                  value={name}
+                  checked={defaults.includes(name)}
+                  class="h-5 w-5 shrink-0 accent-brand-600"
+                />
+                <span class="text-base text-slate-800">{name}</span>
+              </label>
+            </li>
+          ))}
+        </ul>
+      </div>
+    )}
+
+    <footer class="flex flex-shrink-0 flex-wrap items-center gap-3 border-t border-slate-200 px-5 py-4">
+      <span id="trend-settings-count" class="tnum text-sm text-slate-600"></span>
+      <button type="button" id="trend-settings-reset" class="min-h-touch text-base font-semibold text-brand-700 hover:underline">既定に戻す</button>
+      <button
+        type="button"
+        id="trend-settings-apply"
+        class="ml-auto flex min-h-touch items-center justify-center gap-1.5 rounded-xl border border-brand-600 bg-brand-600 px-5 text-base font-semibold text-white transition hover:bg-brand-700"
+      >この内容で表示</button>
+    </footer>
+  </div>
+</div>
+
+<script is:inline define:vars={{ storageKey, defaults, max }}>
+  (() => {
+    const panel = document.getElementById('trend-settings');
+    const openBtn = document.getElementById('trend-settings-open');
+    if (!panel || !openBtn) return;
+    const boxes = () => [...panel.querySelectorAll('input[name="trend-item"]')];
+    const countEl = document.getElementById('trend-settings-count');
+
+    const read = () => {
+      try {
+        const raw = localStorage.getItem(storageKey);
+        if (!raw) return null;
+        const v = JSON.parse(raw);
+        return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : null;
+      } catch { return null; }
+    };
+    const write = (list) => {
+      try { localStorage.setItem(storageKey, JSON.stringify(list)); } catch { /* 保存できなくても表示は続ける */ }
+    };
+
+    /**
+     * 選択に合わせてカードを出し分ける (リロードしない — サーバは候補を全部描いてある)。
+     * 対象は**カードだけ**。拡大モーダルは既定で hidden なので、ここで触ると全部開いてしまう。
+     */
+    const apply = (list) => {
+      const on = new Set(list);
+      let shown = 0;
+      document.querySelectorAll('[data-trend-open][data-trend-item]').forEach((el) => {
+        const hit = on.has(el.getAttribute('data-trend-item'));
+        el.hidden = !hit;
+        if (hit) shown += 1;
+      });
+      const empty = document.getElementById('trend-empty-selection');
+      if (empty) empty.hidden = shown > 0;
+    };
+
+    const syncCount = () => {
+      const n = boxes().filter((b) => b.checked).length;
+      if (countEl) countEl.textContent = `${n} / ${max} 件`;
+      // 上限に達したら未選択を押せなくする (減らせば戻る)。
+      boxes().forEach((b) => { b.disabled = !b.checked && n >= max; });
+    };
+
+    const setChecks = (list) => {
+      const on = new Set(list);
+      boxes().forEach((b) => { b.checked = on.has(b.value); });
+      syncCount();
+    };
+
+    const open = () => {
+      setChecks(read() ?? defaults);
+      panel.hidden = false;
+      document.body.style.overflow = 'hidden';
+    };
+    const close = () => {
+      panel.hidden = true;
+      document.body.style.overflow = '';
+      openBtn.focus();
+    };
+
+    openBtn.addEventListener('click', open);
+    panel.querySelectorAll('[data-trend-settings-close]').forEach((el) => el.addEventListener('click', close));
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.hidden) close(); });
+    panel.addEventListener('change', (e) => { if (e.target?.name === 'trend-item') syncCount(); });
+
+    document.getElementById('trend-settings-reset')?.addEventListener('click', () => setChecks(defaults));
+    document.getElementById('trend-settings-apply')?.addEventListener('click', () => {
+      const list = boxes().filter((b) => b.checked).map((b) => b.value);
+      write(list);
+      apply(list);
+      close();
+    });
+
+    /*
+     * 初期表示。サーバは候補を**全部**描いているので、保存済みが無くても必ず一度絞る
+     * (絞らないと初回だけ全項目が出てしまう)。
+     *
+     * このスクリプトはヘッダ内にあり、**グラフのカードより先に実行される**。
+     * その時点で querySelectorAll は 0 件なので、DOM が揃うまで待ってから当てる
+     * (待たずに呼ぶと初期表示も保存済みの選択も効かない — 実測 2026-08)。
+     */
+    const init = () => apply(read() ?? defaults);
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+  })();
+</script>
