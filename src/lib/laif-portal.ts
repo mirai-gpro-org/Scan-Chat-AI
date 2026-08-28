@@ -26,10 +26,24 @@ import { getS3Config, makeS3Client, type S3Config } from './s3';
 
 /** 受け入れる MIME（結果は PDF のみ）。 */
 export const ACCEPTED_CONTENT_TYPE = 'application/pdf';
-/** 1 ファイルの上限。デモ画面の表示（最大20MB）と一致させる。 */
-export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
-/** presigned URL の有効期限（秒）。spec §4「有効期限5分」。 */
-export const PRESIGN_EXPIRES_SEC = 300;
+/**
+ * 1 ファイルの上限。**画面表示・中継 API と必ず一致させる**
+ * (wellfort-site `partner-portal-preview.astro` / `api/partner/upload.ts`)。
+ *
+ * 20MB → 50MB (2026-08-28・発注者判断)。20MB は LAiF 回答の申告値だったが
+ * (`docs/lab/laif_s3_secure_handoff_spec.md:24`)、実際に届いた生成 PDF が
+ * 34,290KB (約33.5MB) で弾かれたため引き上げた。
+ */
+export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+/**
+ * presigned URL の有効期限（秒）。
+ *
+ * spec §4 は「有効期限5分」だが、これは **PUT を開始できる猶予** であって
+ * 転送時間そのものではない (S3 は署名検証をリクエスト受信時に行う)。
+ * それでも 50MB では回線次第で 5 分の窓を取り逃しやすいので 15 分にした。
+ * URL は 1 回のアップロード用に都度発行され、キーは推測不能な UUID。
+ */
+export const PRESIGN_EXPIRES_SEC = 900;
 
 const DEFAULT_QUARANTINE_PREFIX = 'quarantine/';
 
