@@ -9,6 +9,8 @@
 #     ・CSV のダウンロードもしません
 #     ・デメカル側のデータを変更する操作は一切ありません
 #     ・個人情報は扱いません
+#     ・結果（下記2ファイルと同じ内容）を Wellfort のサーバへ送信します
+#       ※送信に失敗しても処理は続きます。ファイルは必ず手元に残ります
 #
 #  実行後、デスクトップに 2 つのファイルができます。これを送ってください。
 #     demecal_probe_report.txt   … 判定結果
@@ -136,6 +138,40 @@ Say "=================================================="
 Say ""
 Say "このファイルと demecal_login_page.html を担当者へ送ってください。"
 Say "（どちらにも ID・パスワード・個人情報は含まれていません）"
+
+
+# ---------------------------------------------------------------
+# [5] 結果を Wellfort のサーバへ送る（任意・失敗しても問題なし）
+#     送るのは上のレポートとログイン画面のHTMLだけ。
+#     ID・パスワード・受診者情報は含まれません。
+# ---------------------------------------------------------------
+$UploadUrl   = 'https://scan-chat-ai.vercel.app/api/ops/probe-upload'
+$UploadToken = '__PROBE_TOKEN__'
+
+if ($UploadToken -and $UploadToken -notmatch '^__') {
+  Say ""
+  Say "[5] 結果を送信しています..."
+  try {
+    $payload = @{
+      label  = 'demecal-probe'
+      host   = $env:COMPUTERNAME
+      report = ($lines -join [Environment]::NewLine)
+      page   = $(if ($page) { $page.Content } else { '' })
+    } | ConvertTo-Json -Depth 3 -Compress
+    $bytes = [Text.Encoding]::UTF8.GetBytes($payload)
+    $res = Invoke-RestMethod -Uri $UploadUrl -Method Post -Body $bytes -TimeoutSec 60 `
+             -ContentType 'application/json; charset=utf-8' `
+             -Headers @{ 'x-probe-token' = $UploadToken }
+    if ($res.ok) { Say "    送信しました（担当者側で確認できます）" }
+    else         { Say "    送信できませんでした: $($res.error)" }
+  } catch {
+    Say "    送信できませんでした — $($_.Exception.Message)"
+    Say "    （問題ありません。デスクトップのファイルをメールでお送りください）"
+  }
+} else {
+  Say ""
+  Say "[5] 自動送信は無効です。デスクトップのファイルをお送りください。"
+}
 
 try {
   $lines | Out-File -FilePath $ReportPath -Encoding UTF8
