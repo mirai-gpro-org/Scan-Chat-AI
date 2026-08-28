@@ -9,21 +9,13 @@
  */
 import type { APIRoute } from 'astro';
 import { listConfig, setConfig } from '../../../lib/app-config';
+import { isAdminAuthorized } from '../../../lib/api-auth';
 
 export const prerender = false;
 
-function envKey(name: string): string | undefined {
-  const m = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.[name];
-  if (m != null && m !== '') return m;
-  const p = typeof process !== 'undefined' ? process.env?.[name] : undefined;
-  return p != null && p !== '' ? p : undefined;
-}
 function authorized(request: Request): boolean {
-  const expected = envKey('ADMIN_API_KEY');
-  if (!expected) return true; // dev
-  const h = request.headers.get('authorization') || '';
-  const m = /^Bearer\s+(.+)$/i.exec(h.trim());
-  return !!m && m[1] === expected;
+  // 認可の実装は src/lib/api-auth.ts に集約 (キー未設定の本番は拒否＝fail-closed)。
+  return isAdminAuthorized(request);
 }
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8' } });

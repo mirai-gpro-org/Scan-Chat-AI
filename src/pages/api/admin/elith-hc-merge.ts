@@ -34,21 +34,13 @@ import { MODELS } from '../../../lib/gemini';
 import { refreshConfig } from '../../../lib/app-config';
 import { getS3Config, isS3Configured, putFiles, type S3PutFile } from '../../../lib/s3';
 import { checkNecessity } from '../../../lib/elith-necessity-check';
+import { isAdminAuthorized } from '../../../lib/api-auth';
 
 export const prerender = false;
 
-function envKey(name: string): string | undefined {
-  const m = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.[name];
-  if (m != null && m !== '') return m;
-  const p = typeof process !== 'undefined' ? process.env?.[name] : undefined;
-  return p != null && p !== '' ? p : undefined;
-}
 function authorized(request: Request): boolean {
-  const expected = envKey('ADMIN_API_KEY');
-  if (!expected) return true;
-  const h = request.headers.get('authorization') || '';
-  const m = /^Bearer\s+(.+)$/i.exec(h.trim());
-  return !!m && m[1] === expected;
+  // 認可の実装は src/lib/api-auth.ts に集約 (キー未設定の本番は拒否＝fail-closed)。
+  return isAdminAuthorized(request);
 }
 function str(v: unknown): string | null {
   return typeof v === 'string' && v.trim() ? v.trim() : null;

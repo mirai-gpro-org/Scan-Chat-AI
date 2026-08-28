@@ -16,6 +16,7 @@
  */
 
 import type { APIRoute } from 'astro';
+import { isAdminAuthorized } from '../../../lib/api-auth';
 import {
   createUploadTicket, listUploads, createDownloadUrl,
   isPortalUploadEnabled, normalizePartner,
@@ -24,17 +25,9 @@ import {
 
 export const prerender = false;
 
-function envKey(name: string): string | undefined {
-  const m = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.[name];
-  if (m != null && m !== '') return m;
-  const p = typeof process !== 'undefined' ? process.env?.[name] : undefined;
-  return p != null && p !== '' ? p : undefined;
-}
 function authorized(request: Request): boolean {
-  const expected = envKey('ADMIN_API_KEY');
-  if (!expected) return true; // env 未設定の dev のみ素通し
-  const m = /^Bearer\s+(.+)$/i.exec((request.headers.get('authorization') || '').trim());
-  return !!m && m[1] === expected;
+  // 認可の実装は src/lib/api-auth.ts に集約 (キー未設定の本番は拒否＝fail-closed)。
+  return isAdminAuthorized(request);
 }
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {

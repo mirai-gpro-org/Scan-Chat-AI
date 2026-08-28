@@ -37,7 +37,14 @@ LAiF 様の回答（`20260806_laif_spec_confirm` §6）を反映。要点と設�
 
 ### 0.2 要確認（回答で新たに生じた点）
 - **整理番号の採番主体（確定 2026-08）＝Wellfort採番**：**Wellfort が仮名ID(整理番号)を採番**して No.0(識別番号)に入れる。**LAiF自社連番は使わない**（突合は Wellfort 整理番号で一意）。form の桁数(10桁)に合わせる。
-- **生年月日（確定 2026-08・発注者決定）＝渡す**：入力フォーム No.3 の生年月日を **上りCSVに含める**。
+**【確定 2026-08-27・発注者指示】上りの受渡形式 = xlsx（CSV は当初の仮予定・撤回）**：
+LAiF 正式フォーム `input_format_new_202312.xlsx`（シート `KM`）そのものを渡す。**1 ファイル = 1 名分**。
+**ファイル名 = `input_wellfort_laif_{整理番号}.xlsx`**（例 `input_wellfort_laif_W026000123.xlsx`）。
+`{整理番号}` は**名前欄 G1 の識別番号と同一表記**とし、**画面表示・ファイル名・ファイル中身の 3 者を一致**させる
+（旧デモは画面 `WF-2026-000123` / 中身 `W026000123` で食い違っていた → `W026…` へ統一）。
+本文書中の旧「上りCSV」表記は、この xlsx と読み替えること。詳細＝`kit_lifecycle_and_handoff_management_spec §4.1.1 (C)`。
+
+- **生年月日（確定 2026-08・発注者決定）＝渡す**：入力フォーム No.3 の生年月日を **上りファイルに含める**。
   → ⚠ **上りCSVは"PIIフリー"ではなく、生年月日(準識別子)を含む個人データ**として扱う（`data_integration_requirements` の「外部に生年月日を載せない」ルールに対する**LAiF向けの明示的例外**）。
   保護は本方式のポータル（暗号化・パスキー必須・アクセス制御・監査・§0.1 補完多層）で担保。**同意範囲が生年月日の外部提供を含むことの確認**は運用側の残タスク。
 
@@ -111,6 +118,50 @@ LAiF 様の回答（`20260806_laif_spec_confirm` §6）を反映。要点と設�
 > - **未実装**: §3 認証(Supabase Auth + Passkey)・§6 GuardDuty 検疫・§8 EventBridge。
 >   認証が無い間はこの口が**公開の書き込み口**になるため、**env `LAIF_PORTAL_UPLOAD=on` のときだけ有効**（既定 off＝503）。
 >   **本番公開の前に §3 を実装すること。**
+
+### 4.0 有効化に必要な設定（実測 2026-08-27・これが揃わないと動かない）
+
+コードはデプロイ済みでも、以下が欠けると**ブラウザからのアップロードは必ず失敗する**。
+実測: env 未設定のため Scan-Chat-AI は 503、wellfort-site 中継は `SCAN_CHAT_AI_API_KEY 未設定` で 500 だった。
+
+| # | 場所 | 設定 | 欠けたときの症状 |
+|---|---|---|---|
+| 1 | Vercel: Scan-Chat-AI | `ADMIN_API_KEY`（十分に長いランダム値） | **全 admin/partner API が 401**。※未設定は fail-closed（`src/lib/api-auth.ts`）|
+| 2 | Vercel: Scan-Chat-AI | `LAIF_PORTAL_UPLOAD=on` | `503 portal_upload_disabled` |
+| 3 | Vercel: Scan-Chat-AI | `LAIF_S3_BUCKET=wellfort-partner-exchange`（未設定なら `AWS_S3_BUCKET` へ falls back） | Elith 納品バケットへ混入する |
+| 4 | Vercel: wellfort-site | `SCAN_CHAT_AI_API_KEY`（= 1 と同値） | `500 server_misconfig` |
+| 5 | **S3 バケット** | **CORS**（下記） | ブラウザが PUT をブロック（**API は正常なのに失敗する**）|
+
+**5 の CORS は本節の設計（ブラウザ→S3 直接 PUT）に必須**。ブラウザは
+`https://www.wellfort.co.jp` から `https://<bucket>.s3.<region>.amazonaws.com` へ
+クロスオリジンで PUT するため、バケット側に以下が要る（当初この記載が抜けていた）。
+
+```json
+[{
+  "AllowedOrigins": ["https://www.wellfort.co.jp", "https://wellfort.co.jp"],
+  "AllowedMethods": ["PUT"],
+  "AllowedHeaders": ["content-type"],
+  "MaxAgeSeconds": 3000
+}]
+```
+
+`AllowedHeaders` は署名対象に入れている `content-type` を必ず含める（`laif-portal.ts` の
+`signableHeaders`）。ワイルドカード `*` のオリジンは使わない（誰でも書ける口になる）。
+
+**手順の正本＝`docs/operations/LAiFポータル_有効化手順書.md`**（バケット作成後の CORS / IAM / ライフサイクル / env / 疎通確認と失敗時の切り分け）。
+バケットは **`wellfort-partner-exchange`**（`ap-northeast-1`・2026-08-27 作成済）。パートナー名はキーの階層（`quarantine/{partner}/…`）で分けるため、1 バケットに LAiF・プリベント両方を収容する。上り `to-laif/` も同バケット（§7）。
+
+### 4.0.1 認可の実装（fail-closed・2026-08-27）
+
+`ADMIN_API_KEY` 未設定時に素通しする dev 用の分岐が **14 の API に複製**されており、
+本番 Vercel にキーが入っていなかったため **admin API が無認可で叩ける状態**だった
+（実測: `GET /api/admin/config` が認証ヘッダ無しで 200・設定一覧を返却。`config.ts` は
+POST も同じ関数なので設定の書き換えも通り得た）。
+
+→ 認可を **`src/lib/api-auth.ts` に集約**し、**キー未設定の本番は拒否**に変更した。
+素通しは `import.meta.env.DEV`（Vite が本番ビルドで false に静的置換）が true のときだけ。
+**env の入れ忘れが無防備に直結しない**のが変更の主眼。
+※ `src/lib/admin-auth.ts` は別物（admin **画面**の email/uid ガード）。混同しないこと。
 > - **下り(入力ファイル取得)は未実装**（画面は同梱サンプルの静的配布のまま）。
 
 
