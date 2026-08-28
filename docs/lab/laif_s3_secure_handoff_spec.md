@@ -128,7 +128,7 @@ LAiF 正式フォーム `input_format_new_202312.xlsx`（シート `KM`）その
 |---|---|---|---|
 | 1 | Vercel: Scan-Chat-AI | `ADMIN_API_KEY`（十分に長いランダム値） | **全 admin/partner API が 401**。※未設定は fail-closed（`src/lib/api-auth.ts`）|
 | 2 | Vercel: Scan-Chat-AI | `LAIF_PORTAL_UPLOAD=on` | `503 portal_upload_disabled` |
-| 3 | Vercel: Scan-Chat-AI | `LAIF_S3_BUCKET`（未設定なら `AWS_S3_BUCKET` へ falls back） | Elith 納品バケットへ混入する |
+| 3 | Vercel: Scan-Chat-AI | `LAIF_S3_BUCKET=wellfort-partner-exchange`（未設定なら `AWS_S3_BUCKET` へ falls back） | Elith 納品バケットへ混入する |
 | 4 | Vercel: wellfort-site | `SCAN_CHAT_AI_API_KEY`（= 1 と同値） | `500 server_misconfig` |
 | 5 | **S3 バケット** | **CORS**（下記） | ブラウザが PUT をブロック（**API は正常なのに失敗する**）|
 
@@ -147,6 +147,9 @@ LAiF 正式フォーム `input_format_new_202312.xlsx`（シート `KM`）その
 
 `AllowedHeaders` は署名対象に入れている `content-type` を必ず含める（`laif-portal.ts` の
 `signableHeaders`）。ワイルドカード `*` のオリジンは使わない（誰でも書ける口になる）。
+
+**手順の正本＝`docs/operations/LAiFポータル_有効化手順書.md`**（バケット作成後の CORS / IAM / ライフサイクル / env / 疎通確認と失敗時の切り分け）。
+バケットは **`wellfort-partner-exchange`**（`ap-northeast-1`・2026-08-27 作成済）。パートナー名はキーの階層（`quarantine/{partner}/…`）で分けるため、1 バケットに LAiF・プリベント両方を収容する。上り `to-laif/` も同バケット（§7）。
 
 ### 4.0.1 認可の実装（fail-closed・2026-08-27）
 
