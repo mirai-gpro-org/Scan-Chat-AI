@@ -31,22 +31,14 @@ import { refreshConfig } from '../../../lib/app-config';
 import { getS3Config, isS3Configured, putFiles } from '../../../lib/s3';
 import { checkNecessity } from '../../../lib/elith-necessity-check';
 import { masterItemNames } from '../../../lib/standard-master';
+import { isAdminAuthorized } from '../../../lib/api-auth';
 
 export const prerender = false;
 
-function envKey(name: string): string | undefined {
-  const m = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.[name];
-  if (m != null && m !== '') return m;
-  const p = typeof process !== 'undefined' ? process.env?.[name] : undefined;
-  return p != null && p !== '' ? p : undefined;
-}
 /** Bearer 検証。expected 未設定(dev)なら true。 */
 function authorized(request: Request): boolean {
-  const expected = envKey('ADMIN_API_KEY');
-  if (!expected) return true; // dev: キー未設定なら素通し
-  const h = request.headers.get('authorization') || '';
-  const m = /^Bearer\s+(.+)$/i.exec(h.trim());
-  return !!m && m[1] === expected;
+  // 認可の実装は src/lib/api-auth.ts に集約 (キー未設定の本番は拒否＝fail-closed)。
+  return isAdminAuthorized(request);
 }
 
 interface Body {

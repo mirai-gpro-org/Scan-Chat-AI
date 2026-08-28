@@ -18,23 +18,15 @@
 import type { APIRoute } from 'astro';
 import { getServerSupabase } from '../../../../lib/supabase';
 import { putOriginal } from '../../../../lib/originals-storage';
+import { isAdminAuthorized } from '../../../../lib/api-auth';
 
 export const prerender = false;
 
 const MAX_FILE_SIZE = 40 * 1024 * 1024; // 40 MB (レポート PDF は数百 KB 〜 数 MB)
 
-function envKey(name: string): string | undefined {
-  const m = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.[name];
-  if (m != null && m !== '') return m;
-  const p = typeof process !== 'undefined' ? process.env?.[name] : undefined;
-  return p != null && p !== '' ? p : undefined;
-}
 function authorized(request: Request): boolean {
-  const expected = envKey('ADMIN_API_KEY');
-  if (!expected) return true; // env 未設定 (dev) のみ省略
-  const h = request.headers.get('authorization') || '';
-  const m = /^Bearer\s+(.+)$/i.exec(h.trim());
-  return !!m && m[1] === expected;
+  // 認可の実装は src/lib/api-auth.ts に集約 (キー未設定の本番は拒否＝fail-closed)。
+  return isAdminAuthorized(request);
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
