@@ -159,10 +159,87 @@ const collapsible = (c: ChapterVM): boolean => !isPrint && c.blocks.length > 1;
         </div>
       )}
 
-      {vm.cover.abstract && (
-        <div class="md-region md-summary mt-4 border-t border-slate-200 pt-4" set:html={md(vm.cover.abstract)} />
-      )}
     </section>
+
+    {/*
+      ══════════ 冒頭トピック = サービスの 2 本柱 ══════════
+
+      **設計ポリシー (Wellfort へ提示済み)**:
+        「報告書の冒頭には、サービスの 2 本柱をそのままトピックとして置きます。
+          章の並び・見出しも、この 2 本柱に沿えて構成しました。」
+
+      → 目次を**軸ごとに**組み、**表紙の直後**に置く。保存導線や個々の章より前。
+      当初これを保存導線と目次の下に置いていたため、2 本柱が埋もれていた (2026-08-29 修正)。
+      章ごとの見出し (37 件) は畳んでおく — 冒頭に 37 行並べると 2 本柱が押し出されるため。
+    */}
+    {!isPrint && (
+      <section class="card">
+        <h2 class="mb-1 flex items-center gap-2 text-lg font-bold text-navy-800">
+          <AppIcon name="result" size={20} class="text-brand-700" />
+          この報告書の内容
+        </h2>
+        <p class="mb-3 text-sm leading-relaxed text-slate-600">
+          Welltect は次の 2 つを柱にしています。この報告書も、その順で構成しています。
+        </p>
+        <ol class="flex flex-col gap-2.5">
+          {REPORT_AXES.map((ax, i) => (
+            <li class={`rounded-xl border-l-4 px-4 py-3 ${
+              ax.key === 'A' ? 'border-navy-700 bg-navy-50' : 'border-brand-600 bg-brand-50'
+            }`}>
+              <a
+                href={`#axis-${ax.key.toLowerCase()}`}
+                class="text-base font-bold text-navy-800 no-underline hover:underline"
+              >{i + 1}. {ax.title}</a>
+              <p class="mt-0.5 text-sm leading-relaxed text-slate-700">{ax.lead}</p>
+              {vm.chapters.filter((c) => c.axis === ax.key).length > 0 ? (
+                <ul class="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                  {vm.chapters.filter((c) => c.axis === ax.key).map((c) => (
+                    <li><a href={`#${c.anchor}`} class="text-sm text-brand-800 hover:underline">{c.title}</a></li>
+                  ))}
+                </ul>
+              ) : (
+                <p class="mt-2 text-sm text-slate-600">この回は記載がありませんでした。</p>
+              )}
+            </li>
+          ))}
+        </ol>
+
+        {toc.length > 0 && (
+          <details class="mt-3 border-t border-slate-200 pt-2">
+            <summary class="cursor-pointer py-1 text-base font-medium text-brand-800">
+              章ごとの見出しを見る
+            </summary>
+            <ul class="mt-2 flex flex-col gap-3">
+              {toc.map((t) => (
+                <li>
+                  <p class="text-base font-semibold text-navy-800">{t.title}</p>
+                  <ul class="mt-1 flex flex-col gap-1">
+                    {t.topics.map((tp) => (
+                      <li>
+                        <a href={`#${tp.id}`} class="text-base text-brand-800 hover:underline">{tp.heading}</a>
+                        {tp.teaser && <span class="ml-1 text-sm text-slate-600">— {tp.teaser}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </section>
+    )}
+
+    {/*
+      Elith のアブストラクト (総括文)。
+      **2 本柱より後ろに置く** — 608 字あり、表紙に載せると 2 本柱が画面外へ押し出される
+      (実測)。設計ポリシー「冒頭に 2 本柱を置く」が優先 (spec §4.-1)。
+      見出しは付けない。Elith の総括文がそのまま読み出しになる。
+    */}
+    {vm.cover.abstract && (
+      <section class="card">
+        <div class="md-region md-summary" set:html={md(vm.cover.abstract)} />
+      </section>
+    )}
 
     {/*
       ══════════ 保存・印刷の導線 ══════════
@@ -242,31 +319,6 @@ const collapsible = (c: ChapterVM): boolean => !isPrint && c.blocks.length > 1;
             </p>
           </div>
         )}
-      </section>
-    )}
-
-    {/* ══════════ 目次 ══════════ */}
-    {!isPrint && toc.length > 0 && (
-      <section class="card">
-        <h2 class="mb-3 flex items-center gap-2 text-lg font-bold text-navy-800">
-          <AppIcon name="result" size={20} class="text-brand-700" />
-          この報告書の内容
-        </h2>
-        <ul class="flex flex-col gap-3">
-          {toc.map((t) => (
-            <li>
-              <p class="text-base font-semibold text-navy-800">{t.title}</p>
-              <ul class="mt-1 flex flex-col gap-1">
-                {t.topics.map((tp) => (
-                  <li>
-                    <a href={`#${tp.id}`} class="text-base text-brand-800 hover:underline">{tp.heading}</a>
-                    {tp.teaser && <span class="ml-1 text-sm text-slate-600">— {tp.teaser}</span>}
-                  </li>
-                ))}
-              </ul>
-            </li>
-          ))}
-        </ul>
       </section>
     )}
 
