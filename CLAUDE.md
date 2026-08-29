@@ -54,8 +54,7 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
   GET でカタログ+現在値、POST で upsert。**UI は wellfort-site admin 側** (この作業ツリーには
   未取得のため実装状況は未確認)。
 
-**app_config の現行キー (22 件)**: `ui.support_contact` / `ui.health_age_followup` /
-`report.sections.order` / `report.sections.hidden` / `report.sections.labels` / `report.sections.collapsed` /
+**app_config の現行キー (18 件)**: `ui.support_contact` / `ui.health_age_followup` /
 `scan.model` / `live.model` / `scan.output_format` / `scan.boundary_recheck` / `scan.obs_dedup` /
 `scan.scramble_fix` / `scan.eye_resolve` / `scan.lipid_fix` / `scan.canonicalize` /
 `scan.perception_repair` / `scan.vqa_rowcrop` / `scan.ai_prediction_dedup` /
@@ -487,134 +486,32 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
       (要約/順位づけ/言い換え) は全て禁止事項と重なる。スキャン側の実績 (多数決撤回・
       inventoryReread の幻覚5件・VQA の捏造4件→「新規pushしない」) がそのまま効く。
       将来入れるなら **選択のみ/verbatim機械検証/取り込み時1回でDB保存/監査/既定off** が条件 (spec §5.5)。
-    - **【！以下の「【実装】P0〜P4」の記述はすべてリバート対象】** 2026-08-29 に入れた実装は
-      本機能のミッション「可読化」(spec §1.1) を満たさず、設計ポリシー (spec §1.0 = サービスの
-      2 本柱) にも従っていない誤った実装。**確定仕様ではないので根拠に使わないこと。**
-      仕様の正本は `docs/elith/ai_prevention_report_generation_spec.md`、
-      引き継ぎは `docs/elith/ai_prevention_report_HANDOVER.md`。
-      対象コミットの一覧は `docs/elith/ai_prevention_report_REVERT_LIST.md`。
-      **11 件中 10 件は既にデプロイ元ブランチ `claude/awesome-carson-UeyUZ` に入っている**
-      (本番反映済み)。wellfort-site 側の admin 抽出監査 UI も同様。
-    - **【実装】P0 完了 (2026-08-29・spec §9.2)**: 章レジストリ `src/lib/report-sections.ts`
-      (`CHAPTER_REGISTRY` 11章・A軸=`cancer_finding` を先頭・B軸の先頭は `medical_visit`) と
-      表示モデルの型 `src/lib/report-model.ts` (`ReportVM`/`CoverVM`/`ChapterVM`/`TopicVM`/
-      `MeasurementVM`/`LifestylePairVM`/`ReportAudit`)。**画面と `?print=1` はこの型しか知らない**。
-      **表紙はレジストリに入れない** (章ではなく並べ替え・非表示をしないため)。
-      - 上書きは app_config の **`report.sections.{order,hidden,labels,collapsed}`** の4本。
-        **章ごとにキーを生やさない** — `ConfigType` が3種しかなく admin UI は wellfort-site 側なので、
-        章を足すたび `CONFIG_SPECS` が4行増える形を避けた。既定は空=コード既定 (`ui.support_contact` 流儀)。
-        `order` は**書いた章だけを書いた順で出す**。`labels` は `key=表示名`。
-      - **打ち間違いで報告書を真っ白にしない**: 「設定あり」の判定は生文字列でなく
-        **「解釈できた章が1つでもあるか」**で行う (`' , , '`/未知キーのみ を「設定あり」と見なすと
-        章0件になる。P0検証で実際に踏んで修正)。未知キーは無視し `unknown` で監査へ。
-        **全章を明示 `hidden` にした時だけ0件を許す**。
-      - アンカーは `anchorFor(key, heading)` = **見出し文字列の FNV-1a**。連番にすると
-        章を並べ替えたときリンクが壊れるため (spec §5.4)。
-      - `resolveChapters(read?)` は設定リーダを差し替え可能 (P4.3 スナップショット回帰用)。
-        21ケースのロジック検証 + `astro check` 0error。
-    - **【実装】P1 + P4.3 完了 (2026-08-29・spec §9.3)**: アダプタ `src/lib/report-adapter.ts` が
-      **変換規則を所有する唯一のモジュール** (`sanitizeMeasurementsForDelivery` と同じ規律)。
-      `elith-report-highlights.ts` は**アダプタへの薄い橋渡しに置換**(正規表現の二重管理を解消。
-      P2 で `report.astro` を表示モデル駆動にしたら不要)。回帰は
-      **`npm run verify:report-model`** (38件・fixture=`test/fixtures/elith_*_20260826.json`。
-      合成検体で PII 無しを確認済)。
-      - **新旧どちらの形式も読む**。実データ受領まで Stage2 サンプル(配列)が表示されるため。
-        判定検出も両対応: 新=**Elith 自身の判定文**(`基準範囲を上+回っています/…上+回っており`/
-        `基準範囲内であり|です|に収まっており`/`基準値を下回…`)、旧=`（判定区分：X）`。
-        `上+` は誤字「基準範囲を**上上**回っており」が実データにあるため(**原文は直さない**が検出はする)。
-      - **並べ替えをやめた**: 旧実装は判定区分ラダーでソートしていたが、どれが重いかを当社が
-        決めることになる。**Elith が書いた順のまま**出す。最優先は Elith の「医療受診の目安 §1」を使う。
-      - **踏んだ落とし穴 (実測・全て回帰テスト済)**: ①`【】`が単独行前提だと**Stage2サンプルが0件**に
-        (PDF抽出は `[p4] 【体格・腹囲】体重は…` と地続き)→行頭`【】`は見出し+**同行の残りを本文**、
-        `[pN]`は判定前に剥がす ②`【】`を全章で見出し扱い→トピックが39のはず**74件**に→
-        **`###`があればそれだけ**(無い章=検査値FBだけ`【】`へ) ③単一項目ブロックは
-        「**今回の測定値**は27.9…」で項目名が入らない→**ブロック見出しを項目名に**
-        ④`総コレステロール [mg/dL]`=210/`[mg/dl]`=251 があるので基準値は**単位まで一致**させ、
-        一意でなければ**付けない**。
-      - **受領データの状態を自動検知** (`ReportAudit.anomalies`・納品/表示には混ぜない):
-        同名別値9組(**名前は完全一致**で見る。括弧を落として ALT≡ALT(GPT) と見なすのは当社の判断になる)/
-        **本文が参照するヘマトクリットが health_checkup.json に無い**/ウェルネス年齢が当社CABAと不一致/
-        app_config の未知章キー。
-      - 実測 (2026-08-26受領分): セクション10・検査値40・所見5ブロック・値と基準値8件(検査値行に
-        結べたのは7件)・トピック37・生活習慣6ペア・**出さなかった章=`cancer_finding` のみ**。
-    - **【実装】P2 + P2.5 完了 (2026-08-29・spec §9.4)**: `src/pages/report.astro` を
-      **表示モデル駆動の1本の読み物**に書き換え。**旧3モード(a/b/c)は廃止**(新形式に `[pN]` が無く
-      原本PDFへのページジャンプが成立しない)。取得は `loadReportVM()`。サンプルは
-      **2026-08-26受領分の新形式**へ差し替え(`src/data/elith/`・回帰チェックと同じファイル=二重管理しない)。
-      - 構成: 表紙 → 手元に残す → 目次 → **A:初期がんの早期発見** → **B:各章**。
-        **`.astro` に章を直書きしない**(`vm.chapters` を `axis` で分けて回すだけ)。
-      - **`?print=1`** = ナビ/目次/保存導線なし・**`<details>` を使わず全展開**・本文のみ
-        (実測: 通常25個→印刷0個・本文20,149字)。`@media print` は上乗せだけ。
-      - **【spec §3.6 から変更】保存手順は印刷ビューに置かない**。仕様どおり印刷ビューに置くと
-        **手順が保存されたPDFに載る**(iOSの共有→PDFは印刷CSSを通らないので `.no-print` で隠せない)。
-        → 手順は通常画面 `?save=1` に出し、`?print=1` は本文だけにする。
-      - **存在しない列を select しない**: `report_checkup` はP3で追加する列。先に書くと読み取りが失敗し
-        **実データがあるのに黙ってサンプルへ落ちる**。それまで検査値の章は材料が無いので出ない。
-      - タイプ判定は `artifacts` の `test_type==='cancer_urine'` の有無。検査サイクルは
-        `subscriptions.current_cycle_seq` があるときだけ表紙に出る(単品購入は行が無い=自動的に出ない)。
-      - **既知の残り**: `emphasizeTopicJa()` が「無理に制限**するのでは**なく」のような
-        主題でない「〜では」を太字にする(実測)。`report-view.ts` の既存挙動で `/report` 固有ではない。
-    - **【実装】P3 完了 (2026-08-29・spec §9.5)**: 取り込み API の 3 ファイル対応 +
-      マイグレーション `supabase/migrations/20260829000010_diagnosis_report_checkup.sql`
-      (`diagnosis_results.checkup_values` jsonb 追加)。
-      - `POST /api/admin/elith-report/upload` のフォーム項目 (すべて任意・**File でも文字列でも受ける**):
-        `report_text`→`report`+`schema_version='elith-v2.0'` / `health_checkup`→`checkup_values` /
-        `file`(PDF)→`report_pdf_*` / `sections`(旧配列)→`report`+`'elith-v1.0'`(後方互換)。
-      - **PDF を必須から任意へ変更**(表示の主役は JSON・PDF は原本保管だけ)。既存 wellfort-site
-        admin UI は不変で動く。**3つとも無ければ 400 `nothing_to_ingest`**(空の行を作らない)。
-      - 応答に取り込めた数を返す(セクション数/章名/`health_age`/検査値数/`warnings`)。
-        **表示側と同じアダプタで数える** — 別の数え方をすると「取り込めたつもりで画面が空」を検知できない。
-      - **`checkup_values` を別列にする理由**: `report`=本文の散文 / `checkup_values`=検査値40項目 で
-        別ファイル・別構造。**2ファイルは包含関係でない**(本文が参照するヘマトクリットが検査値側に無い)。
-        当社スキャン由来の `measurement_values` とは**出どころが違う**ので混ぜない。
-      - 読み出しは **列が無い環境では列を外して引き直す**(マイグレーション未適用で、実データが
-        あるのに黙ってサンプルへ落ちるのを防ぐ)。
-      - 検証(ローカルPG16): 全マイグレーションを空DBへ順に適用=0失敗 / 受領JSON2点を実insert=
-        `report` 11キー・`checkup_values` 40キー・`health_age`=46.6 で round-trip /
-        **jsonb はキー順を保持しない**ので順序非依存を回帰チェックに追加(40件)。
-    - **【最重要・実装事故と修正 2026-08-29】2本柱の帯は「章」ではなく報告書の骨格**。
-      設計ポリシー(Wellfortへ提示済)「報告書の冒頭には 2 本柱をそのままトピックとして置く/
-      章の並び・見出しもこの 2 本柱に沿える」は、**§0.3「材料が無い章は出さない」より上位**。
-      → 軸の見出しは `src/lib/report-sections.ts` の **`REPORT_AXES`** が常設で描き、
-      **レジストリに入れない**(表紙と同じ理由・並べ替えも非表示もしない)。
-      **事故**: 当初これを描かず `axis` を配列を分ける変数にしか使わなかったため、A に材料が無い
-      タイプ2(=パイロット対象)で **A 軸の痕跡がゼロ**になり報告書が B から始まっていた。
-      モックは軸の帯と所見カードが別要素で「実運用では非表示」の注記はカード側だった。
-      **枠(軸)と中身(章)を分けること。** 併せて `ui.cancer_screening_not_included`
-      (spec §4.0.1 が名指ししていたキー・既定は空=非表示)を実装。空のときは軸の帯だけが立ち
-      「この回の診断結果には、がんの観点での記載がありませんでした。」のみ。文言確定後は
-      **admin から入れるだけで出る**(§0.3「空で用意→決まったら admin から」)。
-      **さらに「冒頭に置く」まで満たす必要がある(2026-08-29 追加修正)**: 帯を描くだけでは不足で、
-      当初 `表紙→手元に残す→目次→主軸A→主軸B` の順だったため 2 本柱が埋もれていた。
-      → `表紙(識別+ウェルネス年齢) → 【この報告書の内容=2本柱】 → 総括文 → 手元に残す → 主軸A → 主軸B`。
-      **目次を軸ごとに組み直して「冒頭トピック」そのものにし**、章名は軸の下にぶら下げる。
-      **【重要】ポリシーの説明文を紙面に載せない(事故③)**: 「年1回の人間ドックの隙間を…」
-      「Welltect は次の2つを柱にしています」を冒頭に貼ったが、これは**Wellfortへ設計意図を
-      説明するための文**で報告書の中身ではない。当社の散文=§1.0「Elith の出力以上の表記を
-      一切しない」違反・§1.3.1 の **(c)内容の創作=不可**。ポリシーが求めるのは
-      **2本柱が構造として最初に見えること**。→ 冒頭に置くのは**見出しとリンクだけ**。
-      `REPORT_AXES` は `key`/`title` のみ(リードを持たせない)。
-      **アブストラクト(608字)は表紙カードから出す**
-      (表紙に載せると2本柱が画面外。§4.1「表紙=health_age+実年齢+abstract」は材料の一覧で
-      描画順の指定ではない)。実測 393x852 で 1 画面目に表紙と 2 本柱が収まる。
-    - **【実装】P4 + P4.2(API) 完了 (2026-08-29・spec §9.6)**:
-      - **§7.2 本文にしかない値も表に載せる**: `MeasurementVM.source`(`checkup`/`report_text`)。
-        **2ファイルは包含関係にない**ので検査値ファイルだけで表を組むと本文が最優先扱いする項目が落ちる
-        (実測=ヘマトクリット55.6%)。本文由来の行として足し、項目名の横に**「本文」**の印。行数 40→**41**。
-      - **§7.1 同名別値は自動採用しない**: `MeasurementVM.conflict`。両方を行として残し値の横に
-        **「N 通り」**の印 + 「どちらが正しいかを当社では判断できないため、届いたまま並べています」。
-        `observation-dedup` と同じ流儀。実測9項目×2行。単位(`mg/dL`/`mg/dl`)が並ぶので理由が行で分かる。
-      - **§7.3 誤字は直さない**(原文改変)。ただし判定句を `上+` にして検出はする。
-      - **P4.2 = `GET /api/admin/elith-report/audit`** (Bearer `ADMIN_API_KEY`・`diagnostic_user_id`
-        省略でサンプル)。認識セクション/トピック数/検査値数/基準値数/出した章・出さなかった章・
-        非表示章/`anomalies`/現在の章立て設定 を返す。**表示と同じ `loadReportVM` で組む**
-        (監査だけ別経路だと「監査は緑なのに画面が空」を検知できない)。**紙面には出さない**。
-      - **P4.2 の admin UI = wellfort-site `claude/elith-verify-image-json`** (発注者許可を得て push・2026-08-29)。
-        `src/pages/api/admin/elith-report-audit.ts`(中継・認可は `config.ts` と同一2層) +
-        `elith-batch.astro` の「📄 AI疾病予防報告書の抽出監査」モーダル。
-        **0件は赤字**にする(それを見つけるのが目的)。**数え直さない**(表示と同じ経路の結果を受け取るだけ)。
-        章立て設定の編集は既存の「⚙ 運用パラメータ」モーダルから可能(`CONFIG_SPECS` 全件描画なので自動で出る)。
-        チップ行は縦積みにした — `.eb-cfg-row` は左右2カラムで右が幅を食うと**ラベルが1文字ずつ折り返される**(実測)。
+    - **【リバート済み 2026-08-29】2026-08-29 に入れた本機能の実装 (P0〜P4) は全て取り消した。**
+      理由は可読化 (spec §1.1) を満たしていないこと (画面本文 20,297 字 / 受領本文 20,490 字 =
+      **削減率 1%**) と、設計ポリシー (spec §1.0 = サービスの 2 本柱) に従っていないこと。
+      **本機能は未実装。** 着手する人は `docs/elith/ai_prevention_report_HANDOVER.md` を先に読む。
+      仕様の正本は `docs/elith/ai_prevention_report_generation_spec.md`。
+      リバート内容の記録は `docs/elith/ai_prevention_report_REVERT_LIST.md`。
+      - **リバートで戻したもの**: `report.astro` (旧 3 モード a/b/c) / `elith-report-highlights.ts` /
+        `elith-report-queries.ts` / `elith-report-sample.ts` / `report-view.ts` /
+        `api/admin/elith-report/upload.ts` (PDF 必須へ戻る) / `app-config.ts` / `package.json`。
+      - **削除したもの**: `report-adapter.ts` / `report-model.ts` / `report-sections.ts` /
+        `api/admin/elith-report/audit.ts` / `scripts/verify-report-model.ts` /
+        `supabase/migrations/20260829000010_diagnosis_report_checkup.sql` (`checkup_values` 列)。
+        app_config の 5 キー (`ui.cancer_screening_not_included` / `report.sections.*` 4 本) も消えた
+        → **app_config の現行キーは 18 件**。
+      - **残したもの**: `src/data/elith/report_text_20260826.json` /
+        `health_checkup_20260826.json` (2026-08-26 受領分・合成検体)。**参照コードは無くなったが、
+        HANDOVER §2.3 が素材の在処として名指ししているデータなので消さない。**
+      - **戻した `elith-report-highlights.ts` は実データで無言で空になる**。実測: 受領 JSON
+        (2026-08-26) は `（判定区分：）` **0 件** / `[pN]` **0 件**。旧サンプルにある `[pN]` 10 件は
+        **アプリが PDF 抽出時に付けたページマーカー**で Elith 由来ではない (Stage2 PDF 原本も 0 件)。
+        **サンプルでは動き実データで何も出ない**状態なので、作り直しでは Elith 自身の判定文
+        (`基準範囲を上…` = 受領 JSON に実測 5 件) から検出し直す。`report.astro` と結合しており
+        (`report.astro:7` が import)、切り離すとビルドが通らないため一体で戻してある。
+      - **`checkup_values` 列は「Supabase へ未適用」を前提に消した** (REVERT_LIST の記載)。
+        **当方から Supabase の実状態は確認できない (未確認)。** 適用済みの環境があれば、
+        列だけが残りマイグレーション履歴と食い違う → その環境では別途判断すること。
 
 ### ウェルネス年齢 (旧称: 健康年齢・2026-08 確定・発注者指示)
 - **名称は「ウェルネス年齢」**。画面・帳票・ドキュメントの表示名は全部これ。
