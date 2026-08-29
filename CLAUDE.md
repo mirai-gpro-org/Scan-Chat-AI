@@ -967,6 +967,41 @@ Supabase database linter の指摘を棚卸しした結果。**テストフェ�
 - 標準スクリプトは `scripts/*.mjs` (Node ESM, 追加依存なし方針)。
 - 主要ライブラリ: `@google/genai`(Gemini)、`@aws-sdk/client-s3`(S3)、`@supabase/supabase-js`。
 
+## デプロイ元ブランチ (2026-08-29 確定・発注者判断「A案」)
+
+**症状**: 本番へマージすると UI デザインや LAiF デモ画面が**前の版に戻る**ことが頻発していた。
+
+**真因 = git ではなくブランチ運用の食い違い** (実測で特定):
+
+| repo | GitHub 既定ブランチ | 実際に作業/デプロイしたいブランチ | 結果 |
+|---|---|---|---|
+| Scan-Chat-AI | `claude/awesome-carson-UeyUZ` (=作業ブランチ・`main` は**存在しない**) | 同じ | 事故なし |
+| wellfort-site | **`main`** | `claude/wellfort-ui-design-draft-7y8dup` | **Preview 止まり + 二重管理** |
+
+- Vercel は **Production Branch に設定されたブランチだけ**を Production にする。wellfort-site は
+  既定が `main` なので、`wellfort-ui-design-draft-7y8dup` へマージしても **Preview のまま**だった。
+- 結果 `main` と当該ブランチが**双方向に乖離** (main に無い 25 件 / 当該に無い 11 件)。
+- さらに**同じ作業が両ブランチに別ハッシュで二重に入っていた**
+  (`LAiFサンプル: 黒枠…` = main `b8eb12f` / 本番 `d85e4e7` 等 4 組)。マージでなく同じ変更を 2 回当てた形跡。
+  → git は別物として扱うので、両者をマージすると **LAiF/partner 領域で必ず競合**し、
+    解決を取り違えると片方の版に戻る。**これが「戻る」の正体。**
+- **実測した競合 3 件はいずれも「main が古い」**: `api/partner/upload.ts` と
+  `partner-portal-preview.astro` が **main=20MB / 本番=50MB** (先日の LAiF 34MB 弾かれ対応が巻き戻る)、
+  LAiF サンプル xlsx は **`xl/` 配下の XML ハッシュが完全一致** = 中身同一でファイル名規則化の差のみ。
+  → **`main` にしかない新しい中身は無い。捨ててよい** (発注者確認済み)。
+
+**確定 (A案)**: **wellfort-site の Vercel Production Branch を
+`claude/wellfort-ui-design-draft-7y8dup` にする** (Scan-Chat-AI と同じ「既定=作業ブランチ」の形に揃える)。
+`main` は使わない。**Vercel の設定変更は発注者側の操作** (UNFIX からは実行も確認もできない)。
+
+- 切替前に検証済み: 当該ブランチで `astro build` 成功 / `astro check` のエラー数はマージ前後とも 82 で増減なし。
+- **CI の追随**: `.github/workflows/deploy-supabase-functions.yml` は `main` への push で発火していた。
+  デプロイ元が変わると **Edge Function の自動デプロイが黙って止まる**ため、
+  trigger branches に当該ブランチを追加済み (`f21ac3f`)。`supabase/` の中身は両ブランチ同一。
+  もう一方の `charge-subscriptions-cron.yml` は cron/手動のみで branches 指定が無く影響なし。
+- **残課題**: GitHub の既定ブランチが `main` のままだと、新規 PR の base が `main` になり
+  **同じ二重管理が再発する**。既定ブランチも当該ブランチへ変更するのが本筋 (未実施・要判断)。
+
 ## 開発ブランチ / ブランチ管理 (2リポジトリ・ドメイン別・ペア運用・2026-08 定義)
 - **ドメイン別ブランチ**: wellfort-site は EC/FA/Elith 等 関心事が混在するため、関心事ごとにブランチを分ける
   (`claude/<domain>-<topic>`。EC/FA と Elith を混ぜない)。
