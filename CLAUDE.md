@@ -54,7 +54,8 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
   GET でカタログ+現在値、POST で upsert。**UI は wellfort-site admin 側** (この作業ツリーには
   未取得のため実装状況は未確認)。
 
-**app_config の現行キー (18 件)**: `ui.support_contact` / `ui.health_age_followup` /
+**app_config の現行キー (22 件)**: `ui.support_contact` / `ui.health_age_followup` /
+`report.sections.order` / `report.sections.hidden` / `report.sections.labels` / `report.sections.collapsed` /
 `scan.model` / `live.model` / `scan.output_format` / `scan.boundary_recheck` / `scan.obs_dedup` /
 `scan.scramble_fix` / `scan.eye_resolve` / `scan.lipid_fix` / `scan.canonicalize` /
 `scan.perception_repair` / `scan.vqa_rowcrop` / `scan.ai_prediction_dedup` /
@@ -486,6 +487,23 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
       (要約/順位づけ/言い換え) は全て禁止事項と重なる。スキャン側の実績 (多数決撤回・
       inventoryReread の幻覚5件・VQA の捏造4件→「新規pushしない」) がそのまま効く。
       将来入れるなら **選択のみ/verbatim機械検証/取り込み時1回でDB保存/監査/既定off** が条件 (spec §5.5)。
+    - **【実装】P0 完了 (2026-08-29・spec §9.2)**: 章レジストリ `src/lib/report-sections.ts`
+      (`CHAPTER_REGISTRY` 11章・A軸=`cancer_finding` を先頭・B軸の先頭は `medical_visit`) と
+      表示モデルの型 `src/lib/report-model.ts` (`ReportVM`/`CoverVM`/`ChapterVM`/`TopicVM`/
+      `MeasurementVM`/`LifestylePairVM`/`ReportAudit`)。**画面と `?print=1` はこの型しか知らない**。
+      **表紙はレジストリに入れない** (章ではなく並べ替え・非表示をしないため)。
+      - 上書きは app_config の **`report.sections.{order,hidden,labels,collapsed}`** の4本。
+        **章ごとにキーを生やさない** — `ConfigType` が3種しかなく admin UI は wellfort-site 側なので、
+        章を足すたび `CONFIG_SPECS` が4行増える形を避けた。既定は空=コード既定 (`ui.support_contact` 流儀)。
+        `order` は**書いた章だけを書いた順で出す**。`labels` は `key=表示名`。
+      - **打ち間違いで報告書を真っ白にしない**: 「設定あり」の判定は生文字列でなく
+        **「解釈できた章が1つでもあるか」**で行う (`' , , '`/未知キーのみ を「設定あり」と見なすと
+        章0件になる。P0検証で実際に踏んで修正)。未知キーは無視し `unknown` で監査へ。
+        **全章を明示 `hidden` にした時だけ0件を許す**。
+      - アンカーは `anchorFor(key, heading)` = **見出し文字列の FNV-1a**。連番にすると
+        章を並べ替えたときリンクが壊れるため (spec §5.4)。
+      - `resolveChapters(read?)` は設定リーダを差し替え可能 (P4.3 スナップショット回帰用)。
+        21ケースのロジック検証 + `astro check` 0error。
 
 ### ウェルネス年齢 (旧称: 健康年齢・2026-08 確定・発注者指示)
 - **名称は「ウェルネス年齢」**。画面・帳票・ドキュメントの表示名は全部これ。

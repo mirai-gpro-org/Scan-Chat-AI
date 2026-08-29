@@ -1044,7 +1044,7 @@ UI は wellfort-site 側。
 
 | Phase | 内容 | 状態 |
 |---|---|---|
-| **P0** | **章レジストリ＋表示モデルの型を先に決める** (§1.3.2 / §1.3.3)。ここを飛ばすと後段が固まる | 未着手 |
+| **P0** | **章レジストリ＋表示モデルの型を先に決める** (§1.3.2 / §1.3.3)。ここを飛ばすと後段が固まる | **実装済 (2026-08-29)** — §9.2 |
 | **P1** | 新形式アダプタ (§5.1) ＋ `elith-report-highlights` の検出ルール差し替え (§5.2) | 未着手 |
 | **P2** | 章立ての組み替え・折りたたみ・**印刷専用ビュー `?print=1`** (§3.3 / §4) | 未着手 |
 | **P3** | 取り込み API の 3 ファイル対応 ＋ マイグレーション (§8.2) | 未着手 |
@@ -1066,6 +1066,46 @@ UI は wellfort-site 側。
 | `src/lib/elith-report-sample.ts` | Stage2 サンプル。新形式のサンプルへ差し替える |
 | `src/pages/report.astro` | 3 モード (a/b/c) を廃し §4.1 の 1 本の読み物へ。**章の描画はレジストリ駆動にし、画面と `?print=1` で同じレンダラを使う** (§1.3.2 / §1.3.5) |
 | `[pN]` → `#page=N` のページジャンプ | **廃止** (新形式に `[pN]` が無い) |
+
+### 9.2 P0 の実装内容 (2026-08-29)
+
+| ファイル | 内容 |
+|---|---|
+| `src/lib/report-model.ts` (新規) | 表示モデルの型。`ReportVM` / `CoverVM` / `ChapterVM` / `TopicVM` / `MeasurementVM` / `LifestylePairVM` / `ReportAudit`。**画面と `?print=1` はこの型しか知らない** (§1.3.3) |
+| `src/lib/report-sections.ts` (新規) | 章レジストリ `CHAPTER_REGISTRY` (11 章・§4.1 の表) ＋ `resolveChapters()` ＋ 決定論アンカー `anchorFor()` |
+| `src/lib/app-config.ts` | `report.sections.{order,hidden,labels,collapsed}` の 4 キーを追加 (group=`報告書`)。**既定は 4 つとも空＝コード既定** |
+
+**表紙はレジストリに入れない** — 章ではなく、並べ替えも非表示もしないため (`CoverVM`)。
+
+#### なぜ「章ごとのキー」でなく「一覧を 1 本の文字列」か
+
+`ConfigType` は `'bool' | 'enum' | 'string'` の 3 種しかなく (`app-config.ts:15`)、
+admin UI は wellfort-site 側にある (CLAUDE.md 確定事項)。章ごとにキーを生やすと
+**章を 1 つ足すたび `CONFIG_SPECS` に 4 行**増え、admin の画面がキーで埋まる。
+→ カタログを増やさずに済む形にした。**既定は空・空ならコード既定**という
+`ui.support_contact` と同じ流儀 (§1.3.2)。
+
+| キー | 書式 | 効き方 |
+|---|---|---|
+| `report.sections.order` | `key,key,…` | **書いた章だけを書いた順で出す**。空ならコード既定の全章 |
+| `report.sections.hidden` | `key,key,…` | `order` より後に効く |
+| `report.sections.labels` | `key=表示名,…` | 見出しの差し替え |
+| `report.sections.collapsed` | `key,key,…` | 既定で畳む。**`?print=1` では無視**（§3.2） |
+
+#### 打ち間違いで報告書を真っ白にしない
+
+**「設定あり」の判定を生文字列でなく「解釈できた章が 1 つでもあるか」で行う。**
+`' , , '` や未知キーだけの指定を「設定あり」と見なすと章が 0 件になり、
+**タイプミス 1 つで報告書が空になる**。P0 のロジック検証で実際にこの分岐を踏んだため修正した。
+未知キーは無視し、`ResolvedChapters.unknown` に入れて抽出監査へ回す (§1.3.6)。
+※ **全章を明示的に `hidden` にした場合だけは 0 件を許す** (意図的な指定なので尊重する)。
+
+#### 検証
+
+`resolveChapters()` / `anchorFor()` を 21 ケースで確認 (既定・order・hidden・labels・
+collapsed・未知キー・空指定・アンカーの決定論性・レジストリの健全性)。`astro check` 0 error。
+恒久的な回帰は **P4.3 の fixture ＋ 表示モデルのスナップショット** で持つ (§1.3.7)。
+そのため `resolveChapters(read?)` は設定リーダを差し替えられるようにしてある。
 
 ---
 
