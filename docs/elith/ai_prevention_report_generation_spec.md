@@ -591,7 +591,7 @@ A の章に、アプリのスキャン結果 (腫瘍マーカー・ABC 健診・
 | 氏名 | `customer_profiles` | **表示する** (§4.0.0.1) |
 | 作成日・紙面の版・第 N 回 | アプリ | 端末に保存された控えの識別に必要 (§3.6) |
 | ウェルネス年齢 | **Elith 出力の値のみ** | §1.3.8 |
-| 検査サイクル (第 N 回 / 全 4 回・次回) | `lab_tests` | 報告書自身のメタ情報。医学的な記述ではない |
+| 検査サイクル (第 N 回 / 全 4 回・次回) | **`customer.subscriptions`** (§4.0.0.2) | 報告書自身のメタ情報。医学的な記述ではない。**タイプ 2 では出さない** |
 
 #### 4.0.0.1 氏名は表示する — PII ルールの適用範囲
 
@@ -606,7 +606,33 @@ Elith を含む外部への受け渡しに適用されるものであって、�
 - 既にアプリは氏名を表示している (`dashboard-queries.ts:416`「真鍋様」形式)。
   報告書もこれに合わせる。
 
-#### 4.0.1 A の総合所見 — 確定案 (2026-08-28)
+##### 4.0.0.2 検査サイクルのデータ源 — **既存テーブルにある**
+
+**新規に持つ必要も、確認する必要もない。** `customer.subscriptions`
+(`20260601000010_schemas_and_tables.sql:93`) に揃っている。
+
+| 表示 | カラム |
+|---|---|
+| 次回はいつか | `next_test_at` |
+| 前回はいつか | `last_test_at` |
+| **第 N 回** | `current_cycle_seq` |
+| 何年目か | `current_cycle_year` |
+| 契約状態 | `status` (`active` / `paused` / `cancelled`) |
+
+各回が実施済みかは `customer.lab_tests` (`:143`) で引ける —
+`test_type` / `sampled_at` / `reported_at` /
+`status` (`pending|in_lab|reported|imported|failed`)。
+出荷・進捗の台帳は `customer.kit_shipments` (`:112`)。
+
+正本: `docs/subscription/subscription_management_feature_requirements.md` /
+`docs/subscription/kit_lifecycle_and_handoff_management_spec.md` /
+`docs/lab/kit_progress_management.md`。
+
+**タイプ 2 (単品購入) では検査サイクルを表示しない。** 年 4 回のサイクルは
+コースプランの構造であり、単品購入には `subscriptions` 行が無い。
+→ レジストリの「材料が無い章は出さない」がそのまま効く (§1.0.1)。
+
+### 4.0.1 A の総合所見 — 確定案 (2026-08-28)
 
 **沈黙は「見ていない」と区別がつかない。** 明示的に述べることで「見た上で特段なし」と
 「そもそも対象外」を読み分けられる。**前半は Elith が書き、後半は当社の固定文**。
@@ -1097,6 +1123,7 @@ UI は wellfort-site 側。
 | 3 | 氏名の扱い | **表示する。** PII ルールは外部受け渡しの規則であり、本人への画面表示には適用されない (§4.0.0.1) |
 | 4 | 見本 17〜18 ページ「追加の所見」は仕様か | **論点として取り下げ。** テストフェーズの寄せ集め・偽装データ由来。**Elith の JSON にのみ従う** |
 | 5 | サーバ側 PDF 生成の要否 | **必要。** 取込時に 1 回生成し S3 へ保存 (§3.1) |
+| 6 | 検査サイクルの日付データ | **確認不要だった。** `customer.subscriptions` に `next_test_at` / `last_test_at` / `current_cycle_seq` / `current_cycle_year` が既にある (§4.0.0.2)。**docs を引かずに確認事項に挙げたのは誤り** |
 
 **残る発注者判断**: なし (現時点)。
 
