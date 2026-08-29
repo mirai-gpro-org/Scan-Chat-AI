@@ -31,18 +31,28 @@ const root = process.cwd();
 const MOCK = resolve(root, 'docs/elith/mock/ai_prevention_report_type2.html');
 const SNAPSHOT = resolve(root, 'docs/elith/mock/sheet_contract_type2.json');
 
+// タイプ 1 の紙面契約も**モックから抽出して記録する**。
+// 実装は JSON 受領後 (v0.2) なので照合はまだ行わないが、**目標を機械可読な形で固定**しておく。
+// ここを口頭やドキュメントの散文で持つと、また実装が別のものになる。
+const MOCK1 = resolve(root, 'docs/elith/mock/ai_prevention_report_type1.html');
+const SNAPSHOT1 = resolve(root, 'docs/elith/mock/sheet_contract_type1.json');
+
 const mock = contractFromMockHtml(readFileSync(MOCK, 'utf-8'));
+const mock1 = contractFromMockHtml(readFileSync(MOCK1, 'utf-8'));
 
 if (WRITE) {
   writeFileSync(SNAPSHOT, `${JSON.stringify(mock, null, 2)}\n`, 'utf-8');
-  console.log(`契約 JSON を再生成: ${SNAPSHOT}`);
+  writeFileSync(SNAPSHOT1, `${JSON.stringify(mock1, null, 2)}\n`, 'utf-8');
+  console.log(`契約 JSON を再生成: ${SNAPSHOT} / ${SNAPSHOT1}`);
 }
 
 // 契約 JSON は「モックから抽出したもの」であり、レビューで紙面の変化を読むためにコミットする。
 // ここでズレたら **モックを直したのに再生成していない**。
 const snapshot = readFileSync(SNAPSHOT, 'utf-8');
 const fresh = `${JSON.stringify(mock, null, 2)}\n`;
-const stale = snapshot !== fresh;
+const snapshot1 = readFileSync(SNAPSHOT1, 'utf-8');
+const fresh1 = `${JSON.stringify(mock1, null, 2)}\n`;
+const stale = snapshot !== fresh || snapshot1 !== fresh1;
 
 const vm = buildReportVM({
   reportText: REPORT_TEXT,
@@ -59,7 +69,9 @@ const vm = buildReportVM({
 const impl = contractFromVM(vm);
 const diffs = diffContract(mock, impl);
 
-console.log(`モック ${mock.cards.length} カード / 実装 ${impl.cards.length} カード`);
+console.log(`タイプ2: モック ${mock.cards.length} カード / 実装 ${impl.cards.length} カード`);
+// タイプ 1 は実装が無い (JSON 未受領・v0.2)。契約だけを記録し、照合はしない。
+console.log(`タイプ1: モック ${mock1.cards.length} カード / 実装 なし (JSON 未受領・照合は v0.2 から)`);
 
 if (stale) {
   console.log('\n✗ 契約 JSON がモックと食い違っています。`npm run verify:sheet-contract -- --write` で再生成してコミットしてください。');
