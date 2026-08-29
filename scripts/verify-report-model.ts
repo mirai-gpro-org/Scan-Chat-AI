@@ -121,6 +121,10 @@ console.log('\n[2 本柱と A の所見]');
 // 軸の帯は章ではなく報告書の骨格。レジストリに入れず、章が 0 件でも画面は必ず描く。
 eq('軸は 2 本', REPORT_AXES.map((a) => a.key), ['A', 'B']);
 eq('A の見出しは「初期がんの早期発見」', REPORT_AXES[0].title, '初期がんの早期発見');
+// **軸は見出しの文字列だけを持つ。** 設計ポリシーの説明文を紙面に載せると
+// 当社が書いた散文になり「Elith の出力以上の表記をしない」に反する。
+eq('軸は見出し以外のテキストを持たない',
+  REPORT_AXES.flatMap((a) => Object.keys(a)).filter((k) => k !== 'key' && k !== 'title'), []);
 eq('軸はレジストリに入っていない',
   CHAPTER_REGISTRY.some((c) => (c.key as string) === 'A' || (c.key as string) === 'B'), false);
 // 予備の文言が空 (既定) → A の章は出ない。**アプリが代わりを書かない**。
