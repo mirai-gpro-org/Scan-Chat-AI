@@ -51,10 +51,6 @@ PR #180 が `claude/clever-cray-ngg0h6` を `claude/awesome-carson-UeyUZ` へマ
   → 「【リバート済み 2026-08-29】」の記録へ置換。
 - 仕様書 §9.2〜§9.6 の実装内容の記述
   → §9.2「【リバート済み】P0〜P4 の実装」へ置換。**実測した事実だけ表で残した**。
-- `supabase/migrations/20260829000010_diagnosis_report_checkup.sql`
-  (`diagnosis_results.checkup_values` 列)。**「Supabase へ未適用」を前提に削除した。**
-  **当方から Supabase の実状態は確認できない (未確認)。** 適用済みの環境があれば、
-  列だけが残りマイグレーション履歴と食い違う → その環境では別途判断すること。
 - `src/lib/app-config.ts` の 5 キー (`ui.cancer_screening_not_included` /
   `report.sections.{order,hidden,labels,collapsed}`)。読み手のコードが消えると
   wellfort-site の「⚙ 運用パラメータ」に**効かないつまみが 5 つ並ぶ**ため
@@ -67,6 +63,11 @@ PR #180 が `claude/clever-cray-ngg0h6` を `claude/awesome-carson-UeyUZ` へマ
   素材の在処として名指ししているデータ**なので消さない。
 - 仕様書のうち §4.-1「2 本柱の帯は常設」ほか**仕様として書かれた節**。
   §9 の実装記録とは別物なので、一括リバートせず選択的に扱った。
+- `supabase/migrations/20260829000010_diagnosis_report_checkup.sql`
+  (`diagnosis_results.checkup_values` 列)。**一度は削除したが、Supabase へ適用済みと
+  発注者確認が取れたので復元した (2026-08-29)。** ファイルを消すと DB に列だけが残り、
+  マイグレーション履歴と食い違うため。**`drop column` はしない** — 受け皿は作り直しでも要る
+  (spec §8.2)。リバートで読み書きが消えたので**列は常に null**。
 
 ### リバートのやり方 (記録)
 
@@ -76,7 +77,7 @@ PR #180 が `claude/clever-cray-ngg0h6` を `claude/awesome-carson-UeyUZ` へマ
 | 対象 | 方法 |
 |---|---|
 | `app-config.ts` / `elith-report-queries.ts` / `elith-report-sample.ts` / `elith-report-highlights.ts` / `report-view.ts` / `report.astro` / `api/admin/elith-report/upload.ts` / `package.json` | `git checkout cd0a556^ -- <path>` |
-| `report-adapter.ts` / `report-model.ts` / `report-sections.ts` / `api/admin/elith-report/audit.ts` / `scripts/verify-report-model.ts` / `20260829000010_*.sql` | `git rm` |
+| `report-adapter.ts` / `report-model.ts` / `report-sections.ts` / `api/admin/elith-report/audit.ts` / `scripts/verify-report-model.ts` | `git rm` |
 | `CLAUDE.md` / 仕様書 / 本書 / HANDOVER | 手で編集 (他の変更を巻き込まないため) |
 
 ---
