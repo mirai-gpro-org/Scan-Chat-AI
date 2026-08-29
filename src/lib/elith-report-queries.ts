@@ -170,30 +170,40 @@ export async function loadReportVM(
   const sb = getServerSupabase();
   if (!sb || !diagnosticUserId) return sample();
 
-  try {
+  interface Row { report: unknown; checkup_values?: unknown; received_at: string }
+
+  /**
+   * `checkup_values` は 20260829000010 で追加した列 (spec §8.2)。
+   * **マイグレーション未適用の環境では select ごと失敗する** ので、
+   * その時だけ列を外して引き直す。実データがあるのに黙ってサンプルへ落とさないため。
+   */
+  const fetchRow = async (withCheckup: boolean): Promise<Row | null> => {
+    const cols = withCheckup ? 'report, checkup_values, received_at, status' : 'report, received_at, status';
     const { data, error } = await (sb.schema('diagnosis') as any)
       .from('diagnosis_results')
-      // `report_checkup` は **まだ列が無い** (P3 で追加する)。
-      // 存在しない列を select すると読み取り自体が失敗し、実データがあるのに
-      // 黙ってサンプルへ落ちるので、ここでは列に触れない。
-      .select('report, received_at, status')
+      .select(cols)
       .eq('diagnostic_user_id', diagnosticUserId)
       .neq('status', 'superseded')
       .not('report', 'is', null)
       .order('received_at', { ascending: false })
       .limit(1);
+    if (error) throw error;
+    return ((data ?? [])[0] as Row | undefined) ?? null;
+  };
 
-    const row = (data ?? [])[0] as
-      | { report: unknown; received_at: string }
-      | undefined;
-    if (error || !row) return sample();
+  try {
+    let row: Row | null;
+    try {
+      row = await fetchRow(true);
+    } catch {
+      row = await fetchRow(false);
+    }
+    if (!row) return sample();
 
     return buildReportVM({
       ...common,
       reportText: row.report,
-      // 検査値 (`health_checkup.json`) の取り込みは P3。
-      // それまでは材料が無いので、検査値の章はそのまま出ない (空カードを作らない)。
-      checkup: null,
+      checkup: row.checkup_values ?? null,
       issuedOn: String(row.received_at).slice(0, 10),
       isSample: false,
     });
