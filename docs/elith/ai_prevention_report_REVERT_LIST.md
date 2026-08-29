@@ -68,6 +68,10 @@ PR #180 が `claude/clever-cray-ngg0h6` を `claude/awesome-carson-UeyUZ` へマ
   発注者確認が取れたので復元した (2026-08-29)。** ファイルを消すと DB に列だけが残り、
   マイグレーション履歴と食い違うため。**`drop column` はしない** — 受け皿は作り直しでも要る
   (spec §8.2)。リバートで読み書きが消えたので**列は常に null**。
+  コメントが実装 (リバート済み) を指したままだったので、
+  **前進マイグレーション `20260829000020_diagnosis_report_checkup_comment.sql` で現状に直した**
+  (COMMENT 文のみ・DDL なし・**要 `db push`**)。**適用済みのファイルは編集しない** —
+  `db push` は `schema_migrations` を見て未適用ぶんだけ当てるため、編集は新環境にしか届かない。
 
 ### リバートのやり方 (記録)
 

@@ -1213,10 +1213,19 @@ UI は wellfort-site 側。
 
 - **現状は読み書きするコードが無い。** `elith-report-queries.ts` は select せず、
   `upload.ts` は `health_checkup` を受け付けない (どちらもリバート済み)。**列は常に null**。
-- **同マイグレーションの `report` 列コメントは実態と食い違う。**「`schema_version=elith-v2.0`
-  は dict 形式」と書いてあるが、リバート後は `elith-v2.0` を書くコードが無い
-  (`diagnosis_results.schema_version` の既定は `20260601000010` の `'elith-v1.0'`)。
-  適用済みのコメントを直すには新しいマイグレーションが要る → **作り直しのときに揃える**。
+- **コメントの食い違いは前進マイグレーションで解消した**
+  (`20260829000020_diagnosis_report_checkup_comment.sql`・**適用には `db push` が要る**)。
+  `20260829000010` のコメントは同日の実装を前提に書かれており、`report` 列は
+  「`schema_version=elith-v2.0` は dict 形式」と書いてあるが**それを書くコードが無く**、
+  `checkup_values` 列は読み書きが無いことに触れていなかった。両方を現状に書き換えた。
+  **COMMENT 文のみで DDL なし＝データ不変。**
+- **【重要】適用済みのマイグレーションは編集して当て直さない。** 適用は `supabase db push`
+  (未適用ぶんのみ反映・`schema_migrations` で状態管理) なので、**編集は push でスキップされ、
+  新環境 (`db reset`) にしか届かない** = 同じファイル名で中身の違う DB が並ぶ。
+  直すときは前進マイグレーションを足す。
+- 検証 (ローカル PG16・空 DB へ全マイグレーションを順に適用): **14 本すべて成功**。
+  `checkup_values` 列は残存 (jsonb・nullable)、コメントは書き換え後の内容、
+  `schema_version` の既定は `'elith-v1.0'`。COMMENT は冪等なので再適用も通る。
 
 ---
 
