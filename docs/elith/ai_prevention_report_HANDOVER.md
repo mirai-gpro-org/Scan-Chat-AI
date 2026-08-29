@@ -155,8 +155,11 @@
 
 ### 3.3 運用側
 
-- wellfort-site の **GitHub 既定ブランチが `main` のまま**。
-  新規 PR の base が `main` になり二重管理が再発する (`CLAUDE.md`「デプロイ元ブランチ」参照)。
+- ~~wellfort-site の GitHub 既定ブランチが `main` のまま~~ → **解決済み (2026-08-29・発注者対応)**。
+  既定ブランチは `claude/wellfort-ui-design-draft-7y8dup` へ切替済み。
+  **ただし切替前に `main` から切られたブランチは本番の 26 件を欠いたまま残っている。**
+  既存ブランチで再開するときは、まず本番ブランチとの差分を確認すること
+  (本リバート作業で実際に踏んだ)。
 
 ---
 
@@ -171,8 +174,7 @@
   `api/admin/elith-report/upload.ts` は **PDF 必須**に戻っている。
 - **消えた**: `report-adapter.ts` / `report-model.ts` / `report-sections.ts` /
   `api/admin/elith-report/audit.ts` / `scripts/verify-report-model.ts` /
-  `diagnosis_results.checkup_values` 列 / `app_config` の 5 キー
-  (`ui.cancer_screening_not_included` ＋ `report.sections.*` 4 本)。
+  `app_config` の 5 キー (`ui.cancer_screening_not_included` ＋ `report.sections.*` 4 本)。
 - **残した**: §2.3 の受領 JSON 2 点 (`src/data/elith/`)。参照コードは無いが素材として要る。
 
 ### 4.1 作り直す人が先に知っておくべき 2 点
@@ -183,8 +185,14 @@
    Elith 由来ではない (Stage2 PDF 原本も 0 件)。**サンプルでは動き実データで何も出ない。**
    → 検出は Elith 自身の判定文 (`基準範囲を上…` = 受領 JSON に 5 件) へ差し替える (spec §5.2)。
    `report.astro:7` が import しているので、片方だけ触るとビルドが通らない。
-2. **`checkup_values` 列は「Supabase へ未適用」を前提に消した。**
-   当方から Supabase の実状態は確認できない (未確認)。適用済みの環境があれば別途判断が要る。
+2. **`diagnosis.diagnosis_results.checkup_values` 列は DB に存在するが、使うコードが無い。**
+   マイグレーション `20260829000010_diagnosis_report_checkup.sql` は **Supabase へ適用済み**
+   (発注者確認 2026-08-29) なのでファイルも残してある。リバートで読み書きが消えたため
+   **列は常に null**。受け皿は作り直しでも要る (spec §8.2) ので `drop column` はしない。
+   コメントの食い違い (`report` 列が `elith-v2.0` に言及していた等) は
+   `20260829000020_diagnosis_report_checkup_comment.sql` で直してある。**`db push` が要る。**
+   **適用済みのマイグレーションは編集して当て直さないこと** — `db push` はスキップするので
+   新環境にしか届かず、同じファイル名で中身の違う DB が並ぶ。
 
 ### 4.2 実装で得た実測 (設計判断ではなく事実)
 

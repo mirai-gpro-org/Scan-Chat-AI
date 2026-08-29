@@ -496,8 +496,7 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
         `elith-report-queries.ts` / `elith-report-sample.ts` / `report-view.ts` /
         `api/admin/elith-report/upload.ts` (PDF 必須へ戻る) / `app-config.ts` / `package.json`。
       - **削除したもの**: `report-adapter.ts` / `report-model.ts` / `report-sections.ts` /
-        `api/admin/elith-report/audit.ts` / `scripts/verify-report-model.ts` /
-        `supabase/migrations/20260829000010_diagnosis_report_checkup.sql` (`checkup_values` 列)。
+        `api/admin/elith-report/audit.ts` / `scripts/verify-report-model.ts`。
         app_config の 5 キー (`ui.cancer_screening_not_included` / `report.sections.*` 4 本) も消えた
         → **app_config の現行キーは 18 件**。
       - **残したもの**: `src/data/elith/report_text_20260826.json` /
@@ -509,9 +508,26 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
         **サンプルでは動き実データで何も出ない**状態なので、作り直しでは Elith 自身の判定文
         (`基準範囲を上…` = 受領 JSON に実測 5 件) から検出し直す。`report.astro` と結合しており
         (`report.astro:7` が import)、切り離すとビルドが通らないため一体で戻してある。
-      - **`checkup_values` 列は「Supabase へ未適用」を前提に消した** (REVERT_LIST の記載)。
-        **当方から Supabase の実状態は確認できない (未確認)。** 適用済みの環境があれば、
-        列だけが残りマイグレーション履歴と食い違う → その環境では別途判断すること。
+      - **`checkup_values` 列のマイグレーションは残した (発注者確認 2026-08-29「適用済み」)**。
+        `supabase/migrations/20260829000010_diagnosis_report_checkup.sql`。
+        **一度は消したが、Supabase へ適用済みと分かったので復元した** (ファイルを消すと
+        DB に列だけが残りマイグレーション履歴と食い違うため)。**`drop column` はしない** —
+        受け皿は作り直しでも要る (spec §8.2「2 ファイルは包含関係でない」)。
+        - **現状は読み書きするコードが無い**。`elith-report-queries.ts` は `checkup_values` を
+          select しないし、`upload.ts` は `health_checkup` を受け付けない (どちらもリバート済み)。
+          **列は存在するが常に null** = 無害だが、作り直しまで使われない。
+        - **コメントの食い違いは前進マイグレーションで解消した**
+          (`20260829000020_diagnosis_report_checkup_comment.sql`・**要 `db push`**)。
+          `20260829000010` のコメントは同日の実装 (P0〜P4) を前提に書かれており、
+          「`schema_version=elith-v2.0` は dict 形式」と書いてあるが**リバート後は
+          `elith-v2.0` を書くコードが無い** (`schema_version` の既定は `20260601000010` の
+          `'elith-v1.0'`)。`checkup_values` も「受け皿」とだけ書かれ、読み書きが無いことに
+          触れていなかった。→ 両方のコメントを現状に書き換えた。**COMMENT 文のみで DDL なし**。
+        - **【重要】適用済みのマイグレーションを編集して当て直さないこと。** 適用は
+          `supabase db push` (未適用ぶんのみ反映・`schema_migrations` で状態管理。
+          `docs/hp_ec/連携_DB適用プロセス課題と対策.md`) なので、**編集は push でスキップされ
+          新環境 (`db reset`) にしか届かず、同じファイル名で中身の違う DB が並ぶ**。
+          直すときは必ず前進マイグレーションを足す。
 
 ### ウェルネス年齢 (旧称: 健康年齢・2026-08 確定・発注者指示)
 - **名称は「ウェルネス年齢」**。画面・帳票・ドキュメントの表示名は全部これ。
@@ -931,8 +947,13 @@ Supabase database linter の指摘を棚卸しした結果。**テストフェ�
   デプロイ元が変わると **Edge Function の自動デプロイが黙って止まる**ため、
   trigger branches に当該ブランチを追加済み (`f21ac3f`)。`supabase/` の中身は両ブランチ同一。
   もう一方の `charge-subscriptions-cron.yml` は cron/手動のみで branches 指定が無く影響なし。
-- **残課題**: GitHub の既定ブランチが `main` のままだと、新規 PR の base が `main` になり
-  **同じ二重管理が再発する**。既定ブランチも当該ブランチへ変更するのが本筋 (未実施・要判断)。
+- **【解決済み 2026-08-29・発注者対応】GitHub の既定ブランチも
+  `claude/wellfort-ui-design-draft-7y8dup` へ切替済み**。これで新規 PR の base が本番ブランチに
+  なり、`main` 経由の二重管理は再発しない。**`main` は使わない** (中身は古い・捨ててよいと確認済み)。
+  - **注意**: 切替前に `main` から切られたローカル/リモートのブランチは、**本番の 26 件を欠いたまま**
+    残っている。実例: 本リバート作業で wellfort-site の作業ブランチが `main` と完全一致
+    (0/0) で、対象コミット `71e7936`/`680c73e` を含んでいなかった。
+    **既存ブランチで作業を再開するときは、まず本番ブランチとの差分を確認すること。**
 
 ## 開発ブランチ / ブランチ管理 (2リポジトリ・ドメイン別・ペア運用・2026-08 定義)
 - **ドメイン別ブランチ**: wellfort-site は EC/FA/Elith 等 関心事が混在するため、関心事ごとにブランチを分ける

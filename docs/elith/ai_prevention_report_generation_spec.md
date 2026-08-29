@@ -1199,16 +1199,33 @@ UI は wellfort-site 側。
 
 **リバートで消したもの** (作り直しでは設計からやり直す): `report-adapter.ts` /
 `report-model.ts` / `report-sections.ts` / `api/admin/elith-report/audit.ts` /
-`scripts/verify-report-model.ts` / `supabase/migrations/20260829000010_*.sql`
-(`diagnosis_results.checkup_values` 列) / `app_config` の 5 キー
+`scripts/verify-report-model.ts` / `app_config` の 5 キー
 (`ui.cancer_screening_not_included` ＋ `report.sections.*` 4 本)。
 
 **残したもの**: `src/data/elith/report_text_20260826.json` /
 `health_checkup_20260826.json`。参照コードは無くなったが、受領 JSON そのもの
 (合成検体・PII なし) であり、HANDOVER §2.3 が素材の在処として名指ししている。
 
-**`checkup_values` 列は「Supabase へ未適用」を前提に消した。**
-当方から Supabase の実状態は確認できない (未確認)。適用済みの環境があれば別途判断すること。
+**`checkup_values` 列のマイグレーションは残した** (`20260829000010_diagnosis_report_checkup.sql`)。
+一度は消したが、**Supabase へ適用済み**と発注者確認が取れたので復元した (2026-08-29)。
+ファイルを消すと DB に列だけが残り、マイグレーション履歴と食い違うため。**`drop column` はしない** —
+受け皿は作り直しでも要る (§8.2「2 ファイルは包含関係でない」)。
+
+- **現状は読み書きするコードが無い。** `elith-report-queries.ts` は select せず、
+  `upload.ts` は `health_checkup` を受け付けない (どちらもリバート済み)。**列は常に null**。
+- **コメントの食い違いは前進マイグレーションで解消した**
+  (`20260829000020_diagnosis_report_checkup_comment.sql`・**適用には `db push` が要る**)。
+  `20260829000010` のコメントは同日の実装を前提に書かれており、`report` 列は
+  「`schema_version=elith-v2.0` は dict 形式」と書いてあるが**それを書くコードが無く**、
+  `checkup_values` 列は読み書きが無いことに触れていなかった。両方を現状に書き換えた。
+  **COMMENT 文のみで DDL なし＝データ不変。**
+- **【重要】適用済みのマイグレーションは編集して当て直さない。** 適用は `supabase db push`
+  (未適用ぶんのみ反映・`schema_migrations` で状態管理) なので、**編集は push でスキップされ、
+  新環境 (`db reset`) にしか届かない** = 同じファイル名で中身の違う DB が並ぶ。
+  直すときは前進マイグレーションを足す。
+- 検証 (ローカル PG16・空 DB へ全マイグレーションを順に適用): **14 本すべて成功**。
+  `checkup_values` 列は残存 (jsonb・nullable)、コメントは書き換え後の内容、
+  `schema_version` の既定は `'elith-v1.0'`。COMMENT は冪等なので再適用も通る。
 
 ---
 
