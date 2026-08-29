@@ -2,41 +2,40 @@
 import AppIcon from '../components/AppIcon.astro';
 import AppNav from '../components/AppNav.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
-import { loadElithReport } from '../lib/elith-report-queries';
-import { findSection, type ElithSection } from '../lib/elith-parser';
-import { extractReportPoints, extractTopPriority } from '../lib/elith-report-highlights';
-import { REPORT_MODES, isReportMode, modeHref, renderReportMarkdown, normalizePage } from '../lib/report-view';
+import { loadReportVM } from '../lib/elith-report-queries';
+import { renderReportMarkdown } from '../lib/report-view';
 import { countUnreadImportant } from '../lib/notice-queries';
 import { refreshConfig, cfg } from '../lib/app-config';
-import { loadDashboard } from '../lib/dashboard-queries';
+import { loadDashboard, getHealthAge, withHonorific, formatJpDate } from '../lib/dashboard-queries';
 import { AI_PREVENTION_REPORT_LABEL } from '../lib/display-names';
+import { WELLNESS_AGE_LABEL } from '../lib/wellness-age';
 
 /**
- * AI疾病予防報告書 (Elith の診断結果) の表示ページ。
+ * AI疾病予防報告書 — 受領 JSON からアプリが生成する報告書。
  *
- * パイプライン ⑥ (docs/lab/lab_data_pipeline_master_spec.md:24,96):
- *   「ElithのAI診断結果(PDF)をS3から受取→Webアプリへ表示UP」
+ * 正本: docs/elith/ai_prevention_report_generation_spec.md
  *
- * 表示方式は 3 モード (test_data_storage_and_db_design.md §6.4):
- *   a) サマリー   … 報告書自身の「アブストラクト」
- *   b) 要注意抜粋 … 報告書自身の「医療受診の目安」「必要とする栄養素/サプリ情報」
- *   c) 全編       … 原本 PDF (17 ページ) を iframe 表示
- * a/b の `[pN]` から c) の該当ページへ飛ぶ。
+ * 【この画面の役割は可読化だけ】(spec §1.1)
+ *   Elith の出力は文章の羅列で読み通せない。**出す文を選んで構造に置く**ことで読ませる。
+ *   要約・言い換え・当社の散文の追加はしない (spec §1.0.0)。実測: 受領本文 20,046 字に対し
+ *   最初に読む面 (ダイジェスト) は 1,567 字 = 92.2% 減。全文は下の「全編」に畳んで置く。
  *
- * 【現状】受取仕様が未確定 (同 :98) のため、実データ (diagnosis_results.report_pdf_url)
- *   が無い間は Elith 提供のサンプル (2026-08-06 Stage2 版) にフォールバックする。
- *   切替は `loadElithReport()` が行う (elith-report-queries.ts)。
+ * 【章を直書きしない】(spec §1.3.2 / §1.3.5)
+ *   構成は `report-sections.ts` のレジストリと `app_config` が決め、この画面は
+ *   表示モデル (`report-model.ts`) を回すだけ。**章を足したら印刷ビューにも自動で載る。**
  *
- * 【原則】要約はアプリが作らない。報告書が自前で持っている章をそのまま出す。
+ * 【`?print=1` は別実装ではなくモード引数】(spec §3.3)
+ *   iOS の「共有 → PDF」は `@media print` を通らないため、印刷 CSS に依存した設計は採れない。
+ *   全展開・UI なしを**通常の画面 CSS で**出し、`@media print` は上乗せに留める。
  */
-
 export const prerender = false;
 
 const url = new URL(Astro.request.url);
 const u = url.searchParams.get('u');
-const modeParam = url.searchParams.get('mode');
-const mode = isReportMode(modeParam) ? modeParam : 'summary';
-const initialPage = normalizePage(url.searchParams.get('page'));
+/** 印刷/PDF 用ビュー。全展開・UI なし・ウェルネス年齢を冒頭に出す。 */
+const isPrint = url.searchParams.get('print') === '1';
+/** 端末に保存する手順を出すモード。**印刷ビューには置かない** (手順が PDF に載るため・spec §3.6)。 */
+const showSave = url.searchParams.get('save') === '1';
 
 const authEnabled = !!import.meta.env.PUBLIC_GOOGLE_CLIENT_ID;
 const needsSignIn = authEnabled && !u;
@@ -48,242 +47,316 @@ const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) :
 await refreshConfig();
 const supportContact = cfg('ui.support_contact');
 
-// ── 表示する報告書 ────────────────────────────────────────────
-// 実データ (diagnosis_results) があればそれを、無ければサンプルを返す。
-const view = await loadElithReport(data?.diagnosticUserId ?? null);
-const sections: ElithSection[] = view.sections;
-const pdf = view.pdf;
-const isSample = view.isSample;
-const reportPages = view.pages;
+const healthAge = data ? await getHealthAge(data.diagnosticUserId) : null;
 
-const HIGHLIGHT_NAMES = ['医療受診の目安', '必要とする栄養素/サプリ情報'];
-const summarySection = findSection(sections, 'アブストラクト');
+const vm = await loadReportVM({
+  diagnosticUserId: data?.diagnosticUserId ?? null,
+  name: data?.appUser?.display_name_cache ? withHonorific(data.appUser.display_name_cache) : 'お客様',
+  chronologicalAge: healthAge?.latest?.chronologicalAge ?? null,
+  ourWellnessAge: healthAge?.latest?.biologicalAge ?? null,
+  // タイプ判定はアプリが持つ (spec §1.0.3)。Elith 出力から推測しない。
+  hasCancerRisk: (data?.artifacts ?? []).some((a) => a.test_type === 'cancer_urine'),
+  cycleSeq: data?.subscription?.current_cycle_seq ?? null,
+});
 
-// 要点は「報告書本文に書かれている判定区分」を機械的に拾ったもの。
-// アプリが値を評価して作ったものではない (elith-report-highlights.ts 参照)。
-const points = extractReportPoints(sections, reportPages);
-const topPriority = extractTopPriority(sections, reportPages);
-const highlightSections = HIGHLIGHT_NAMES
-  .map((n) => findSection(sections, n))
-  .filter((s): s is ElithSection => s != null);
+const q = (extra: Record<string, string>) => {
+  const p = new URLSearchParams();
+  if (u) p.set('u', u);
+  for (const [k, v] of Object.entries(extra)) p.set(k, v);
+  const s = p.toString();
+  return s ? `/report?${s}` : '/report';
+};
 
-const md = (t: string): string => renderReportMarkdown(t, { u, basePath: '/report' });
-const href = (m: (typeof REPORT_MODES)[number]['key']): string => modeHref(m, { u, basePath: '/report' });
-const pdfSrc = pdf ? `${pdf.url}#page=${initialPage}` : null;
-
-// 目次 (章 → 原本ページ)。要約から全編へ飛ぶための案内で、内容の解釈は含まない。
-const toc = sections
-  .filter((s) => s.section_name !== 'アブストラクト')
-  .map((s) => ({ name: s.section_name, page: reportPages[s.section_name] ?? 1 }));
+const digestByAxis = (axis: 'a' | 'b') => vm.digest.filter((c) => c.axis === axis);
+const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis === axis);
 ---
 
-<!--
-  読み物のモード (サマリー/要注意) は本文の行長に合わせた中幅 (flow) にする。
-  幅を app のままにすると本文だけ 38em で止まり、右側が大きく空いて座りが悪い。
-  全編は PDF ビューアなので広い方 (app) を使う。
--->
-<BaseLayout title={`${AI_PREVENTION_REPORT_LABEL} | Welltect`} width={mode === 'full' ? 'app' : 'flow'}>
-  <AppNav u={u} current="/report" unreadNotices={unreadNotices} supportContact={supportContact} />
+<BaseLayout title={`${AI_PREVENTION_REPORT_LABEL} | Welltect`} width="flow">
+  {!isPrint && (
+    <AppNav u={u} current="/report" unreadNotices={unreadNotices} supportContact={supportContact} />
+  )}
 
-  <header class="hero-gradient px-5 pb-5 pt-5">
-    <h1 class="flex items-center gap-2 text-2xl font-bold tracking-tight text-navy-800">
-      <AppIcon name="report" size={28} class="text-brand-700" />
-      {AI_PREVENTION_REPORT_LABEL}
-    </h1>
-    <p class="mt-1.5 text-base text-slate-700">
-      {pdf
-        ? `${pdf.label} ・ ${pdf.issuedOn} 発行${pdf.pageCount ? ` ・ 全 ${pdf.pageCount} ページ` : ''}`
-        : '報告書はまだ届いていません。'}
-    </p>
-    {isSample && (
-      <p class="mt-2 inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-sm text-amber-800">
-        <AppIcon name="info" size={14} />
-        サンプル表示（受取仕様の確定前）
+  <main class={`report-sheet flex flex-1 flex-col gap-4 px-5 pb-12 ${isPrint ? 'pt-6' : 'pt-5'}`}>
+
+    {/* ══════════ 表紙 ══════════ */}
+    <header class="rounded-lg border border-slate-200 bg-navy-50 px-5 py-5">
+      <p class="text-xs font-semibold uppercase tracking-[0.16em] text-brand-700">Welltect</p>
+      <h1 class="mt-1.5 text-2xl font-bold leading-snug tracking-tight text-navy-800">
+        {AI_PREVENTION_REPORT_LABEL}
+      </h1>
+      <p class="mt-1.5 text-base font-bold text-navy-800">{vm.cover.name}</p>
+      <p class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600">
+        <span>作成日 {formatJpDate(vm.cover.issuedOn) || vm.cover.issuedOn}</span>
+        <span>紙面 {vm.cover.sheetVersion}</span>
+        {vm.cover.testedOn && <span>検査 {formatJpDate(vm.cover.testedOn)}</span>}
+        {vm.cover.cycleSeq && <span>第 {vm.cover.cycleSeq} 回 / 全 {vm.cover.cycleTotal} 回</span>}
       </p>
-    )}
 
-    <nav class="mt-4 flex w-full max-w-xl rounded-full bg-white p-1" role="tablist" aria-label="表示モード">
-      {REPORT_MODES.map((m) => (
-        <a
-          href={href(m.key)}
-          role="tab"
-          aria-selected={mode === m.key}
-          class={`flex min-h-touch flex-1 items-center justify-center rounded-full px-3 text-center text-base font-medium transition ${
-            mode === m.key ? 'bg-brand-600 text-white' : 'text-slate-700 hover:bg-slate-100'
-          }`}
-        >{m.label}</a>
-      ))}
-    </nav>
-    <p class="mt-1.5 text-sm text-slate-600">
-      {REPORT_MODES.find((m) => m.key === mode)?.note}
-    </p>
-  </header>
+      {/*
+        ウェルネス年齢は**画面版に出さない** (ダッシュボード上部で表示済み・spec §4.0.0.3)。
+        PDF 版はアプリから切り離されて単体で読まれるので、冒頭に置く。
+      */}
+      {isPrint && vm.cover.wellnessAge != null && (
+        <div class="mt-4 flex items-baseline gap-3 border-t border-slate-200 pt-4">
+          <b class="font-mono text-3xl font-medium tabular-nums leading-none text-brand-800">
+            {vm.cover.wellnessAge}
+          </b>
+          <span class="text-sm text-slate-700">
+            {WELLNESS_AGE_LABEL}
+            {vm.cover.chronologicalAge != null && (
+              <span class="ml-2 text-slate-600">実年齢 {vm.cover.chronologicalAge} 歳</span>
+            )}
+          </span>
+        </div>
+      )}
 
-  <main class="flex flex-1 flex-col gap-5 px-5 pb-12 pt-5">
+      {vm.isSample && !isPrint && (
+        <p class="mt-3 inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-sm text-amber-800">
+          <AppIcon name="info" size={14} />
+          サンプル表示（受取仕様の確定前）
+        </p>
+      )}
+    </header>
 
-    {/* a) サマリー */}
-    {mode === 'summary' && (
-      <>
-        {/* 要点 — 報告書が記載した判定区分をそのまま並べたもの */}
-        {(topPriority || points.length > 0) && (
-          <section class="card card-hairline">
-            <h2 class="mb-1 flex items-center gap-2 text-lg font-bold text-navy-800">
-              <AppIcon name="watch" size={20} class="text-status-watch" />
-              報告書が挙げている要点
-            </h2>
-            <p class="mb-4 text-sm text-slate-600">
-              報告書本文に記載された判定をそのまま抜き出しています。各項目から原本の該当ページへ移動できます。
-            </p>
+    {/* ══════════ 2 本柱 × ダイジェスト ══════════
+        軸の帯は**常設**。材料が無い回でも消さない (spec §4.-1)。
+        帯が持つのは見出しだけで、ポリシーの説明文は紙面に載せない。 */}
+    {vm.axes.map((axis) => (
+      <section class="flex flex-col gap-4">
+        <div class={`mt-2 rounded-md px-4 py-3 ${
+          axis.key === 'a'
+            ? 'border-l-4 border-navy-700 bg-navy-50'
+            : 'border-l-4 border-brand-600 bg-brand-50'
+        }`}>
+          <span class="text-xs font-semibold tracking-[0.12em] text-slate-600">
+            主軸 {axis.key === 'a' ? 'A' : 'B'}
+          </span>
+          <h2 class="mt-0.5 text-lg font-bold leading-snug text-navy-800">{axis.title}</h2>
+        </div>
 
-            <ul class="flex flex-col gap-3">
-              {topPriority && (
-                <li class="rounded-xl border border-status-watch bg-status-watch-bg p-4">
-                  <p class="flex flex-wrap items-center gap-2">
-                    <span class="status-pill status-watch">
-                      <AppIcon name="watch" size={14} />最優先
-                    </span>
-                    <a
-                      href={`/report?${u ? `u=${encodeURIComponent(u)}&` : ''}mode=full&page=${topPriority.page}#pdf-viewer`}
-                      data-pdf-page={String(topPriority.page)}
-                      class="pdf-page-link inline-flex min-h-touch items-center gap-1.5 rounded-full border border-brand-300 bg-white px-3 text-sm font-medium text-brand-800 no-underline hover:bg-brand-50"
-                      title="原本の該当ページを開く"
-                    ><AppIcon name="report" size={15} />説明</a>
-                  </p>
-                  <p class="mt-2 text-base leading-relaxed text-navy-800">{topPriority.text}</p>
-                </li>
-              )}
+        {digestByAxis(axis.key).map((card) => (
+          <article class={`card flex flex-col gap-2 ${
+            card.tone === 'emergency' ? 'border-l-4 border-l-status-action bg-status-action-bg' : ''
+          }`}>
+            {card.tone === 'emergency' && (
+              <p class="inline-flex w-fit items-center gap-1.5 rounded px-2 py-0.5 text-xs font-semibold text-status-action">
+                <AppIcon name="error" size={14} />すぐ受診
+              </p>
+            )}
+            {card.title && (
+              <h3 class="text-base font-bold leading-snug text-navy-800">{card.title}</h3>
+            )}
 
-              {points.map((pt) => (
-                <li class="rounded-xl border border-slate-200 bg-white p-4">
-                  <p class="flex flex-wrap items-center gap-2">
-                    <span class="text-base font-semibold text-navy-800">{pt.category}</span>
-                    {pt.judgement && (
-                      <span class="status-pill status-watch">
-                        <AppIcon name="watch" size={14} />{pt.judgement}
-                      </span>
-                    )}
-                    <a
-                      href={`/report?${u ? `u=${encodeURIComponent(u)}&` : ''}mode=full&page=${pt.page}#pdf-viewer`}
-                      data-pdf-page={String(pt.page)}
-                      class="pdf-page-link inline-flex min-h-touch items-center gap-1.5 rounded-full border border-brand-300 bg-brand-50 px-3 text-sm font-medium text-brand-800 no-underline hover:bg-brand-100"
-                      title="原本の該当ページを開く"
-                    ><AppIcon name="report" size={15} />説明</a>
-                  </p>
-                  <p class="mt-1.5 text-base leading-relaxed text-slate-800">{pt.text}</p>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
+            {card.blocks.map((block) => (
+              <>
+                {block.kind === 'paragraphs' && block.items.map((t) => (
+                  <p class="text-base leading-relaxed text-slate-800">{t}</p>
+                ))}
 
-        <section class="card">
-          <h2 class="mb-3 flex items-center gap-2 text-lg font-bold text-navy-800">
-            <AppIcon name="tip" size={20} class="text-brand-700" />
-            報告書のまとめ
-          </h2>
-          {summarySection ? (
-            <div class="md-region md-summary" set:html={md(summarySection.text)} />
-          ) : (
-            <p class="text-base text-slate-600">サマリーがありません。</p>
-          )}
-        </section>
+                {block.kind === 'steps' && (
+                  <ol class="ml-5 flex list-decimal flex-col gap-2 text-base marker:font-semibold marker:text-brand-700">
+                    {block.items.map((s) => (
+                      <li>
+                        <b class="text-navy-800">{s.heading}</b>
+                        <span class="mt-0.5 block leading-relaxed text-slate-800">{s.text}</span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
 
-        <section class="card">
-          <h2 class="mb-1 flex items-center gap-2 text-lg font-bold text-navy-800">
-            <AppIcon name="result" size={20} class="text-brand-700" />
-            報告書の構成
-          </h2>
-          <p class="mb-3 text-sm text-slate-600">
-            見たい章を選ぶと、原本の該当ページを開きます。
-          </p>
-          <ul class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {toc.map((t) => (
-              <li>
-                <a
-                  href={`/report?${u ? `u=${encodeURIComponent(u)}&` : ''}mode=full&page=${t.page}#pdf-viewer`}
-                  data-pdf-page={String(t.page)}
-                  class="pdf-page-link flex min-h-touch items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-800 transition hover:border-brand-400 hover:bg-brand-50"
-                >
-                  <span>{t.name}</span>
-                  <AppIcon name="next" size={18} class="shrink-0 text-brand-700" />
-                </a>
-              </li>
+                {block.kind === 'table' && (
+                  <div class="-mx-1 overflow-x-auto">
+                    <table class="w-full border-collapse text-sm">
+                      <thead>
+                        <tr class="border-b border-slate-200 text-xs text-slate-600">
+                          <th class="whitespace-nowrap px-1.5 py-1 text-left font-semibold">項目</th>
+                          <th class="whitespace-nowrap px-1.5 py-1 text-left font-semibold">今回</th>
+                          <th class="whitespace-nowrap px-1.5 py-1 text-left font-semibold">基準値</th>
+                          <th class="whitespace-nowrap px-1.5 py-1 text-left font-semibold">判定</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {block.rows.map((r) => (
+                          <tr class="border-b border-slate-100 align-baseline last:border-b-0">
+                            <td class="px-1.5 py-1.5">
+                              {r.name}
+                              {/* 2 ファイルは包含関係でないので、本文にしかない値も載せる (spec §7.2)。 */}
+                              {r.source === 'report_text' && (
+                                <span class="ml-1 rounded bg-slate-100 px-1 text-[11px] text-slate-600">本文</span>
+                              )}
+                              {r.variants > 1 && (
+                                <span class="ml-1 rounded bg-amber-50 px-1 text-[11px] text-amber-800">
+                                  {r.variants} 通り
+                                </span>
+                              )}
+                            </td>
+                            <td class="whitespace-nowrap px-1.5 py-1.5 font-mono tabular-nums">{r.value}</td>
+                            <td class="whitespace-nowrap px-1.5 py-1.5 text-xs text-slate-600">
+                              {r.reference || '—'}
+                            </td>
+                            {/* 判定は Elith の原文をそのまま。色だけで意味を伝えない (アイコン+テキスト+色)。 */}
+                            <td class={`px-1.5 py-1.5 text-xs leading-snug ${
+                              r.tone === 'flagged' ? 'font-semibold text-status-watch'
+                              : r.tone === 'within' ? 'text-status-ok' : 'text-slate-500'
+                            }`}>
+                              {r.judgement || '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {block.kind === 'pairs' && (
+                  <dl class="flex flex-col gap-3">
+                    {block.items.map((p) => (
+                      <div class="border-b border-dashed border-slate-200 pb-3 last:border-b-0 last:pb-0">
+                        <dt class="text-base font-bold text-navy-800">{p.heading}</dt>
+                        <dd class="mt-1 grid grid-cols-[5.4rem_1fr] gap-x-2 gap-y-1 text-base leading-relaxed max-[520px]:grid-cols-1">
+                          <span class="pt-0.5 text-xs font-semibold text-slate-600">現状評価</span>
+                          <span class="text-slate-800">{p.current}</span>
+                          <span class="pt-0.5 text-xs font-semibold text-slate-600">行動提案</span>
+                          <span class="text-slate-800">{p.action}</span>
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+
+                {block.kind === 'weeks' && (
+                  <div class="flex flex-col">
+                    {block.items.map((w) => (
+                      <div class="grid grid-cols-[3.6rem_1fr] gap-3 border-b border-slate-100 py-2 text-base last:border-b-0">
+                        <b class="pt-0.5 text-sm text-brand-800">{w.heading}</b>
+                        <span class="leading-relaxed text-slate-800">{w.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
             ))}
-          </ul>
-        </section>
-      </>
-    )}
 
-    {/* b) 要注意抜粋 */}
-    {mode === 'highlights' && (
-      highlightSections.length === 0 ? (
-        <p class="card text-base text-slate-600">要注意として抽出された章がありません。</p>
-      ) : (
-        highlightSections.map((s) => (
-          <section class="card">
-            <h2 class="mb-3 flex items-center gap-2 text-lg font-bold text-navy-800">
-              <AppIcon name="watch" size={20} class="text-status-watch" />
-              {s.section_name}
-            </h2>
-            <div class="md-region md-summary" set:html={md(s.text)} />
-          </section>
-        ))
-      )
-    )}
+            <p class="mt-0.5 font-mono text-[11px] text-slate-500">{card.source}</p>
+          </article>
+        ))}
 
-    {/* c) 全編 = 原本 PDF */}
-    {mode === 'full' && (
-      !pdf || !pdfSrc ? (
-        <p class="card text-base text-slate-600">原本の報告書がまだ届いていません。</p>
-      ) : (
-      <section id="pdf-viewer" class="card scroll-mt-24">
-        <header class="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 class="flex items-center gap-2 text-lg font-bold text-navy-800">
-            <AppIcon name="report" size={20} class="text-brand-700" />
-            原本の報告書
-          </h2>
-          <a
-            href={pdf.url}
-            target="_blank"
-            rel="noopener"
-            class="inline-flex min-h-touch items-center gap-1.5 text-base font-medium text-brand-700 hover:underline"
-          >
-            別タブで開く
-            <AppIcon name="external" size={16} />
-          </a>
-        </header>
-        <iframe
-          id="report-pdf-iframe"
-          src={pdfSrc}
-          title={pdf.label}
-          class="w-full rounded-lg border border-slate-200"
-          style="height: clamp(520px, 78vh, 1100px)"
-          loading="lazy"
-        ></iframe>
+        {/* A に材料が無い回でも帯は立つ。**アプリが代わりの所見を書かない** (spec §4.0.1)。 */}
+        {axis.key === 'a' && !digestByAxis('a').length && (
+          <p class="px-1 text-sm text-slate-600">
+            <a class="font-semibold text-brand-700 underline" href="/result">がんリスク検査の結果を見る →</a>
+          </p>
+        )}
       </section>
-      )
+    ))}
+
+    {/* ══════════ 全編 ══════════
+        ダイジェストで選ばれなかった文はここに全部ある。捨てていない。
+        `?print=1` では**折りたたみを使わない** — 畳んだ状態が PDF に漏れると本文が欠ける
+        (iOS の「共有 → PDF」は印刷 CSS を通らない・spec §3.2)。 */}
+    {!!vm.chapters.length && (
+      <section class="mt-4 flex flex-col gap-3">
+        <h2 class="border-t border-slate-200 pt-5 text-lg font-bold text-navy-800">全編</h2>
+        {(['a', 'b'] as const).flatMap((ax) => chaptersByAxis(ax)).map((ch) => (
+          <details class="card" open={isPrint || !ch.collapsed}>
+            <summary class={`cursor-pointer text-base font-bold text-navy-800 ${isPrint ? 'list-none' : ''}`}>
+              {ch.title}
+            </summary>
+            <div class="md-region md-summary mt-3 flex flex-col gap-4">
+              {ch.topics.map((t) => (
+                <div id={t.anchor}>
+                  {t.heading && <h3 class="text-base font-bold text-navy-800">{t.heading}</h3>}
+                  <div set:html={renderReportMarkdown(t.body)} />
+                </div>
+              ))}
+
+              {/* 受領した検査値の全行。ダイジェストは Elith が取り上げた 8 項目だけを出している。 */}
+              {ch.table && !!ch.table.length && (
+                <div class="overflow-x-auto">
+                  <table class="w-full border-collapse text-sm">
+                    <thead>
+                      <tr class="border-b border-slate-200 text-xs text-slate-600">
+                        <th class="px-1.5 py-1 text-left font-semibold">項目</th>
+                        <th class="px-1.5 py-1 text-left font-semibold">今回</th>
+                        <th class="px-1.5 py-1 text-left font-semibold">基準値</th>
+                        <th class="px-1.5 py-1 text-left font-semibold">判定</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ch.table.map((r) => (
+                        <tr class="border-b border-slate-100 align-baseline last:border-b-0">
+                          <td class="px-1.5 py-1.5">
+                            {r.name}
+                            {r.source === 'report_text' && (
+                              <span class="ml-1 rounded bg-slate-100 px-1 text-[11px] text-slate-600">本文</span>
+                            )}
+                            {r.variants > 1 && (
+                              <span class="ml-1 rounded bg-amber-50 px-1 text-[11px] text-amber-800">
+                                {r.variants} 通り
+                              </span>
+                            )}
+                          </td>
+                          <td class="whitespace-nowrap px-1.5 py-1.5 font-mono tabular-nums">{r.value}</td>
+                          <td class="whitespace-nowrap px-1.5 py-1.5 text-xs text-slate-600">{r.reference || '—'}</td>
+                          <td class="px-1.5 py-1.5 text-xs leading-snug text-slate-600">{r.judgement || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </details>
+        ))}
+      </section>
     )}
 
-    <p class="text-sm leading-relaxed text-slate-600">
-      本報告書は Elith 社の AI が作成したものです。Welltect は内容を要約・加工せず、
-      報告書に書かれている章をそのまま表示しています。診断・治療の判断は医療機関にご相談ください。
-    </p>
+    {/* ══════════ 端末に残す (spec §3.6) ══════════
+        主要利用者は 50〜65 代。共有シートを自力で辿らせない。
+        **印刷ビューには置かない** — 手順そのものが保存された PDF に載るため。 */}
+    {!isPrint && (
+      <section class="mt-4 flex flex-col gap-2 border-t border-slate-200 pt-5">
+        <h2 class="text-base font-bold text-navy-800">手元に残す</h2>
+        <div class="flex flex-wrap gap-2">
+          <a class="btn-pair btn-data" href={q({ print: '1' })}>
+            <AppIcon name="report" size={16} />印刷用の紙面をひらく
+          </a>
+          <a class="btn-pair btn-graph" href={q({ save: '1' })}>
+            <AppIcon name="download" size={16} />端末に保存する
+          </a>
+        </div>
+
+        {showSave && (
+          <div class="card mt-1 flex flex-col gap-2 text-base leading-relaxed">
+            <p class="text-sm text-slate-700">
+              印刷用の紙面をひらいてから、次の手順で保存します。
+            </p>
+            <ol class="ml-5 flex list-decimal flex-col gap-1 text-base">
+              <li>画面下（または上）の<b>共有ボタン（□に↑の形）</b>を押します。</li>
+              <li>一覧から <b>プリント</b> を選びます。</li>
+              <li>出てきた紙面を <b>指 2 本で広げる</b> と PDF になります。</li>
+              <li>もう一度 共有ボタン → <b>「ファイル」に保存</b> を選びます。</li>
+            </ol>
+            <p class="text-sm text-slate-600">
+              端末や OS の版によってメニューの名前が変わることがあります。
+              保存した紙面は、この画面を開かなくても読めます。
+            </p>
+          </div>
+        )}
+      </section>
+    )}
   </main>
 </BaseLayout>
 
-<script>
-  // [pN] / 目次クリック: サーバ往復せず iframe を直接更新する
-  document.addEventListener('click', (e) => {
-    const t = e.target;
-    if (!(t instanceof Element)) return;
-    const a = t.closest('a.pdf-page-link');
-    if (!a) return;
-    const iframe = document.getElementById('report-pdf-iframe') as HTMLIFrameElement | null;
-    if (!iframe) return; // 全編モードでなければ通常遷移させる
-    e.preventDefault();
-    const page = a.getAttribute('data-pdf-page') ?? '1';
-    const base = iframe.src.split('#')[0];
-    iframe.src = `${base}#page=${page}`;
-    document.getElementById('pdf-viewer')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-</script>
+<style is:global>
+  /*
+    印刷 CSS は**上乗せだけ**。`?print=1` は通常の画面 CSS で紙面が成立しているので、
+    印刷 CSS が効かない経路 (iOS の 共有 → PDF) でも同じ紙面になる (spec §3.3)。
+  */
+  @media print {
+    nav, header.app-nav, .no-print { display: none !important; }
+    .report-sheet { padding: 0 !important; }
+    .card, .report-sheet table, .report-sheet details { break-inside: avoid; }
+    details > summary { list-style: none; }
+  }
+</style>

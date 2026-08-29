@@ -54,7 +54,9 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
   GET でカタログ+現在値、POST で upsert。**UI は wellfort-site admin 側** (この作業ツリーには
   未取得のため実装状況は未確認)。
 
-**app_config の現行キー (18 件)**: `ui.support_contact` / `ui.health_age_followup` /
+**app_config の現行キー (23 件)**: `ui.support_contact` / `ui.health_age_followup` /
+`ui.cancer_screening_not_included` / `report.sections.order` / `report.sections.hidden` /
+`report.sections.labels` / `report.sections.collapsed` /
 `scan.model` / `live.model` / `scan.output_format` / `scan.boundary_recheck` / `scan.obs_dedup` /
 `scan.scramble_fix` / `scan.eye_resolve` / `scan.lipid_fix` / `scan.canonicalize` /
 `scan.perception_repair` / `scan.vqa_rowcrop` / `scan.ai_prediction_dedup` /
@@ -486,7 +488,42 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
       (要約/順位づけ/言い換え) は全て禁止事項と重なる。スキャン側の実績 (多数決撤回・
       inventoryReread の幻覚5件・VQA の捏造4件→「新規pushしない」) がそのまま効く。
       将来入れるなら **選択のみ/verbatim機械検証/取り込み時1回でDB保存/監査/既定off** が条件 (spec §5.5)。
-    - **【リバート済み 2026-08-29】2026-08-29 に入れた本機能の実装 (P0〜P4) は全て取り消した。**
+    - **【実装済み 2026-08-29・パイロット版 v0.1】正本 `docs/elith/ai_prevention_report_generation_spec.md` §9.3。**
+      対象は**タイプ2 (単品購入相当) のみ** (§0.0)。タイプ1 はがんリスク検査ありの JSON 2 点を
+      Elith から受領してから v0.2。
+      - **構成 = 3 層** (spec §1.3.3)。`report-model.ts` (型・画面はこれしか知らない) /
+        `report-sections.ts` (2本柱 `REPORT_AXES` は常設・章レジストリ・app_config 上書き・アンカー) /
+        `report-adapter.ts` (**変換規則を所有する唯一のモジュール**) /
+        `elith-report-queries.ts` (DB→アダプタ) / `report.astro` (画面と `?print=1` が同じレンダラ) /
+        `api/admin/elith-report/upload.ts` (3ファイル対応・PDF は任意) /
+        `api/admin/elith-report/audit.ts` (抽出監査) / `scripts/verify-report-model.ts` (回帰)。
+      - **可読化の実体 = ダイジェストと全編を分けたこと**。**出す文を選んで構造に置き**、
+        選ばれなかった文は全編に**畳んで**置く。実測: 受領本文 20,046 字 →
+        **ダイジェスト 1,478 字 (削減率 92.6%)** / 画面の可視テキスト実測 1,985 字。
+        1 回目のリバート理由が削減率 1% だったので、**回帰チェックで 80% 未満を落とす**。
+        **全編は既定で全章を畳む** — 開くとダイジェストと同じ内容が二重に流れて 1 回目に戻る。
+      - **「選択」であって「圧縮」ではない**。回帰チェックが、紙面に出る全文が受領 JSON の
+        **部分文字列**であることを機械で確認する (唯一の例外 = 下記パイロット暫定文)。
+      - **唯一の当社文 = `PILOT_CANCER_FINDING_TEXT`** (`report-adapter.ts`)。タイプ2 の主軸 A
+        「今回の所見」に出す 2 文で、**Elith へ依頼中の文型そのもの** (spec §10.1 E-1)。
+        発注者指示でパイロット版はこのまま出し、Wellfort/Elith の回答後に
+        ① Elith の `cancer_screening.text` ② `ui.cancer_screening_not_included` のどちらかへ置き換える。
+      - **踏んだ実装バグ 3 件 (すべて回帰チェックが検出)**:
+        ①**単位の大小文字を潰すと 2 検体が混ざる** — 突き合わせキーを `toLowerCase()` していたため
+        `mg/dL`(血液検査)と`mg/dl`(人間ドック)が同一視され、**Elith が判定していない行に判定が付いた**。
+        ②**単位の切り出しが数字を食う** — `/^[\d.,\s]+/` は `585 10^4/ul` の単位側 `10` まで消していた。
+        ③**`split('。')` して `。` を付け直すと原文に無い句点が生える**=原文改変。
+        `match(/[^。]+。|[^。]+$/g)` に修正。
+      - **判定は Elith が名指しした項目にだけ当てる**。「クレアチニンについても基準値との関係において…」
+        のように判定句を伴わない言及には付けない (実測でクレアチニンの判定は空のまま)。
+      - **app_config に 5 キー追加 → 現行 23 件**: `ui.cancer_screening_not_included` /
+        `report.sections.{order,hidden,labels,collapsed}`。**既定は全て空**=コード既定。
+        **未知キー・空白だけの値でコード既定へ落ちる** (打ち間違いで報告書を真っ白にしない)。
+      - **検証**: `npm run verify:report-model` 68/68 ・ `astro check` 0 errors ・ `astro build` 成功 ・
+        dev で `/report` `?print=1` `?save=1` とも 200。
+      - **パイロット版で実装しないもの**: サーバ側 PDF 生成 (§3.1・Vercel 実測が未) /
+        オフライン案内の最小 SW / iOS・Android 実機確認 / タイプ1 の紙面。
+    - **【1 回目はリバート済み 2026-08-29】上記の前に入れた実装 (P0〜P4) は全て取り消した。**
       理由は可読化 (spec §1.1) を満たしていないこと (画面本文 20,297 字 / 受領本文 20,490 字 =
       **削減率 1%**) と、設計ポリシー (spec §1.0 = サービスの 2 本柱) に従っていないこと。
       **本機能は未実装。** 着手する人は `docs/elith/ai_prevention_report_HANDOVER.md` を先に読む。
@@ -498,7 +535,7 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
       - **削除したもの**: `report-adapter.ts` / `report-model.ts` / `report-sections.ts` /
         `api/admin/elith-report/audit.ts` / `scripts/verify-report-model.ts`。
         app_config の 5 キー (`ui.cancer_screening_not_included` / `report.sections.*` 4 本) も消えた
-        → **app_config の現行キーは 18 件**。
+        (**2 回目の実装で同じキーを入れ直した** → 現行 23 件)。
       - **残したもの**: `src/data/elith/report_text_20260826.json` /
         `health_checkup_20260826.json` (2026-08-26 受領分・合成検体)。**参照コードは無くなったが、
         HANDOVER §2.3 が素材の在処として名指ししているデータなので消さない。**
@@ -884,7 +921,7 @@ Supabase database linter の指摘を棚卸しした結果。**テストフェ�
 | `docs/elith/elith_s3_data_handoff_spec.md` | **Elith S3 受け渡し仕様** (パス/命名/format_id/JSON) |
 | `docs/elith/elith_batch_centralization_design.md` | Elith バッチ**一元化設計**(キーは Vercel・役割分担・admin バッチ) |
 | `docs/elith/elith_assembly_wrapping_spec.md` | **納品セット アセンブリのラップ仕様(Elith向け説明)**。フォルダ/命名/ウェルネス年齢の時系列化(検査日毎・旧1件を撤回)・疑似データも同様に時系列生成・**LAiF AI疾病発症予測(Other/ai_prediction)のファイル仕様=Elith承諾により確定(§5・2026-08)。合成は data.items[] の発症率%/相対リスク比のみジッタ・昨年比は前年の相対リスク比を引継ぎ(実装済)**・manifest不一致の確認事項 |
-| `docs/elith/ai_prevention_report_HANDOVER.md` | **引き継ぎ書。新しく着手する人は最初にこれを読む**。ミッションの3層/**設計ポリシー=サービスの2本柱**/越えてはならない線/参照すべきドキュメントの順序/素材/回答待ち。**本機能は未実装扱い — 2026-08-29 の実装コミットは全てリバート対象** (一覧=下行) |
+| `docs/elith/ai_prevention_report_HANDOVER.md` | **引き継ぎ書。新しく着手する人は最初にこれを読む**。ミッションの3層/**設計ポリシー=サービスの2本柱**/越えてはならない線/参照すべきドキュメントの順序/素材/回答待ち。**1 回目の実装はリバート済み・2 回目 (パイロット版 v0.1) が実装済み** (spec §9.2/§9.3) |
 | `docs/elith/ai_prevention_report_REVERT_LIST.md` | **リバート対象コミットの一覧**。Scan-Chat-AI 11 件 (うち 10 件は本番反映済み) / wellfort-site 2 件 / 併せて外すもの (CLAUDE.md の【実装】記述・`checkup_values` マイグレーション) |
 | `docs/elith/ai_prevention_report_generation_spec.md` | **AI疾病予防報告書 生成機能の仕様 (パイプライン⑥・2026-08-28)**。受領 JSON 3 点 → アプリが可読な報告書を生成。入力仕様/出力は HTML+印刷CSS(PDF生成しない)/章立て/決定論の変換規則/**作れないもの①〜④と捏造ゼロの境界**/受領データの既知不具合/実装計画/Elith 確認事項 |
 | `docs/elith/batch_scan_to_elith_usage.md` | サンプル一括スキャン→S3 バッチ手順 (`scripts/batch-scan-to-elith.mjs`) |
