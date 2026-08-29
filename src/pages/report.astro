@@ -305,14 +305,13 @@ const collapsible = (c: ChapterVM): boolean => !isPrint && c.blocks.length > 1;
 
     {/*
       Elith が A について何も書かず、予備の文言 (`ui.cancer_screening_not_included`) も
-      未設定のとき。**アプリが代わりを書かない** (spec §4.0.1) ので、
-      「まだ何も届いていない」ことだけを示す。**所見の代わりにはしない。**
+      未設定のときは **何も出さない**。
+      §0.3「Elith の新フィールドが未受領 → カードごと非表示。アプリが代わりを書くことはしない」/
+      §4.0.1「フィールド自体が無い → カードごと非表示 (定型表現も出さない)」。
+      以前ここに「この回の診断結果には、がんの観点での記載がありませんでした。」と
+      **当社の文**を置いていたが、上記に反するため削除した (2026-08-29)。
+      見出しだけが立つのは正常な状態。文言が決まったら admin から入れれば出る。
     */}
-    {axisA.length === 0 && (
-      <p class="px-4 text-sm leading-relaxed text-slate-600">
-        この回の診断結果には、がんの観点での記載がありませんでした。
-      </p>
-    )}
 
     {/* ══════════ 主軸 B ══════════ */}
     <h2
@@ -407,9 +406,6 @@ const collapsible = (c: ChapterVM): boolean => !isPrint && c.blocks.length > 1;
                 )}
               </div>
             ))}
-            <p class="text-sm leading-relaxed text-slate-600">
-              生活全体を変える提案ではありません。続けられている項目はそのままで構いません。
-            </p>
           </div>
         )}
 

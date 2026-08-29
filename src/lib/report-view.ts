@@ -11,31 +11,18 @@
 import { marked } from 'marked';
 import { ICON_SVG } from './icon-svg';
 
-export type ReportMode = 'summary' | 'highlights' | 'full';
-
-export const REPORT_MODES: { key: ReportMode; label: string; note: string }[] = [
-  { key: 'summary',    label: 'サマリー',   note: '要点だけを 1 画面で' },
-  { key: 'highlights', label: '要注意',     note: '優先度の高い項目' },
-  { key: 'full',       label: '全編',       note: '原本レポートの全文' },
-];
-
-export function isReportMode(v: string | null | undefined): v is ReportMode {
-  return v === 'summary' || v === 'highlights' || v === 'full';
-}
+/*
+  旧 3 モード (a サマリー / b 要注意 / c 全編 PDF) の型とヘルパ
+  (`ReportMode` / `REPORT_MODES` / `isReportMode` / `modeHref`) は削除した。
+  新形式に `[pN]` が無く原本 PDF へのページジャンプが成立しないため 3 モードは廃止され
+  (spec §5.1 / §9.1)、参照が 0 になっていた。
+*/
 
 interface LinkOpts {
   /** テストフェーズの ?u= を引き継ぐ。 */
   u?: string | null;
   /** 遷移先パス (既定は現在のページ = 空文字)。 */
   basePath?: string;
-}
-
-/** モード切替リンク。 */
-export function modeHref(mode: ReportMode, opts: LinkOpts = {}): string {
-  const qs = new URLSearchParams();
-  if (opts.u) qs.set('u', opts.u);
-  qs.set('mode', mode);
-  return `${opts.basePath ?? ''}?${qs.toString()}`;
 }
 
 /**
@@ -180,10 +167,4 @@ export function renderReportMarkdown(text: string, opts: LinkOpts = {}): string 
       + ` data-pdf-page="${n}" title="原本レポートの該当ページを開く">${ICON_SVG.report}説明</a>`;
   });
   return marked.parse(linked, { async: false }) as string;
-}
-
-/** `?page=` を 1 以上の整数に正規化する。 */
-export function normalizePage(v: string | null | undefined): number {
-  const n = Number(v);
-  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
 }
