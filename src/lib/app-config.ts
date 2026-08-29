@@ -37,6 +37,23 @@ export const CONFIG_SPECS: ConfigSpec[] = [
       + ' **診断・治療の助言にならない範囲で書くこと** (アプリは独自に解釈しない方針)。'
       + ' 例: 「気になる点は次回の検査時に医師へご相談ください。」' },
 
+  // ── AI疾病予防報告書の章立て (docs/elith/ai_prevention_report_generation_spec.md §1.3.2) ──
+  // **既定は 4 つとも空 = コード既定のレジストリ (`report-sections.ts` CHAPTER_REGISTRY)**。
+  // 章の順序・表示可否・見出し・既定の開閉を「デプロイ不要・admin から即時」で変えるための口。
+  // 章キー: cancer_finding / medical_visit / measurements / summary / diet / exercise /
+  //         sleep / lifestyle / diet_plan / nutrients / references
+  // **未知キーは無視される** (打ち間違いで画面が空にならないようにしてある)。
+  { key: 'report.sections.order', type: 'string', group: '報告書', label: '章の並び', default: '',
+    description: '章キーをカンマ区切りで。**書いた章だけを書いた順で出す** (列挙しなかった章は出ない)。'
+      + ' 空ならコード既定の全章。例: cancer_finding,medical_visit,measurements,summary' },
+  { key: 'report.sections.hidden', type: 'string', group: '報告書', label: '非表示にする章', default: '',
+    description: '章キーをカンマ区切り。並びより後に効く。例: references,nutrients' },
+  { key: 'report.sections.labels', type: 'string', group: '報告書', label: '見出しの差し替え', default: '',
+    description: '`章キー=表示名` をカンマ区切り。例: medical_visit=今回いちばん大事なこと,measurements=検査値' },
+  { key: 'report.sections.collapsed', type: 'string', group: '報告書', label: '既定で畳む章', default: '',
+    description: '章キーをカンマ区切り。**印刷ビュー (?print=1) では無視される**'
+      + ' (畳んだ状態が紙面に漏れると本文が欠けるため)。例: diet,exercise,sleep' },
+
   // ── モデル ──
   { key: 'scan.model', type: 'enum', group: 'モデル', label: 'スキャン用モデル', default: 'gemini-3.1-flash-lite',
     options: ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-flash'],
