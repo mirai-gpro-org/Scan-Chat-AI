@@ -508,6 +508,15 @@
 .md-region ol { @apply my-1.5 ml-5 list-decimal text-base; }
 .md-region code { @apply rounded bg-slate-100 px-1 text-[0.9em]; }
 
+/*
+ * AI疾病予防報告書のダイジェスト本文。
+ *
+ * 器はダッシュボードと同じ `app` 幅 (PC で 1408px まで) にしてあるので、
+ * **行長は本文側で止める**。`.md-region p` と同じ 38em (和文 38 字前後)。
+ * 表 (検査値) にはこのクラスを付けない — 表は広い幅を使えたほうが読みやすい。
+ */
+.report-prose { max-width: 38em; }
+
 /* ─ サマリー / 要注意モードでの強調表示 ─ */
 /*
  * 長文の行間。2.0 は空きすぎで「間延びして 1 画面に入る量が少ない」ため 1.75 に。

@@ -194,6 +194,25 @@ export function splitTopics(text: string): Block[] {
   return [];
 }
 
+/**
+ * 見出しが 1 つも無い章を **章まるごと 1 ブロック**として返す。
+ *
+ * 【なぜ要るか】受領形式は世代で変わる。実測 (2026-08-29・本番 DB の 真鍋検体) では
+ *   `医療受診の目安` / `ライフスタイル総合` / `必要とする栄養素/サプリ情報` に
+ *   `###` も `【】` も無く、`splitTopics` が 0 件を返して**ダイジェストのカードが
+ *   全部消えた** (主軸 B が帯だけの白紙になる)。全編の章側は既にこの受け皿を持っていた
+ *   (「見出しの無い章は章まるごと 1 トピック」) が、ダイジェスト側に無かった。
+ *
+ * **中身は足さない。** 見出しが無いことを「見出し = 章名」として扱うだけで、
+ * 本文は 1 文字も変えない (spec §1.0.0)。
+ */
+function topicsOrWhole(section: ElithSection): Block[] {
+  const blocks = splitTopics(section.text);
+  if (blocks.length) return blocks;
+  const body = section.text.trim();
+  return body ? [{ heading: '', body }] : [];
+}
+
 // ── 検査値 (spec §5.3 / §7.1 / §7.2) ─────────────────────────
 
 /**
@@ -211,8 +230,14 @@ function toneOf(judgement: string): MeasurementRow['tone'] {
   return 'flagged';
 }
 
-/** `名前は 値（基準値：〜）` を拾う。 */
-const VALUE_RE = /([^\s、。（(]+?)(?:は|が)((?:[0-9][^（(、。]*?))（基準値：([^）]*)）/g;
+/**
+ * `名前は 値（基準値：〜）` を拾う。
+ *
+ * **コロンは全角 `：` と半角 `:` の両方を受ける。** 受領世代によって揺れており、
+ * 全角だけを見ていたため本番 DB の検体 (半角 `（基準値: 〜129 mmHg）` が 12 箇所) で
+ * **1 件も拾えず、検査値の表が空になった** (実測 2026-08-29)。
+ */
+const VALUE_RE = /([^\s、。（(]+?)(?:は|が)((?:[0-9][^（(、。]*?))（基準値[：:]\s*([^）]*)）/g;
 
 /** `health_checkup.json` のキー `項目名 [単位]` を分解する。 */
 function splitCheckupKey(key: string): { name: string; unit: string } {
@@ -272,7 +297,11 @@ export function buildMeasurements(
   const fromText = new Map<string, FromText>();
 
   if (bloodAnalysis) {
-    for (const block of splitByBracket(bloodAnalysis.text)) {
+    // **`【】` 決め打ちにしない。** 受領世代によって節の書き方が `###` に変わる
+    // (実測 2026-08-29: 本番 DB の検体は `### 血圧` 形式で `【` が 0 件)。
+    // `splitByBracket` しか見ていなかったため 1 ブロックも取れず表が空になった。
+    // 見出しがまったく無い章は章まるごと 1 ブロックとして扱う。
+    for (const block of topicsOrWhole(bloodAnalysis)) {
       const found: FromText[] = [];
       VALUE_RE.lastIndex = 0;
       let m: RegExpExecArray | null;
@@ -280,7 +309,9 @@ export function buildMeasurements(
         // 「今回の測定値は27.9 mg/dL（基準値：…）」のように項目名が入らない書き方がある。
         // その場合はブロック見出しが項目名 (単一項目ブロック)。
         const raw = m[1].trim();
-        const name = /測定値|結果$/.test(raw) ? block.heading.trim() : raw;
+        const name = /測定値|結果$/.test(raw)
+          ? (block.heading.trim() || bloodAnalysis.section_name.trim())
+          : raw;
         if (!name) continue;
         const value = m[2].trim();
         const entry: FromText = { name, unit: unitOfValue(value), value, reference: m[3].trim(), judgement: '' };
@@ -448,7 +479,8 @@ export function buildReportVM(input: BuildInput): ReportVM {
       // ── 主軸 B ──────────────────────────────────────
       case 'medical_visit': {
         if (!section) break;
-        const blocks = splitTopics(section.text);
+        // 見出しの無い世代でも空にしない (`topicsOrWhole` のコメントを参照)。
+        const blocks = topicsOrWhole(section);
         // 救急サインは別カードに切り出す。**赤はここだけ** (spec §4.2.1)。
         const emergency = findEmergencySentence(section.text);
         if (emergency) {
@@ -459,9 +491,10 @@ export function buildReportVM(input: BuildInput): ReportVM {
         const lead = blocks[0];
         const steps: DigestItem[] = blocks.slice(1).map((b) => ({
           heading: b.heading, text: leadSentences(b.body, 1),
-        })).filter((s) => s.text);
+        })).filter((s) => s.heading && s.text);
         built = card(spec.key, title, 'b',
-          `${section.section_name} §1〜§${blocks.length}`, [
+          steps.length ? `${section.section_name} §1〜§${blocks.length}`
+                       : `${section.section_name} 冒頭 2 文`, [
             ...(lead ? [{ kind: 'paragraphs' as const, items: [leadSentences(lead.body, 2)] }] : []),
             { kind: 'steps' as const, items: steps },
           ]);
@@ -505,10 +538,16 @@ export function buildReportVM(input: BuildInput): ReportVM {
 
       case 'nutrients': {
         if (!section) break;
-        const blocks = splitTopics(section.text);
-        const items = blocks.map((b) => leadSentences(b.body, 1)).filter(Boolean);
+        const blocks = topicsOrWhole(section);
+        const hasHeadings = blocks.some((b) => b.heading);
+        // 見出しがある世代は各節の冒頭 1 文。無い世代は章の冒頭 2 文
+        // (節が無いのに「§1〜§1」と書かないため、出典表記も分ける)。
+        const items = hasHeadings
+          ? blocks.map((b) => leadSentences(b.body, 1)).filter(Boolean)
+          : [leadSentences(blocks[0]?.body ?? '', 2)].filter(Boolean);
         built = card(spec.key, title, 'b',
-          `${section.section_name} §1〜§${blocks.length}`,
+          hasHeadings ? `${section.section_name} §1〜§${blocks.length}`
+                      : `${section.section_name} 冒頭 2 文`,
           [{ kind: 'paragraphs', items }]);
         break;
       }
