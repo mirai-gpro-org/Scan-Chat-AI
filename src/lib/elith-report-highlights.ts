@@ -1,84 +1,70 @@
 /**
- * AI疾病予防報告書から「要点」を取り出す (決定論・抽出のみ)。
+ * AI疾病予防報告書から「要点」を取り出す — **`report-adapter.ts` への薄い橋渡し**。
  *
- * 【原則】アプリは値を評価しない。
- *   ここで行うのは **レポート本文に書かれている「判定区分」を拾って並べ替える**ことだけ。
- *   値と基準値を比べて良し悪しを決めることはしない (ミッション④「独自に分析・解釈しない」)。
- *   文言も要約せず、レポートの一文をそのまま切り出す。
+ * 【なぜ薄いか】変換規則は 1 モジュールが所有する
+ * (`docs/elith/ai_prevention_report_generation_spec.md` §1.3.4)。抽出の実体は
+ * `report-adapter.ts` の `extractFindings()` / `extractTopPriority()` にあり、
+ * ここは既存の呼び出し元 (`report.astro` の 3 モード表示) の形に合わせるだけ。
+ * **P2 で `report.astro` を表示モデル駆動へ書き換えたら、このファイルは不要になる。**
  *
- * 【抽出できる根拠】レポートの「検査値フィードバック」章は
- *   `【血圧】血圧は 136 / 84 mmHg（判定区分：注意・経過観察）です。…`
- *   の形で、カテゴリと判定区分が本文に明記されている (2026-08 Stage2 版で確認)。
+ * 【検出ルールを差し替えた (2026-08-29・spec §5.2)】
+ *   旧: `（判定区分：X）` … Stage2 の書式。**新形式には 0 件**なので、
+ *       放置すると新データで**無言で空になる**。
+ *   新: **Elith 自身が書いた判定文** (`基準範囲を上回っています` 等) を原文のまま拾う。
+ *   旧形式もサンプル表示のため引き続き読める (アダプタ側で両対応)。
  *
- * 【フォーマット依存】上記の書式に依存する。書式が変わったら拾えなくなるが、
- *   **拾えないときは何も出さない**ので、誤った要点が出ることはない (fail-safe)。
+ * 【並べ替えをやめた】旧実装は判定区分のラダー (`要治療 > 要検査 > …`) で並べ替えていたが、
+ *   どれが重いかを当社が決めることになる。**Elith が書いた順のまま**出す。
+ *   最優先は Elith 自身が「医療受診の目安」に書いているので、そちらを使う (spec §4.2.1)。
+ *
+ * 【原則】アプリは値を評価しない。値と基準値を比べて良し悪しを決めない (ミッション④)。
+ * 【fail-safe】拾えないときは何も出さない。誤った要点は出さない。
  */
 
 import type { ElithSection } from './elith-parser';
-
-/** レポートが使う判定区分。表示順は健診の判定ラダーに合わせる (アプリの判断ではない)。 */
-const JUDGEMENT_ORDER = ['要治療', '要検査', '緊急', '注意・経過観察', '異常なし'] as const;
+import {
+  extractFindings,
+  extractTopPriority as adapterTopPriority,
+  parseReportText,
+} from './report-adapter';
 
 export interface ReportPoint {
   /** 【】で括られたカテゴリ名 (例: 血圧)。 */
   category: string;
   /** レポート本文からそのまま切り出した一文。 */
   text: string;
-  /** レポートが記載した判定区分。記載が無ければ null。 */
+  /** **Elith が書いた判定文**そのまま。記載が無ければ null。 */
   judgement: string | null;
-  /** 原本 PDF の該当ページ。 */
+  /** 原本 PDF の該当ページ。新形式に `[pN]` は無いので既定 1 (spec §5.1)。 */
   page: number;
 }
 
 const FEEDBACK_SECTION = '検査値フィードバック';
+const VISIT_SECTION = '医療受診の目安';
 
-/** `[pN]` 先頭マーカーからページ番号を取り出す。 */
-function pageOf(section: ElithSection, fallback: number): number {
-  const m = /^\[p(\d+)\]/.exec(section.text.trim());
-  return m ? Number(m[1]) : fallback;
+/** `[pN]` 先頭マーカーからページ番号を取り出す (旧形式のみ)。 */
+function pageOf(sections: ElithSection[], name: string, pages: Record<string, number>): number {
+  const s = sections.find((x) => x.section_name === name);
+  const m = s ? /^\[p(\d+)\]/.exec(s.text.trim()) : null;
+  return m ? Number(m[1]) : pages[name] ?? 1;
 }
 
 /**
- * 「検査値フィードバック」から、判定区分が明記されたカテゴリを抜き出す。
- * 判定区分の記載が無いカテゴリ (＝良好と本文に書かれているもの) は返さない。
+ * 「検査値フィードバック」から、Elith が判定文を書いたカテゴリを抜き出す。
+ * 判定文の無いカテゴリは返さない。**並べ替えない。**
  */
 export function extractReportPoints(
   sections: ElithSection[],
   pages: Record<string, number> = {},
 ): ReportPoint[] {
-  const fb = sections.find((s) => s.section_name === FEEDBACK_SECTION);
-  if (!fb) return [];
-  const page = pageOf(fb, pages[FEEDBACK_SECTION] ?? 1);
-
-  const points: ReportPoint[] = [];
-  // 【カテゴリ】本文 …【次のカテゴリ】… の形で分割する
-  const parts = fb.text.split(/【([^】]+)】/);
-  for (let i = 1; i < parts.length; i += 2) {
-    const category = parts[i].trim();
-    // 改行だけを畳む (数値と単位の間の空白は残す)
-    const bodyRaw = (parts[i + 1] ?? '').replace(/\n+/g, '').replace(/[ \t]{2,}/g, ' ').trim();
-    if (!category || !bodyRaw) continue;
-
-    const judgements = [...bodyRaw.matchAll(/判定区分[：:]\s*([^）)、。]+)/g)].map((m) => m[1].trim());
-    if (judgements.length === 0) continue; // 判定区分の記載が無いものは要点にしない
-
-    // 記載された判定のうち、ラダー上もっとも重いものを代表にする
-    const judgement =
-      JUDGEMENT_ORDER.find((j) => judgements.includes(j)) ?? judgements[0];
-
-    // 「…です。」までを一文として切り出す (要約しない)
-    const sentence = bodyRaw.split('です。')[0];
-    const text = sentence ? `${sentence}です。` : bodyRaw.slice(0, 120);
-
-    points.push({ category, text, judgement, page });
-  }
-
-  points.sort(
-    (a, b) =>
-      JUDGEMENT_ORDER.indexOf(a.judgement as (typeof JUDGEMENT_ORDER)[number]) -
-      JUDGEMENT_ORDER.indexOf(b.judgement as (typeof JUDGEMENT_ORDER)[number]),
-  );
-  return points;
+  const { byKey } = parseReportText(sections);
+  const page = pageOf(sections, FEEDBACK_SECTION, pages);
+  return extractFindings(byKey).map((f) => ({
+    category: f.category,
+    text: f.sentence,
+    judgement: f.judgement,
+    page,
+  }));
 }
 
 /** 「医療受診の目安」の最優先所見。見出し直後の本文をそのまま返す。 */
@@ -86,15 +72,7 @@ export function extractTopPriority(
   sections: ElithSection[],
   pages: Record<string, number> = {},
 ): { text: string; page: number } | null {
-  const s = sections.find((x) => x.section_name === '医療受診の目安');
-  if (!s) return null;
-  const m = /\*\*最優先[^*]*\*\*\s*([\s\S]+?)(?=\n\n\*\*|$)/.exec(s.text);
-  if (!m) return null;
-  const body = m[1].trim();
-  if (!body) return null;
-  const sentence = body.split('です。')[0];
-  return {
-    text: sentence ? `${sentence}です。` : body.slice(0, 160),
-    page: pageOf(s, pages['医療受診の目安'] ?? 1),
-  };
+  const { byKey } = parseReportText(sections);
+  const found = adapterTopPriority(byKey);
+  return found ? { text: found.text, page: pageOf(sections, VISIT_SECTION, pages) } : null;
 }
