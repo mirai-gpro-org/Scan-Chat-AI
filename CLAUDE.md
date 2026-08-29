@@ -535,8 +535,36 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
         (ミッション④) なので空のままにする。加えて**軸が空でも黙らない** —
         ダイジェスト 0 枚の軸に全編への案内文を出す (当社が代わりの要点は書かない)。
         回帰に**本番検体と同じ形の fixture** を追加。
-      - **検証**: `npm run verify:report-model` 74/74 ・ `astro check` 0 errors ・ `astro build` 成功 ・
-        dev で `/report` `?print=1` `?save=1` とも 200。
+      - **【モックの再現性チェック 2026-08-29・発注者指摘】正本 spec §1.3.10。**
+        「モックを作っても再現性を検査していないなら作る意味が無い」という指摘。実際そのとおりで、
+        v0.1 はモックと照合されないまま本番へ出て**検査値の並びがモックと違って**いたし、
+        主軸 B の白紙化も「モックには 7 枚あるカードが実装では 1 枚」に気づけなかったのが本質。
+        → **モックをリポジトリに置き、そこから「紙面契約」を機械抽出して実装と突き合わせる**。
+        - `docs/elith/mock/ai_prevention_report_type2.html` … モック本体 (Artifact と同じ中身)。
+          抽出が見るのは `data-card="<章キー>"` / `data-axis` / `data-note` の**3 つだけ**で、
+          **CSS は一切見ない**。
+        - `docs/elith/mock/sheet_contract_type2.json` … 生成物。**コミットする** —
+          PR の差分に「紙面がどう変わるか」が文の単位で出る。
+        - `npm run verify:sheet-contract` … 契約 ↔ 表示モデル (サーバ不要)。
+          `-- --write` で契約を再生成。**契約 JSON を手で書き換えて通すのは禁止。**
+        - `npm run verify:screen` … 契約 ↔ **実際の画面** ＋ 幅・行長の実測 (要 `npm run dev`)。
+          表示モデルが正しくてもレンダラが描き落とせば画面は空になるので、ここで閉じる。
+        - `npm run verify:report` … report-model + sheet-contract をまとめて。
+        - **契約に入れるのは紙面の中身だけ** (どのカードが/どの見出しで/どの文を/どの順で)。
+          色・余白・影・出典表記・リンクは入れない (見た目まで縛ると微調整で落ちて誰も直さなくなる)。
+          幅は `verify:screen` が**実測値**で見る。
+        - **紙面を変える手順は モック → 契約再生成 → 実装 の順だけ**。差分が出たら
+          「モックが正」か「モックが古い」かで、**どちらであれ両方を突き合わせて直す**。
+        - **導入即日で 5 件の差分が出た** (spec §1.3.10 の表)。うち①並び順=モックが正
+          (Elith 本文の言及順と完全一致していた) → 実装を修正。②栄養素の節・③判定欄の長さ=
+          実装が正 → モックを補正 (補正の内訳はモック HTML の冒頭コメントにも残す)。
+          ④主軸 A のリンクは**遷移先が無く 404 だった** (`/result` は存在しないページ) →
+          がんリスク検査がある回だけ `/result/{id}` へ送るよう修正。
+        - **限界**: 契約は**この 1 検体の紙面**を固定するだけ。別世代の受領データで壊れることは
+          防げない (それは §9.3.1 の fixture の仕事)。タイプ 1 はモックが v0.2 待ちで契約が無い。
+      - **検証**: `npm run verify:report-model` 74/74 ・ `npm run verify:sheet-contract` 一致 ・
+        `npm run verify:screen` 全ブレークポイント一致 ・ `astro check` 0 errors ・
+        `astro build` 成功 ・ dev で `/report` `?print=1` `?save=1` とも 200。
       - **パイロット版で実装しないもの**: サーバ側 PDF 生成 (§3.1・Vercel 実測が未) /
         オフライン案内の最小 SW / iOS・Android 実機確認 / タイプ1 の紙面。
     - **【1 回目はリバート済み 2026-08-29】上記の前に入れた実装 (P0〜P4) は全て取り消した。**
@@ -944,6 +972,7 @@ Supabase database linter の指摘を棚卸しした結果。**テストフェ�
 | `docs/elith/elith_assembly_wrapping_spec.md` | **納品セット アセンブリのラップ仕様(Elith向け説明)**。フォルダ/命名/ウェルネス年齢の時系列化(検査日毎・旧1件を撤回)・疑似データも同様に時系列生成・**LAiF AI疾病発症予測(Other/ai_prediction)のファイル仕様=Elith承諾により確定(§5・2026-08)。合成は data.items[] の発症率%/相対リスク比のみジッタ・昨年比は前年の相対リスク比を引継ぎ(実装済)**・manifest不一致の確認事項 |
 | `docs/elith/ai_prevention_report_HANDOVER.md` | **引き継ぎ書。新しく着手する人は最初にこれを読む**。ミッションの3層/**設計ポリシー=サービスの2本柱**/越えてはならない線/参照すべきドキュメントの順序/素材/回答待ち。**1 回目の実装はリバート済み・2 回目 (パイロット版 v0.1) が実装済み** (spec §9.2/§9.3) |
 | `docs/elith/ai_prevention_report_REVERT_LIST.md` | **リバート対象コミットの一覧**。Scan-Chat-AI 11 件 (うち 10 件は本番反映済み) / wellfort-site 2 件 / 併せて外すもの (CLAUDE.md の【実装】記述・`checkup_values` マイグレーション) |
+| `docs/elith/mock/ai_prevention_report_type2.html` | **紙面モック (タイプ2)。飾りではなく契約の入力**。`npm run verify:sheet-contract` がここから紙面契約を抽出し実装と突き合わせる (spec §1.3.10)。冒頭コメントに annotation の意味とモック補正の記録 |
 | `docs/elith/ai_prevention_report_generation_spec.md` | **AI疾病予防報告書 生成機能の仕様 (パイプライン⑥・2026-08-28)**。受領 JSON 3 点 → アプリが可読な報告書を生成。入力仕様/出力は HTML+印刷CSS(PDF生成しない)/章立て/決定論の変換規則/**作れないもの①〜④と捏造ゼロの境界**/受領データの既知不具合/実装計画/Elith 確認事項 |
 | `docs/elith/batch_scan_to_elith_usage.md` | サンプル一括スキャン→S3 バッチ手順 (`scripts/batch-scan-to-elith.mjs`) |
 | `docs/lab/lab_data_pipeline_master_spec.md` | **検査データ・パイプライン 総合仕様書(E2E正本・上位文書)**。EC購入→キット/タイミング→発送指示/進捗→AI問診/検体返送→各社受渡→受領チェック(週次)→Elithラップ/S3書出→AI診断PDF受取/表示 を6ステップで連結。詳細は(a)(b)(c)へ委譲(二重管理しない) |

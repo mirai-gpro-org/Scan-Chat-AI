@@ -269,7 +269,22 @@ function textKey(name: string, unit: string): string {
 }
 
 export interface MeasurementResult {
+  /** 受領した全行。**受領ファイルのキー順のまま**にする (原票と並びが揃う)。全編の表に出す。 */
   rows: MeasurementRow[];
+  /**
+   * ダイジェストの表に出す行 = **Elith が本文で取り上げた項目**を、
+   * **Elith が本文で言及した順**に並べたもの (spec §1.3.10 / モック契約)。
+   *
+   * 【なぜ受領順ではないか】`health_checkup.json` のキー順は検査票の様式順で、
+   * Elith の話の流れとは無関係。そのまま出すと、Elith が最初に取り上げた
+   * 赤血球・ヘモグロビン・ヘマトクリットの 3 点セットが表の中ほどにばらけ、
+   * 直前の「医療受診の目安」の話と繋がらない (モックとの差分で発覚)。
+   *
+   * 【なぜ当社の解釈ではないか】並べ替えの根拠は **Elith が本文に書いた順序そのもの**。
+   * 値と基準値を当社が比べて優先順位を付けているのではないので、
+   * 整理であって解釈ではない (ミッション④)。
+   */
+  digestRows: MeasurementRow[];
   anomalies: string[];
 }
 
@@ -350,6 +365,13 @@ export function buildMeasurements(
     seenNames.set(name, (seenNames.get(name) ?? 0) + 1);
   }
 
+  // 行 → 本文での言及順。`fromText` は Map なので**挿入順 = 本文に現れた順**。
+  // **行を作るその場で記録する。** 後から名前で引き当てると、同名別値 (総コレステロール
+  // 210 mg/dL と 251 mg/dl) で**単位違いの別の行に順序が付く** (実測で末尾へ飛んだ)。
+  const mentionAt = new Map<string, number>();
+  [...fromText.keys()].forEach((k, i) => mentionAt.set(k, i));
+  const rowMention = new Map<MeasurementRow, number>();
+
   const usedFromText = new Set<string>();
   for (const [key, arr] of entries) {
     const { name, unit } = splitCheckupKey(key);
@@ -359,7 +381,7 @@ export function buildMeasurements(
     const k = textKey(name, unit);
     const t = fromText.get(k);
     if (t) usedFromText.add(k);
-    rows.push({
+    const row: MeasurementRow = {
       name,
       value: unit ? `${first.value} ${unit}` : String(first.value),
       reference: t?.reference ?? '',
@@ -367,12 +389,17 @@ export function buildMeasurements(
       tone: toneOf(t?.judgement ?? ''),
       source: 'checkup',
       variants: seenNames.get(name) ?? 1,
-    });
+    };
+    rows.push(row);
+    const at = mentionAt.get(k);
+    if (at !== undefined) rowMention.set(row, at);
   }
 
   for (const [name, count] of seenNames) {
     if (count > 1) anomalies.push(`同名別値: ${name} が ${count} 通り届いています (自動採用しません)`);
   }
+
+
 
   // ④ 本文にしかない項目を足す (spec §7.2)。
   //    2 ファイルは包含関係でないので、検査値ファイルだけで組むと本文が最優先扱いする
@@ -391,9 +418,18 @@ export function buildMeasurements(
     if (!seenNames.has(t.name)) {
       anomalies.push(`本文が扱う ${t.name} が health_checkup.json に無いため、本文から拾いました`);
     }
+    rowMention.set(rows[rows.length - 1], mentionAt.get(k) ?? Number.MAX_SAFE_INTEGER);
   }
 
-  return { rows, anomalies };
+  // ダイジェスト = 本文が取り上げた行 (基準値が付いた行) を、**本文での言及順**に。
+  // 言及順が取れなかった行は末尾へ回し、その中では受領順を保つ (安定ソート)。
+  const digestRows = rows
+    .filter((r) => r.reference)
+    .map((r, i) => ({ r, i, m: rowMention.get(r) ?? Number.MAX_SAFE_INTEGER }))
+    .sort((a, b) => a.m - b.m || a.i - b.i)
+    .map((x) => x.r);
+
+  return { rows, digestRows, anomalies };
 }
 
 // ── ダイジェストのカード ────────────────────────────────
@@ -506,7 +542,10 @@ export function buildReportVM(input: BuildInput): ReportVM {
         // 受領した全 40 項目は全編の章に出る (可読化 = 出す文を選ぶこと・spec §1.1)。
         // 判定が無い行 (実測: クレアチニン) も、Elith が触れている以上は落とさず
         // 判定欄を空で出す。「印が無い」を「基準値内」と読み替えない (ミッション④)。
-        const rows = measured.rows.filter((r) => r.reference);
+        //
+        // 並びは **Elith が本文で言及した順** (`measured.digestRows`・spec §1.3.10)。
+        // 受領ファイルのキー順ではない。当社が優先順位を決めているのでもない。
+        const rows = measured.digestRows;
         built = card(spec.key, title, 'b',
           `${section?.section_name ?? '検査値フィードバック'} (値・基準値・判定はすべて本文からの逐語)`,
           [{ kind: 'table', rows }]);

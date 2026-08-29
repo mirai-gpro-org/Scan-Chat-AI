@@ -1,0 +1,333 @@
+<title>パイロット版 紙面モック（単品購入）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+  :root{
+    --page:#EFECE5;--ground:#FBFAF7;--surface:#FFFFFF;--alt:#F4F2EC;
+    --ink:#102B3A;--soft:#495B65;--faint:#6E7D85;--rule:#DED9CF;
+    --brand:#287F86;--brand-bg:#E4EFEE;--brand-dk:#1E6067;
+    --navy:#1D4356;--navy-bg:#E7ECEE;
+    --bronze:#A98558;
+    --warn:#96661F;--warn-bg:#F8F0E0;--warn-line:#DCBC83;
+    --alert:#A8443C;--alert-bg:#F9EAE8;--alert-line:#D89A93;
+    --ok:#2E7D5B;--ok-bg:#E6F1EB;
+    --shadow:0 1px 2px rgba(16,43,58,.05),0 10px 30px rgba(16,43,58,.06);
+    --jp:"BIZ UDGothic","Hiragino Sans","Noto Sans JP",sans-serif;
+    --sans:"IBM Plex Sans",var(--jp);
+    --mono:"IBM Plex Mono","BIZ UDGothic",ui-monospace,monospace;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --page:#091419;--ground:#0E1F29;--surface:#142A36;--alt:#1B333F;
+    --ink:#EDEAE3;--soft:#B3C0C6;--faint:#8A999F;--rule:#2C4451;
+    --brand:#63B5B0;--brand-bg:#1C3A3C;--brand-dk:#8ACFC9;
+    --navy:#9FBCC9;--navy-bg:#17303C;
+    --bronze:#C0A075;
+    --warn:#D9A85A;--warn-bg:#32270F;--warn-line:#6B5626;
+    --alert:#E0857C;--alert-bg:#37201E;--alert-line:#7A413B;
+    --ok:#6FC095;--ok-bg:#17332A;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.25);
+  }}
+  :root[data-theme="dark"]{
+    --page:#091419;--ground:#0E1F29;--surface:#142A36;--alt:#1B333F;
+    --ink:#EDEAE3;--soft:#B3C0C6;--faint:#8A999F;--rule:#2C4451;
+    --brand:#63B5B0;--brand-bg:#1C3A3C;--brand-dk:#8ACFC9;
+    --navy:#9FBCC9;--navy-bg:#17303C;
+    --bronze:#C0A075;
+    --warn:#D9A85A;--warn-bg:#32270F;--warn-line:#6B5626;
+    --alert:#E0857C;--alert-bg:#37201E;--alert-line:#7A413B;
+    --ok:#6FC095;--ok-bg:#17332A;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.25);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--page);color:var(--ink);font-family:var(--jp);
+       font-size:16px;line-height:1.8;-webkit-font-smoothing:antialiased}
+  .sheet{max-width:44rem;margin:2.5rem auto;background:var(--ground);
+         border:1px solid var(--rule);border-radius:8px;box-shadow:var(--shadow);overflow:hidden}
+  .inner{padding:2rem 1.6rem 3rem;display:flex;flex-direction:column;gap:1.4rem}
+  @media(max-width:520px){.inner{padding:1.5rem 1.05rem 2.5rem}body{font-size:15px}}
+
+  /* 表紙 */
+  .cover{background:var(--navy-bg);border-bottom:1px solid var(--rule);padding:1.8rem 1.6rem 1.5rem}
+  .cover .brand{font-family:var(--sans);font-size:.7rem;font-weight:600;letter-spacing:.16em;
+                text-transform:uppercase;color:var(--brand)}
+  .cover h1{margin:.5rem 0 0;font-size:1.55rem;font-weight:700;line-height:1.35;letter-spacing:-.01em}
+  .cover .meta{margin-top:.7rem;font-family:var(--sans);font-size:.76rem;color:var(--faint);
+               display:flex;gap:1rem;flex-wrap:wrap}
+
+  /* 主軸見出し */
+  .axis{margin-top:.6rem;padding:1rem 1.1rem;border-radius:6px;display:flex;flex-direction:column;gap:.25rem}
+  .axis.a{background:var(--navy-bg);border-left:4px solid var(--navy)}
+  .axis.b{background:var(--brand-bg);border-left:4px solid var(--brand)}
+  .axis .lab{font-family:var(--sans);font-size:.68rem;font-weight:600;letter-spacing:.12em;color:var(--faint)}
+  .axis h2{margin:0;font-size:1.2rem;font-weight:700;line-height:1.4}
+
+  h3{margin:.5rem 0 0;font-size:1.02rem;font-weight:700;line-height:1.5;
+     display:flex;align-items:center;gap:.45rem;flex-wrap:wrap}
+  h4{margin:.3rem 0 0;font-size:.9rem;font-weight:700;line-height:1.5;color:var(--brand-dk)}
+  p{margin:0}
+  .card{background:var(--surface);border:1px solid var(--rule);border-radius:7px;
+        padding:1rem 1.1rem;display:flex;flex-direction:column;gap:.55rem}
+  .card>p{font-size:.92rem;line-height:1.8}
+  .er{background:var(--alert-bg);border-color:var(--alert-line);border-left:4px solid var(--alert)}
+  .pending{background:var(--alt);border-style:dashed}
+
+  .tag{font-family:var(--sans);font-size:.66rem;font-weight:600;padding:.14rem .5rem;
+       border-radius:2px;white-space:nowrap;letter-spacing:.03em}
+  .t-pending{background:var(--bronze);color:var(--page)}
+
+  table{border-collapse:collapse;width:100%;font-size:.86rem}
+  .scroll{overflow-x:auto}
+  th{font-family:var(--sans);font-size:.68rem;font-weight:600;color:var(--faint);
+     text-align:left;padding:.3rem .35rem;border-bottom:1px solid var(--rule);white-space:nowrap}
+  td{padding:.38rem .35rem;border-bottom:1px solid var(--rule);vertical-align:baseline;line-height:1.6}
+  tr:last-child td{border-bottom:none}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .up{color:var(--warn);font-weight:600}
+  .in{color:var(--ok)}
+  .ref{color:var(--faint);font-size:.78rem;white-space:nowrap}
+  .jdg{font-family:var(--sans);font-size:.76rem;line-height:1.6;min-width:11rem}
+  .j-w{color:var(--warn);font-weight:600}
+  .j-o{color:var(--ok)}
+  .j-x{color:var(--faint)}
+
+  .lsblk{display:flex;flex-direction:column;gap:.85rem}
+  .lsit{display:flex;flex-direction:column;gap:.32rem;padding-bottom:.85rem;
+        border-bottom:1px dashed var(--rule)}
+  .lsit:last-child{border-bottom:none;padding-bottom:0}
+  .lsrow{display:grid;grid-template-columns:5.4rem 1fr;gap:.55rem;font-size:.88rem;line-height:1.75}
+  .lsrow .k{font-family:var(--sans);font-size:.72rem;font-weight:600;color:var(--faint);padding-top:.3rem}
+  @media(max-width:520px){.lsrow{grid-template-columns:1fr;gap:.1rem}.lsrow .k{padding-top:0}}
+
+  ol.steps{margin:0;padding-left:1.2rem;display:flex;flex-direction:column;gap:.3rem;font-size:.9rem}
+  ol.steps li::marker{color:var(--brand);font-weight:600}
+  ul.list{margin:0;padding-left:1.15rem;display:flex;flex-direction:column;gap:.35rem;font-size:.9rem;line-height:1.7}
+  ul.list li::marker{color:var(--bronze)}
+  .muted{color:var(--faint);font-size:.84rem;line-height:1.7}
+
+  .weeks{display:flex;flex-direction:column;gap:0}
+  .wk{display:grid;grid-template-columns:3.3rem 1fr;gap:.8rem;padding:.55rem 0;
+      border-bottom:1px solid var(--rule);font-size:.88rem;line-height:1.7}
+  .wk:last-child{border-bottom:none}
+  .wk b{font-family:var(--sans);font-size:.76rem;color:var(--brand-dk);padding-top:.15rem}
+
+  .src{font-family:var(--mono);font-size:.68rem;color:var(--faint);margin-top:.15rem}
+  .banner{max-width:44rem;margin:0 auto 1rem;padding:.7rem 1rem;background:var(--warn-bg);
+          border:1px solid var(--warn-line);border-radius:6px;font-size:.84rem;color:var(--warn)}
+</style>
+
+<!--
+  ══════════════════════════════════════════════════════════════════════════
+  AI疾病予防報告書 パイロット版 v0.1 紙面モック — タイプ 2 (単品購入相当)
+
+  正本 (仕様): docs/elith/ai_prevention_report_generation_spec.md
+  公開先 (発注者が見る版): Artifact「パイロット版 紙面モック（単品購入）」
+    https://claude.ai/code/artifact/6eac069b-6d12-4005-8b72-b2b3c020fadd
+
+  【このファイルは飾りではなく“契約”】(spec §1.3.10)
+    `npm run verify:sheet-contract` が、この HTML から **紙面契約**
+    (どのカードが / どの見出しで / どの文を / どの順で 出るか) を機械で抽出し、
+    同じ受領 JSON (2026-08-26) を実装に通して得た表示モデルと突き合わせる。
+    **食い違えば CI が落ちる。** モックを直したら契約 JSON を再生成し、
+    実装をそれに合わせる — この順番でしか紙面は変えられない。
+
+  【annotation の意味】抽出はこの 3 つだけを見る。**見た目の CSS は一切見ない。**
+    data-card="<章キー>"  … 契約に入るカード。値は CHAPTER_REGISTRY のキー
+    data-axis="a|b"       … 2 本柱のどちら側か
+    data-note             … 注釈・説明用のカード。**契約から外す** (紙面ではない)
+
+  【契約に入らないもの】色・余白・角丸・影・フォントなどの見た目、`.src` の出典表記、
+    ナビゲーションのリンク。見た目まで契約にすると、デザインの微調整のたびに CI が
+    落ちて誰も直さなくなる (= 契約が死ぬ)。幅とレイアウトは `npm run verify:layout` が
+    実測値で別に見る。
+
+  ─────────────────────────────────────────────────────────────────────────
+  【2026-08-29 のモック補正 3 件】
+  Artifact 版から本ファイルへ写す際、**モックが実装に合わせて直された箇所が 3 つある**。
+  片方だけ直して契約を通すのは契約の放棄なので、何をどちらへ寄せたかを全部ここに残す。
+
+  ① 栄養素カード: §1・§3 の 2 文 → **§1〜§3 の 3 文** (モックを実装へ寄せた)
+     Artifact 版は §2「摂取状況を確認するポイント」を落としていた。落とすには
+     「どの節が要点か」をアプリが決める規則が要り、それは解釈 (ミッション④)。
+     節ごとの冒頭 1 文を機械的に全部出すのが、当社が選ばない唯一の形。
+
+  ② 検査値の判定欄: 「基準範囲を上回っており、注意が必要な状態です」→
+     **「基準範囲を上回っており」** (モックを実装へ寄せた)。
+     spec §4.2.1 が判定の形を「Elith 原文『基準範囲を上回っています』」と定めており、
+     短い判定句が正。続きの節は全編の本文にそのまま出る。どちらも逐語。
+
+  ③ 主軸 A の「がんリスク検査について →」リンク: **保留 (紙面から外した)**。
+     タイプ 2 には遷移先のページが存在せず、置くと 404 になる。
+     がんリスク検査がある回 (タイプ 1) だけ、その結果ページへ送る。
+     **「について」の説明ページを作るかは未決** — 作るならリンクを戻す。
+
+  逆に、**実装をモックへ寄せた**のが検査値の並び順:
+     受領ファイルのキー順 → **Elith が本文で言及した順**。
+     モックの並び (赤血球数・ヘモグロビン・ヘマトクリット …) は当社の趣味ではなく
+     **Elith 自身が本文でその順に書いている**ことが実測で分かったので、モックが正しかった。
+  ══════════════════════════════════════════════════════════════════════════
+-->
+
+<div class="banner">
+  <b>パイロット版 v0.1 の紙面モック — タイプ 2（単品購入相当）。画面版。</b>
+  タイプ 1（コースプラン・がんリスク検査あり）は、Elith から該当検体の JSON 2 点を受領後に v0.2 で対応します。<br>
+  値は<b>合成検体</b>に基づきます。<b>紙面の文はすべて Elith 受領データからの逐語</b>で、要約・言い換え・当社の散文はありません
+  （誤字「基準範囲を<b>上上</b>回っており」も原文のまま出しています）。<br>
+  <b>ウェルネス年齢は画面版には出しません</b>（ダッシュボード上部に表示済みのため）。<b>PDF 版では冒頭に入れます。</b>
+</div>
+
+<div class="sheet">
+
+  <div class="cover">
+    <div class="brand">Welltect</div>
+    <h1>AI疾病予防報告書</h1>
+    <div style="margin-top:.5rem;font-size:1.05rem;font-weight:700">相川 佳之 様</div>
+    <div class="meta"><span>作成日 2026-08-28</span><span>紙面 v1.0</span><span>検査 2026-06-08</span></div>
+  </div>
+
+  <div class="inner">
+
+    <!-- ══════════ 主軸 A ══════════ -->
+    <div class="axis a">
+      <span class="lab">主軸 A</span>
+      <h2>初期がんの早期発見</h2>
+    </div>
+
+    <div class="card pending" data-card="cancer_finding" data-axis="a">
+      <h3><span class="tag t-pending">Elith へ依頼中</span>今回の所見</h3>
+      <p>今回お預かりした人間ドックの結果と問診の範囲では、がんに関して特に気になる点は見当たりませんでした。</p>
+      <p>なお、がんリスク検査は今回の検査には含まれていません。</p>
+      <div class="src">Elith へ依頼中 (spec §10.1 E-1)</div>
+    </div>
+
+    <div class="card" style="background:var(--alt);border-style:dashed" data-note>
+      <p class="muted">
+        <b>この 2 文は Elith に書いていただく依頼中の内容です</b>（E-1）。受領データにはまだ含まれていません。
+        <b>発注者判断により、パイロット版ではこのまま出します</b>（Wellfort / Elith の回答後に差し替え）。<br>
+        <b>1 文目で「見た」ことと「無かった」ことを伝えるのが要点です。</b>
+        当社の定型文（下記フォールバック）では「範囲の説明」しかできず、<b>「見ていない」と読まれてしまいます。</b><br>
+        <b>フォールバック（`ui.cancer_screening_not_included`）</b>：
+        「この報告書は、がんリスク検査を含まない検査データをもとに作成しています。
+        そのため、がんリスクの評価は含まれていません。」
+      </p>
+    </div>
+
+    <!-- ══════════ 主軸 B ══════════ -->
+    <div class="axis b">
+      <span class="lab">主軸 B</span>
+      <h2>AI 診断による疾病予防アドバイス</h2>
+    </div>
+
+    <div class="card er" data-card="emergency" data-axis="b">
+      <p>なお、強い頭痛、胸痛、呼吸困難、片側の麻痺、意識の変化といった症状が現れた場合には、早急な医療確認が必要です。</p>
+      <div class="src">医療受診の目安</div>
+    </div>
+
+    <div class="card" data-card="medical_visit" data-axis="b">
+      <h3>医療受診の目安</h3>
+      <p>今回の結果の中で、特に優先してご確認いただきたいのはヘマトクリットの値です。ヘマトクリットは血液中に占める赤血球の割合を示す検査項目であり、今回の結果では基準値よりも高い数値となっています。</p>
+      <ol class="steps">
+        <li><b>まず確認すること</b><br>まずは、お手元の健康診断結果の原票を改めてご確認いただき、ヘマトクリットおよびヘモグロビンの項目について、健診機関からどのような判定やコメントが記載されているかを確認してください。</li>
+        <li><b>相談先とタイミング</b><br>赤血球やヘモグロビン、ヘマトクリットの高値が複数見られる場合や、繰り返し同様の結果が出ている場合は、内科または血液内科への相談が必要です。</li>
+        <li><b>相談時の準備と確認後の進め方</b><br>医師に相談される際は、今回の健診結果の原票を必ず持参してください。</li>
+      </ol>
+      <div class="src">医療受診の目安 §1〜§4</div>
+    </div>
+
+    <!--
+      並び順は**Elith が判定を書いた項目が先**。判定の無い行 (クレアチニン) を最後へ送る。
+      値と基準値を比べて当社が良し悪しを決めているのではなく、**Elith が書いた判定文の
+      有無で並べているだけ**なのでミッション④ の範囲内 (整理はする / 解釈はしない)。
+    -->
+    <div class="card" data-card="measurements" data-axis="b">
+      <h3>検査値フィードバック</h3>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>項目</th><th>今回</th><th>基準値</th><th>判定</th></tr></thead>
+        <tbody>
+          <tr><td>赤血球数</td><td class="num up">585 10^4/ul</td><td class="ref">400〜539 10^4/ul</td><td class="jdg j-w">基準範囲を上回っています</td></tr>
+          <tr><td>ヘモグロビン</td><td class="num up">18.1 g/dL</td><td class="ref">13.1〜16.3 g/dL</td><td class="jdg j-w">基準範囲を上回っています</td></tr>
+          <tr><td>ヘマトクリット</td><td class="num up">55.6 %</td><td class="ref">38.5〜48.9 %</td><td class="jdg j-w">基準範囲を上回っています</td></tr>
+          <tr><td>尿素窒素</td><td class="num up">27.9 mg/dL</td><td class="ref">8〜20 mg/dL</td><td class="jdg j-w">基準範囲を上回っており</td></tr>
+          <tr><td>ALT(GPT)</td><td class="num up">49 U/L</td><td class="ref">10〜42 U/L</td><td class="jdg j-w">基準範囲を上上回っており</td></tr>
+          <tr><td>総コレステロール</td><td class="num up">251 mg/dl</td><td class="ref">140〜199 mg/dl</td><td class="jdg j-w">基準範囲を上回っており</td></tr>
+          <tr><td>eGFR</td><td class="num in">64.6 mL/min</td><td class="ref">60.0以上 mL/min</td><td class="jdg j-o">基準範囲内</td></tr>
+          <tr><td>クレアチニン</td><td class="num">0.96 mg/dl</td><td class="ref">1.00以上 mg/dl</td><td class="jdg j-x"></td></tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="src">検査値フィードバック (値・基準値・判定はすべて本文からの逐語)</div>
+    </div>
+
+    <div class="card" data-card="lifestyle" data-axis="b">
+      <h3>ライフスタイル総合</h3>
+      <div class="lsblk">
+        <div class="lsit">
+          <h4>飲酒習慣</h4>
+          <div class="lsrow"><span class="k">現状評価</span><span>生活習慣アンケートでは、現在はまったく飲酒していないと回答されています。</span></div>
+          <div class="lsrow"><span class="k">行動提案</span><span>今後も、現在の飲酒しない生活をそのまま続けることを第一の目標としてください。</span></div>
+        </div>
+        <div class="lsit">
+          <h4>喫煙習慣</h4>
+          <div class="lsrow"><span class="k">現状評価</span><span>生活習慣アンケートでは、過去に喫煙していましたが、現在はまったく吸っていません。</span></div>
+          <div class="lsrow"><span class="k">行動提案</span><span>現在の禁煙状態をそのまま保ち、今後もたばこを吸わない生活を長く続けてください。</span></div>
+        </div>
+        <div class="lsit">
+          <h4>仕事中の過ごし方</h4>
+          <div class="lsrow"><span class="k">現状評価</span><span>生活習慣アンケートでは、1日の座りっぱなしの時間は8時間と回答されています。</span></div>
+          <div class="lsrow"><span class="k">行動提案</span><span>現在の運動習慣を続けながら、長時間座り続けない過ごし方を加えてください。</span></div>
+        </div>
+        <div class="lsit">
+          <h4>通勤・移動の活かし方</h4>
+          <div class="lsrow"><span class="k">現状評価</span><span>通勤や移動の過ごし方に関する情報は未確認のため、現状は把握できておりません。</span></div>
+          <div class="lsrow"><span class="k">行動提案</span><span>移動機会がある場合、歩行などの身体活動を増やす選択肢を無理なく検討してください。</span></div>
+        </div>
+        <div class="lsit">
+          <h4>余暇の充実と社会的なつながり</h4>
+          <div class="lsrow"><span class="k">現状評価</span><span>余暇の過ごし方や社会的なつながりに関する情報は、現状では未確認の状態です。</span></div>
+          <div class="lsrow"><span class="k">行動提案</span><span>余暇活動や交流を選ぶ場合、ご自身の好みに合った活動を無理のない範囲で選択してください。</span></div>
+        </div>
+        <div class="lsit">
+          <h4>健康管理習慣</h4>
+          <div class="lsrow"><span class="k">現状評価</span><span>現在の体重は69.3kgであり、標準体重の57.5kgとの差を確認しております。</span></div>
+          <div class="lsrow"><span class="k">行動提案</span><span>定期的に、できるだけ同じ条件で体重を記録する習慣を身につけてください。</span></div>
+        </div>
+      </div>
+      <div class="src">ライフスタイル総合 §1〜§6（各節の【現状評価】【行動提案】冒頭文）</div>
+    </div>
+
+    <div class="card" data-card="diet_plan" data-axis="b">
+      <h3>1か月の食事改善プラン</h3>
+      <p>このプランは1か月かけて段階的に食事を整えていく例です。すべての項目を完璧に行う必要はありませんので、ご自身で実行可能な行動を選んでください。</p>
+      <div class="weeks">
+        <div class="wk"><b>第1週</b><span>朝食を抜く習慣を改善し、まずは体にエネルギーを補給することを目的とします。</span></div>
+        <div class="wk"><b>第2週</b><span>朝の習慣に慣れてきたら、食事全体の組み合わせを整えることを目的にします。</span></div>
+        <div class="wk"><b>第3週</b><span>食事の組み合わせに慣れたら、食材の種類を広げて偏りを減らすことを目的にします。</span></div>
+        <div class="wk"><b>第4週</b><span>1か月を振り返り、ご自身にとって無理なく続けられた方法を選ぶことを目的にします。</span></div>
+      </div>
+      <div class="src">食事アドバイス §4</div>
+    </div>
+
+    <div class="card" data-card="nutrients" data-axis="b">
+      <h3>必要とする栄養素/サプリ情報</h3>
+      <p>優先候補は食物繊維です。</p>
+      <p>普段の食事を振り返り、野菜、海藻、きのこ、豆類、果物、麦や雑穀を1週間にどのくらい食べているか思い出してみてください。</p>
+      <p>食物繊維は、サプリメントよりも食事から補うことを優先します。</p>
+      <div class="src">必要とする栄養素/サプリ情報 §1〜§3</div>
+    </div>
+
+    <div class="card" data-note>
+      <h3>全編</h3>
+      <p class="muted">
+        ダイジェストで選ばれなかった文はここに全部あります（捨てていません）。
+        画面では章ごとの折りたたみで、<b>既定は全章を畳む</b>。<code>?print=1</code> では全展開します。<br>
+        アブストラクト／総評／検査値フィードバック／食事アドバイス／運動アドバイス／睡眠・ストレス管理／
+        ライフスタイル総合／医療受診の目安／必要とする栄養素/サプリ情報／リファレンス
+      </p>
+    </div>
+
+  </div>
+</div>
+
+</body></html>
