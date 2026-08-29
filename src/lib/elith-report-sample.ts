@@ -21,24 +21,6 @@
 
 import type { ElithSection } from './elith-parser';
 import { AI_PREVENTION_REPORT_LABEL } from './display-names';
-import REPORT_TEXT_20260826 from '../data/elith/report_text_20260826.json';
-import HEALTH_CHECKUP_20260826 from '../data/elith/health_checkup_20260826.json';
-
-/**
- * **新形式のサンプル (2026-08-26 受領分)** — 報告書生成機能はこちらを使う。
- *
- * 下の `ELITH_REPORT_SAMPLE` (Stage2・PDF 抽出の配列) は**旧 3 モード表示の名残**で、
- * 原本 PDF (`ELITH_REPORT_PDF`) と対になっている。新形式には `[pN]` が無く
- * ページジャンプが成立しないため、生成側では使わない
- * (`docs/elith/ai_prevention_report_generation_spec.md` §5.1)。
- *
- * 【PII】**合成検体**で氏名・生年月日・連絡先の記載なし (実測で確認済・spec §7.0)。
- * 【二重管理しない】回帰チェック (`npm run verify:report-model`) も同じファイルを読む。
- */
-export const ELITH_REPORT_TEXT_SAMPLE: unknown = REPORT_TEXT_20260826;
-export const ELITH_CHECKUP_SAMPLE: unknown = HEALTH_CHECKUP_20260826;
-/** 受領日 (紙面の作成日として出す)。 */
-export const ELITH_SAMPLE_ISSUED_ON = '2026-08-26';
 
 /** 原本 PDF (public 配下)。 */
 export const ELITH_REPORT_PDF = {

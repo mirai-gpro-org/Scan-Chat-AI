@@ -19,15 +19,9 @@
 import { getServerSupabase } from './supabase';
 import { getOriginalSignedUrl } from './originals-storage';
 import { demoFallbackEnabled } from './demo-data';
-import {
-  ELITH_REPORT_SAMPLE, ELITH_REPORT_PDF, ELITH_REPORT_PAGES,
-  ELITH_REPORT_TEXT_SAMPLE, ELITH_CHECKUP_SAMPLE, ELITH_SAMPLE_ISSUED_ON,
-} from './elith-report-sample';
+import { ELITH_REPORT_SAMPLE, ELITH_REPORT_PDF, ELITH_REPORT_PAGES } from './elith-report-sample';
 import type { ElithSection } from './elith-parser';
 import { AI_PREVENTION_REPORT_LABEL } from './display-names';
-import { buildReportVM } from './report-adapter';
-import { refreshConfig } from './app-config';
-import type { CycleVM, ReportType, ReportVM } from './report-model';
 
 export interface ElithReportView {
   sections: ElithSection[];
@@ -102,112 +96,5 @@ export async function loadElithReport(diagnosticUserId: string | null): Promise<
     };
   } catch {
     return sampleView();
-  }
-}
-
-// ───────────────────────────────────────────────────────────────
-// 報告書生成 (パイプライン⑥・新形式)
-// ───────────────────────────────────────────────────────────────
-
-/** 表紙・タイプ判定に要る、アプリ側が持っている情報 (spec §4.0.0)。 */
-export interface ReportContext {
-  /** 氏名。**本人への表示なので出す** (spec §4.0.0.1)。 */
-  name?: string | null;
-  /** 生年月日。ウェルネス年齢と並べる実年齢の算出に使う。 */
-  dateOfBirth?: string | null;
-  /**
-   * その回の入力に**がんリスク検査があったか** (spec §1.0.3)。
-   * **Elith 出力から推測しない。** アプリが持つ情報で決める。
-   */
-  hasCancerRiskTest?: boolean;
-  /** `customer.subscriptions` の値 (spec §4.0.0.2)。単品購入では行が無いので null。 */
-  cycle?: CycleVM | null;
-  /** 当社 CABA の算出値。Elith の値と不一致なら監査に出す (spec §1.3.8)。 */
-  ownWellnessAge?: number | null;
-}
-
-/** 生年月日から満年齢。日付が読めなければ null (推測しない)。 */
-export function ageFromDateOfBirth(dob: string | null | undefined, on = new Date()): number | null {
-  if (!dob) return null;
-  const d = new Date(dob);
-  if (Number.isNaN(d.getTime())) return null;
-  let age = on.getFullYear() - d.getFullYear();
-  const before = on.getMonth() < d.getMonth()
-    || (on.getMonth() === d.getMonth() && on.getDate() < d.getDate());
-  if (before) age -= 1;
-  return age >= 0 && age < 130 ? age : null;
-}
-
-/**
- * 最新の AI疾病予防報告書を **表示モデル**として取得する (spec §1.3.3)。
- *
- * 実データが無いあいだは **2026-08-26 受領分のサンプル**を出す。
- * 旧 `loadElithReport()` は 3 モード表示 (原本 PDF ビューア) 用に残してある。
- */
-export async function loadReportVM(
-  diagnosticUserId: string | null,
-  ctx: ReportContext = {},
-): Promise<ReportVM> {
-  await refreshConfig();
-
-  const type: ReportType = ctx.hasCancerRiskTest ? 'course' : 'single';
-  const common = {
-    type,
-    name: ctx.name ?? null,
-    actualAge: ageFromDateOfBirth(ctx.dateOfBirth),
-    cycle: ctx.cycle ?? null,
-    ownWellnessAge: ctx.ownWellnessAge ?? null,
-  };
-
-  const sample = (): ReportVM => buildReportVM({
-    ...common,
-    reportText: ELITH_REPORT_TEXT_SAMPLE,
-    checkup: ELITH_CHECKUP_SAMPLE,
-    issuedOn: ELITH_SAMPLE_ISSUED_ON,
-    isSample: true,
-  });
-
-  const sb = getServerSupabase();
-  if (!sb || !diagnosticUserId) return sample();
-
-  interface Row { report: unknown; checkup_values?: unknown; received_at: string }
-
-  /**
-   * `checkup_values` は 20260829000010 で追加した列 (spec §8.2)。
-   * **マイグレーション未適用の環境では select ごと失敗する** ので、
-   * その時だけ列を外して引き直す。実データがあるのに黙ってサンプルへ落とさないため。
-   */
-  const fetchRow = async (withCheckup: boolean): Promise<Row | null> => {
-    const cols = withCheckup ? 'report, checkup_values, received_at, status' : 'report, received_at, status';
-    const { data, error } = await (sb.schema('diagnosis') as any)
-      .from('diagnosis_results')
-      .select(cols)
-      .eq('diagnostic_user_id', diagnosticUserId)
-      .neq('status', 'superseded')
-      .not('report', 'is', null)
-      .order('received_at', { ascending: false })
-      .limit(1);
-    if (error) throw error;
-    return ((data ?? [])[0] as Row | undefined) ?? null;
-  };
-
-  try {
-    let row: Row | null;
-    try {
-      row = await fetchRow(true);
-    } catch {
-      row = await fetchRow(false);
-    }
-    if (!row) return sample();
-
-    return buildReportVM({
-      ...common,
-      reportText: row.report,
-      checkup: row.checkup_values ?? null,
-      issuedOn: String(row.received_at).slice(0, 10),
-      isSample: false,
-    });
-  } catch {
-    return sample();
   }
 }

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | 対象 | パイプライン⑥「AI疾病予防報告書」の生成機能 |
-| 状態 | **未実装。** ブランチ `claude/clever-cray-ngg0h6` に残っている本機能の実装は全て誤りであり、**リバート対象**。対象コミットは各コミットの `git notes` に記載 (§4) |
+| 状態 | **未実装。** 2026-08-29 の実装 (P0〜P4) は**リバート済み** (§4)。作り直しは仕様書から始める |
 | デプロイ元 | Scan-Chat-AI `claude/awesome-carson-UeyUZ` / wellfort-site `claude/wellfort-ui-design-draft-7y8dup` |
 
 **本書に書くのは ミッション・設計ポリシー・参照ドキュメント だけ。**
@@ -160,19 +160,33 @@
 
 ---
 
-## 4. リバート対象
+## 4. リバート (2026-08-29 実施済み)
 
-ブランチ `claude/clever-cray-ngg0h6` に残っている本機能の実装コミットは
-**全て誤った実装であり、リバートする**。
+2026-08-29 に入れた本機能の実装 (Scan-Chat-AI 11 件・wellfort-site 2 件) は
+**全て誤った実装であり、リバート済み**。**確定仕様として参照しないこと。**
 
-**対象コミットの一覧 = `docs/elith/ai_prevention_report_REVERT_LIST.md`**
-(Scan-Chat-AI 11 件・wellfort-site 2 件・併せて外すもの)。
+内容は `docs/elith/ai_prevention_report_REVERT_LIST.md`。要点だけ:
 
-**Scan-Chat-AI の 11 件中 10 件は既にデプロイ元ブランチ
-`claude/awesome-carson-UeyUZ` に入っている** (= 本番へ反映済み)。
-リバートは作業ブランチとデプロイ元の両方に要る。
-wellfort-site 側の admin 抽出監査 UI も本番へマージ済み。
+- **戻った**: `report.astro` は旧 3 モード (a/b/c) に、
+  `api/admin/elith-report/upload.ts` は **PDF 必須**に戻っている。
+- **消えた**: `report-adapter.ts` / `report-model.ts` / `report-sections.ts` /
+  `api/admin/elith-report/audit.ts` / `scripts/verify-report-model.ts` /
+  `diagnosis_results.checkup_values` 列 / `app_config` の 5 キー
+  (`ui.cancer_screening_not_included` ＋ `report.sections.*` 4 本)。
+- **残した**: §2.3 の受領 JSON 2 点 (`src/data/elith/`)。参照コードは無いが素材として要る。
 
-`CLAUDE.md` の「AI疾病予防報告書」節にある **【実装】P0〜P4 の記述も同じくリバート対象**
-(実装の記録であって確定仕様ではない)。仕様の正本は
-`docs/elith/ai_prevention_report_generation_spec.md`。
+### 4.1 作り直す人が先に知っておくべき 2 点
+
+1. **`elith-report-highlights.ts` は実データで無言で空になる。**
+   `（判定区分：）` と `[pN]` に依存しているが、受領 JSON (2026-08-26) はどちらも **0 件**。
+   旧サンプルの `[pN]` 10 件は**アプリが PDF 抽出時に付けたページマーカー**で、
+   Elith 由来ではない (Stage2 PDF 原本も 0 件)。**サンプルでは動き実データで何も出ない。**
+   → 検出は Elith 自身の判定文 (`基準範囲を上…` = 受領 JSON に 5 件) へ差し替える (spec §5.2)。
+   `report.astro:7` が import しているので、片方だけ触るとビルドが通らない。
+2. **`checkup_values` 列は「Supabase へ未適用」を前提に消した。**
+   当方から Supabase の実状態は確認できない (未確認)。適用済みの環境があれば別途判断が要る。
+
+### 4.2 実装で得た実測 (設計判断ではなく事実)
+
+`docs/elith/ai_prevention_report_generation_spec.md` §9.2 に表で残してある。
+同じ穴を踏まないために、着手前に目を通すこと。
