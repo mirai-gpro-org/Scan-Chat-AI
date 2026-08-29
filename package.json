@@ -14,7 +14,8 @@
     "preview": "astro preview",
     "check": "astro check",
     "astro": "astro",
-    "verify:blood-csv": "esbuild scripts/verify-blood-csv-structure.ts --bundle --platform=node --format=esm | node --input-type=module"
+    "verify:blood-csv": "esbuild scripts/verify-blood-csv-structure.ts --bundle --platform=node --format=esm | node --input-type=module",
+    "verify:report-model": "esbuild scripts/verify-report-model.ts --bundle --platform=node --format=esm --log-level=error | node --input-type=module"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.9",

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | 対象 | パイプライン⑥「AI疾病予防報告書」の生成機能 |
-| 状態 | **未実装。** 2026-08-29 の実装 (P0〜P4) は**リバート済み** (§4)。作り直しは仕様書から始める |
+| 状態 | **パイロット版 v0.1 実装済み** (spec §9.3)。対象はタイプ2 のみ。1 回目の実装 (P0〜P4) はリバート済み (§4) |
 | デプロイ元 | Scan-Chat-AI `claude/awesome-carson-UeyUZ` / wellfort-site `claude/wellfort-ui-design-draft-7y8dup` |
 
 **本書に書くのは ミッション・設計ポリシー・参照ドキュメント だけ。**
@@ -163,38 +163,37 @@
 
 ---
 
-## 4. リバート (2026-08-29 実施済み)
+## 4. 実装の履歴
 
-2026-08-29 に入れた本機能の実装 (Scan-Chat-AI 11 件・wellfort-site 2 件) は
-**全て誤った実装であり、リバート済み**。**確定仕様として参照しないこと。**
+### 4.1 1 回目 (リバート済み)
 
-内容は `docs/elith/ai_prevention_report_REVERT_LIST.md`。要点だけ:
+2026-08-29 に入れた実装 (Scan-Chat-AI 11 件・wellfort-site 2 件) は
+**可読化 (§1.3) を満たしておらず全て取り消した** (画面本文 20,297 字 / 受領本文 20,490 字 =
+削減率 1%)。内容は `docs/elith/ai_prevention_report_REVERT_LIST.md`。
+**確定仕様として参照しないこと。**
 
-- **戻った**: `report.astro` は旧 3 モード (a/b/c) に、
-  `api/admin/elith-report/upload.ts` は **PDF 必須**に戻っている。
-- **消えた**: `report-adapter.ts` / `report-model.ts` / `report-sections.ts` /
-  `api/admin/elith-report/audit.ts` / `scripts/verify-report-model.ts` /
-  `app_config` の 5 キー (`ui.cancer_screening_not_included` ＋ `report.sections.*` 4 本)。
-- **残した**: §2.3 の受領 JSON 2 点 (`src/data/elith/`)。参照コードは無いが素材として要る。
+### 4.2 2 回目 = パイロット版 v0.1 (実装済み)
 
-### 4.1 作り直す人が先に知っておくべき 2 点
+正本は spec §9.3。**1 回目との差は「ダイジェストと全編を分けたこと」** —
+出す文を選んで構造に置き、選ばれなかった文は全編に畳んで置く。
+実測: 受領本文 20,046 字 → ダイジェスト 1,478 字 (**削減率 92.6%**)。
 
-1. **`elith-report-highlights.ts` は実データで無言で空になる。**
-   `（判定区分：）` と `[pN]` に依存しているが、受領 JSON (2026-08-26) はどちらも **0 件**。
-   旧サンプルの `[pN]` 10 件は**アプリが PDF 抽出時に付けたページマーカー**で、
-   Elith 由来ではない (Stage2 PDF 原本も 0 件)。**サンプルでは動き実データで何も出ない。**
-   → 検出は Elith 自身の判定文 (`基準範囲を上…` = 受領 JSON に 5 件) へ差し替える (spec §5.2)。
-   `report.astro:7` が import しているので、片方だけ触るとビルドが通らない。
-2. **`diagnosis.diagnosis_results.checkup_values` 列は DB に存在するが、使うコードが無い。**
-   マイグレーション `20260829000010_diagnosis_report_checkup.sql` は **Supabase へ適用済み**
-   (発注者確認 2026-08-29) なのでファイルも残してある。リバートで読み書きが消えたため
-   **列は常に null**。受け皿は作り直しでも要る (spec §8.2) ので `drop column` はしない。
-   コメントの食い違い (`report` 列が `elith-v2.0` に言及していた等) は
-   `20260829000020_diagnosis_report_checkup_comment.sql` で直してある。**`db push` が要る。**
-   **適用済みのマイグレーションは編集して当て直さないこと** — `db push` はスキップするので
-   新環境にしか届かず、同じファイル名で中身の違う DB が並ぶ。
+**「選択」であって「圧縮」ではない。** `npm run verify:report-model` が、紙面に出る全文が
+受領 JSON の**部分文字列**であることを機械で確かめる (68/68)。
 
-### 4.2 実装で得た実測 (設計判断ではなく事実)
+### 4.3 触る前に知っておくべきこと
 
-`docs/elith/ai_prevention_report_generation_spec.md` §9.2 に表で残してある。
-同じ穴を踏まないために、着手前に目を通すこと。
+1. **紙面に出る当社の文は 1 か所だけ。** `report-adapter.ts` の
+   `PILOT_CANCER_FINDING_TEXT` (タイプ2 の主軸 A「今回の所見」の 2 文)。
+   **Elith へ依頼中の文型そのもの**で、発注者指示によりパイロット版はこのまま出す。
+   回答を得たら Elith の `cancer_screening.text` か
+   `ui.cancer_screening_not_included` へ置き換わり、この定数は消える。
+   **これ以外に当社の文を紙面へ足さないこと** (spec §1.0.0)。
+2. **全編は既定で全章を畳む。** 開くとダイジェストと同じ内容が二重に流れ、
+   1 回目と同じ画面になる。回帰チェックで固定してある。
+3. **`diagnosis_results.checkup_values` 列**はマイグレーション適用済み
+   (`20260829000010` ＋ コメント修正 `20260829000020`)。取込 API と表示が読み書きする。
+   **適用済みのマイグレーションは編集して当て直さない** — `supabase db push` は
+   `schema_migrations` を見て未適用ぶんだけ当てるので、編集は新環境にしか届かない。
+4. **回帰チェックを先に読む** (`scripts/verify-report-model.ts`)。
+   守っている不変条件がそのまま書いてある。実装バグを 3 件捕まえた実績がある (spec §9.3)。

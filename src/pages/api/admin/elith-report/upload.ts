@@ -1,24 +1,35 @@
 /**
- * admin: Elith の AI疾病予防報告書 (PDF) 取込 API — パイプライン⑥ の暫定実装。
+ * admin: Elith の AI疾病予防報告書 取込 API — パイプライン⑥。
  *
- * 経路: Elith → S3 → (Wellfort 管理者が取得) → 本 API → 原本ストレージ + diagnosis_results
- *   `docs/lab/lab_data_pipeline_master_spec.md:24,96` の「AI診断結果(PDF)を受取→Webアプリへ表示」。
+ * 正本: docs/elith/ai_prevention_report_generation_spec.md §8
  *
- * 【暫定である理由】受取仕様 (命名規則・出力トリガ・世代管理・ひも付け・受領確認) は同 :98 のとおり
- *   未確定。確定するまでは「管理者が手で上げる」経路だけを用意し、自動受信は作らない。
- *   世代管理は暫定で、同一ユーザーの既存行を `status='superseded'` に落として新しい行を足す。
+ * 【受領は 1 件 = 3 ファイル】(spec §2)
+ *   | 受領物                | フォーム項目     | 格納先                        |
+ *   |-----------------------|------------------|-------------------------------|
+ *   | `report_text.json`    | `report_text`    | `report` (jsonb)              |
+ *   | `health_checkup.json` | `health_checkup` | `checkup_values` (jsonb)      |
+ *   | 組版済み PDF          | `file`           | `report_pdf_*` (**原本保管**) |
+ *
+ *   **PDF は任意**。表示の主役は JSON で、PDF は JSON の部分集合 (固有情報ゼロ・spec §2.3)。
+ *   旧 `sections` (配列) も後方互換で受ける。**3 つとも無ければ 400** (空の行を作らない)。
+ *
+ * 【暫定である理由】受取仕様 (命名規則・出力トリガ・世代管理・ひも付け・受領確認) は
+ *   `docs/lab/lab_data_pipeline_master_spec.md:98` のとおり未確定。確定するまでは
+ *   「管理者が手で上げる」経路だけを用意し、自動受信は作らない。
  *
  * 【責務の分界】UI は wellfort-site 側 (CLAUDE.md「admin UI は wellfort-site に置く」)。
- *   本ファイルは API のみ。認可は Bearer ADMIN_API_KEY (wellfort_admin_lab_upload_spec §6-1)。
+ *   本ファイルは API のみ。認可は Bearer ADMIN_API_KEY。
  *
- * 【原則】レポート本文の要約・解釈はしない。`sections` は呼び出し側が渡した本文をそのまま格納する
- *   (表示側 report.astro もレポート自身の章をそのまま出すだけ)。
+ * 【原則】本文の要約・解釈はしない。受領したものをそのまま格納する。
+ *   応答の件数は**表示と同じアダプタ**で数える — 別の数え方をすると
+ *   「取り込めたつもりで画面が空」を検知できない (spec §1.3.6)。
  */
 
 import type { APIRoute } from 'astro';
 import { getServerSupabase } from '../../../../lib/supabase';
 import { putOriginal } from '../../../../lib/originals-storage';
 import { isAdminAuthorized } from '../../../../lib/api-auth';
+import { buildReportVM } from '../../../../lib/report-adapter';
 
 export const prerender = false;
 
@@ -58,41 +69,80 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ ok: false, error: 'invalid diagnostic_user_id' }, 400);
   }
 
-  const file = form.get('file');
-  if (!(file instanceof File)) return json({ ok: false, error: 'no file' }, 400);
-  if (!file.name.toLowerCase().endsWith('.pdf')) return json({ ok: false, error: 'pdf only' }, 400);
-  if (file.size > MAX_FILE_SIZE) {
-    return json({ ok: false, error: 'too_large', detail: `> ${MAX_FILE_SIZE / 1024 / 1024} MB` }, 413);
-  }
+  /** File でも文字列でも JSON を受ける (wellfort-site 側の実装に依存させない)。 */
+  const readJson = async (name: string): Promise<{ ok: true; value: unknown } | { ok: false } | null> => {
+    const v = form.get(name);
+    let raw: string;
+    if (v instanceof File) raw = (await v.text()).trim();
+    else if (typeof v === 'string') raw = v.trim();
+    else return null;
+    if (!raw) return null;
+    try { return { ok: true, value: JSON.parse(raw) }; } catch { return { ok: false }; }
+  };
 
-  // レポート本文 (章配列)。渡されなければ空配列 = PDF のみの取込。
-  let sections: unknown = [];
-  const rawSections = form.get('sections');
-  if (typeof rawSections === 'string' && rawSections.trim()) {
-    try {
-      sections = JSON.parse(rawSections);
-    } catch {
-      return json({ ok: false, error: 'invalid sections json' }, 400);
+  // report_text.json (新形式 dict)。無ければ旧 sections (配列) を見る。
+  let report: unknown = null;
+  let schemaVersion = 'elith-v1.0';
+  const rt = await readJson('report_text');
+  if (rt && !rt.ok) return json({ ok: false, error: 'invalid report_text json' }, 400);
+  if (rt?.ok) {
+    if (!rt.value || typeof rt.value !== 'object') {
+      return json({ ok: false, error: 'report_text must be an object or array' }, 400);
     }
-    if (!Array.isArray(sections)) return json({ ok: false, error: 'sections must be an array' }, 400);
+    report = rt.value;
+    // 新形式 (dict) を入れたときだけ版を上げる。配列で来たら旧形式のまま。
+    schemaVersion = Array.isArray(rt.value) ? 'elith-v1.0' : 'elith-v2.0';
+  } else {
+    const legacy = await readJson('sections');
+    if (legacy && !legacy.ok) return json({ ok: false, error: 'invalid sections json' }, 400);
+    if (legacy?.ok) {
+      if (!Array.isArray(legacy.value)) return json({ ok: false, error: 'sections must be an array' }, 400);
+      report = legacy.value;
+    }
   }
 
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  // health_checkup.json (40 項目)。
+  let checkup: Record<string, { date?: string; value?: unknown }[]> | null = null;
+  const hc = await readJson('health_checkup');
+  if (hc && !hc.ok) return json({ ok: false, error: 'invalid health_checkup json' }, 400);
+  if (hc?.ok) {
+    if (!hc.value || typeof hc.value !== 'object' || Array.isArray(hc.value)) {
+      return json({ ok: false, error: 'health_checkup must be an object' }, 400);
+    }
+    checkup = hc.value as Record<string, { date?: string; value?: unknown }[]>;
+  }
+
+  // PDF は任意 (原本として保管するだけ)。
+  const file = form.get('file');
+  if (file instanceof File) {
+    if (!file.name.toLowerCase().endsWith('.pdf')) return json({ ok: false, error: 'pdf only' }, 400);
+    if (file.size > MAX_FILE_SIZE) {
+      return json({ ok: false, error: 'too_large', detail: `> ${MAX_FILE_SIZE / 1024 / 1024} MB` }, 413);
+    }
+  } else if (report === null && checkup === null) {
+    // 3 つとも無い = 取り込むものが無い。**空の行を作らない。**
+    return json({ ok: false, error: 'nothing_to_ingest',
+      detail: 'report_text / health_checkup / file のいずれかが要る' }, 400);
+  }
+
   const now = new Date();
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  // PII を含まない diagnostic_user_id のみでパスを作る (customer スキーマの値は使わない)。
-  const key = `elith_reports/${diagnosticUserId}/${yyyy}/${mm}/${file.name}`;
+  let stored: { storageUrl: string; sha256: string; backend: string } | null = null;
+  let pages: number | null = null;
 
-  let stored;
-  try {
-    stored = await putOriginal({ key, contentType: 'application/pdf', body: bytes });
-  } catch (e) {
-    return json({ ok: false, error: 'storage_failed', detail: String((e as Error)?.message ?? e) }, 502);
+  if (file instanceof File) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    // PII を含まない diagnostic_user_id のみでパスを作る (customer スキーマの値は使わない)。
+    const key = `elith_reports/${diagnosticUserId}/${yyyy}/${mm}/${file.name}`;
+    try {
+      stored = await putOriginal({ key, contentType: 'application/pdf', body: bytes });
+    } catch (e) {
+      return json({ ok: false, error: 'storage_failed', detail: String((e as Error)?.message ?? e) }, 502);
+    }
+    const pagesParam = Number(form.get('pages'));
+    pages = Number.isFinite(pagesParam) && pagesParam > 0 ? Math.trunc(pagesParam) : guessPageCount(bytes);
   }
-
-  const pagesParam = Number(form.get('pages'));
-  const pages = Number.isFinite(pagesParam) && pagesParam > 0 ? Math.trunc(pagesParam) : guessPageCount(bytes);
 
   const receivedAt = now.toISOString();
   const db = sb.schema('diagnosis') as unknown as { from: (t: string) => any };
@@ -110,26 +160,43 @@ export const POST: APIRoute = async ({ request }) => {
     .insert({
       diagnostic_user_id:     diagnosticUserId,
       diagnostic_id:          crypto.randomUUID(),
-      report:                 sections,
+      report:                 report,
+      checkup_values:         checkup,
+      schema_version:         schemaVersion,
       status:                 'received',
       received_at:            receivedAt,
-      report_pdf_url:         stored.storageUrl,
-      report_pdf_sha256:      stored.sha256,
+      report_pdf_url:         stored?.storageUrl ?? null,
+      report_pdf_sha256:      stored?.sha256 ?? null,
       report_pdf_pages:       pages,
-      report_pdf_received_at: receivedAt,
+      report_pdf_received_at: stored ? receivedAt : null,
     })
     .select('id')
     .single();
   if (error) return json({ ok: false, error: 'db_failed', detail: error.message }, 500);
 
+  // 取り込めた中身を**表示と同じアダプタで数えて**返す。
+  // 別の数え方をすると「取り込めたつもりで画面が空」を検知できない (spec §1.3.6)。
+  const vm = buildReportVM({
+    reportText: report, checkup, name: '', issuedOn: receivedAt.slice(0, 10),
+    isSample: false, hasCancerRisk: false, cycleSeq: null, chronologicalAge: null,
+  });
+
   return json({
     ok: true,
     id: data?.id ?? null,
-    backend: stored.backend,
-    storage_url: stored.storageUrl,
-    sha256: stored.sha256,
-    pages,
-    sections: Array.isArray(sections) ? sections.length : 0,
+    schema_version: schemaVersion,
+    pdf: stored ? { backend: stored.backend, storage_url: stored.storageUrl, sha256: stored.sha256, pages } : null,
+    ingested: {
+      sections: vm.audit.sections.length,
+      section_names: vm.audit.sections,
+      wellness_age: vm.cover.wellnessAge,
+      measurements: vm.audit.measurementCount,
+      references: vm.audit.referenceCount,
+      topics: vm.audit.topicCount,
+      digest_cards: vm.audit.digestCards,
+      empty_cards: vm.audit.emptyCards,
+    },
+    warnings: vm.audit.anomalies,
   });
 };
 
