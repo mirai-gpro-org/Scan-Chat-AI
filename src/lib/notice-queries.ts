@@ -104,7 +104,7 @@ export async function loadNotices(
     (importantRaw?.length ?? 0) === 0 &&
     (generalRaw?.length ?? 0) === 0 &&
     (newsRaw?.length ?? 0) === 0;
-  if (demoFallbackEnabled() && (anyErr || allEmpty)) {
+  if (demoFallbackEnabled(diagnosticUserId) && (anyErr || allEmpty)) {
     return buildDemoNotices(diagnosticUserId, userName);
   }
 
@@ -137,7 +137,7 @@ export async function countUnreadImportant(diagnosticUserId: string): Promise<nu
     .select('id', { count: 'exact', head: true })
     .eq('diagnostic_user_id', diagnosticUserId)
     .is('read_at', null);
-  if (error) return demoFallbackEnabled() ? demoUnreadImportant() : 0;
-  if ((count ?? 0) === 0 && demoFallbackEnabled()) return demoUnreadImportant();
+  if (error) return demoFallbackEnabled(diagnosticUserId) ? demoUnreadImportant() : 0;
+  if ((count ?? 0) === 0 && demoFallbackEnabled(diagnosticUserId)) return demoUnreadImportant();
   return count ?? 0;
 }

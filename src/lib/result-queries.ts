@@ -78,10 +78,15 @@ const HIGHLIGHT_NAMES = [
 
 export async function loadResult(
   artifactId: string,
+  /**
+   * 閲覧者の diagnostic_user_id。**デモ層の可否判定にだけ使う**
+   * (2026-08-30・デモは admin 限定)。省略時は非 admin 扱い。
+   */
+  viewerUid?: string | null,
 ): Promise<ResultData | { error: string }> {
   // デモ層 (demo-data.ts) の検査履歴から来た id。DB には存在しないので
   // ここで組み立てて返す。これが無いと検査履歴のリンクがエラー画面になる。
-  if (artifactId.startsWith('demo-art-')) return demoResult(artifactId);
+  if (artifactId.startsWith('demo-art-')) return demoResult(artifactId, viewerUid);
 
   if (!/^[0-9a-f-]{36}$/i.test(artifactId)) {
     return { error: '不正な検査 ID です。' };
@@ -207,8 +212,8 @@ async function resolveOriginal(
  * デモ層の検査 1 件。原本はまだ無いので検査種別のサンプル PDF を出す。
  * AI 診断レポートは載せない (実データ経路と同じ扱い — /report が正)。
  */
-function demoResult(artifactId: string): ResultData | { error: string } {
-  if (!demoFallbackEnabled()) return { error: '検査結果が見つかりません。' };
+function demoResult(artifactId: string, viewerUid?: string | null): ResultData | { error: string } {
+  if (!demoFallbackEnabled(viewerUid)) return { error: '検査結果が見つかりません。' };
   const artifact = demoArtifacts('').find((a) => a.id === artifactId);
   if (!artifact) return { error: '検査結果が見つかりません。' };
   const samplePdf = SAMPLE_PDF_MAP[artifact.test_type] ?? null;

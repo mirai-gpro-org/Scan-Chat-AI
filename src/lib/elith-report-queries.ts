@@ -82,7 +82,7 @@ export async function loadElithReport(diagnosticUserId: string | null): Promise<
     const row = (data ?? [])[0] as
       | { report: unknown; report_pdf_url: string; report_pdf_pages: number | null; received_at: string }
       | undefined;
-    if (error || !row) return demoFallbackEnabled() ? sampleView() : { ...sampleView(), sections: [], pdf: null };
+    if (error || !row) return demoFallbackEnabled(diagnosticUserId) ? sampleView() : { ...sampleView(), sections: [], pdf: null };
 
     const url = await getOriginalSignedUrl(row.report_pdf_url);
     if (!url) return sampleView();
@@ -159,13 +159,31 @@ export async function loadReportVM(
     ownWellnessAge: ctx.ownWellnessAge ?? null,
   };
 
-  const sample = (): ReportVM => buildReportVM({
+  /**
+   * 実データが無いときの表示。
+   *
+   * **サンプル報告書は admin にしか出さない (2026-08-30・発注者指示)。**
+   * 実顧客に他人名義のサンプルを「自分の報告書」として見せないため。
+   * 非 admin には材料ゼロの ReportVM を返す (章は材料が無いので出ない = spec §0.3)。
+   */
+  const empty = (): ReportVM => buildReportVM({
     ...common,
-    reportText: ELITH_REPORT_TEXT_SAMPLE,
-    checkup: ELITH_CHECKUP_SAMPLE,
-    issuedOn: ELITH_SAMPLE_ISSUED_ON,
-    isSample: true,
+    reportText: null,
+    checkup: null,
+    issuedOn: '',
+    isSample: false,
   });
+
+  const sample = (): ReportVM =>
+    demoFallbackEnabled(diagnosticUserId)
+      ? buildReportVM({
+          ...common,
+          reportText: ELITH_REPORT_TEXT_SAMPLE,
+          checkup: ELITH_CHECKUP_SAMPLE,
+          issuedOn: ELITH_SAMPLE_ISSUED_ON,
+          isSample: true,
+        })
+      : empty();
 
   const sb = getServerSupabase();
   if (!sb || !diagnosticUserId) return sample();

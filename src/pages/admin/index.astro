@@ -1,13 +1,17 @@
 ---
 import AppIcon from '../../components/AppIcon.astro';
 import BaseLayout from '../../layouts/BaseLayout.astro';
-import { gateByUid, notFoundForNonAdmin } from '../../lib/admin-auth';
+import { notFoundForNonAdmin } from '../../lib/admin-auth';
+import { resolveViewer } from '../../lib/viewer';
 
 export const prerender = false;
 
 const url = new URL(Astro.request.url);
 const u = url.searchParams.get('u');
-const { allowed, uid } = gateByUid(u);
+// admin 判定は Cookie の本人で行う (`?u=` を admin uid にしただけでは通らない)。
+const viewer = await resolveViewer(Astro);
+const allowed = viewer.isAdmin;
+const uid = viewer.uid;
 if (!allowed) {
   return notFoundForNonAdmin();
 }

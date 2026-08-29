@@ -18,6 +18,7 @@ import { getLatestMeasurements } from '../lib/measurement-queries';
 import { countUnreadImportant } from '../lib/notice-queries';
 import { refreshConfig, cfg } from '../lib/app-config';
 import { isBridgeConfigured } from '../lib/supabase';
+import { resolveViewer } from '../lib/viewer';
 import {
   extractUrgentAlert,
   extractDailyQuests,
@@ -28,11 +29,14 @@ import {
 export const prerender = false;
 
 const url = new URL(Astro.request.url);
-const u = url.searchParams.get('u');
+// 入場は Cookie で本人を判定する (`src/lib/viewer.ts`)。`?u=` は admin の代理表示のみ。
+const viewer = await resolveViewer(Astro);
+const u = viewer.uid;
 
 // === [一時デバッグ] HP↔#2 ブリッジ接続状態の可視化 ===
 // `?debug=bridge` を付けて開くとサーバー側 env の有無をUIに表示する。
-const debugBridge = url.searchParams.get('debug') === 'bridge';
+// デバッグ表示は admin だけ (本番相当への切替・2026-08-30)。
+const debugBridge = url.searchParams.get('debug') === 'bridge' && viewer.isAdmin;
 const bridgeConfigured = isBridgeConfigured();
 const bridgeUrlSeen = !!(import.meta.env.HP_BRIDGE_SUPABASE_URL || (typeof process !== 'undefined' ? process.env?.HP_BRIDGE_SUPABASE_URL : ''));
 const bridgeKeySeen = !!(import.meta.env.HP_BRIDGE_READONLY_KEY  || (typeof process !== 'undefined' ? process.env?.HP_BRIDGE_READONLY_KEY  : ''));

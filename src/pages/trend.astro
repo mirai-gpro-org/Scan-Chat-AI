@@ -8,6 +8,7 @@ import { loadDashboard, testTypeLabel } from '../lib/dashboard-queries';
 import { getMeasurementTrend, getTrendCandidates, DEFAULT_TREND_ITEMS } from '../lib/measurement-queries';
 import { countUnreadImportant } from '../lib/notice-queries';
 import { refreshConfig, cfg } from '../lib/app-config';
+import { resolveViewer } from '../lib/viewer';
 
 /**
  * 検査値の推移 (グラフ)。ダッシュボードの検査カードにある「グラフ」の遷移先。
@@ -27,7 +28,9 @@ export const prerender = false;
 const MAX_ITEMS = 8;
 
 const url = new URL(Astro.request.url);
-const u = url.searchParams.get('u');
+// 入場は Cookie で本人を判定する (`src/lib/viewer.ts`)。`?u=` は admin の代理表示のみ。
+const viewer = await resolveViewer(Astro);
+const u = viewer.uid;
 const type = url.searchParams.get('type');
 
 const authEnabled = !!import.meta.env.PUBLIC_GOOGLE_CLIENT_ID;

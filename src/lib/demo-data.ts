@@ -11,6 +11,7 @@
  * ※ これは表示用フォールバックであり DB には書き込まない。
  */
 
+import { isAdminUid } from './admin-auth';
 import type { ElithSection } from './elith-parser';
 import type { DashboardData, MetricTrendSeries } from './dashboard-queries';
 import type { NoticesData } from './notice-queries';
@@ -23,10 +24,46 @@ import type {
   UserNotice,
 } from '../types/supabase';
 
-/** ダミーフォールバックが有効か (既定 ON、PUBLIC_DEMO_FALLBACK=false で無効)。 */
-export function demoFallbackEnabled(): boolean {
-  return import.meta.env.PUBLIC_DEMO_FALLBACK !== 'false';
+/**
+ * ダミーフォールバックが有効か。
+ *
+ * **admin 限定 (2026-08-30・発注者指示)。**
+ *   以前は env だけで判定していたため、**検査結果がまだ無い実顧客**
+ *   (購入直後は必ずこの状態) にもダミーが出た。ダッシュボード側に admin 判定は無く
+ *   (`dashboard-queries.loadDashboard`)、サインイン後は一般顧客も本人の uid で
+ *   `?u=` に redirect されて admin と同じコードパスに入る
+ *   (`GoogleOneTap.astro` の resolve → redirect)。
+ *   さらにフォールバック2 (`buildDemoDashboard`) は DB を見ないコード内ダミーなので、
+ *   seed の有無に関わらず必ず発火していた。
+ *   → **「自分のものではない検査結果が、自分の画面に出る」**。9/1 ローンチ前に塞ぐ。
+ *
+ * 判定は 2 条件の AND:
+ *   1. env `PUBLIC_DEMO_FALLBACK` が `'false'` でない (従来どおり。全体を切るスイッチ)
+ *   2. **閲覧中の uid が admin** (`admin-auth.isAdminUid`)
+ *
+ * **uid を渡さない呼び出しは false**（＝ダミーを出さない）。
+ * 呼び出し側が uid を持っていない経路で誤ってダミーが出るより、
+ * 空表示になる方が安全なため fail-safe をこちら側に倒す。
+ *
+ * @param uid 閲覧中の diagnostic_user_id。省略・null は非 admin 扱い。
+ */
+export function demoFallbackEnabled(uid?: string | null): boolean {
+  if (import.meta.env.PUBLIC_DEMO_FALLBACK === 'false') return false;
+  if (isAdminUid(uid)) return true;
+  return DEMO_ALLOWED_UIDS.has((uid ?? '').trim().toLowerCase());
 }
+
+/**
+ * admin ではないが**デモを出してよい** uid。
+ *
+ * OEM 相手先ブランド向けデモ顧客 (山田太郎)。`supabase/demo_oem_account.sql` が
+ * `test_artifacts` / `diagnosis_results` を実際に投入するので通常はフォールバック不要だが、
+ * seed 未適用の環境で画面が空になるのを避けるために残す。
+ * **admin 権限は与えない** (`admin-auth.ADMIN_UIDS` には入れない)。
+ */
+const DEMO_ALLOWED_UIDS: ReadonlySet<string> = new Set([
+  'da000001-0000-0000-0000-000000000000',
+]);
 
 const now = () => new Date();
 const daysAgo = (d: number) => new Date(Date.now() - d * 86400_000).toISOString();
