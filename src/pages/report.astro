@@ -162,71 +162,34 @@ const collapsible = (c: ChapterVM): boolean => !isPrint && c.blocks.length > 1;
     </section>
 
     {/*
-      ══════════ 冒頭トピック = サービスの 2 本柱 ══════════
+      ══════════ 冒頭の目次 = 2 本柱 ══════════
 
-      **設計ポリシー (Wellfort へ提示済み)**:
-        「報告書の冒頭には、サービスの 2 本柱をそのままトピックとして置きます。
-          章の並び・見出しも、この 2 本柱に沿えて構成しました。」
-
-      → 目次を**軸ごとに**組み、**表紙の直後**に置く。保存導線や個々の章より前。
-      当初これを保存導線と目次の下に置いていたため、2 本柱が埋もれていた (2026-08-29 修正)。
-      章ごとの見出し (37 件) は畳んでおく — 冒頭に 37 行並べると 2 本柱が押し出されるため。
+      設計ポリシー「報告書の冒頭に 2 本柱をそのままトピックとして置く / 章の並び・見出しも
+      これに沿える」を、**構造で**満たす。ポリシーの説明文は載せない —
+      あれは Wellfort へ設計意図を説明するための文で、報告書の中身ではない。
+      当社の散文を紙面に置くと「Elith の出力以上の表記をしない」(spec §1.0) に反する。
+      → ここに置くのは**見出しとリンクだけ**。
     */}
     {!isPrint && (
-      <section class="card">
-        <h2 class="mb-1 flex items-center gap-2 text-lg font-bold text-navy-800">
-          <AppIcon name="result" size={20} class="text-brand-700" />
-          この報告書の内容
-        </h2>
-        <p class="mb-3 text-sm leading-relaxed text-slate-600">
-          Welltect は次の 2 つを柱にしています。この報告書も、その順で構成しています。
-        </p>
-        <ol class="flex flex-col gap-2.5">
-          {REPORT_AXES.map((ax, i) => (
-            <li class={`rounded-xl border-l-4 px-4 py-3 ${
-              ax.key === 'A' ? 'border-navy-700 bg-navy-50' : 'border-brand-600 bg-brand-50'
-            }`}>
+      <nav class="card" aria-label="目次">
+        <ol class="flex flex-col gap-3">
+          {REPORT_AXES.map((ax) => (
+            <li>
               <a
                 href={`#axis-${ax.key.toLowerCase()}`}
-                class="text-base font-bold text-navy-800 no-underline hover:underline"
-              >{i + 1}. {ax.title}</a>
-              <p class="mt-0.5 text-sm leading-relaxed text-slate-700">{ax.lead}</p>
-              {vm.chapters.filter((c) => c.axis === ax.key).length > 0 ? (
-                <ul class="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                class="text-lg font-bold text-navy-800 no-underline hover:underline"
+              >{ax.title}</a>
+              {vm.chapters.filter((c) => c.axis === ax.key).length > 0 && (
+                <ul class="mt-1 flex flex-wrap gap-x-3 gap-y-1">
                   {vm.chapters.filter((c) => c.axis === ax.key).map((c) => (
-                    <li><a href={`#${c.anchor}`} class="text-sm text-brand-800 hover:underline">{c.title}</a></li>
+                    <li><a href={`#${c.anchor}`} class="text-base text-brand-800 hover:underline">{c.title}</a></li>
                   ))}
                 </ul>
-              ) : (
-                <p class="mt-2 text-sm text-slate-600">この回は記載がありませんでした。</p>
               )}
             </li>
           ))}
         </ol>
-
-        {toc.length > 0 && (
-          <details class="mt-3 border-t border-slate-200 pt-2">
-            <summary class="cursor-pointer py-1 text-base font-medium text-brand-800">
-              章ごとの見出しを見る
-            </summary>
-            <ul class="mt-2 flex flex-col gap-3">
-              {toc.map((t) => (
-                <li>
-                  <p class="text-base font-semibold text-navy-800">{t.title}</p>
-                  <ul class="mt-1 flex flex-col gap-1">
-                    {t.topics.map((tp) => (
-                      <li>
-                        <a href={`#${tp.id}`} class="text-base text-brand-800 hover:underline">{tp.heading}</a>
-                        {tp.teaser && <span class="ml-1 text-sm text-slate-600">— {tp.teaser}</span>}
-                      </li>
-                    ))}
-                  </ul>
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
-      </section>
+      </nav>
     )}
 
     {/*
@@ -328,18 +291,14 @@ const collapsible = (c: ChapterVM): boolean => !isPrint && c.blocks.length > 1;
       章の出し分け (材料が無い章は出さない) より上位にある。
       ここを章と一体にしていたため、A に材料が無い検体で軸ごと消えていた (2026-08-29 修正)。
     */}
-    <section class="rounded-xl border-l-4 border-navy-700 bg-navy-50 px-4 py-3" id="axis-a">
-      <p class="font-sans text-xs font-semibold tracking-widest text-slate-600">主軸 A</p>
-      <h2 class="mt-0.5 flex items-center gap-2 text-xl font-bold text-navy-800">
-        {!isPrint && <AppIcon name="cancer-risk" size={20} class="text-navy-700" />}
-        {AXIS_A.title}
-      </h2>
-      <p class="mt-1 text-sm leading-relaxed text-slate-700">{AXIS_A.lead}</p>
-    </section>
+    <h2
+      class="mt-2 scroll-mt-20 border-b-2 border-navy-700 pb-1 text-xl font-bold text-navy-800"
+      id="axis-a"
+    >{AXIS_A.title}</h2>
 
     {axisA.map((c) => (
       <section class="card card-hairline" id={c.anchor}>
-        <h2 class="mb-2 text-lg font-bold text-navy-800">{c.title}</h2>
+        <h3 class="mb-2 text-lg font-bold text-navy-800">{c.title}</h3>
         <div class="md-region md-summary" set:html={md(c.body)} />
       </section>
     ))}
@@ -356,18 +315,14 @@ const collapsible = (c: ChapterVM): boolean => !isPrint && c.blocks.length > 1;
     )}
 
     {/* ══════════ 主軸 B ══════════ */}
-    <section class="mt-2 rounded-xl border-l-4 border-brand-600 bg-brand-50 px-4 py-3" id="axis-b">
-      <p class="font-sans text-xs font-semibold tracking-widest text-slate-600">主軸 B</p>
-      <h2 class="mt-0.5 flex items-center gap-2 text-xl font-bold text-navy-800">
-        {!isPrint && <AppIcon name="report" size={20} class="text-brand-700" />}
-        {AXIS_B.title}
-      </h2>
-      <p class="mt-1 text-sm leading-relaxed text-slate-700">{AXIS_B.lead}</p>
-    </section>
+    <h2
+      class="mt-4 scroll-mt-20 border-b-2 border-brand-600 pb-1 text-xl font-bold text-navy-800"
+      id="axis-b"
+    >{AXIS_B.title}</h2>
 
     {axisB.map((c) => (
       <section class="card" id={c.anchor}>
-        <h2 class="mb-2 text-lg font-bold text-navy-800">{c.title}</h2>
+        <h3 class="mb-2 text-lg font-bold text-navy-800">{c.title}</h3>
 
         {/* 検査値の表。**アプリは値と基準値を比べない** — 判定は Elith の原文だけ (spec §5.3)。 */}
         {c.source === 'measurements' && (
