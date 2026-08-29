@@ -49,13 +49,19 @@ const supportContact = cfg('ui.support_contact');
 
 const healthAge = data ? await getHealthAge(data.diagnosticUserId) : null;
 
+/**
+ * その回の入力にがんリスク検査があったか (spec §1.0.3)。**アプリが判定する。**
+ * 見つかればその結果ページへ送れるので、主軸 A の導線もここから決まる。
+ */
+const cancerArtifact = (data?.artifacts ?? []).find((a) => a.test_type === 'cancer_urine') ?? null;
+
 const vm = await loadReportVM({
   diagnosticUserId: data?.diagnosticUserId ?? null,
   name: data?.appUser?.display_name_cache ? withHonorific(data.appUser.display_name_cache) : 'お客様',
   chronologicalAge: healthAge?.latest?.chronologicalAge ?? null,
   ourWellnessAge: healthAge?.latest?.biologicalAge ?? null,
   // タイプ判定はアプリが持つ (spec §1.0.3)。Elith 出力から推測しない。
-  hasCancerRisk: (data?.artifacts ?? []).some((a) => a.test_type === 'cancer_urine'),
+  hasCancerRisk: !!cancerArtifact,
   cycleSeq: data?.subscription?.current_cycle_seq ?? null,
 });
 
@@ -71,7 +77,13 @@ const digestByAxis = (axis: 'a' | 'b') => vm.digest.filter((c) => c.axis === axi
 const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis === axis);
 ---
 
-<BaseLayout title={`${AI_PREVENTION_REPORT_LABEL} | Welltect`} width="flow">
+{/*
+  幅は**ダッシュボードと同じ `app`** (発注者指示 2026-08-29)。この画面はダッシュボードの
+  タイルから来るので、`flow` (lg 以上で 672px 止まり) だと PC・タブレットで直前の画面より
+  急に狭くなる。**長文の行長は器ではなく本文側で 38em に止める** (`.report-prose`) ので、
+  器を広げても和文 1 行が 90 字に伸びることはなく、表だけが広い幅を使える。
+*/}
+<BaseLayout title={`${AI_PREVENTION_REPORT_LABEL} | Welltect`} width="app">
   {!isPrint && (
     <AppNav u={u} current="/report" unreadNotices={unreadNotices} supportContact={supportContact} />
   )}
@@ -150,7 +162,7 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
             {card.blocks.map((block) => (
               <>
                 {block.kind === 'paragraphs' && block.items.map((t) => (
-                  <p class="text-base leading-relaxed text-slate-800">{t}</p>
+                  <p class="report-prose text-base leading-relaxed text-slate-800">{t}</p>
                 ))}
 
                 {block.kind === 'steps' && (
@@ -158,7 +170,7 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
                     {block.items.map((s) => (
                       <li>
                         <b class="text-navy-800">{s.heading}</b>
-                        <span class="mt-0.5 block leading-relaxed text-slate-800">{s.text}</span>
+                        <span class="report-prose mt-0.5 block leading-relaxed text-slate-800">{s.text}</span>
                       </li>
                     ))}
                   </ol>
@@ -213,7 +225,7 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
                     {block.items.map((p) => (
                       <div class="border-b border-dashed border-slate-200 pb-3 last:border-b-0 last:pb-0">
                         <dt class="text-base font-bold text-navy-800">{p.heading}</dt>
-                        <dd class="mt-1 grid grid-cols-[5.4rem_1fr] gap-x-2 gap-y-1 text-base leading-relaxed max-[520px]:grid-cols-1">
+                        <dd class="report-prose mt-1 grid grid-cols-[5.4rem_1fr] gap-x-2 gap-y-1 text-base leading-relaxed max-[520px]:grid-cols-1">
                           <span class="pt-0.5 text-xs font-semibold text-slate-600">現状評価</span>
                           <span class="text-slate-800">{p.current}</span>
                           <span class="pt-0.5 text-xs font-semibold text-slate-600">行動提案</span>
@@ -229,7 +241,7 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
                     {block.items.map((w) => (
                       <div class="grid grid-cols-[3.6rem_1fr] gap-3 border-b border-slate-100 py-2 text-base last:border-b-0">
                         <b class="pt-0.5 text-sm text-brand-800">{w.heading}</b>
-                        <span class="leading-relaxed text-slate-800">{w.text}</span>
+                        <span class="report-prose leading-relaxed text-slate-800">{w.text}</span>
                       </div>
                     ))}
                   </div>
@@ -241,10 +253,33 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
           </article>
         ))}
 
-        {/* A に材料が無い回でも帯は立つ。**アプリが代わりの所見を書かない** (spec §4.0.1)。 */}
-        {axis.key === 'a' && !digestByAxis('a').length && (
+        {/*
+          主軸 A の導線 (spec §4.0.1「詳細はリンクで別画面へ送る」)。
+          **その回にがんリスク検査があったときだけ出す。** 無い回 (タイプ 2) は送る先が
+          存在しないので出さない — 押せば 404 になるリンクを置かない。
+          (モックの「がんリスク検査について →」は遷移先が未定のため保留・spec §1.3.10 の
+           モック補正 ③。作るなら別途。)
+          A に材料が無い回でも帯は立つ。**アプリが代わりの所見を書かない** (spec §4.0.1)。
+        */}
+        {axis.key === 'a' && cancerArtifact && (
           <p class="px-1 text-sm text-slate-600">
-            <a class="font-semibold text-brand-700 underline" href="/result">がんリスク検査の結果を見る →</a>
+            <a class="font-semibold text-brand-700 underline" href={`/result/${cancerArtifact.id}${u ? `?u=${u}` : ''}`}>
+              がんリスク検査の結果を見る →
+            </a>
+          </p>
+        )}
+
+        {/*
+          **黙って白紙にしない** (spec §1.3.6)。ダイジェストの抽出は fail-safe なので、
+          受領形式が変わると誤った要点を出す代わりに**何も出さずに空になる**。
+          実際に 2026-08-29、旧世代の検体で主軸 B が帯だけになった。
+          抽出が空でも本文は全編にあるので、そこへ送る。**当社が代わりの要点を書かない。**
+        */}
+        {axis.key === 'b' && !digestByAxis('b').length && (
+          <p class="px-1 text-sm text-slate-600">
+            {chaptersByAxis('b').length
+              ? '今回の受領分からは要点を取り出せませんでした。本文は下の「全編」にすべてあります。'
+              : '今回はこの項目の材料が届いていません。'}
           </p>
         )}
       </section>

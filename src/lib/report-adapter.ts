@@ -194,6 +194,25 @@ export function splitTopics(text: string): Block[] {
   return [];
 }
 
+/**
+ * 見出しが 1 つも無い章を **章まるごと 1 ブロック**として返す。
+ *
+ * 【なぜ要るか】受領形式は世代で変わる。実測 (2026-08-29・本番 DB の 真鍋検体) では
+ *   `医療受診の目安` / `ライフスタイル総合` / `必要とする栄養素/サプリ情報` に
+ *   `###` も `【】` も無く、`splitTopics` が 0 件を返して**ダイジェストのカードが
+ *   全部消えた** (主軸 B が帯だけの白紙になる)。全編の章側は既にこの受け皿を持っていた
+ *   (「見出しの無い章は章まるごと 1 トピック」) が、ダイジェスト側に無かった。
+ *
+ * **中身は足さない。** 見出しが無いことを「見出し = 章名」として扱うだけで、
+ * 本文は 1 文字も変えない (spec §1.0.0)。
+ */
+function topicsOrWhole(section: ElithSection): Block[] {
+  const blocks = splitTopics(section.text);
+  if (blocks.length) return blocks;
+  const body = section.text.trim();
+  return body ? [{ heading: '', body }] : [];
+}
+
 // ── 検査値 (spec §5.3 / §7.1 / §7.2) ─────────────────────────
 
 /**
@@ -211,8 +230,14 @@ function toneOf(judgement: string): MeasurementRow['tone'] {
   return 'flagged';
 }
 
-/** `名前は 値（基準値：〜）` を拾う。 */
-const VALUE_RE = /([^\s、。（(]+?)(?:は|が)((?:[0-9][^（(、。]*?))（基準値：([^）]*)）/g;
+/**
+ * `名前は 値（基準値：〜）` を拾う。
+ *
+ * **コロンは全角 `：` と半角 `:` の両方を受ける。** 受領世代によって揺れており、
+ * 全角だけを見ていたため本番 DB の検体 (半角 `（基準値: 〜129 mmHg）` が 12 箇所) で
+ * **1 件も拾えず、検査値の表が空になった** (実測 2026-08-29)。
+ */
+const VALUE_RE = /([^\s、。（(]+?)(?:は|が)((?:[0-9][^（(、。]*?))（基準値[：:]\s*([^）]*)）/g;
 
 /** `health_checkup.json` のキー `項目名 [単位]` を分解する。 */
 function splitCheckupKey(key: string): { name: string; unit: string } {
@@ -244,7 +269,22 @@ function textKey(name: string, unit: string): string {
 }
 
 export interface MeasurementResult {
+  /** 受領した全行。**受領ファイルのキー順のまま**にする (原票と並びが揃う)。全編の表に出す。 */
   rows: MeasurementRow[];
+  /**
+   * ダイジェストの表に出す行 = **Elith が本文で取り上げた項目**を、
+   * **Elith が本文で言及した順**に並べたもの (spec §1.3.10 / モック契約)。
+   *
+   * 【なぜ受領順ではないか】`health_checkup.json` のキー順は検査票の様式順で、
+   * Elith の話の流れとは無関係。そのまま出すと、Elith が最初に取り上げた
+   * 赤血球・ヘモグロビン・ヘマトクリットの 3 点セットが表の中ほどにばらけ、
+   * 直前の「医療受診の目安」の話と繋がらない (モックとの差分で発覚)。
+   *
+   * 【なぜ当社の解釈ではないか】並べ替えの根拠は **Elith が本文に書いた順序そのもの**。
+   * 値と基準値を当社が比べて優先順位を付けているのではないので、
+   * 整理であって解釈ではない (ミッション④)。
+   */
+  digestRows: MeasurementRow[];
   anomalies: string[];
 }
 
@@ -272,7 +312,11 @@ export function buildMeasurements(
   const fromText = new Map<string, FromText>();
 
   if (bloodAnalysis) {
-    for (const block of splitByBracket(bloodAnalysis.text)) {
+    // **`【】` 決め打ちにしない。** 受領世代によって節の書き方が `###` に変わる
+    // (実測 2026-08-29: 本番 DB の検体は `### 血圧` 形式で `【` が 0 件)。
+    // `splitByBracket` しか見ていなかったため 1 ブロックも取れず表が空になった。
+    // 見出しがまったく無い章は章まるごと 1 ブロックとして扱う。
+    for (const block of topicsOrWhole(bloodAnalysis)) {
       const found: FromText[] = [];
       VALUE_RE.lastIndex = 0;
       let m: RegExpExecArray | null;
@@ -280,7 +324,9 @@ export function buildMeasurements(
         // 「今回の測定値は27.9 mg/dL（基準値：…）」のように項目名が入らない書き方がある。
         // その場合はブロック見出しが項目名 (単一項目ブロック)。
         const raw = m[1].trim();
-        const name = /測定値|結果$/.test(raw) ? block.heading.trim() : raw;
+        const name = /測定値|結果$/.test(raw)
+          ? (block.heading.trim() || bloodAnalysis.section_name.trim())
+          : raw;
         if (!name) continue;
         const value = m[2].trim();
         const entry: FromText = { name, unit: unitOfValue(value), value, reference: m[3].trim(), judgement: '' };
@@ -319,6 +365,13 @@ export function buildMeasurements(
     seenNames.set(name, (seenNames.get(name) ?? 0) + 1);
   }
 
+  // 行 → 本文での言及順。`fromText` は Map なので**挿入順 = 本文に現れた順**。
+  // **行を作るその場で記録する。** 後から名前で引き当てると、同名別値 (総コレステロール
+  // 210 mg/dL と 251 mg/dl) で**単位違いの別の行に順序が付く** (実測で末尾へ飛んだ)。
+  const mentionAt = new Map<string, number>();
+  [...fromText.keys()].forEach((k, i) => mentionAt.set(k, i));
+  const rowMention = new Map<MeasurementRow, number>();
+
   const usedFromText = new Set<string>();
   for (const [key, arr] of entries) {
     const { name, unit } = splitCheckupKey(key);
@@ -328,7 +381,7 @@ export function buildMeasurements(
     const k = textKey(name, unit);
     const t = fromText.get(k);
     if (t) usedFromText.add(k);
-    rows.push({
+    const row: MeasurementRow = {
       name,
       value: unit ? `${first.value} ${unit}` : String(first.value),
       reference: t?.reference ?? '',
@@ -336,12 +389,17 @@ export function buildMeasurements(
       tone: toneOf(t?.judgement ?? ''),
       source: 'checkup',
       variants: seenNames.get(name) ?? 1,
-    });
+    };
+    rows.push(row);
+    const at = mentionAt.get(k);
+    if (at !== undefined) rowMention.set(row, at);
   }
 
   for (const [name, count] of seenNames) {
     if (count > 1) anomalies.push(`同名別値: ${name} が ${count} 通り届いています (自動採用しません)`);
   }
+
+
 
   // ④ 本文にしかない項目を足す (spec §7.2)。
   //    2 ファイルは包含関係でないので、検査値ファイルだけで組むと本文が最優先扱いする
@@ -360,9 +418,18 @@ export function buildMeasurements(
     if (!seenNames.has(t.name)) {
       anomalies.push(`本文が扱う ${t.name} が health_checkup.json に無いため、本文から拾いました`);
     }
+    rowMention.set(rows[rows.length - 1], mentionAt.get(k) ?? Number.MAX_SAFE_INTEGER);
   }
 
-  return { rows, anomalies };
+  // ダイジェスト = 本文が取り上げた行 (基準値が付いた行) を、**本文での言及順**に。
+  // 言及順が取れなかった行は末尾へ回し、その中では受領順を保つ (安定ソート)。
+  const digestRows = rows
+    .filter((r) => r.reference)
+    .map((r, i) => ({ r, i, m: rowMention.get(r) ?? Number.MAX_SAFE_INTEGER }))
+    .sort((a, b) => a.m - b.m || a.i - b.i)
+    .map((x) => x.r);
+
+  return { rows, digestRows, anomalies };
 }
 
 // ── ダイジェストのカード ────────────────────────────────
@@ -448,7 +515,8 @@ export function buildReportVM(input: BuildInput): ReportVM {
       // ── 主軸 B ──────────────────────────────────────
       case 'medical_visit': {
         if (!section) break;
-        const blocks = splitTopics(section.text);
+        // 見出しの無い世代でも空にしない (`topicsOrWhole` のコメントを参照)。
+        const blocks = topicsOrWhole(section);
         // 救急サインは別カードに切り出す。**赤はここだけ** (spec §4.2.1)。
         const emergency = findEmergencySentence(section.text);
         if (emergency) {
@@ -459,9 +527,10 @@ export function buildReportVM(input: BuildInput): ReportVM {
         const lead = blocks[0];
         const steps: DigestItem[] = blocks.slice(1).map((b) => ({
           heading: b.heading, text: leadSentences(b.body, 1),
-        })).filter((s) => s.text);
+        })).filter((s) => s.heading && s.text);
         built = card(spec.key, title, 'b',
-          `${section.section_name} §1〜§${blocks.length}`, [
+          steps.length ? `${section.section_name} §1〜§${blocks.length}`
+                       : `${section.section_name} 冒頭 2 文`, [
             ...(lead ? [{ kind: 'paragraphs' as const, items: [leadSentences(lead.body, 2)] }] : []),
             { kind: 'steps' as const, items: steps },
           ]);
@@ -473,7 +542,10 @@ export function buildReportVM(input: BuildInput): ReportVM {
         // 受領した全 40 項目は全編の章に出る (可読化 = 出す文を選ぶこと・spec §1.1)。
         // 判定が無い行 (実測: クレアチニン) も、Elith が触れている以上は落とさず
         // 判定欄を空で出す。「印が無い」を「基準値内」と読み替えない (ミッション④)。
-        const rows = measured.rows.filter((r) => r.reference);
+        //
+        // 並びは **Elith が本文で言及した順** (`measured.digestRows`・spec §1.3.10)。
+        // 受領ファイルのキー順ではない。当社が優先順位を決めているのでもない。
+        const rows = measured.digestRows;
         built = card(spec.key, title, 'b',
           `${section?.section_name ?? '検査値フィードバック'} (値・基準値・判定はすべて本文からの逐語)`,
           [{ kind: 'table', rows }]);
@@ -505,10 +577,16 @@ export function buildReportVM(input: BuildInput): ReportVM {
 
       case 'nutrients': {
         if (!section) break;
-        const blocks = splitTopics(section.text);
-        const items = blocks.map((b) => leadSentences(b.body, 1)).filter(Boolean);
+        const blocks = topicsOrWhole(section);
+        const hasHeadings = blocks.some((b) => b.heading);
+        // 見出しがある世代は各節の冒頭 1 文。無い世代は章の冒頭 2 文
+        // (節が無いのに「§1〜§1」と書かないため、出典表記も分ける)。
+        const items = hasHeadings
+          ? blocks.map((b) => leadSentences(b.body, 1)).filter(Boolean)
+          : [leadSentences(blocks[0]?.body ?? '', 2)].filter(Boolean);
         built = card(spec.key, title, 'b',
-          `${section.section_name} §1〜§${blocks.length}`,
+          hasHeadings ? `${section.section_name} §1〜§${blocks.length}`
+                      : `${section.section_name} 冒頭 2 文`,
           [{ kind: 'paragraphs', items }]);
         break;
       }

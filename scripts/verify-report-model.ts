@@ -211,6 +211,65 @@ const legacy = buildReportVM({
 });
 check('旧形式 (配列) も読める', legacy.chapters.some((c) => c.key === 'medical_visit'));
 
+// ── 12) 旧世代の受領形式でも主軸 B が白紙にならない (2026-08-29 の実障害) ──
+//
+// 本番 DB の検体で主軸 B が**帯だけの白紙**になった。原因は 3 つとも
+// 「受領形式の世代差を認識できていない」もので、内容の不足ではない:
+//   ① `検査値フィードバック` の節が `【】` でなく `###`
+//      → `buildMeasurements` が `splitByBracket` 決め打ちで 0 ブロック
+//   ② 基準値のコロンが半角 `（基準値: 〜129 mmHg）`
+//      → `VALUE_RE` が全角 `：` しか見ておらず 0 件
+//   ③ `医療受診の目安` / `必要とする栄養素` に見出しが 1 つも無い
+//      → `splitTopics` が 0 件を返しカードごと消える
+// **中身を作って埋めたのではない。**出せる文が実際にあるのに認識できていなかった。
+const OLD_GEN = [
+  {
+    section_name: '医療受診の目安', char_count: 0,
+    text: '今回の健診結果では、血圧の改善が見られた一方で、尿酸値や空腹時血糖、腎機能の数値に注意が必要な状態です。'
+      + 'これらの数値は、生活習慣病の重症化を防ぐためにも、早めの医療機関への受診が望まれます。'
+      + 'まずは、眼科への予約を取り、精密検査を受けることを最優先に考えてみてください。',
+  },
+  {
+    section_name: '検査値フィードバック', char_count: 0,
+    text: '### 血圧\n最高血圧は127 mmHg（基準値: 〜129 mmHg）、最低血圧は82 mmHg（基準値: 〜84 mmHg）と、'
+      + 'どちらも正常範囲内に収まっています。\n'
+      + '### 腎機能・尿酸\nクレアチニンは1.03 mg/dl（基準値: 〜1.00 mg/dl）と基準値をわずかに超え、'
+      + 'eGFRは56.6 ml/min（基準値: 60以上）と基準値を下回っています。',
+  },
+  {
+    section_name: '必要とする栄養素/サプリ情報', char_count: 0,
+    text: 'ビタミンC（成人100 mg/日）：尿酸値が高い場合は補給優先候補になります。'
+      + 'ビタミンC不足が続くと、歯ぐきから血が出る、傷が治りにくいなどの具体的症状につながります。',
+  },
+];
+const oldGen = buildReportVM({
+  reportText: OLD_GEN, checkup: null, name: '', issuedOn: '2026-01-24', isSample: false,
+  hasCancerRisk: false, cycleSeq: null, chronologicalAge: null, readConfig: () => '',
+});
+const oldB = oldGen.digest.filter((c) => c.axis === 'b');
+check('旧世代: 主軸 B が白紙にならない', oldB.length >= 3, `${oldB.length} カード`);
+check('旧世代: 見出しの無い章もダイジェストに出る',
+  oldB.some((c) => c.key === 'medical_visit') && oldB.some((c) => c.key === 'nutrients'),
+  oldB.map((c) => c.key).join(','));
+const oldRows = oldGen.chapters.find((c) => c.key === 'measurements')?.table ?? [];
+check('旧世代: `###` 節 + 半角コロンでも検査値を拾う', oldRows.length >= 4,
+  `${oldRows.length} 行`);
+check('旧世代: 基準値が半角コロンでも結べる',
+  oldRows.some((r) => r.name === '最高血圧' && r.reference === '〜129 mmHg'),
+  oldRows.map((r) => `${r.name}=${r.reference}`).join(' / '));
+// 旧世代でも紙面の文はすべて逐語。
+const OLD_CORPUS = norm(OLD_GEN.map((s) => s.text).join(''));
+for (const c of oldB) {
+  for (const b of c.blocks) {
+    const texts = b.kind === 'paragraphs' ? b.items
+      : b.kind === 'steps' || b.kind === 'weeks' ? b.items.map((i) => i.text)
+      : [];
+    for (const t of texts) {
+      check(`旧世代 逐語: ${c.key}`, OLD_CORPUS.includes(norm(t)), t.slice(0, 30));
+    }
+  }
+}
+
 // ── 結果 ──────────────────────────────────────────────────────────
 console.log(`\n受領本文 ${CORPUS.length} 字 / ダイジェスト ${digestChars} 字 (削減率 ${reduction.toFixed(1)}%)`);
 console.log(`検査値 ${vm.audit.measurementCount} 行・基準値 ${vm.audit.referenceCount} 件・トピック ${vm.audit.topicCount} 件`);
