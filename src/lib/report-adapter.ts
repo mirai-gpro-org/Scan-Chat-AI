@@ -20,7 +20,7 @@
 
 import { anchorFor, resolveChapters, type ChapterKey, type ChapterSpec } from './report-sections';
 import type {
-  ChapterVM, CoverVM, CycleVM, LifestylePairVM, MeasurementVM,
+  ChapterBlockVM, ChapterVM, CoverVM, CycleVM, LifestylePairVM, MeasurementVM,
   ReportAudit, ReportSectionRaw, ReportType, ReportVM, TopicVM,
 } from './report-model';
 
@@ -212,6 +212,29 @@ export function extractTopics(key: ChapterKey, section: ReportSectionRaw): Topic
     heading: b.heading,
     teaser: firstSentence(b.body),
   }));
+}
+
+/**
+ * 章本文を見出し単位のブロックに割る (折りたたみと目次アンカーの単位・spec §4.3)。
+ * `extractTopics` と**同じ割り方・同じアンカー**を使う (目次とリンク先がずれないように)。
+ */
+export function extractBlocks(key: ChapterKey, section: ReportSectionRaw): ChapterBlockVM[] {
+  const mode = hasHashHeading(section.text) ? 'hash' : 'both';
+  const blocks = splitBlocks(section.text, mode);
+  const withHeading = blocks.filter((b) => b.heading);
+  if (withHeading.length === 0) {
+    return section.text.trim()
+      ? [{ id: anchorFor(key, section.section_name), heading: '', body: section.text.trim() }]
+      : [];
+  }
+  // 見出しより前の導入文があれば、見出しなしのブロックとして先頭に残す (取りこぼさない)。
+  const out: ChapterBlockVM[] = [];
+  const lead = blocks.find((b) => !b.heading && b.body);
+  if (lead) out.push({ id: anchorFor(key, '__lead__'), heading: '', body: lead.body });
+  for (const b of withHeading) {
+    out.push({ id: anchorFor(key, b.heading), heading: b.heading, body: b.body });
+  }
+  return out;
 }
 
 /**
@@ -478,7 +501,8 @@ function buildChapter(
 ): ChapterVM | null {
   const base = {
     key: spec.key, title: spec.title, axis: spec.axis, source: spec.source,
-    topics: [] as TopicVM[], measurements: [] as MeasurementVM[], pairs: [] as LifestylePairVM[],
+    blocks: [] as ChapterBlockVM[], topics: [] as TopicVM[],
+    measurements: [] as MeasurementVM[], pairs: [] as LifestylePairVM[],
     collapsed: spec.collapsed, anchor: anchorFor(spec.key),
   };
 
@@ -486,7 +510,9 @@ function buildChapter(
     // A の章。Elith にフィールドの新設を依頼中 (spec §4.0.1)。
     // **フィールド自体が無ければカードごと非表示** — 定型表現も出さない。
     const s = byKey.get('cancer_finding');
-    return s?.text ? { ...base, body: s.text } : null;
+    return s?.text
+      ? { ...base, body: s.text, blocks: [{ id: base.anchor, heading: '', body: s.text }] }
+      : null;
   }
 
   if (spec.source === 'measurements') {
@@ -502,7 +528,9 @@ function buildChapter(
   if (spec.source === 'diet_plan') {
     const diet = byKey.get('diet') ?? byKey.get('食事アドバイス');
     const plan = diet ? extractDietPlan(diet.text) : null;
-    return plan?.body ? { ...base, body: plan.body } : null;
+    return plan?.body
+      ? { ...base, body: plan.body, blocks: [{ id: base.anchor, heading: '', body: plan.body }] }
+      : null;
   }
 
   const s = byKey.get(spec.source);
@@ -515,7 +543,12 @@ function buildChapter(
     if (plan) body = removeBlock(body, plan.heading);
   }
 
-  const chapter: ChapterVM = { ...base, body, topics: extractTopics(spec.key, { ...s, text: body }) };
+  const shaped: ReportSectionRaw = { ...s, text: body };
+  const chapter: ChapterVM = {
+    ...base, body,
+    blocks: extractBlocks(spec.key, shaped),
+    topics: extractTopics(spec.key, shaped),
+  };
   if (spec.source === 'lifestyle') chapter.pairs = extractLifestylePairs(body);
   return chapter;
 }

@@ -12,8 +12,10 @@
  *      Stage2 → Stage3 で `判定区分` と `[pN]` が消えた実績がある。
  *   ③ **設定の打ち間違いで報告書が真っ白にならないこと** (spec §9.2)。
  *
- * 【fixture】`test/fixtures/` の 2 点は 2026-08-26 受領分。**合成検体**で PII を含まない
+ * 【fixture】`src/data/elith/` の 2 点は 2026-08-26 受領分。**合成検体**で PII を含まない
  *   (氏名・生年月日・連絡先の記載なしを確認済み・spec §7.0)。
+ *   実データ受領までのサンプル表示にも同じファイルを使う (`elith-report-sample.ts`) —
+ *   **1 か所に置いて二重管理しない**。
  */
 
 import { readFileSync } from 'node:fs';
@@ -28,7 +30,7 @@ import { ELITH_REPORT_SAMPLE } from '../src/lib/elith-report-sample';
 // バンドルして `node --input-type=module` で走らせるため import.meta.url は使えない
 // (eval のパスになる)。npm run はパッケージルートを cwd にするのでそれを基点にする。
 const ROOT = process.cwd();
-const load = (f: string): unknown => JSON.parse(readFileSync(join(ROOT, 'test/fixtures', f), 'utf8'));
+const load = (f: string): unknown => JSON.parse(readFileSync(join(ROOT, 'src/data/elith', f), 'utf8'));
 
 let failed = 0;
 function eq(name: string, got: unknown, want: unknown): void {
@@ -77,8 +79,8 @@ eq('アンカーは見出しごとに別', anchorFor('diet', 'A') !== anchorFor(
 
 // ── 新形式 (2026-08-26 受領分) ──────────────────────────────────
 console.log('\n[新形式アダプタ — 2026-08-26 受領分]');
-const reportText = load('elith_report_text_20260826.json');
-const checkup = load('elith_health_checkup_20260826.json');
+const reportText = load('report_text_20260826.json');
+const checkup = load('health_checkup_20260826.json');
 const { byKey, healthAge } = parseReportText(reportText);
 
 eq('セクション 10 件', byKey.size, 10);

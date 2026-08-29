@@ -101,8 +101,24 @@ export interface LifestylePairVM {
 }
 
 /**
+ * 章の中の見出しブロック 1 つ。`### 見出し` 単位。
+ *
+ * 画面ではこの単位で折りたためる (spec §4.3)。
+ * **`?print=1` では折りたたまず、見出し＋本文をそのまま並べる** —
+ * 畳んだ状態が紙面に漏れると本文が欠落するため (spec §3.2)。
+ */
+export interface ChapterBlockVM {
+  /** 同一 HTML 内アンカー。`TopicVM.id` と同じ値になる (同じ見出しから作るため)。 */
+  id: string;
+  /** 見出し (原文のまま)。章に見出しが無ければ空。 */
+  heading: string;
+  /** 本文 Markdown (原文のまま)。 */
+  body: string;
+}
+
+/**
  * 章 1 つ分。
- * `body` / `topics` / `measurements` / `pairs` のうち、その章が持つものだけが埋まる。
+ * `body` / `blocks` / `topics` / `measurements` / `pairs` のうち、その章が持つものだけが埋まる。
  */
 export interface ChapterVM {
   key: ChapterKey;
@@ -110,8 +126,10 @@ export interface ChapterVM {
   title: string;
   axis: ReportAxis;
   source: ChapterSource;
-  /** 本文 Markdown (Elith の原文のまま)。 */
+  /** 本文 Markdown (Elith の原文のまま・章まるごと)。 */
   body: string;
+  /** `body` を見出し単位に割ったもの。折りたたみと目次アンカーはこの単位。 */
+  blocks: ChapterBlockVM[];
   topics: TopicVM[];
   /** `measurements` 章のみ。 */
   measurements: MeasurementVM[];
