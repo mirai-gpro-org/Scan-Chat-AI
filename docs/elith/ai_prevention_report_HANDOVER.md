@@ -165,19 +165,13 @@
 ブランチ `claude/clever-cray-ngg0h6` に残っている本機能の実装コミットは
 **全て誤った実装であり、リバートする**。
 
-対象コミットには `git notes` で印を付けてある。
+**対象コミットの一覧 = `docs/elith/ai_prevention_report_REVERT_LIST.md`**
+(Scan-Chat-AI 11 件・wellfort-site 2 件・併せて外すもの)。
 
-```bash
-git fetch origin 'refs/notes/*:refs/notes/*'
-git log --show-notes=commits claude/clever-cray-ngg0h6
-```
-
-**うち 11 件は既にデプロイ元ブランチ `claude/awesome-carson-UeyUZ` に入っている**
-(= 本番へ反映済み)。リバートは作業ブランチとデプロイ元の両方に要る。
-
-wellfort-site 側 (`claude/elith-verify-image-json` → 本番へマージ済) の
-`src/pages/api/admin/elith-report-audit.ts` と `admin/elith-batch.astro` の
-「AI疾病予防報告書の抽出監査」モーダルも同じ実装の一部で、同じくリバート対象。
+**Scan-Chat-AI の 11 件中 10 件は既にデプロイ元ブランチ
+`claude/awesome-carson-UeyUZ` に入っている** (= 本番へ反映済み)。
+リバートは作業ブランチとデプロイ元の両方に要る。
+wellfort-site 側の admin 抽出監査 UI も本番へマージ済み。
 
 `CLAUDE.md` の「AI疾病予防報告書」節にある **【実装】P0〜P4 の記述も同じくリバート対象**
 (実装の記録であって確定仕様ではない)。仕様の正本は
