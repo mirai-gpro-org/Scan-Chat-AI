@@ -19,6 +19,7 @@
  */
 
 import { anchorFor, resolveChapters, type ChapterKey, type ChapterSpec } from './report-sections';
+import { cfg } from './app-config';
 import type {
   ChapterBlockVM, ChapterVM, CoverVM, CycleVM, LifestylePairVM, MeasurementVM,
   ReportAudit, ReportSectionRaw, ReportType, ReportVM, TopicVM,
@@ -512,13 +513,24 @@ export interface BuildReportInput {
   ownWellnessAge?: number | null;
   /** 章立ての解決を差し替える (テスト用)。既定は `app_config` を重ねた結果。 */
   chapters?: ChapterSpec[];
+  /**
+   * A の予備の文言 (spec §4.0.1)。既定は `app_config` の
+   * `ui.cancer_screening_not_included`。**空なら文言を出さない** (§0.3)。
+   * テストから差し込めるように引数にしてある (`chapters` と同じ流儀)。
+   */
+  cancerFallbackText?: string;
 }
 
 /** 章 1 つ分の本文を作る。材料が無ければ null を返し、**章ごと出さない** (spec §0.3)。 */
 function buildChapter(
   spec: ChapterSpec,
   byKey: Map<string, ReportSectionRaw>,
-  ctx: { dietPlanEnabled: boolean; measurements: MeasurementVM[]; findings: ReportFinding[] },
+  ctx: {
+    dietPlanEnabled: boolean;
+    measurements: MeasurementVM[];
+    findings: ReportFinding[];
+    cancerFallback: string;
+  },
 ): ChapterVM | null {
   const base = {
     key: spec.key, title: spec.title, axis: spec.axis, source: spec.source,
@@ -528,11 +540,20 @@ function buildChapter(
   };
 
   if (spec.source === 'cancer_finding') {
-    // A の章。Elith にフィールドの新設を依頼中 (spec §4.0.1)。
-    // **フィールド自体が無ければカードごと非表示** — 定型表現も出さない。
+    /*
+      A の所見 (spec §4.0.1)。**軸の見出しはここではなく `REPORT_AXES` が常設で描く** —
+      2 本柱は設計ポリシーで決めた報告書の骨格で、章の出し分けより上位。
+      ここが受け持つのは**中身**だけ。
+
+      1. Elith の記述があればそれ (本命・§10.1 E-1 で依頼中)
+      2. 無ければ `ui.cancer_screening_not_included` (当社の定型文)。
+         **既定は空 = 文言を出さない** (§0.3)。文言が確定したら admin から入れれば出る。
+      **アプリが代わりを書くことはしない。**
+    */
     const s = byKey.get('cancer_finding');
-    return s?.text
-      ? { ...base, body: s.text, blocks: [{ id: base.anchor, heading: '', body: s.text }] }
+    const body = s?.text?.trim() || ctx.cancerFallback;
+    return body
+      ? { ...base, body, blocks: [{ id: base.anchor, heading: '', body }] }
       : null;
   }
 
@@ -584,7 +605,10 @@ export function buildReportVM(input: BuildReportInput): ReportVM {
   const { hit: referenceCount, notes: refNotes } = applyReferences(measurements, findings);
 
   const dietPlanEnabled = resolved.chapters.some((c) => c.key === 'diet_plan');
-  const ctx = { dietPlanEnabled, measurements, findings };
+  const ctx = {
+    dietPlanEnabled, measurements, findings,
+    cancerFallback: (input.cancerFallbackText ?? cfg('ui.cancer_screening_not_included')).trim(),
+  };
 
   const chapters: ChapterVM[] = [];
   const skipped: ChapterKey[] = [];

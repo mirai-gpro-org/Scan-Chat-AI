@@ -9,6 +9,7 @@ import { refreshConfig, cfg } from '../lib/app-config';
 import { loadDashboard, withHonorific } from '../lib/dashboard-queries';
 import { AI_PREVENTION_REPORT_LABEL } from '../lib/display-names';
 import { WELLNESS_AGE_LABEL } from '../lib/wellness-age';
+import { REPORT_AXES } from '../lib/report-sections';
 import type { ChapterVM } from '../lib/report-model';
 
 /**
@@ -92,6 +93,9 @@ const toc = vm.chapters
   .filter((c) => c.topics.length > 0)
   .map((c) => ({ title: c.title, anchor: c.anchor, topics: c.topics }));
 
+// 2 本柱の帯。**章ではなく報告書の骨格**なので、章が 0 件でも必ず描く (設計ポリシー)。
+const AXIS_A = REPORT_AXES[0];
+const AXIS_B = REPORT_AXES[1];
 const axisA: ChapterVM[] = vm.chapters.filter((c) => c.axis === 'A');
 const axisB: ChapterVM[] = vm.chapters.filter((c) => c.axis === 'B');
 
@@ -266,18 +270,49 @@ const collapsible = (c: ChapterVM): boolean => !isPrint && c.blocks.length > 1;
       </section>
     )}
 
-    {/* ══════════ A: 初期がんの早期発見 ══════════ */}
+    {/*
+      ══════════ 主軸 A ══════════
+      **軸の帯は常設。** 2 本柱は設計ポリシーで決めた報告書の骨格で、
+      章の出し分け (材料が無い章は出さない) より上位にある。
+      ここを章と一体にしていたため、A に材料が無い検体で軸ごと消えていた (2026-08-29 修正)。
+    */}
+    <section class="rounded-xl border-l-4 border-navy-700 bg-navy-50 px-4 py-3" id="axis-a">
+      <p class="font-sans text-xs font-semibold tracking-widest text-slate-600">主軸 A</p>
+      <h2 class="mt-0.5 flex items-center gap-2 text-xl font-bold text-navy-800">
+        {!isPrint && <AppIcon name="cancer-risk" size={20} class="text-navy-700" />}
+        {AXIS_A.title}
+      </h2>
+      <p class="mt-1 text-sm leading-relaxed text-slate-700">{AXIS_A.lead}</p>
+    </section>
+
     {axisA.map((c) => (
       <section class="card card-hairline" id={c.anchor}>
-        <h2 class="mb-2 flex items-center gap-2 text-lg font-bold text-navy-800">
-          <AppIcon name="cancer-risk" size={20} class="text-brand-700" />
-          {c.title}
-        </h2>
+        <h2 class="mb-2 text-lg font-bold text-navy-800">{c.title}</h2>
         <div class="md-region md-summary" set:html={md(c.body)} />
       </section>
     ))}
 
-    {/* ══════════ B: AI 診断による疾病予防アドバイス ══════════ */}
+    {/*
+      Elith が A について何も書かず、予備の文言 (`ui.cancer_screening_not_included`) も
+      未設定のとき。**アプリが代わりを書かない** (spec §4.0.1) ので、
+      「まだ何も届いていない」ことだけを示す。**所見の代わりにはしない。**
+    */}
+    {axisA.length === 0 && (
+      <p class="px-4 text-sm leading-relaxed text-slate-600">
+        この回の診断結果には、がんの観点での記載がありませんでした。
+      </p>
+    )}
+
+    {/* ══════════ 主軸 B ══════════ */}
+    <section class="mt-2 rounded-xl border-l-4 border-brand-600 bg-brand-50 px-4 py-3" id="axis-b">
+      <p class="font-sans text-xs font-semibold tracking-widest text-slate-600">主軸 B</p>
+      <h2 class="mt-0.5 flex items-center gap-2 text-xl font-bold text-navy-800">
+        {!isPrint && <AppIcon name="report" size={20} class="text-brand-700" />}
+        {AXIS_B.title}
+      </h2>
+      <p class="mt-1 text-sm leading-relaxed text-slate-700">{AXIS_B.lead}</p>
+    </section>
+
     {axisB.map((c) => (
       <section class="card" id={c.anchor}>
         <h2 class="mb-2 text-lg font-bold text-navy-800">{c.title}</h2>

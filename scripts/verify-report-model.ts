@@ -24,7 +24,7 @@ import { join } from 'node:path';
 import {
   buildReportVM, extractFindings, extractTopPriority, parseCheckup, parseReportText,
 } from '../src/lib/report-adapter';
-import { CHAPTER_REGISTRY, anchorFor, resolveChapters } from '../src/lib/report-sections';
+import { CHAPTER_REGISTRY, REPORT_AXES, anchorFor, resolveChapters } from '../src/lib/report-sections';
 import { ELITH_REPORT_SAMPLE } from '../src/lib/elith-report-sample';
 
 // バンドルして `node --input-type=module` で走らせるため import.meta.url は使えない
@@ -115,6 +115,27 @@ eq('タイプ 2 は検査サイクルを出さない', vm.cover.cycle, null);
 eq('トピック 37 件', vm.audit.topicCount, 37);
 eq('生活習慣は 6 ペア', vm.chapters.find((c) => c.key === 'lifestyle')?.pairs.length, 6);
 eq('基準値が付いたのは 8 件 (本文にしかない 1 件を表へ足した分を含む)', vm.audit.referenceCount, 8);
+
+// ── 2 本柱と A の所見 (設計ポリシー / spec §4.0.1 / §0.3) ────────
+console.log('\n[2 本柱と A の所見]');
+// 軸の帯は章ではなく報告書の骨格。レジストリに入れず、章が 0 件でも画面は必ず描く。
+eq('軸は 2 本', REPORT_AXES.map((a) => a.key), ['A', 'B']);
+eq('A の見出しは「初期がんの早期発見」', REPORT_AXES[0].title, '初期がんの早期発見');
+eq('軸はレジストリに入っていない',
+  CHAPTER_REGISTRY.some((c) => (c.key as string) === 'A' || (c.key as string) === 'B'), false);
+// 予備の文言が空 (既定) → A の章は出ない。**アプリが代わりを書かない**。
+eq('予備の文言が空なら A の章は出ない', vm.audit.skippedChapters, ['cancer_finding']);
+// 文言が admin で設定されたら、コード変更なしで出る (§0.3)。
+const FALLBACK = 'この報告書は、がんリスク検査を含まない検査データをもとに作成しています。';
+const vmFb = buildReportVM({
+  reportText, checkup, type: 'single', issuedOn: '2026-08-26',
+  chapters: CHAPTER_REGISTRY.slice(), cancerFallbackText: FALLBACK,
+});
+eq('文言を入れると A の章が出る', vmFb.audit.skippedChapters, []);
+eq('本文は設定した文言そのもの',
+  vmFb.chapters.find((c) => c.key === 'cancer_finding')?.body, FALLBACK);
+eq('A の章は A 軸に属する',
+  vmFb.chapters.find((c) => c.key === 'cancer_finding')?.axis, 'A');
 
 // ── データ品質ガード (spec §7) ──────────────────────────────────
 console.log('\n[データ品質ガード]');
