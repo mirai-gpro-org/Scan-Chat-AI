@@ -306,8 +306,23 @@ const collapsible = (c: ChapterVM): boolean => !isPrint && c.blocks.length > 1;
                       <tr>
                         <td class="border-b border-slate-100 px-2 py-1.5 align-baseline">
                           {m.name}{m.unit && <span class="ml-1 text-sm text-slate-500">{m.unit}</span>}
+                          {/* 出どころ (spec §7.2)。2 ファイルは包含関係にないので、本文にしかない値も載せる。 */}
+                          {m.source === 'report_text' && (
+                            <span class="ml-1.5 whitespace-nowrap rounded border border-slate-300 px-1 text-xs text-slate-600">本文</span>
+                          )}
                         </td>
-                        <td class="border-b border-slate-100 px-2 py-1.5 align-baseline tabular-nums">{m.value}</td>
+                        <td class="border-b border-slate-100 px-2 py-1.5 align-baseline tabular-nums">
+                          {m.value}
+                          {/*
+                            同名別値 (spec §7.1)。**どちらかを勝手に選ばない。**
+                            届いた値をそのまま並べ、判断はしない。
+                          */}
+                          {m.conflict && (
+                            <span class="ml-1.5 inline-flex items-center gap-1 whitespace-nowrap rounded border border-status-watch px-1 text-xs text-status-watch">
+                              <AppIcon name="watch" size={11} />{new Set(m.conflict).size} 通り
+                            </span>
+                          )}
+                        </td>
                         <td class="border-b border-slate-100 px-2 py-1.5 align-baseline text-sm text-slate-600">
                           {m.reference ?? ''}
                         </td>
@@ -319,7 +334,14 @@ const collapsible = (c: ChapterVM): boolean => !isPrint && c.blocks.length > 1;
             )}
             <p class="mt-2 text-sm leading-relaxed text-slate-600">
               値は検査機関の記載どおりです。基準値は報告書の本文に書かれている項目にだけ付いています。
+              <b>本文</b>の印は、検査値の一覧ではなく報告書の文章に書かれていた値です。
             </p>
+            {c.measurements.some((m) => m.conflict) && (
+              <p class="mt-1 text-sm leading-relaxed text-slate-600">
+                値の横に<b>「N 通り」</b>の印がある項目は、<b>同じ項目名で値が 2 通り届いています。</b>
+                どちらが正しいかを当社では判断できないため、届いたまま並べています。
+              </p>
+            )}
           </>
         )}
 

@@ -112,6 +112,8 @@ export function parseCheckup(raw: unknown): MeasurementVM[] {
       reference: null,
       judgement: null,
       date: typeof last.date === 'string' ? last.date : null,
+      source: 'checkup',
+      conflict: null,
     });
   }
   return out;
@@ -380,7 +382,10 @@ export function extractFindings(byKey: Map<string, ReportSectionRaw>): ReportFin
       const raw = m[1].trim();
       const name = GENERIC_SUBJECT_RE.test(raw) ? b.heading : raw;
       const { value, unit } = splitValueUnit(m[2].trim());
-      items.push({ name, unit, value, reference: m[3].trim(), judgement, date: null });
+      items.push({
+        name, unit, value, reference: m[3].trim(), judgement, date: null,
+        source: 'report_text', conflict: null,
+      });
     }
 
     out.push({ category: b.heading, judgement, sentence, items, anchor: anchorFor('measurements', b.heading) });
@@ -428,8 +433,15 @@ function applyReferences(
       if (!it.reference) continue;
       let cands = rows.filter((r) => r.name === it.name);
       if (cands.length === 0) {
-        // 本文が参照している値が health_checkup.json に無い (spec §7.2)。
-        notes.push(`本文が参照する値が検査値に無い: ${it.name} = ${it.value}`);
+        /*
+          本文が参照している値が `health_checkup.json` に無い (spec §7.2)。
+          **2 ファイルは包含関係にない**ので、検査値ファイルだけで表を組むと
+          本文が最優先の所見として扱う項目 (実測: ヘマトクリット 55.6 %) が落ちる。
+          → **本文由来の行として表に足す。** 出どころは `source` で分かるようにする。
+        */
+        rows.push({ ...it, source: 'report_text', conflict: null });
+        notes.push(`本文にしかない値を表へ追加: ${it.name} = ${it.value}`);
+        hit++;
         continue;
       }
       if (it.unit && cands.length > 1) {
@@ -456,7 +468,7 @@ function applyReferences(
  * 「この 2 つは同じ項目だ」という判断を当社がすることになる (ミッション④)。
  * 受領キーが別なら別項目として扱い、実測 9 組を検出する。
  */
-function duplicateNames(rows: MeasurementVM[]): string[] {
+function markConflicts(rows: MeasurementVM[]): string[] {
   const seen = new Map<string, string[]>();
   for (const r of rows) {
     const base = r.name;
@@ -464,9 +476,18 @@ function duplicateNames(rows: MeasurementVM[]): string[] {
     list.push(r.value);
     seen.set(base, list);
   }
-  return [...seen.entries()]
-    .filter(([, vals]) => vals.length > 1 && new Set(vals).size > 1)
-    .map(([name, vals]) => `同名別値: ${name} = ${vals.join(' / ')}`);
+  const conflicting = [...seen.entries()]
+    .filter(([, vals]) => vals.length > 1 && new Set(vals).size > 1);
+
+  // **行にも印を付ける。** 監査に出すだけでは画面が「値が 2 通り届いている」と言えない。
+  // **どちらかを勝手に選ばない** (spec §7.1・`observation-dedup` と同じ流儀)。
+  const byName = new Map(conflicting);
+  for (const r of rows) {
+    const vals = byName.get(r.name);
+    r.conflict = vals ? [...vals] : null;
+  }
+
+  return conflicting.map(([name, vals]) => `同名別値: ${name} = ${vals.join(' / ')}`);
 }
 
 // ───────────────────────────────────────────────────────────────
@@ -574,7 +595,8 @@ export function buildReportVM(input: BuildReportInput): ReportVM {
   }
 
   const abstract = byKey.get('abstract') ?? byKey.get('アブストラクト');
-  const anomalies = [...duplicateNames(measurements), ...refNotes];
+  // **applyReferences の後に呼ぶ** — 本文由来の行を足したあとで競合を見る必要がある。
+  const anomalies = [...markConflicts(measurements), ...refNotes];
   if (resolved.unknown.length > 0) {
     anomalies.push(`app_config に未知の章キー: ${resolved.unknown.join(', ')}`);
   }

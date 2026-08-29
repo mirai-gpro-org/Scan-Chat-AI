@@ -114,7 +114,24 @@ eq('出る章', vm.chapters.map((c) => c.key), [
 eq('タイプ 2 は検査サイクルを出さない', vm.cover.cycle, null);
 eq('トピック 37 件', vm.audit.topicCount, 37);
 eq('生活習慣は 6 ペア', vm.chapters.find((c) => c.key === 'lifestyle')?.pairs.length, 6);
-eq('基準値が付いたのは 7 件', vm.audit.referenceCount, 7);
+eq('基準値が付いたのは 8 件 (本文にしかない 1 件を表へ足した分を含む)', vm.audit.referenceCount, 8);
+
+// ── データ品質ガード (spec §7) ──────────────────────────────────
+console.log('\n[データ品質ガード]');
+const meas = vm.chapters.find((c) => c.key === 'measurements')!.measurements;
+// §7.2 本文にしかない値も表に載せ、出どころを持たせる
+const ht = meas.find((m) => m.name === 'ヘマトクリット');
+eq('本文にしかないヘマトクリットが表にある', [ht?.value, ht?.source], ['55.6', 'report_text']);
+eq('検査値ファイル由来の行は source=checkup',
+  meas.find((m) => m.name === 'ALT(GPT)')?.source, 'checkup');
+eq('表の行数は 40 + 本文由来 1', meas.length, 41);
+// §7.1 同名別値は自動採用せず、行に印を付ける
+const tc = meas.filter((m) => m.name === '総コレステロール');
+eq('総コレステロールは 2 行とも残る', tc.map((m) => m.value).sort(), ['210', '251']);
+eq('2 行とも競合の印が付く', tc.map((m) => m.conflict?.length ?? 0), [2, 2]);
+eq('競合のない行に印は付かない', meas.find((m) => m.name === 'AFP')?.conflict, null);
+eq('競合している項目は 9 種',
+  new Set(meas.filter((m) => m.conflict).map((m) => m.name)).size, 9);
 // 受領データの既知の状態 (spec §7.1 / §7.2)。**自動採用も補完もしない**。
 eq('同名別値 9 組を監査に出す',
   vm.audit.anomalies.filter((a) => a.startsWith('同名別値')).length, 9);

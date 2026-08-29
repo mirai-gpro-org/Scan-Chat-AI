@@ -74,6 +74,14 @@ export interface TopicVM {
 }
 
 /**
+ * 検査値の出どころ (spec §7.2)。
+ * **2 ファイルは包含関係にない** — `health_checkup.json` だけで表を組むと、
+ * 本文が最優先の所見として扱う値 (実測: ヘマトクリット 55.6 %) が落ちる。
+ * 両方を載せたうえで、どちらから来た値かを持たせる。
+ */
+export type MeasurementSource = 'checkup' | 'report_text';
+
+/**
  * 検査値 1 行 (spec §5.3)。
  * **アプリは値と基準値を比べない。** `judgement` は Elith が本文に書いた判定文のみ。
  */
@@ -88,6 +96,14 @@ export interface MeasurementVM {
   /** Elith 自身の判定文 (例「基準範囲を上回っています」)。当社が作った語は入れない。 */
   judgement: string | null;
   date: string | null;
+  /** この値がどのファイル由来か (spec §7.2)。 */
+  source: MeasurementSource;
+  /**
+   * 同じ項目名で**別の値が届いている**とき、届いた値すべて (spec §7.1)。
+   * **どちらかを勝手に選ばない。** 画面には「値が 2 通り届いている」と出す。
+   * 競合が無ければ null。
+   */
+  conflict: string[] | null;
 }
 
 /** 生活習慣の 1 項目 (spec §4.2.2)。維持/改善の自動分類はしない。 */
