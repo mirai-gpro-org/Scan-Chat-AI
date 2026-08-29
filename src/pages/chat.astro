@@ -10,7 +10,12 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
 ---
 
 <BaseLayout title="AI 問診 | Welltect" width="flow">
-  <header class="hero-gradient relative px-5 pt-5 pb-3">
+  <!--
+    進行状況を常に見せるため sticky。選択画面 (choice-picker) はこのヘッダの
+    高さを測って**その下から**開くので、全画面の選択中も進捗バーが隠れない。
+    z-30 = スクリム(z-40)/パネル(z-50) より下だが、幾何的に重ならないので問題ない。
+  -->
+  <header id="chat-header" class="hero-gradient sticky top-0 z-30 px-5 pt-5 pb-3">
     <div class="flex items-center justify-between">
       <a href={diagnosticUserId ? `/?u=${encodeURIComponent(diagnosticUserId)}` : '/'} class="text-sm text-slate-600 hover:text-slate-900">
         ‹ メニュー
@@ -35,9 +40,10 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
       <!-- セクション dot は問診定義 (SECTIONS) に合わせて動的生成 -->
     </div>
 
-    <div class="mt-2 flex items-center justify-between text-xs">
+    <div class="mt-2 flex items-center justify-between gap-3 text-xs">
       <span id="section-label" class="font-medium text-slate-700">準備中…</span>
-      <span id="progress-text" class="text-slate-500">0%</span>
+      <!-- 表記は「問診完了まであと N%」(N=残り)。文言は live-controller の renderProgress が正。 -->
+      <span id="progress-text" class="shrink-0 font-medium text-brand-700">問診完了まであと 100%</span>
     </div>
   </header>
 
@@ -132,10 +138,10 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
             id="mic-btn"
             type="button"
             class="mic-fab compact shrink-0"
-            aria-label="問診を中断"
+            aria-label="問診を中止"
           >
-            <span class="mic-icon text-lg">⏸</span>
-            <span class="mic-label text-xs">中断</span>
+            <span class="mic-icon flex items-center justify-center"><AppIcon name="blocked" size={22} /></span>
+            <span class="mic-label text-xs">中止</span>
           </button>
           <button
             id="speaker-btn"
@@ -191,23 +197,17 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
           </p>
         </div>
 
-        <!-- chip 単一選択 -->
-        <div id="ui-chip" class="stagger flex flex-col gap-2" hidden></div>
-
-        <!-- multi 複数選択 -->
-        <div id="ui-multi" class="flex flex-col gap-2" hidden>
-          <button id="multi-open" type="button" class="btn-primary w-full">
-            ＋ 選択肢から選ぶ
+        <!--
+          選択式 (chip 単一 / multi 複数 / list 多件数) は**すべて同じ選択画面**を使う。
+          件数と収まり具合で ボトムシート / 全画面 / 全画面+検索 に自動で切り替わる
+          (実装 src/scripts/chat/choice-picker.ts)。以前は chip だけインラインのカード、
+          multi だけ別のボトムシートで、デザイン案と見た目が揃っていなかった。
+        -->
+        <div id="ui-list" class="flex flex-col gap-2" hidden>
+          <button id="list-open" type="button" class="btn-primary w-full">
+            <AppIcon name="list" size={20} /> 選択肢から選ぶ
           </button>
-          <p id="multi-summary" class="text-center text-xs text-slate-500"></p>
-        </div>
-
-        <!-- wheel ホイール選択 (選択肢が多い設問) -->
-        <div id="ui-wheel" class="flex flex-col gap-2" hidden>
-          <button id="wheel-open" type="button" class="btn-primary w-full">
-            <AppIcon name="wheel" size={20} /> 回して選ぶ
-          </button>
-          <p id="wheel-summary" class="text-center text-xs text-slate-500"></p>
+          <p id="list-summary" class="text-center text-sm text-slate-600"></p>
         </div>
 
         <!-- matrix マトリクス選択 (項目 × 頻度) -->
@@ -281,20 +281,6 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
     </div>
   </main>
 
-  <!-- マルチ選択モーダル (ボトムシート) -->
-  <div id="multi-modal" hidden>
-    <div class="sheet-backdrop" data-close-modal></div>
-    <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="multi-title">
-      <div class="sheet-handle"></div>
-      <h2 id="multi-title" class="mb-3 text-base font-semibold">該当するものを選んでください</h2>
-      <p class="mb-4 text-xs text-slate-500">複数選択できます</p>
-      <div id="multi-options" class="space-y-2"></div>
-      <div class="mt-5 flex gap-2">
-        <button type="button" class="btn-secondary flex-1" data-close-modal>キャンセル</button>
-        <button id="multi-confirm" type="button" class="btn-primary flex-1">決定</button>
-      </div>
-    </div>
-  </div>
 </BaseLayout>
 
 <script>
@@ -333,9 +319,7 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
       questionText: $('question-text'),
 
       uiVoice: $('ui-voice'),
-      uiChip: $('ui-chip'),
-      uiMulti: $('ui-multi'),
-      uiWheel: $('ui-wheel'),
+      uiList: $('ui-list'),
       uiMatrix: $('ui-matrix'),
       uiSlider: $('ui-slider'),
       uiStepper: $('ui-stepper'),
@@ -357,15 +341,9 @@ const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
       textSubmit: $<HTMLButtonElement>('text-submit'),
       textExample: $('text-example'),
 
-      multiOpen: $<HTMLButtonElement>('multi-open'),
-      multiSummary: $('multi-summary'),
-      multiModal: $('multi-modal'),
-      multiOptions: $('multi-options'),
-      multiTitle: $('multi-title'),
-      multiConfirm: $<HTMLButtonElement>('multi-confirm'),
 
-      wheelOpen: $<HTMLButtonElement>('wheel-open'),
-      wheelSummary: $('wheel-summary'),
+      listOpen: $<HTMLButtonElement>('list-open'),
+      listSummary: $('list-summary'),
       matrixOpen: $<HTMLButtonElement>('matrix-open'),
       matrixSummary: $('matrix-summary'),
 

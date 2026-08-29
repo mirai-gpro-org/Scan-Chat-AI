@@ -112,6 +112,7 @@ const refLabel = (s: MetricTrendSeries): string => {
         <button
           type="button"
           data-trend-open={String(i)}
+          data-trend-item={s.label}
           class="group flex w-full flex-col rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:border-brand-500 hover:bg-brand-50/40"
           aria-haspopup="dialog"
         >

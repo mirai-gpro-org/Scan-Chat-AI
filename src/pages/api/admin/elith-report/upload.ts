@@ -1,5 +1,5 @@
 /**
- * admin: Elith の AI 診断結果レポート (PDF) 取込 API — パイプライン⑥ の暫定実装。
+ * admin: Elith の AI疾病予防報告書 (PDF) 取込 API — パイプライン⑥ の暫定実装。
  *
  * 経路: Elith → S3 → (Wellfort 管理者が取得) → 本 API → 原本ストレージ + diagnosis_results
  *   `docs/lab/lab_data_pipeline_master_spec.md:24,96` の「AI診断結果(PDF)を受取→Webアプリへ表示」。

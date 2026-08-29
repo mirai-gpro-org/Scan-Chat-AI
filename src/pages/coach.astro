@@ -38,8 +38,8 @@ const urgentAlert = ctx?.urgentAlert ?? null;
 // 開始ボタン押下時に AI が最初に喋る挨拶文 (会話履歴が空の時のみ)。
 // 緊急アラートがあれば追記。
 const initialGreeting = urgentAlert
-  ? `${displayName}、こんにちは AI ヘルスコーチです。最新の AI 診断結果を読み込みました。検査結果に「${urgentAlert.title}」の留意事項がございますので、もし気になることがあればお尋ねください。健康に関するご質問は何でもお気軽にどうぞ。`
-  : `${displayName}、こんにちは AI ヘルスコーチです。最新の AI 診断結果を読み込みました。健康に関するご質問は何でもお気軽にお尋ねください。`;
+  ? `${displayName}、こんにちは AI ヘルスコーチです。最新の AI疾病予防報告書を読み込みました。検査結果に「${urgentAlert.title}」の留意事項がございますので、もし気になることがあればお尋ねください。健康に関するご質問は何でもお気軽にどうぞ。`
+  : `${displayName}、こんにちは AI ヘルスコーチです。最新の AI疾病予防報告書を読み込みました。健康に関するご質問は何でもお気軽にお尋ねください。`;
 ---
 
 <BaseLayout title="AI ヘルスコーチ | Welltect" width="flow">
@@ -65,7 +65,7 @@ const initialGreeting = urgentAlert
 
     {hasContext && (
       <p class="mt-2 text-xs text-slate-600">
-        {displayName} の AI 診断結果 (Elith {sectionCount} セクション) を参照中
+        {displayName} の AI疾病予防報告書 (Elith {sectionCount} セクション) を参照中
       </p>
     )}
   </header>
@@ -82,7 +82,7 @@ const initialGreeting = urgentAlert
   {diagnosticUserId && !hasContext && (
     <main class="flex flex-1 flex-col items-center justify-center gap-3 px-5 text-center">
       <AppIcon name="result" size={32} class="text-slate-500" />
-      <h2 class="text-base font-semibold">AI 診断結果が見つかりません</h2>
+      <h2 class="text-base font-semibold">AI疾病予防報告書が見つかりません</h2>
       <p class="text-xs text-slate-500">検査結果が表示されているかダッシュボードでご確認ください。</p>
       <a
         href={`/dashboard?u=${encodeURIComponent(diagnosticUserId)}`}
@@ -410,7 +410,7 @@ const initialGreeting = urgentAlert
         '<span class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style="animation-delay:0ms"></span>' +
         '<span class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style="animation-delay:120ms"></span>' +
         '<span class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style="animation-delay:240ms"></span>' +
-        '<span class="ml-2 text-xs">あなたのAI診断結果を読込んでいます。少々お待ちください。</span>' +
+        '<span class="ml-2 text-xs">あなたの AI疾病予防報告書を読込んでいます。少々お待ちください。</span>' +
         '</span>';
       wrap.appendChild(bubble);
       logEl.appendChild(wrap);

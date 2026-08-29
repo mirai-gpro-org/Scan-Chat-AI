@@ -83,6 +83,36 @@ export function demoArtifacts(uid: string): TestArtifact[] {
       test_date: daysAgo(160), lab_name: null, display_mode: 'standard',
       page_count: 4, imported_at: daysAgo(158), status: 'imported',
     },
+    {
+      ...base, id: 'demo-art-0005', source: 'wellfort_lab', test_type: 'ai_prediction',
+      test_date: daysAgo(75), lab_name: 'LAiF', display_mode: 'standard',
+      page_count: 6, imported_at: daysAgo(73), status: 'imported',
+    },
+    /*
+     * 前回分。検査 5 種それぞれに 2 回目を置くのは、テストフェーズで
+     * 「グラフ」(推移は 2 回目から) と「過去データ」(切替先が要る) を
+     * クライアントに見てもらうため。実データが入れば demo 層は出なくなる。
+     */
+    {
+      ...base, id: 'demo-art-0011', source: 'wellfort_lab', test_type: 'blood',
+      test_date: daysAgo(205), lab_name: 'リージャー', display_mode: 'three_mode',
+      page_count: 2, imported_at: daysAgo(203), status: 'imported',
+    },
+    {
+      ...base, id: 'demo-art-0012', source: 'wellfort_lab', test_type: 'cancer_urine',
+      test_date: daysAgo(230), lab_name: 'PREVENT', display_mode: 'standard',
+      page_count: 1, imported_at: daysAgo(228), status: 'imported',
+    },
+    {
+      ...base, id: 'demo-art-0014', source: 'user_upload', test_type: 'health_checkup',
+      test_date: daysAgo(525), lab_name: null, display_mode: 'standard',
+      page_count: 4, imported_at: daysAgo(523), status: 'imported',
+    },
+    {
+      ...base, id: 'demo-art-0015', source: 'wellfort_lab', test_type: 'ai_prediction',
+      test_date: daysAgo(440), lab_name: 'LAiF', display_mode: 'standard',
+      page_count: 6, imported_at: daysAgo(438), status: 'imported',
+    },
   ] as TestArtifact[];
 }
 

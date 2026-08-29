@@ -88,6 +88,26 @@
            hover:border-brand-400 hover:bg-brand-50 active:scale-[0.99];
   }
 
+  /* ─ 検査カードの操作ボタン (データ / グラフ) ─
+     「データ」と「グラフ」は同格。どちらかを優先させる意図は無い (発注者指示 2026-08) ので、
+     塗り(brand-600)と白の主従をやめ、面積・高さ・太さを揃えて**色相だけ**で分ける。
+     brand 塗りは画面に 1 つ (AI疾病予防報告書) だけ残す。
+     枠は navy-400 以上にする — slate-300 は白地に 1.72:1 で
+     非文字コントラスト WCAG 1.4.11 (3:1) に届かない (中止ボタンで受けた指摘と同型)。
+     実測: データ 文字 6.48:1 / 枠 4.70:1、グラフ 文字 12.10:1 / 枠 4.22:1。 */
+  .btn-pair {
+    @apply flex min-h-touch items-center justify-center gap-1.5 rounded-xl border
+           px-2 text-base font-semibold transition;
+    /* 和文はどこでも折れるので、5 列に並べたときラベルが「デー／タ」と割れる (実測 1440px)。 */
+    white-space: nowrap;
+  }
+  .btn-data  { @apply border-brand-600 bg-brand-50 text-brand-700 hover:bg-brand-100; }
+  .btn-graph { @apply border-navy-400  bg-mist     text-navy-800  hover:bg-navy-100; }
+  /* 未実施などで押せないとき。色は持たせず、押せないことだけを示す。 */
+  .btn-pair-off {
+    @apply cursor-not-allowed border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-50;
+  }
+
   /* カードの内側。スマホは 16px、sm 以上で 20px (画面が狭いほど本文に幅を回す)。 */
   .card {
     @apply rounded-2xl border border-slate-200 bg-white p-4 sm:p-5;
@@ -176,39 +196,6 @@
   .speaker-fab.muted .speaker-ico-off { display: block; @apply text-status-action; }
   .speaker-fab.muted .speaker-label { @apply text-slate-600; }
 
-  .choice-card {
-    @apply flex min-h-touch w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white
-           px-4 py-3.5 text-left text-base font-medium text-slate-800 transition
-           hover:border-brand-400 hover:bg-brand-50 active:scale-[0.995];
-  }
-  /* 選択肢の先頭アイコン枠。絵文字ではなく SVG アイコンが入る。 */
-  .choice-card .emoji {
-    @apply inline-flex h-6 w-6 shrink-0 items-center justify-center text-slate-600;
-  }
-  .choice-card.selected {
-    @apply border-brand-600 bg-brand-50 text-brand-800 ring-2 ring-brand-300;
-  }
-  .choice-card.selected .emoji { @apply text-brand-700; }
-  .choice-card.flash { animation: card-flash 0.4s ease-out; }
-  @keyframes card-flash {
-    0%   { background-color: theme('colors.brand.100'); }
-    100% { background-color: transparent; }
-  }
-
-  .stagger > * {
-    opacity: 0;
-    animation: chip-in 0.28s ease-out forwards;
-  }
-  .stagger > *:nth-child(1) { animation-delay: 0.02s; }
-  .stagger > *:nth-child(2) { animation-delay: 0.06s; }
-  .stagger > *:nth-child(3) { animation-delay: 0.10s; }
-  .stagger > *:nth-child(4) { animation-delay: 0.14s; }
-  .stagger > *:nth-child(5) { animation-delay: 0.18s; }
-  .stagger > *:nth-child(6) { animation-delay: 0.22s; }
-  .stagger > *:nth-child(7) { animation-delay: 0.26s; }
-  .stagger > *:nth-child(8) { animation-delay: 0.30s; }
-  @keyframes chip-in { to { opacity: 1; } }
-
   .bubble-in { animation: bubble-in 0.24s ease-out both; }
   @keyframes bubble-in {
     from { opacity: 0; transform: translateY(6px); }
@@ -288,54 +275,148 @@
            hover:border-brand-400 hover:bg-brand-50 active:scale-95;
   }
 
-  /* ─ ホイール (ドラム) ピッカー ─ */
+  /* ─ 選択肢リスト (ホイールの置換・2026-08) ─
+   *
+   * ホイールを廃止した理由と 3 段階レイアウトの根拠は
+   * `src/scripts/chat/choice-picker.ts` の冒頭コメントに書いてある。
+   *
+   * 【この構造を崩さないこと】.lp-panel = flex column /
+   *   .lp-scroll = flex:1 + min-height:0 + overflow-y:auto / .lp-foot = flex-shrink:0。
+   *   これで**固定フッターが最終行に被らない**(padding で逃がす必要がない)。
+   *   block レイアウトに戻すと最後の 1〜2 件が永久に選べなくなる。
+   */
 
-  .wheel-summary {
-    @apply mt-3 min-h-[1rem] text-center text-sm text-brand-700;
+  /* --lp-top = 画面上部に残す高さ (問診ヘッダ)。choice-picker が実測して入れる。
+   * これにより**全画面の選択中も進捗バーが隠れない**。スクリムにも同じ offset を掛けるので
+   * ヘッダは暗くならない。アンカーが無ければ 0 = 従来どおり全面。 */
+  .lp-root { position: fixed; inset: 0; z-index: 40; --lp-top: 0px; }
+  .lp-root .sheet-backdrop { top: var(--lp-top); }
+
+  /* 〜7 件: ボトムシート */
+  .lp-root[data-layout='sheet'] .lp-panel {
+    @apply fixed inset-x-0 bottom-0 z-50 mx-auto max-w-lg rounded-t-3xl border border-slate-200 bg-white;
+    max-height: 80vh;
+    animation: sheet-up 0.22s ease-out both;
+  }
+  /* 8 件〜: 全画面 */
+  .lp-root[data-layout='full'] .lp-panel,
+  .lp-root[data-layout='search'] .lp-panel {
+    @apply fixed inset-x-0 bottom-0 z-50 mx-auto max-w-lg border-slate-200 bg-white;
+    top: var(--lp-top);
+    animation: sheet-up 0.2s ease-out both;
+  }
+  .lp-panel { display: flex; flex-direction: column; min-height: 0; }
+
+  .lp-head { @apply shrink-0 border-b border-slate-200 px-4 pb-3 pt-3; }
+  .lp-root[data-layout='sheet'] .lp-head { @apply border-b-0 pt-3; }
+  /* ヘッダは 2 種類を描いておき、ここで出し分ける (全画面への昇格を data-layout だけで行うため) */
+  .lp-root[data-layout='sheet'] .lp-bar { display: none; }
+  .lp-root:not([data-layout='sheet']) .sheet-handle,
+  .lp-root:not([data-layout='sheet']) .sheet-backdrop,
+  .lp-root:not([data-layout='sheet']) .lp-sheet-head { display: none; }
+  .lp-sheet-head { @apply flex items-center gap-2; }
+  .lp-bar { @apply flex items-center gap-1; }
+  .lp-back {
+    @apply -ml-2 grid h-11 w-11 shrink-0 place-items-center rounded-full text-slate-700;
+  }
+  .lp-back:hover { @apply bg-slate-100; }
+  .lp-title { @apply flex-1 text-center text-base font-semibold text-slate-900; }
+  .lp-title-sheet { @apply flex-1 text-left; }
+
+  /* 問診の「中止」。選択画面は画面を覆うので、ここからも中止できるようにする。 */
+  /* 枠は slate-500。slate-300 だと白地に 1.72:1 で WCAG 1.4.11 (3:1) に届かず、
+   * 「押せるもの」として輪郭が見えない (実測 2026-08)。 */
+  .lp-abort {
+    @apply inline-flex min-h-touch shrink-0 items-center gap-1 rounded-full border border-slate-500
+           bg-white px-3 text-sm font-medium text-slate-700;
+  }
+  .lp-abort:hover { @apply border-status-action text-status-action; }
+  .lp-abort svg { width: 18px; height: 18px; }
+  /* 戻るボタン(44px)と釣り合いを取り、見出しを中央に置く */
+  .lp-bar .lp-title { margin-right: 2.75rem; }
+  .lp-sub { @apply mt-1 text-center text-sm text-slate-600; }
+
+  .lp-search { @apply relative mt-3; }
+  .lp-search-ico {
+    @apply pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500;
+  }
+  .lp-search-input {
+    @apply w-full rounded-xl border border-slate-300 bg-white py-3 pl-10 pr-3 text-slate-900
+           placeholder:text-slate-500;
+    font-size: 16px; /* iOS の自動ズームを防ぐ下限 */
+  }
+  .lp-search-input:focus {
+    @apply border-brand-500 outline-none ring-2 ring-brand-200;
   }
 
-  .wheel-viewport {
+  .lp-scroll {
+    /* position: relative は必須。これが無いと .lp-item の offsetParent が
+     * .lp-panel(fixed) になり、offsetTop にヘッダ高が乗って
+     * ①見切れ判定と③残数が壊れる (実測 2026-08: 7件で「あと2件」と誤表示)。 */
     position: relative;
-    height: 240px; /* 5 行 × 48px */
-    overflow-y: scroll;
-    scroll-snap-type: y mandatory;
-    -webkit-overflow-scrolling: touch;
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 78%, transparent 100%);
-    mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 78%, transparent 100%);
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    /* padding-top は置かない。sticky の吸着位置は padding 辺なので、
+     * ここに余白があるとその隙間から中身が見えてしまう。余白は中の要素に持たせる。 */
+    @apply px-4;
   }
-  .wheel-viewport::-webkit-scrollbar { display: none; }
+  .lp-count { @apply pb-1 pt-3 text-sm text-slate-600; }
+  .lp-items { @apply flex flex-col gap-2 pb-2 pt-2; }
 
-  .wheel-list { list-style: none; margin: 0; padding: 0; }
-  .wheel-pad { height: 96px; } /* (240 - 48) / 2 */
-
-  .wheel-highlight {
-    position: absolute;
-    left: 0.5rem;
-    right: 0.5rem;
-    top: 96px;
-    height: 48px;
-    border-radius: 0.75rem;
-    background: theme('colors.mist');
-    border-top: 1px solid theme('colors.brand.300');
-    border-bottom: 1px solid theme('colors.brand.300');
-    pointer-events: none;
-    z-index: 1;
+  /* ② 分類見出しは sticky。スクロール中に上端へ貼り付き、現在位置が分かる。 */
+  .lp-group {
+    @apply sticky top-0 z-10 -mx-4 bg-white px-4 pb-1 pt-3 text-sm font-semibold text-slate-700;
   }
 
-  .wheel-item {
-    height: 48px;
-    scroll-snap-align: center;
-    cursor: pointer;
-    @apply flex items-center justify-center gap-2 px-3 text-base text-slate-600;
+  .lp-item {
+    @apply flex min-h-touch w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white
+           px-4 py-3 text-left text-base text-slate-800 transition;
   }
-  .wheel-item .wheel-emoji { @apply inline-flex h-5 w-5 items-center justify-center; }
-  .wheel-item .wheel-check { width: 1.1rem; text-align: center; color: transparent; }
-  .wheel-item.centered { @apply text-lg font-semibold text-slate-900; }
-  .wheel-item.on .wheel-text { @apply font-semibold text-brand-700; }
-  .wheel-item.on .wheel-check { color: theme('colors.brand.600'); }
-  .wheel-item.on .wheel-check::before { content: '✓'; }
+  .lp-item:hover { @apply border-brand-400 bg-brand-50; }
+  .lp-item:active { transform: scale(0.995); }
+  .lp-item[hidden] { display: none; }
+  .lp-ico { @apply inline-flex h-6 w-6 shrink-0 items-center justify-center text-slate-600; }
+  .lp-text { @apply flex min-w-0 flex-1 flex-col; }
+  .lp-label { @apply font-medium; }
+  .lp-note { @apply text-sm text-slate-600; }
+  /* 未選択は「＋」相当の空丸、選択済みはブランド色のチェック */
+  .lp-mark {
+    @apply grid h-6 w-6 shrink-0 place-items-center rounded-full border border-slate-300 text-white;
+  }
+  .lp-mark svg { width: 16px; height: 16px; }
+  .lp-item.on { @apply border-brand-600 bg-brand-50; }
+  .lp-item.on .lp-label { @apply font-semibold text-brand-800; }
+  .lp-item.on .lp-ico { @apply text-brand-700; }
+  .lp-item.on .lp-mark { @apply border-brand-600 bg-brand-600; }
+
+  .lp-empty { @apply py-10 text-center text-base text-slate-600; }
+
+  /* アクションシート (中止の 3 択)。lp-item を流用し、右端は chevron。 */
+  .as-panel .lp-scroll { @apply pb-2; }
+  .as-item { @apply py-4; }
+  /* .lp-item と同じ 1 クラス同士だと Tailwind の生成順で負ける (実測: bg-white のまま) ため、
+   * 必ず .as-item と組にして詳細度を上げる。 */
+  .as-item.as-primary { @apply border-brand-600 bg-brand-50; }
+  .as-item.as-primary .lp-label { @apply font-semibold text-brand-800; }
+  .as-item.as-primary .lp-ico { @apply text-brand-700; }
+  .as-item.as-danger .lp-label { @apply font-semibold text-status-action; }
+  .as-item.as-danger .lp-ico { @apply text-status-action; }
+
+  .lp-foot {
+    @apply shrink-0 border-t border-slate-200 bg-white px-4 pt-2;
+    padding-bottom: calc(env(safe-area-inset-bottom) + 0.75rem);
+  }
+  /* ③ 残数。スクロールで最下部に達したら消える。 */
+  .lp-more {
+    @apply flex items-center justify-center gap-1 pb-2 text-sm font-medium text-brand-700;
+  }
+  .lp-more svg { width: 16px; height: 16px; }
+  .lp-more[hidden] { display: none; }
+  .lp-actions { @apply flex items-center gap-3; }
+  .lp-selected { @apply shrink-0 text-sm font-medium text-brand-700; }
+  .lp-confirm { @apply flex-1; }
+  .lp-cancel { @apply flex-1; }
 
   /* ─ マトリクス選択 (項目 × 頻度) ─ */
 

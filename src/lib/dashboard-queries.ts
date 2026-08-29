@@ -21,6 +21,7 @@ import type {
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '../types/supabase';
 import { extractMetricCards, type ElithSection, type MetricCard } from './elith-parser';
+import { AI_PREDICTION_REPORT_LABEL } from './display-names';
 
 export interface MetricTrendPoint {
   date: string;       // ISO date
@@ -383,7 +384,7 @@ export async function getHealthAge(diagnosticUserId: string): Promise<HealthAgeS
  * ウェルネス年齢のダミー (テストフェーズの表示確認用)。
  *
  * health_age_scores が空 / Supabase 未接続でも、ダッシュボードの並び
- * (ウェルネス年齢 → AI 診断結果 → AI スキャン/AI 問診) を確認できるようにする。
+ * (ウェルネス年齢 → AI疾病予防報告書 → AI スキャン/AI 問診) を確認できるようにする。
  * demo-data.ts の他のダミーと同じ扱いで、`PUBLIC_DEMO_FALLBACK=false` で切れる。
  * **値は CABA で算出したものではなく固定のダミー**。DB に実データが入れば自動で消える。
  */
@@ -477,7 +478,7 @@ export function testTypeLabel(type: string): { name: string; icon: AppIconName }
     blood:          { name: '血液検査',    icon: 'blood' },
     genetics:       { name: '遺伝子検査',  icon: 'genetics' },
     cancer_urine:   { name: 'がんリスク',  icon: 'cancer-risk' },
-    ai_prediction:  { name: 'AI 疾病予測', icon: 'ai-prediction' },
+    ai_prediction:  { name: AI_PREDICTION_REPORT_LABEL, icon: 'ai-prediction' },
   };
   return map[type] ?? { name: type, icon: 'result' };
 }

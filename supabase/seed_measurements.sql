@@ -479,8 +479,58 @@ select ta.id, ta.diagnostic_user_id, ta.test_type, ta.test_date, v.seq, v.item_n
   ) as v(seq, item_name, canonical_name, value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag)
  where ta.diagnostic_user_id = 'd0000003-0000-0000-0000-000000000000' and ta.test_type='blood' and ta.test_date = '2026-07-15';
 
--- ── ③ 健診パネル (真鍋 2025-06-15) : 定性値・非数値を含む経路の検証 ──────
-update diagnosis.test_artifacts set measurements = '[{"name": "身長", "value": "171.2", "value_num": 171.2, "unit": "cm", "ref_low": null, "ref_high": null, "flag": null}, {"name": "体重", "value": "72.4", "value_num": 72.4, "unit": "kg", "ref_low": null, "ref_high": null, "flag": null}, {"name": "BMI", "value": "24.7", "value_num": 24.7, "unit": null, "ref_low": "18.5", "ref_high": "24.9", "flag": null}, {"name": "腹囲", "value": "87.5", "value_num": 87.5, "unit": "cm", "ref_low": null, "ref_high": "85.0", "flag": "H"}, {"name": "最高血圧", "value": "134", "value_num": 134.0, "unit": "mmHg", "ref_low": null, "ref_high": "129", "flag": "H"}, {"name": "最低血圧", "value": "84", "value_num": 84.0, "unit": "mmHg", "ref_low": null, "ref_high": "84", "flag": null}, {"name": "裸眼視力右", "value": "0.7", "value_num": 0.7, "unit": null, "ref_low": "1.0", "ref_high": null, "flag": "L"}, {"name": "裸眼視力左", "value": "0.8", "value_num": 0.8, "unit": null, "ref_low": "1.0", "ref_high": null, "flag": "L"}, {"name": "尿蛋白", "value": "(-)", "value_num": null, "unit": null, "ref_low": null, "ref_high": "(-)", "flag": null}, {"name": "尿潜血", "value": "(-)", "value_num": null, "unit": null, "ref_low": null, "ref_high": "(-)", "flag": null}, {"name": "尿糖", "value": "(-)", "value_num": null, "unit": null, "ref_low": null, "ref_high": "(-)", "flag": null}]'::jsonb
+-- ── ③ 健診パネル (真鍋 d0000001) : 人間ドックを年 1 回 x 3 年分 ────────────
+-- 推移グラフは 2 回目の検査から引けるため、1 回分だと「グラフ」ボタンが無効のままになる。
+-- クライアントに推移グラフと「表示項目の設定」を見てもらうため 3 回分を置く。
+-- 値は医学的に成立させてある (BMI=体重/身長^2 / LDL+HDL<=TC / Friedewald TC=LDL+HDL+TG/5 /
+-- eGFR=194*Cr^-1.094*Age^-0.287 の日本人向け推算式)。定性 3 項目 (尿蛋白/尿潜血/尿糖) は
+-- value_num を持たないので推移の候補には出ない = 非数値経路の検証も兼ねる。
+
+insert into diagnosis.test_artifacts
+  (diagnostic_user_id, source, test_type, test_date, external_test_id, lab_name,
+   schema_version, age_at_test, sex, display_mode, page_count, imported_at, imported_by, status) values
+  ('d0000001-0000-0000-0000-000000000000', 'user_upload', 'health_checkup', '2024-06-14', 'HC-2024-000614', '某総合病院 (ユーザー UL)', '1.0', 54, 'male', 'three_mode', 8, '2024-06-14 14:30+09', 'user', 'active'),
+  ('d0000001-0000-0000-0000-000000000000', 'user_upload', 'health_checkup', '2026-06-19', 'HC-2026-000619', '某総合病院 (ユーザー UL)', '1.0', 56, 'male', 'three_mode', 8, '2026-06-19 14:30+09', 'user', 'active')
+on conflict (diagnostic_user_id, source, test_type, test_date, external_test_id) do nothing;
+
+-- 2024-06-14
+update diagnosis.test_artifacts set measurements = '[{"name": "身長", "value": "171.2", "value_num": 171.2, "unit": "cm", "ref_low": null, "ref_high": null, "flag": null}, {"name": "体重", "value": "71.6", "value_num": 71.6, "unit": "kg", "ref_low": null, "ref_high": null, "flag": null}, {"name": "BMI", "value": "24.4", "value_num": 24.4, "unit": null, "ref_low": "18.5", "ref_high": "24.9", "flag": null}, {"name": "腹囲", "value": "86.4", "value_num": 86.4, "unit": "cm", "ref_low": null, "ref_high": "85.0", "flag": "H"}, {"name": "最高血圧", "value": "131", "value_num": 131.0, "unit": "mmHg", "ref_low": null, "ref_high": "129", "flag": "H"}, {"name": "最低血圧", "value": "82", "value_num": 82.0, "unit": "mmHg", "ref_low": null, "ref_high": "84", "flag": null}, {"name": "裸眼視力右", "value": "0.8", "value_num": 0.8, "unit": null, "ref_low": "1.0", "ref_high": null, "flag": "L"}, {"name": "裸眼視力左", "value": "0.9", "value_num": 0.9, "unit": null, "ref_low": "1.0", "ref_high": null, "flag": "L"}, {"name": "総コレステロール", "value": "205", "value_num": 205.0, "unit": "mg/dL", "ref_low": "130", "ref_high": "219", "flag": null}, {"name": "HDLコレステロール", "value": "53", "value_num": 53.0, "unit": "mg/dL", "ref_low": "40", "ref_high": null, "flag": null}, {"name": "LDLコレステロール", "value": "124", "value_num": 124.0, "unit": "mg/dL", "ref_low": "60", "ref_high": "119", "flag": "H"}, {"name": "空腹時中性脂肪", "value": "140", "value_num": 140.0, "unit": "mg/dL", "ref_low": "30", "ref_high": "149", "flag": null}, {"name": "空腹時血糖", "value": "104", "value_num": 104.0, "unit": "mg/dL", "ref_low": "73", "ref_high": "109", "flag": null}, {"name": "HbA1c(NGSP)", "value": "5.8", "value_num": 5.8, "unit": "%", "ref_low": "4.6", "ref_high": "6.2", "flag": null}, {"name": "γ-GTP", "value": "58", "value_num": 58.0, "unit": "U/L", "ref_low": "13", "ref_high": "64", "flag": null}, {"name": "尿酸", "value": "7.0", "value_num": 7.0, "unit": "mg/dL", "ref_low": "3.7", "ref_high": "7.8", "flag": null}, {"name": "クレアチニン", "value": "0.91", "value_num": 0.91, "unit": "mg/dL", "ref_low": "0.65", "ref_high": "1.07", "flag": null}, {"name": "eGFR", "value": "68.5", "value_num": 68.5, "unit": "mL/min/1.73m²", "ref_low": "60", "ref_high": null, "flag": null}, {"name": "尿蛋白", "value": "(-)", "value_num": null, "unit": null, "ref_low": null, "ref_high": "(-)", "flag": null}, {"name": "尿潜血", "value": "(-)", "value_num": null, "unit": null, "ref_low": null, "ref_high": "(-)", "flag": null}, {"name": "尿糖", "value": "(-)", "value_num": null, "unit": null, "ref_low": null, "ref_high": "(-)", "flag": null}]'::jsonb
+ where diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and test_type = 'health_checkup' and test_date = '2024-06-14';
+delete from diagnosis.measurement_values mv using diagnosis.test_artifacts ta
+ where mv.artifact_id = ta.id and ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='health_checkup' and ta.test_date='2024-06-14';
+insert into diagnosis.measurement_values
+  (artifact_id, diagnostic_user_id, test_type, test_date, seq, item_name, canonical_name,
+   value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag, source_file_kind)
+select ta.id, ta.diagnostic_user_id, ta.test_type, ta.test_date, v.seq, v.item_name, v.canonical_name,
+       v.value, v.value_num, v.unit, v.ref_low, v.ref_high, v.ref_low_num, v.ref_high_num, v.flag, 'scan_md'
+  from diagnosis.test_artifacts ta,
+  (values
+    (0, '身長', '身長', '171.2', 171.2, 'cm', null, null, null, null, null),
+    (1, '体重', '体重', '71.6', 71.6, 'kg', null, null, null, null, null),
+    (2, 'BMI', 'BMI', '24.4', 24.4, null, '18.5', '24.9', 18.5, 24.9, null),
+    (3, '腹囲', '腹囲', '86.4', 86.4, 'cm', null, '85.0', null, 85.0, 'H'),
+    (4, '最高血圧', '最高血圧', '131', 131.0, 'mmHg', null, '129', null, 129.0, 'H'),
+    (5, '最低血圧', '最低血圧', '82', 82.0, 'mmHg', null, '84', null, 84.0, null),
+    (6, '裸眼視力右', '裸眼視力右', '0.8', 0.8, null, '1.0', null, 1.0, null, 'L'),
+    (7, '裸眼視力左', '裸眼視力左', '0.9', 0.9, null, '1.0', null, 1.0, null, 'L'),
+    (8, '総コレステロール', '総コレステロール', '205', 205.0, 'mg/dL', '130', '219', 130.0, 219.0, null),
+    (9, 'HDLコレステロール', 'HDLコレステロール', '53', 53.0, 'mg/dL', '40', null, 40.0, null, null),
+    (10, 'LDLコレステロール', 'LDLコレステロール', '124', 124.0, 'mg/dL', '60', '119', 60.0, 119.0, 'H'),
+    (11, '空腹時中性脂肪', '空腹時中性脂肪', '140', 140.0, 'mg/dL', '30', '149', 30.0, 149.0, null),
+    (12, '空腹時血糖', '空腹時血糖', '104', 104.0, 'mg/dL', '73', '109', 73.0, 109.0, null),
+    (13, 'HbA1c(NGSP)', 'HbA1c(NGSP)', '5.8', 5.8, '%', '4.6', '6.2', 4.6, 6.2, null),
+    (14, 'γ-GTP', 'γ-GTP', '58', 58.0, 'U/L', '13', '64', 13.0, 64.0, null),
+    (15, '尿酸', '尿酸', '7.0', 7.0, 'mg/dL', '3.7', '7.8', 3.7, 7.8, null),
+    (16, 'クレアチニン', 'クレアチニン', '0.91', 0.91, 'mg/dL', '0.65', '1.07', 0.65, 1.07, null),
+    (17, 'eGFR', 'eGFR', '68.5', 68.5, 'mL/min/1.73m²', '60', null, 60.0, null, null),
+    (18, '尿蛋白', '尿蛋白', '(-)', null, null, null, '(-)', null, null, null),
+    (19, '尿潜血', '尿潜血', '(-)', null, null, null, '(-)', null, null, null),
+    (20, '尿糖', '尿糖', '(-)', null, null, null, '(-)', null, null, null)
+  ) as v(seq, item_name, canonical_name, value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag)
+ where ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='health_checkup' and ta.test_date = '2024-06-14';
+
+-- 2025-06-15
+update diagnosis.test_artifacts set measurements = '[{"name": "身長", "value": "171.2", "value_num": 171.2, "unit": "cm", "ref_low": null, "ref_high": null, "flag": null}, {"name": "体重", "value": "72.4", "value_num": 72.4, "unit": "kg", "ref_low": null, "ref_high": null, "flag": null}, {"name": "BMI", "value": "24.7", "value_num": 24.7, "unit": null, "ref_low": "18.5", "ref_high": "24.9", "flag": null}, {"name": "腹囲", "value": "87.5", "value_num": 87.5, "unit": "cm", "ref_low": null, "ref_high": "85.0", "flag": "H"}, {"name": "最高血圧", "value": "134", "value_num": 134.0, "unit": "mmHg", "ref_low": null, "ref_high": "129", "flag": "H"}, {"name": "最低血圧", "value": "84", "value_num": 84.0, "unit": "mmHg", "ref_low": null, "ref_high": "84", "flag": null}, {"name": "裸眼視力右", "value": "0.7", "value_num": 0.7, "unit": null, "ref_low": "1.0", "ref_high": null, "flag": "L"}, {"name": "裸眼視力左", "value": "0.8", "value_num": 0.8, "unit": null, "ref_low": "1.0", "ref_high": null, "flag": "L"}, {"name": "総コレステロール", "value": "210", "value_num": 210.0, "unit": "mg/dL", "ref_low": "130", "ref_high": "219", "flag": null}, {"name": "HDLコレステロール", "value": "51", "value_num": 51.0, "unit": "mg/dL", "ref_low": "40", "ref_high": null, "flag": null}, {"name": "LDLコレステロール", "value": "129", "value_num": 129.0, "unit": "mg/dL", "ref_low": "60", "ref_high": "119", "flag": "H"}, {"name": "空腹時中性脂肪", "value": "150", "value_num": 150.0, "unit": "mg/dL", "ref_low": "30", "ref_high": "149", "flag": "H"}, {"name": "空腹時血糖", "value": "107", "value_num": 107.0, "unit": "mg/dL", "ref_low": "73", "ref_high": "109", "flag": null}, {"name": "HbA1c(NGSP)", "value": "5.9", "value_num": 5.9, "unit": "%", "ref_low": "4.6", "ref_high": "6.2", "flag": null}, {"name": "γ-GTP", "value": "64", "value_num": 64.0, "unit": "U/L", "ref_low": "13", "ref_high": "64", "flag": null}, {"name": "尿酸", "value": "7.3", "value_num": 7.3, "unit": "mg/dL", "ref_low": "3.7", "ref_high": "7.8", "flag": null}, {"name": "クレアチニン", "value": "0.93", "value_num": 0.93, "unit": "mg/dL", "ref_low": "0.65", "ref_high": "1.07", "flag": null}, {"name": "eGFR", "value": "66.5", "value_num": 66.5, "unit": "mL/min/1.73m²", "ref_low": "60", "ref_high": null, "flag": null}, {"name": "尿蛋白", "value": "(-)", "value_num": null, "unit": null, "ref_low": null, "ref_high": "(-)", "flag": null}, {"name": "尿潜血", "value": "(-)", "value_num": null, "unit": null, "ref_low": null, "ref_high": "(-)", "flag": null}, {"name": "尿糖", "value": "(-)", "value_num": null, "unit": null, "ref_low": null, "ref_high": "(-)", "flag": null}]'::jsonb
  where diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and test_type = 'health_checkup' and test_date = '2025-06-15';
 delete from diagnosis.measurement_values mv using diagnosis.test_artifacts ta
  where mv.artifact_id = ta.id and ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='health_checkup' and ta.test_date='2025-06-15';
@@ -499,11 +549,57 @@ select ta.id, ta.diagnostic_user_id, ta.test_type, ta.test_date, v.seq, v.item_n
     (5, '最低血圧', '最低血圧', '84', 84.0, 'mmHg', null, '84', null, 84.0, null),
     (6, '裸眼視力右', '裸眼視力右', '0.7', 0.7, null, '1.0', null, 1.0, null, 'L'),
     (7, '裸眼視力左', '裸眼視力左', '0.8', 0.8, null, '1.0', null, 1.0, null, 'L'),
-    (8, '尿蛋白', '尿蛋白', '(-)', null, null, null, '(-)', null, null, null),
-    (9, '尿潜血', '尿潜血', '(-)', null, null, null, '(-)', null, null, null),
-    (10, '尿糖', '尿糖', '(-)', null, null, null, '(-)', null, null, null)
+    (8, '総コレステロール', '総コレステロール', '210', 210.0, 'mg/dL', '130', '219', 130.0, 219.0, null),
+    (9, 'HDLコレステロール', 'HDLコレステロール', '51', 51.0, 'mg/dL', '40', null, 40.0, null, null),
+    (10, 'LDLコレステロール', 'LDLコレステロール', '129', 129.0, 'mg/dL', '60', '119', 60.0, 119.0, 'H'),
+    (11, '空腹時中性脂肪', '空腹時中性脂肪', '150', 150.0, 'mg/dL', '30', '149', 30.0, 149.0, 'H'),
+    (12, '空腹時血糖', '空腹時血糖', '107', 107.0, 'mg/dL', '73', '109', 73.0, 109.0, null),
+    (13, 'HbA1c(NGSP)', 'HbA1c(NGSP)', '5.9', 5.9, '%', '4.6', '6.2', 4.6, 6.2, null),
+    (14, 'γ-GTP', 'γ-GTP', '64', 64.0, 'U/L', '13', '64', 13.0, 64.0, null),
+    (15, '尿酸', '尿酸', '7.3', 7.3, 'mg/dL', '3.7', '7.8', 3.7, 7.8, null),
+    (16, 'クレアチニン', 'クレアチニン', '0.93', 0.93, 'mg/dL', '0.65', '1.07', 0.65, 1.07, null),
+    (17, 'eGFR', 'eGFR', '66.5', 66.5, 'mL/min/1.73m²', '60', null, 60.0, null, null),
+    (18, '尿蛋白', '尿蛋白', '(-)', null, null, null, '(-)', null, null, null),
+    (19, '尿潜血', '尿潜血', '(-)', null, null, null, '(-)', null, null, null),
+    (20, '尿糖', '尿糖', '(-)', null, null, null, '(-)', null, null, null)
   ) as v(seq, item_name, canonical_name, value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag)
- where ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='health_checkup' and ta.test_date='2025-06-15';
+ where ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='health_checkup' and ta.test_date = '2025-06-15';
+
+-- 2026-06-19
+update diagnosis.test_artifacts set measurements = '[{"name": "身長", "value": "171.2", "value_num": 171.2, "unit": "cm", "ref_low": null, "ref_high": null, "flag": null}, {"name": "体重", "value": "72.9", "value_num": 72.9, "unit": "kg", "ref_low": null, "ref_high": null, "flag": null}, {"name": "BMI", "value": "24.9", "value_num": 24.9, "unit": null, "ref_low": "18.5", "ref_high": "24.9", "flag": null}, {"name": "腹囲", "value": "88.2", "value_num": 88.2, "unit": "cm", "ref_low": null, "ref_high": "85.0", "flag": "H"}, {"name": "最高血圧", "value": "136", "value_num": 136.0, "unit": "mmHg", "ref_low": null, "ref_high": "129", "flag": "H"}, {"name": "最低血圧", "value": "85", "value_num": 85.0, "unit": "mmHg", "ref_low": null, "ref_high": "84", "flag": "H"}, {"name": "裸眼視力右", "value": "0.7", "value_num": 0.7, "unit": null, "ref_low": "1.0", "ref_high": null, "flag": "L"}, {"name": "裸眼視力左", "value": "0.7", "value_num": 0.7, "unit": null, "ref_low": "1.0", "ref_high": null, "flag": "L"}, {"name": "総コレステロール", "value": "214", "value_num": 214.0, "unit": "mg/dL", "ref_low": "130", "ref_high": "219", "flag": null}, {"name": "HDLコレステロール", "value": "50", "value_num": 50.0, "unit": "mg/dL", "ref_low": "40", "ref_high": null, "flag": null}, {"name": "LDLコレステロール", "value": "133", "value_num": 133.0, "unit": "mg/dL", "ref_low": "60", "ref_high": "119", "flag": "H"}, {"name": "空腹時中性脂肪", "value": "155", "value_num": 155.0, "unit": "mg/dL", "ref_low": "30", "ref_high": "149", "flag": "H"}, {"name": "空腹時血糖", "value": "110", "value_num": 110.0, "unit": "mg/dL", "ref_low": "73", "ref_high": "109", "flag": "H"}, {"name": "HbA1c(NGSP)", "value": "6.0", "value_num": 6.0, "unit": "%", "ref_low": "4.6", "ref_high": "6.2", "flag": null}, {"name": "γ-GTP", "value": "69", "value_num": 69.0, "unit": "U/L", "ref_low": "13", "ref_high": "64", "flag": "H"}, {"name": "尿酸", "value": "7.5", "value_num": 7.5, "unit": "mg/dL", "ref_low": "3.7", "ref_high": "7.8", "flag": null}, {"name": "クレアチニン", "value": "0.94", "value_num": 0.94, "unit": "mg/dL", "ref_low": "0.65", "ref_high": "1.07", "flag": null}, {"name": "eGFR", "value": "65.4", "value_num": 65.4, "unit": "mL/min/1.73m²", "ref_low": "60", "ref_high": null, "flag": null}, {"name": "尿蛋白", "value": "(-)", "value_num": null, "unit": null, "ref_low": null, "ref_high": "(-)", "flag": null}, {"name": "尿潜血", "value": "(-)", "value_num": null, "unit": null, "ref_low": null, "ref_high": "(-)", "flag": null}, {"name": "尿糖", "value": "(-)", "value_num": null, "unit": null, "ref_low": null, "ref_high": "(-)", "flag": null}]'::jsonb
+ where diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and test_type = 'health_checkup' and test_date = '2026-06-19';
+delete from diagnosis.measurement_values mv using diagnosis.test_artifacts ta
+ where mv.artifact_id = ta.id and ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='health_checkup' and ta.test_date='2026-06-19';
+insert into diagnosis.measurement_values
+  (artifact_id, diagnostic_user_id, test_type, test_date, seq, item_name, canonical_name,
+   value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag, source_file_kind)
+select ta.id, ta.diagnostic_user_id, ta.test_type, ta.test_date, v.seq, v.item_name, v.canonical_name,
+       v.value, v.value_num, v.unit, v.ref_low, v.ref_high, v.ref_low_num, v.ref_high_num, v.flag, 'scan_md'
+  from diagnosis.test_artifacts ta,
+  (values
+    (0, '身長', '身長', '171.2', 171.2, 'cm', null, null, null, null, null),
+    (1, '体重', '体重', '72.9', 72.9, 'kg', null, null, null, null, null),
+    (2, 'BMI', 'BMI', '24.9', 24.9, null, '18.5', '24.9', 18.5, 24.9, null),
+    (3, '腹囲', '腹囲', '88.2', 88.2, 'cm', null, '85.0', null, 85.0, 'H'),
+    (4, '最高血圧', '最高血圧', '136', 136.0, 'mmHg', null, '129', null, 129.0, 'H'),
+    (5, '最低血圧', '最低血圧', '85', 85.0, 'mmHg', null, '84', null, 84.0, 'H'),
+    (6, '裸眼視力右', '裸眼視力右', '0.7', 0.7, null, '1.0', null, 1.0, null, 'L'),
+    (7, '裸眼視力左', '裸眼視力左', '0.7', 0.7, null, '1.0', null, 1.0, null, 'L'),
+    (8, '総コレステロール', '総コレステロール', '214', 214.0, 'mg/dL', '130', '219', 130.0, 219.0, null),
+    (9, 'HDLコレステロール', 'HDLコレステロール', '50', 50.0, 'mg/dL', '40', null, 40.0, null, null),
+    (10, 'LDLコレステロール', 'LDLコレステロール', '133', 133.0, 'mg/dL', '60', '119', 60.0, 119.0, 'H'),
+    (11, '空腹時中性脂肪', '空腹時中性脂肪', '155', 155.0, 'mg/dL', '30', '149', 30.0, 149.0, 'H'),
+    (12, '空腹時血糖', '空腹時血糖', '110', 110.0, 'mg/dL', '73', '109', 73.0, 109.0, 'H'),
+    (13, 'HbA1c(NGSP)', 'HbA1c(NGSP)', '6.0', 6.0, '%', '4.6', '6.2', 4.6, 6.2, null),
+    (14, 'γ-GTP', 'γ-GTP', '69', 69.0, 'U/L', '13', '64', 13.0, 64.0, 'H'),
+    (15, '尿酸', '尿酸', '7.5', 7.5, 'mg/dL', '3.7', '7.8', 3.7, 7.8, null),
+    (16, 'クレアチニン', 'クレアチニン', '0.94', 0.94, 'mg/dL', '0.65', '1.07', 0.65, 1.07, null),
+    (17, 'eGFR', 'eGFR', '65.4', 65.4, 'mL/min/1.73m²', '60', null, 60.0, null, null),
+    (18, '尿蛋白', '尿蛋白', '(-)', null, null, null, '(-)', null, null, null),
+    (19, '尿潜血', '尿潜血', '(-)', null, null, null, '(-)', null, null, null),
+    (20, '尿糖', '尿糖', '(-)', null, null, null, '(-)', null, null, null)
+  ) as v(seq, item_name, canonical_name, value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag)
+ where ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='health_checkup' and ta.test_date = '2026-06-19';
 
 -- ── ④ ウェルネス年齢スコア (現状 0 行 = カードが何も表示できない状態の解消) ────
 -- biological_age は UI 表示検証用の固定値であり CABA の実計算結果ではない。
@@ -525,6 +621,84 @@ insert into diagnosis.health_age_scores
   ('d0000003-0000-0000-0000-000000000000', 'blood', '2026-03-05', 67.7, 73.8, 6.1, 'seed-fixture', '{"used_markers": ["albumin", "creatinine", "glucose", "crp", "lymph", "mcv", "rdw", "alp", "wbc"], "carried_markers": [], "imputed_markers": ["rdw", "lymph"], "note": "seed: UI表示検証用の固定値。CABA実計算ではない。"}'::jsonb),
   ('d0000003-0000-0000-0000-000000000000', 'blood', '2026-07-15', 68.0, 75.6, 7.6, 'seed-fixture', '{"used_markers": ["albumin", "creatinine", "glucose", "crp", "lymph", "mcv", "rdw", "alp", "wbc"], "carried_markers": [], "imputed_markers": ["rdw", "lymph"], "note": "seed: UI表示検証用の固定値。CABA実計算ではない。"}'::jsonb)
 on conflict (diagnostic_user_id, test_date, source_kind) do nothing;
+
+
+-- ── ⑥ がんリスク検査 (真鍋 d0000001・ALA-PDS) : canonical_name が付かない経路 ────
+-- 項目名・単位・値のレンジは docs/scan/golden/scan_golden_cancer_alapds_20251226.md の
+-- 実測 (元 PDF page2 から人手確定) に合わせる。
+--
+-- 【canonical_name は null のまま】standard-master.ts は健診標準フォーマット(KMAT)の
+-- starter なので ALA-PDS の項目は収録されていない。当て推量で埋めない (捏造ゼロ)。
+-- 推移グラフ側は **テストフェーズの暫定措置**として item_name をキーに拾う
+-- (src/lib/measurement-queries.ts の seriesKey)。
+--
+-- 【インデックス値】ポルフィリン量からの算出式は検査機関の非公開仕様なので、こちらでは
+-- 式を作らない。ゴールデンの実測ペア (972 → 0.8) の比をそのまま保った値を置いている
+-- =表示確認用のテスト値であって、検査機関の算出結果ではない。
+-- 【基準値・判定は入れない】「A: <2.0 / B: 2.0〜4.9 …」の目安表はゴールデンでも
+-- 説明文 (非測定値) 扱い。アプリが基準値や判定を決めないため ref/flag は null。
+
+insert into diagnosis.test_artifacts
+  (diagnostic_user_id, source, test_type, test_date, external_test_id, lab_name,
+   schema_version, age_at_test, sex, display_mode, page_count, imported_at, imported_by, status) values
+  ('d0000001-0000-0000-0000-000000000000', 'wellfort_lab', 'cancer_urine', '2024-01-16', 'K0871', 'PREVENT メディカル', '1.0', 54, 'male', 'single', 3, '2024-01-16 10:00+09', 'wellfort_batch', 'active'),
+  ('d0000001-0000-0000-0000-000000000000', 'wellfort_lab', 'cancer_urine', '2025-01-14', 'K0975', 'PREVENT メディカル', '1.0', 55, 'male', 'single', 3, '2025-01-14 10:00+09', 'wellfort_batch', 'active'),
+  ('d0000001-0000-0000-0000-000000000000', 'wellfort_lab', 'cancer_urine', '2026-01-12', 'K1079', 'PREVENT メディカル', '1.0', 56, 'male', 'single', 3, '2026-01-12 10:00+09', 'wellfort_batch', 'active')
+on conflict (diagnostic_user_id, source, test_type, test_date, external_test_id) do nothing;
+
+-- 2024-01-16
+update diagnosis.test_artifacts set measurements = '[{"name": "尿中ポルフィリン量", "value": "852", "value_num": 852.0, "unit": "nmol/g・CRE", "ref_low": null, "ref_high": null, "flag": null}, {"name": "インデックス値", "value": "0.7", "value_num": 0.7, "unit": null, "ref_low": null, "ref_high": null, "flag": null}, {"name": "リスクランク", "value": "A", "value_num": null, "unit": null, "ref_low": null, "ref_high": null, "flag": null}]'::jsonb
+ where diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and test_type = 'cancer_urine' and test_date = '2024-01-16';
+delete from diagnosis.measurement_values mv using diagnosis.test_artifacts ta
+ where mv.artifact_id = ta.id and ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='cancer_urine' and ta.test_date='2024-01-16';
+insert into diagnosis.measurement_values
+  (artifact_id, diagnostic_user_id, test_type, test_date, seq, item_name, canonical_name,
+   value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag, source_file_kind)
+select ta.id, ta.diagnostic_user_id, ta.test_type, ta.test_date, v.seq, v.item_name, v.canonical_name,
+       v.value, v.value_num, v.unit, v.ref_low, v.ref_high, v.ref_low_num, v.ref_high_num, v.flag, 'scan_md'
+  from diagnosis.test_artifacts ta,
+  (values
+    (0, '尿中ポルフィリン量', null, '852', 852.0, 'nmol/g・CRE', null, null, null::numeric, null::numeric, null),
+    (1, 'インデックス値', null, '0.7', 0.7, null, null, null, null::numeric, null::numeric, null),
+    (2, 'リスクランク', null, 'A', null, null, null, null, null::numeric, null::numeric, null)
+  ) as v(seq, item_name, canonical_name, value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag)
+ where ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='cancer_urine' and ta.test_date = '2024-01-16';
+
+-- 2025-01-14
+update diagnosis.test_artifacts set measurements = '[{"name": "尿中ポルフィリン量", "value": "972", "value_num": 972.0, "unit": "nmol/g・CRE", "ref_low": null, "ref_high": null, "flag": null}, {"name": "インデックス値", "value": "0.8", "value_num": 0.8, "unit": null, "ref_low": null, "ref_high": null, "flag": null}, {"name": "リスクランク", "value": "A", "value_num": null, "unit": null, "ref_low": null, "ref_high": null, "flag": null}]'::jsonb
+ where diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and test_type = 'cancer_urine' and test_date = '2025-01-14';
+delete from diagnosis.measurement_values mv using diagnosis.test_artifacts ta
+ where mv.artifact_id = ta.id and ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='cancer_urine' and ta.test_date='2025-01-14';
+insert into diagnosis.measurement_values
+  (artifact_id, diagnostic_user_id, test_type, test_date, seq, item_name, canonical_name,
+   value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag, source_file_kind)
+select ta.id, ta.diagnostic_user_id, ta.test_type, ta.test_date, v.seq, v.item_name, v.canonical_name,
+       v.value, v.value_num, v.unit, v.ref_low, v.ref_high, v.ref_low_num, v.ref_high_num, v.flag, 'scan_md'
+  from diagnosis.test_artifacts ta,
+  (values
+    (0, '尿中ポルフィリン量', null, '972', 972.0, 'nmol/g・CRE', null, null, null::numeric, null::numeric, null),
+    (1, 'インデックス値', null, '0.8', 0.8, null, null, null, null::numeric, null::numeric, null),
+    (2, 'リスクランク', null, 'A', null, null, null, null, null::numeric, null::numeric, null)
+  ) as v(seq, item_name, canonical_name, value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag)
+ where ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='cancer_urine' and ta.test_date = '2025-01-14';
+
+-- 2026-01-12
+update diagnosis.test_artifacts set measurements = '[{"name": "尿中ポルフィリン量", "value": "1094", "value_num": 1094.0, "unit": "nmol/g・CRE", "ref_low": null, "ref_high": null, "flag": null}, {"name": "インデックス値", "value": "0.9", "value_num": 0.9, "unit": null, "ref_low": null, "ref_high": null, "flag": null}, {"name": "リスクランク", "value": "A", "value_num": null, "unit": null, "ref_low": null, "ref_high": null, "flag": null}]'::jsonb
+ where diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and test_type = 'cancer_urine' and test_date = '2026-01-12';
+delete from diagnosis.measurement_values mv using diagnosis.test_artifacts ta
+ where mv.artifact_id = ta.id and ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='cancer_urine' and ta.test_date='2026-01-12';
+insert into diagnosis.measurement_values
+  (artifact_id, diagnostic_user_id, test_type, test_date, seq, item_name, canonical_name,
+   value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag, source_file_kind)
+select ta.id, ta.diagnostic_user_id, ta.test_type, ta.test_date, v.seq, v.item_name, v.canonical_name,
+       v.value, v.value_num, v.unit, v.ref_low, v.ref_high, v.ref_low_num, v.ref_high_num, v.flag, 'scan_md'
+  from diagnosis.test_artifacts ta,
+  (values
+    (0, '尿中ポルフィリン量', null, '1094', 1094.0, 'nmol/g・CRE', null, null, null::numeric, null::numeric, null),
+    (1, 'インデックス値', null, '0.9', 0.9, null, null, null, null::numeric, null::numeric, null),
+    (2, 'リスクランク', null, 'A', null, null, null, null, null::numeric, null::numeric, null)
+  ) as v(seq, item_name, canonical_name, value, value_num, unit, ref_low, ref_high, ref_low_num, ref_high_num, flag)
+ where ta.diagnostic_user_id = 'd0000001-0000-0000-0000-000000000000' and ta.test_type='cancer_urine' and ta.test_date = '2026-01-12';
 
 -- ── ⑤ 空状態は既存 seed のまま (追加しない) ─────────────────────────────
 --   鈴木 一郎  d0000004… : 契約直後・検査なし        → 「データが無いとき」の画面

@@ -3,7 +3,7 @@
 この文書は **AI問診（音声/タップのハイブリッド問診）の確定仕様と設計原則**の唯一の正本。
 AI問診まわりのコードに触れる前に必ず読むこと。**ここに書かれた確定事項を、推測や場当たり修正で蒸し返さない。**
 
-- 対象コード: `src/scripts/chat/live-controller.ts` / `interview-script.ts` / `live-audio-manager.ts` / `wheel-picker.ts` / `src/pages/chat.astro` / `src/pages/api/live-token.ts`
+- 対象コード: `src/scripts/chat/live-controller.ts` / `interview-script.ts` / `live-audio-manager.ts` / `choice-picker.ts` / `src/pages/chat.astro` / `src/pages/api/live-token.ts`
 - 上位の確定事項: `CLAUDE.md` §「AI問診 / Live API 制御 (絶対厳守)」（本書はその詳細版）
 - 関連仕様: `docs/funding_application/要件定義書.md` F-3、`docs/interview/20260331_AI参考問診票.png`
 
@@ -21,7 +21,15 @@ Gemini Live API は VAD・割り込み・ターン取りをモデル(サーバ)�
 ## 1. アーキテクチャ
 
 - **問診進行**（質問順・分岐・完了・進捗）= クライアントの **`InterviewEngine`**（`interview-script.ts`）が確定的に制御。LLM に問診順を決めさせない → ループ・順序乱れ・選択肢欠落が構造的にゼロ。
-- **回答UI**（chip / multi / wheel / matrix / slider / stepper / text）= プログラムが設問種別に応じて描画。タップ回答が一級市民。
+- **回答UI**（chip / multi / **list** / matrix / slider / stepper / text）= プログラムが設問種別に応じて描画。タップ回答が一級市民。
+- **中止と再開もプログラム側の責務**（フロー/データの範疇であり、音声のターン制御ではない）。
+  「中止」は 3 択（①記憶して中止 ②全クリアして中止 ③問診に戻る）で、①は localStorage の
+  `InterviewProgress` に途中経過を退避し、次回 `InterviewEngine.resume()` で続きから再開する。
+  1 問ごとに保存するので、中止ボタンを押さない離脱（タブを閉じる・リロード）でも戻れる。
+  - **`list` は旧 `wheel`（ホイール選択）の置換（2026-08・発注者承認）。** 件数で 3 段階に自動で切り替わる
+    （〜7件=ボトムシート / 8〜12件=全画面 / 13件〜=全画面+検索+分類見出し）。実装 `src/scripts/chat/choice-picker.ts`。
+    ホイールを廃止した理由・スクロール可視化の 3 点セット（見切れ / sticky 見出し / 残数）・
+    フッター被りを構造で防ぐ理由は、同ファイル冒頭のコメントが正本。
 - **音声**= **Gemini Live API**（`gemini-3.1-flash-live-preview`）。挨拶・質問読み上げ・回答の復唱・間・割り込みは **LLM が担う**。
 - **回答データ** = engine が `AnswerValue` で構造化記録 → Elith `LifestyleQuestionnaireData` として出力。
 
@@ -32,7 +40,7 @@ Gemini Live API は VAD・割り込み・ターン取りをモデル(サーバ)�
 | 領域 | 制御主体 | 補足 |
 |---|---|---|
 | 質問順・分岐・完了（フロー） | **プログラム(engine)** | 確定的。`recordAndAdvance` |
-| 選択肢UI・ウィジェット描画 | **プログラム** | `renderChips` 等。設問種別で切替 |
+| 選択肢UI・ウィジェット描画 | **プログラム** | `renderChips` / `openListPicker` 等。設問種別で切替 |
 | 回答データの記録・構造化 | **プログラム** | Elith 出力の源泉 |
 | タップ回答の受付 | **プログラム** | 音声が無い＝Live API 自発応答なし＝安全 |
 | **音声のターン取り / 割り込み / VAD** | **Live API/LLM** | **プログラムで握らない** |

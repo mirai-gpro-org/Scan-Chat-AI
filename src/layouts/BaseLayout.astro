@@ -61,12 +61,17 @@ const WIDTH = {
         - Android (Chrome) は manifest の icons を使う。192 と 512 が必須
           (web.dev/articles/install-criteria の installability criteria)。
         - iOS Safari は manifest ではなく `apple-touch-icon` を使う
+        - **URL の `?v=` は必ずアイコンを作り直すたびに上げること**。Chrome は
+          manifest の `icons` が同じならアイコン URL を immutable 扱いして
+          再ダウンロードしないため、中身だけ差し替えても**インストール済みの
+          ホーム画面アイコンは永久に古いまま**になる
+          (出典: web.dev/articles/manifest-updates)
           (Apple: Configuring Web Applications)。180x180 を 1 枚置く。
         - 画像は scripts/build-pwa-icons.mjs が Welltect ロゴから生成する
           (ロゴは加工せず、白地の正方形に余白付きで配置するだけ)。
     */}
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=3" />
     <meta name="apple-mobile-web-app-title" content="Welltect" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />

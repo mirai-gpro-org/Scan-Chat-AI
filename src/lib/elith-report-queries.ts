@@ -1,5 +1,5 @@
 /**
- * AI 診断結果レポート (Elith) の取得 — パイプライン⑥ の暫定実装。
+ * AI疾病予防報告書 (Elith の診断結果) の取得 — パイプライン⑥ の暫定実装。
  *
  * 【データの所在】diagnosis.diagnosis_results が「Elith の診断結果 1 回分」を表す。
  *   report              … セクション JSON (3 モードの a/b/c すべての本文)
@@ -21,6 +21,7 @@ import { getOriginalSignedUrl } from './originals-storage';
 import { demoFallbackEnabled } from './demo-data';
 import { ELITH_REPORT_SAMPLE, ELITH_REPORT_PDF, ELITH_REPORT_PAGES } from './elith-report-sample';
 import type { ElithSection } from './elith-parser';
+import { AI_PREVENTION_REPORT_LABEL } from './display-names';
 
 export interface ElithReportView {
   sections: ElithSection[];
@@ -55,7 +56,7 @@ function pagesFromSections(sections: ElithSection[]): Record<string, number> {
 }
 
 /**
- * 最新の AI 診断結果レポートを取得する。
+ * 最新の AI疾病予防報告書を取得する。
  * 実データが無い / Supabase 未接続のときはサンプルへフォールバックする。
  */
 export async function loadElithReport(diagnosticUserId: string | null): Promise<ElithReportView> {
@@ -85,7 +86,7 @@ export async function loadElithReport(diagnosticUserId: string | null): Promise<
       sections,
       pdf: {
         url,
-        label: 'AI 診断結果レポート (Elith)',
+        label: `${AI_PREVENTION_REPORT_LABEL} (Elith)`,
         pageCount: row.report_pdf_pages ?? 0,
         issuedOn: String(row.received_at).slice(0, 10),
       },

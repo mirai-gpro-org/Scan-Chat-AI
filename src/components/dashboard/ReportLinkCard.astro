@@ -1,55 +1,51 @@
 ---
 import AppIcon from '../AppIcon.astro';
-import AppLogo from '../AppLogo.astro';
+import { formatJpDate } from '../../lib/dashboard-queries';
+import { AI_PREVENTION_REPORT_LABEL } from '../../lib/display-names';
 
 /**
- * AI 診断結果 (Elith レポート) への導線カード。
+ * AI疾病予防報告書 (Elith 診断結果) への導線タイル。
  *
- * 入力の導線 (AI スキャン / AI 問診) とは性質が違うので横並びにせず、
- * ウェルネス年齢の隣に置く。PC / タブレットではウェルネス年齢が 1 枚だけだと横に間延びするため、
- * 2 カラムの右側に入って余白を埋める役割も持つ。
+ * 【優先度】Welltect の売りの一つなので、他の検査セクションより優先して見せる
+ *   (発注者指示 2026-08)。大きさは検査カードと同寸のまま、**面を brand 塗り**にして
+ *   優先度を出す。画面で brand 塗りはこの 1 枚だけ — 塗りが複数あると主役が消えて
+ *   このタイルが検査カードに埋もれるため、AI スキャン等は淡色ペアに落としてある。
  *
- * layout:
- *   'row'   … 1 カラム時 (スマホ / ウェルネス年齢が無いとき)。横並びの帯。
- *   'stack' … 2 カラムの右側。縦組み。**高さはウェルネス年齢に揃えない** —
- *             中身が少ないので引き伸ばすと中央が大きく空いて未完成に見える
- *             (グリッド側を items-start にしてある)。
+ * 【コントラスト実測】白文字 on brand-600 = 4.70:1 (AA 4.5 ✓) /
+ *   白ボタンの brand-700 文字 = 7.09:1。文字を薄くしない (opacity を掛けない)。
+ *
+ * ページ数など報告書固有のメタは、型に無い列を推測で出さない (ミッション④)。
+ * 出すのは受領日だけ。
  */
 interface Props {
   href: string;
-  layout?: 'row' | 'stack';
+  /** Elith から受領した日 (diagnosis_results.received_at)。無ければ日付行を出さない。 */
+  receivedAt?: string | null;
 }
-const { href, layout = 'row' } = Astro.props as Props;
-
-const base =
-  'group flex min-h-touch rounded-2xl border border-brand-200 bg-brand-50 transition '
-  + 'hover:border-brand-400 hover:bg-brand-100';
+const { href, receivedAt = null } = Astro.props as Props;
 ---
 
-{layout === 'stack' ? (
-  <a href={href} class={`${base} flex-col items-start gap-3 px-5 py-5`}>
-    <span class="flex items-center gap-3">
-      <AppIcon name="report" size={30} class="shrink-0 text-brand-700" />
-      <AppLogo height={40} />
+<section class="flex flex-col gap-3 rounded-2xl border border-brand-600 bg-brand-600 p-4 text-white sm:p-5">
+  <div class="flex items-center gap-3">
+    <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/20">
+      <AppIcon name="report" size={20} />
     </span>
     <span class="flex min-w-0 flex-col">
-      <span class="text-base font-semibold text-navy-800">AI 診断結果</span>
-      <span class="text-sm text-slate-700">レポートを読む</span>
+      <span class="text-base font-bold">{AI_PREVENTION_REPORT_LABEL}</span>
+      {receivedAt && <span class="tnum whitespace-nowrap text-sm">{formatJpDate(receivedAt)}</span>}
     </span>
-    <span class="inline-flex items-center gap-1 text-sm font-medium text-brand-700">
-      開く<AppIcon name="next" size={16} />
-    </span>
+  </div>
+
+  <a
+    href={href}
+    class="flex min-h-touch items-center justify-center gap-1.5 rounded-xl bg-white px-3 text-base font-semibold text-brand-700 transition hover:bg-brand-50"
+  >
+    報告書を読む<AppIcon name="next" size={18} />
   </a>
-) : (
-  <a href={href} class={`${base} items-center gap-4 px-5 py-4`}>
-    <span class="flex shrink-0 items-center gap-3">
-      <AppIcon name="report" size={32} class="text-brand-700" />
-      <AppLogo height={44} />
-    </span>
-    <span class="flex min-w-0 flex-col">
-      <span class="text-base font-semibold text-navy-800">AI 診断結果</span>
-      <span class="text-sm text-slate-700">レポートを読む</span>
-    </span>
-    <AppIcon name="next" size={20} class="ml-auto shrink-0 text-brand-700" />
-  </a>
-)}
+
+  <span class="text-sm">
+    <span class="whitespace-nowrap">サマリー</span> ／
+    <span class="whitespace-nowrap">要注意の抜粋</span> ／
+    <span class="whitespace-nowrap">全編PDF</span>
+  </span>
+</section>
