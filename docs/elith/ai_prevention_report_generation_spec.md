@@ -1047,7 +1047,7 @@ UI は wellfort-site 側。
 | **P0** | **章レジストリ＋表示モデルの型を先に決める** (§1.3.2 / §1.3.3)。ここを飛ばすと後段が固まる | **実装済 (2026-08-29)** — §9.2 |
 | **P1** | 新形式アダプタ (§5.1) ＋ `elith-report-highlights` の検出ルール差し替え (§5.2) | **実装済 (2026-08-29)** — §9.3 |
 | **P2** | 章立ての組み替え・折りたたみ・**印刷専用ビュー `?print=1`** (§3.3 / §4) | **実装済 (2026-08-29)** — §9.4 |
-| **P3** | 取り込み API の 3 ファイル対応 ＋ マイグレーション (§8.2) | 未着手 |
+| **P3** | 取り込み API の 3 ファイル対応 ＋ マイグレーション (§8.2) | **実装済 (2026-08-29)** — §9.5 |
 | **P4** | データ品質ガード (§7) | 未着手 |
 | **P4.2** | **抽出監査を admin に出す** (§1.3.6)。UI は wellfort-site 側 | 未着手 |
 | **P4.3** | **fixture＋表示モデルのスナップショット回帰** (§1.3.7) | **実装済 (2026-08-29)** — `npm run verify:report-model`。§9.3 |
@@ -1203,6 +1203,46 @@ collapsed・未知キー・空指定・アンカーの決定論性・レジス�
   直すなら他ページへの影響込みで別途。
 - 実機確認 (P4.5) は未実施。**印刷専用ビュー方式は iOS の 2 経路どちらでも成立する**設計なので、
   この確認を待たずに進めてよい (§3.4)。
+
+### 9.5 P3 の実装内容 (2026-08-29)
+
+| ファイル | 内容 |
+|---|---|
+| `supabase/migrations/20260829000010_diagnosis_report_checkup.sql` (新規) | `diagnosis_results.checkup_values` (jsonb) を追加 |
+| `src/pages/api/admin/elith-report/upload.ts` | **3 ファイル対応**。`report_text` / `health_checkup` / `file` (PDF) |
+| `src/lib/elith-report-queries.ts` | `checkup_values` を読む。**列が無い環境では列を外して引き直す** |
+
+#### フォーム項目 (すべて任意・**File でも文字列でも受ける**)
+
+| 項目 | 受領物 | 格納先 |
+|---|---|---|
+| `report_text` | `report_text.json` | `report` (jsonb) ＋ `schema_version='elith-v2.0'` |
+| `health_checkup` | `health_checkup.json` | `checkup_values` (jsonb) |
+| `file` | 組版済み PDF | `report_pdf_*` (原本として保管) |
+| `sections` | 旧形式のセクション配列 | `report` ＋ `schema_version='elith-v1.0'` (後方互換) |
+
+- **PDF を必須から任意へ変えた。** 表示の主役は JSON で、PDF は原本保管だけ (§2.3)。
+  既存の wellfort-site admin UI (PDF＋`sections` を送る) はそのまま動く。
+- **3 つとも無ければ 400 `nothing_to_ingest`。** 空の行を作らない。
+- 応答に **取り込めた中身の数**を返す (セクション数・章名・`health_age`・検査値数・`warnings`)。
+  **表示側と同じアダプタで数える** — ここだけ別の数え方をすると
+  「取り込めたつもりで画面が空」を検知できない (§1.3.6 と同じ趣旨)。
+
+#### なぜ別列 (`checkup_values`) か
+
+`report` は本文 (10 セクションの散文)、`checkup_values` は検査値 (40 項目) で、
+別ファイル・別構造。**2 ファイルは包含関係でない** — 本文が参照するヘマトクリットが
+検査値側に無い (§7.2) ため、片方から他方を導けない。
+当社スキャン由来の `diagnosis.measurement_values` とも**出どころが違う**ので混ぜない
+(混ぜると、どちらの値をユーザーに見せているか分からなくなる)。
+
+#### 検証 (ローカル PG16)
+
+- **全マイグレーションを空 DB へ順に適用 → 0 失敗**。`checkup_values` が生えることを確認。
+- 受領 JSON 2 点を実際に `insert` → `report` 11 キー (10 セクション＋`health_age`) /
+  `checkup_values` 40 キー / `health_age`=46.6 で round-trip。
+- **jsonb はキー順を保持しない**ので、キー順を入れ替えても表示モデルが変わらないことを
+  回帰チェックに追加した (`npm run verify:report-model`・40 件)。
 
 ---
 

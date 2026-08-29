@@ -130,6 +130,23 @@ const plan = vm.chapters.find((c) => c.key === 'diet_plan')!;
 eq('食事プランを別章に出したので本文からは消える', /か\s*月.*プラン/.test(diet.body), false);
 eq('食事プランの本文は原文に含まれる', dietRaw.includes(plan.body), true);
 
+// ── DB 往復 (jsonb) ─────────────────────────────────────────────
+// `report` は jsonb で保存する (§8.2)。**jsonb はキー順を保持しない**ので、
+// 並びに依存した読み方をしていないことを確認する。
+console.log('\n[jsonb のキー順に依存しない]');
+const shuffled = Object.fromEntries(
+  Object.entries(reportText as Record<string, unknown>).reverse(),
+);
+const vmShuffled = buildReportVM({
+  reportText: shuffled, checkup, type: 'single', issuedOn: '2026-08-26',
+  chapters: CHAPTER_REGISTRY.slice(),
+});
+const shape = (v: typeof vm) => v.chapters.map((c) => [c.key, c.title, c.body.length, c.topics.length]);
+eq('キー順を入れ替えても章の並びと中身が同じ', shape(vmShuffled), shape(vm));
+eq('キー順を入れ替えても監査値が同じ',
+  [vmShuffled.audit.topicCount, vmShuffled.audit.measurementCount, vmShuffled.audit.referenceCount],
+  [vm.audit.topicCount, vm.audit.measurementCount, vm.audit.referenceCount]);
+
 // ── 旧形式 (Stage2 サンプル) ─────────────────────────────────────
 // 実データ受領までサンプルが表示される。検出ルールを変えたときに
 // **こちらが無言で空になっていない**ことを見る (実際に一度 0 件にした)。

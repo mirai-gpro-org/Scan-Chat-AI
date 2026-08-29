@@ -546,6 +546,24 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
         `subscriptions.current_cycle_seq` があるときだけ表紙に出る(単品購入は行が無い=自動的に出ない)。
       - **既知の残り**: `emphasizeTopicJa()` が「無理に制限**するのでは**なく」のような
         主題でない「〜では」を太字にする(実測)。`report-view.ts` の既存挙動で `/report` 固有ではない。
+    - **【実装】P3 完了 (2026-08-29・spec §9.5)**: 取り込み API の 3 ファイル対応 +
+      マイグレーション `supabase/migrations/20260829000010_diagnosis_report_checkup.sql`
+      (`diagnosis_results.checkup_values` jsonb 追加)。
+      - `POST /api/admin/elith-report/upload` のフォーム項目 (すべて任意・**File でも文字列でも受ける**):
+        `report_text`→`report`+`schema_version='elith-v2.0'` / `health_checkup`→`checkup_values` /
+        `file`(PDF)→`report_pdf_*` / `sections`(旧配列)→`report`+`'elith-v1.0'`(後方互換)。
+      - **PDF を必須から任意へ変更**(表示の主役は JSON・PDF は原本保管だけ)。既存 wellfort-site
+        admin UI は不変で動く。**3つとも無ければ 400 `nothing_to_ingest`**(空の行を作らない)。
+      - 応答に取り込めた数を返す(セクション数/章名/`health_age`/検査値数/`warnings`)。
+        **表示側と同じアダプタで数える** — 別の数え方をすると「取り込めたつもりで画面が空」を検知できない。
+      - **`checkup_values` を別列にする理由**: `report`=本文の散文 / `checkup_values`=検査値40項目 で
+        別ファイル・別構造。**2ファイルは包含関係でない**(本文が参照するヘマトクリットが検査値側に無い)。
+        当社スキャン由来の `measurement_values` とは**出どころが違う**ので混ぜない。
+      - 読み出しは **列が無い環境では列を外して引き直す**(マイグレーション未適用で、実データが
+        あるのに黙ってサンプルへ落ちるのを防ぐ)。
+      - 検証(ローカルPG16): 全マイグレーションを空DBへ順に適用=0失敗 / 受領JSON2点を実insert=
+        `report` 11キー・`checkup_values` 40キー・`health_age`=46.6 で round-trip /
+        **jsonb はキー順を保持しない**ので順序非依存を回帰チェックに追加(40件)。
 
 ### ウェルネス年齢 (旧称: 健康年齢・2026-08 確定・発注者指示)
 - **名称は「ウェルネス年齢」**。画面・帳票・ドキュメントの表示名は全部これ。
