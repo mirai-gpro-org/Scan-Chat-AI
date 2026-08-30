@@ -97,7 +97,8 @@ demecal_login_page.html     ← ログイン画面の作り
 | | |
 |---|---|
 | 配布口 | `GET /api/ops/probe-bat?k=<token>`。`.ps1` をその場で bat に包み、トークンを注入して返す |
-| 受け口 | `POST /api/ops/probe-upload`。**テキストのみ・書き込み専用**（読み出す API は作らない） |
+| 受け口 | `POST /api/ops/probe-upload`。**テキストのみ・書き込み専用** |
+| 確認口 | `GET /api/ops/probe-list?k=<token>`。**実行の一覧**（新しい順）。`&key=<report.txt の key>` でその中身。**`ops/probe/` 配下しか読まない・`page.html` の本文は返さない**（2026-08-30 追加） |
 | 認可 | どちらも env `PROBE_UPLOAD_TOKEN`（配布=`?k=` / 受取=ヘッダ `x-probe-token`）。**`ADMIN_API_KEY` は使わない** — 配布物に埋まるので、漏れてもこの 2 口だけに閉じる使い捨てにする |
 | 保存先 | S3 `{AWS_S3_PREFIX}ops/probe/{YYYY-MM-DD}/{label}-{PC名}-{uuid}/report.txt`（HTML があれば `page.html`） |
 | 上限 | report 256KB / page 2MB |
@@ -112,8 +113,25 @@ demecal_login_page.html     ← ログイン画面の作り
    ```
    https://scan-chat-ai.vercel.app/api/ops/probe-bat?k=<PROBE_UPLOAD_TOKEN>
    ```
-3. 実行後、S3 の `ops/probe/` を見る。
-4. **済んだら Vercel の env を削除**して閉じる。
+3. 実行されたかを確認する:
+   ```
+   https://scan-chat-ai.vercel.app/api/ops/probe-list?k=<PROBE_UPLOAD_TOKEN>
+   ```
+   `count` が実行回数（送信できたもの）。各行の `report_key` を `&key=` に渡すと本文が読める。
+   S3 コンソールから `{AWS_S3_PREFIX}ops/probe/` を直接見てもよい。
+4. **済んだら Vercel の env を削除**して閉じる（配布・受取・確認の 3 口が同時に閉じる）。
+
+> **`count` が 0 のときの切り分け**（「未実行」と即断しない）:
+> 送信は**任意**で、失敗しても bat は正常終了し「デスクトップのファイルをメールで」と案内する
+> （`demecal-probe.ps1` [5]）。したがって 0 件は次のいずれか。
+> 1. まだ実行されていない
+> 2. 実行されたが、**渡した bat がトークン未注入**だった（repo の
+>    `scripts/デメカル接続チェック.bat` はプレースホルダ `__PROBE_TOKEN__` のまま。
+>    配布 API か `build-demecal-probe-bat.py --token` で作ったものでないと送信しない）
+> 3. 実行時に env が未設定だった（当時 503）／PC から送信がブロックされた
+>
+> **env が今生きているかはトークン無しで判る**: `GET /api/ops/probe-bat`（`k` 無し）が
+> **401 なら設定済み・503 なら未設定**。
 
 **トークンはリポジトリに置かない。** `.ps1` はプレースホルダ `__PROBE_TOKEN__` のまま commit されており、
 注入は配布時（上記 API か下記スクリプト）に行う。

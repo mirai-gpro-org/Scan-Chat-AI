@@ -5,6 +5,7 @@ import ScanOverlay from '../components/ScanOverlay.astro';
 import { getUserUploads } from '../lib/scan-queries';
 import { testTypeLabel, formatJpDate } from '../lib/dashboard-queries';
 import { qrSvgPath } from '../lib/qr';
+import { resolveViewer } from '../lib/viewer';
 
 export const prerender = false;
 
@@ -14,10 +15,9 @@ const pageUrl = Astro.request.url;
 const qr = qrSvgPath(pageUrl, { cell: 4, margin: 4, ec: 'M' });
 
 const url = new URL(Astro.request.url);
-const rawU = url.searchParams.get('u');
-const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU)
-  ? rawU
-  : (rawU ? `${rawU.slice(0, 8)}-0000-0000-0000-000000000000` : null);
+// 入場は Cookie で本人を判定する (`src/lib/viewer.ts`)。`?u=` は admin の代理表示のみ。
+const viewer = await resolveViewer(Astro);
+const diagnosticUserId = viewer.uid;
 const uploads = diagnosticUserId ? await getUserUploads(diagnosticUserId) : [];
 const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnosticUserId)}` : '/dashboard';
 ---

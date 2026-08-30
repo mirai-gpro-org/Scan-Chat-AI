@@ -22,12 +22,14 @@ import AppIcon from '../components/AppIcon.astro';
 
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { buildCoachContext } from '../lib/coach-context';
+import { resolveViewer } from '../lib/viewer';
 
 export const prerender = false;
 
 const url = new URL(Astro.request.url);
-const rawU = url.searchParams.get('u');
-const diagnosticUserId = rawU && /^[0-9a-f-]{36}$/i.test(rawU) ? rawU : null;
+// 入場は Cookie で本人を判定する (`src/lib/viewer.ts`)。`?u=` は admin の代理表示のみ。
+const viewer = await resolveViewer(Astro);
+const diagnosticUserId = viewer.uid;
 
 const ctx = diagnosticUserId ? await buildCoachContext(diagnosticUserId).catch(() => null) : null;
 const hasContext = !!ctx;

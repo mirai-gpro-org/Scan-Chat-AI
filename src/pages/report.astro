@@ -9,6 +9,7 @@ import { refreshConfig, cfg } from '../lib/app-config';
 import { loadDashboard, getHealthAge, withHonorific, formatJpDate } from '../lib/dashboard-queries';
 import { AI_PREVENTION_REPORT_LABEL } from '../lib/display-names';
 import { WELLNESS_AGE_LABEL } from '../lib/wellness-age';
+import { resolveViewer } from '../lib/viewer';
 
 /**
  * AI疾病予防報告書 — 受領 JSON からアプリが生成する報告書。
@@ -31,7 +32,9 @@ import { WELLNESS_AGE_LABEL } from '../lib/wellness-age';
 export const prerender = false;
 
 const url = new URL(Astro.request.url);
-const u = url.searchParams.get('u');
+// 入場は Cookie で本人を判定する (`src/lib/viewer.ts`)。`?u=` は admin の代理表示のみ。
+const viewer = await resolveViewer(Astro);
+const u = viewer.uid;
 /** 印刷/PDF 用ビュー。全展開・UI なし・ウェルネス年齢を冒頭に出す。 */
 const isPrint = url.searchParams.get('print') === '1';
 /** 端末に保存する手順を出すモード。**印刷ビューには置かない** (手順が PDF に載るため・spec §3.6)。 */

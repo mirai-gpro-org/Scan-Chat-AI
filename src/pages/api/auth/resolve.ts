@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { getServerSupabase } from '../../../lib/supabase';
 import { isHpEdgeConfigured, resolveCustomerByEmail } from '../../../lib/hp-edge';
+import { VIEWER_COOKIE, signViewer, viewerCookieOptions } from '../../../lib/viewer';
 
 export const prerender = false;
 
@@ -16,7 +17,7 @@ export const prerender = false;
  *
  * 旧 GoogleOneTap.astro の DEMO_EMAIL_TO_UID ハードコードを置き換える。
  */
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ request, cookies }) => {
   const body = (await request.json().catch(() => null)) as { accessToken?: unknown } | null;
   const accessToken = typeof body?.accessToken === 'string' ? body.accessToken : null;
   if (!accessToken) return json({ error: 'missing accessToken' }, 400);
@@ -78,6 +79,15 @@ export const POST: APIRoute = async ({ request }) => {
     .from('app_users')
     .upsert(row, { onConflict: 'diagnostic_user_id' });
   if (upErr) return json({ error: `app_users upsert: ${upErr.message}` }, 500);
+
+  /*
+   * 本人確認済みの uid を **HttpOnly Cookie** に載せる（2026-08-30）。
+   * これ以降、画面側は `?u=` ではなくこの Cookie で本人を判定する
+   * （`src/lib/viewer.ts`）。`?u=` は admin の代理表示のときだけ効く。
+   * 署名鍵が無い環境では null が返るので Cookie を発行しない（fail-closed）。
+   */
+  const token = await signViewer(diagnosticUserId);
+  if (token) cookies.set(VIEWER_COOKIE, token, viewerCookieOptions());
 
   return json({ linked: true, diagnosticUserId }, 200);
 };

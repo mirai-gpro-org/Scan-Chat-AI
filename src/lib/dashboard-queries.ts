@@ -97,7 +97,7 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
     const sb = getServerSupabase();
     if (!sb) {
       // Supabase 未設定でもテストフェーズはダミーを見せる (500 にしない)
-      if (demoFallbackEnabled()) return buildDemoDashboard(uid, null);
+      if (demoFallbackEnabled(uid)) return buildDemoDashboard(uid, null);
       return { error: 'Supabase が未設定です。.env.local を確認してください。' };
     }
 
@@ -115,7 +115,7 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
 
     // クエリエラー時もテストフェーズはダミーへ (テーブル未適用等で 500 にしない)
     if (appUserErr || artErr || resErr) {
-      if (demoFallbackEnabled()) return buildDemoDashboard(uid, appUser?.display_name_cache ?? null);
+      if (demoFallbackEnabled(uid)) return buildDemoDashboard(uid, appUser?.display_name_cache ?? null);
       if (appUserErr) return { error: `app_users: ${appUserErr.message}` };
       if (artErr)     return { error: `test_artifacts: ${artErr.message}` };
       return { error: `diagnosis_results: ${resErr!.message}` };
@@ -127,7 +127,7 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
     let usingDemoData = false;
 
     // フォールバック1: 当該ユーザーに結果が無ければ 真鍋(DEFAULT_USER) の実データを表示。
-    if (demoFallbackEnabled() && results.length === 0 && uid !== DEFAULT_USER) {
+    if (demoFallbackEnabled(uid) && results.length === 0 && uid !== DEFAULT_USER) {
       const [
         { data: demoArtifacts },
         { data: demoResults },
@@ -144,7 +144,7 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
     }
 
     // フォールバック2: 真鍋にも実データが無ければ 組込みダミー(demo-data) で画面を成立させる。
-    if (demoFallbackEnabled() && results.length === 0) {
+    if (demoFallbackEnabled(uid) && results.length === 0) {
       return buildDemoDashboard(uid, appUser?.display_name_cache ?? null);
     }
 
@@ -176,7 +176,7 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
      * 0 件のときだけダミーへ落とす。実データが 1 件でもあればそちらが優先。
      */
     let shipmentSource: DashboardData['shipmentSource'] = usingBridge ? 'bridge' : 'customer';
-    if (demoFallbackEnabled() && safeBundle.shipments.length === 0) {
+    if (demoFallbackEnabled(uid) && safeBundle.shipments.length === 0) {
       safeBundle.shipments = demoShipments(resultUid);
       shipmentSource = 'demo';
     }
@@ -196,7 +196,7 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
     };
   } catch (e) {
     // 想定外の例外でも 500 にせず、テストフェーズはダミー／それ以外はエラー表示
-    if (demoFallbackEnabled()) return buildDemoDashboard(uid, null);
+    if (demoFallbackEnabled(uid)) return buildDemoDashboard(uid, null);
     return { error: e instanceof Error ? e.message : String(e) };
   }
 }
@@ -260,7 +260,7 @@ export async function getMetricTrend(
   limit = 6,
 ): Promise<MetricTrendSeries[]> {
   const sb = getServerSupabase();
-  if (!sb) return demoFallbackEnabled() ? demoMetricTrend() : [];
+  if (!sb) return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend() : [];
 
   try {
   const { data, error } = await sb
@@ -273,7 +273,7 @@ export async function getMetricTrend(
     .limit(limit);
 
   if (error || !data || data.length === 0) {
-    return demoFallbackEnabled() ? demoMetricTrend() : [];
+    return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend() : [];
   }
 
   const uric: MetricTrendPoint[] = [];
@@ -301,10 +301,10 @@ export async function getMetricTrend(
   if (uric.length > 0)       out.push({ label: '尿酸',       unit: 'mg/dL', referenceUpper: 7.0,  points: uric });
   if (bpSystolic.length > 0) out.push({ label: '最高血圧',   unit: 'mmHg',  referenceUpper: 129,  points: bpSystolic });
   if (fpg.length > 0)        out.push({ label: '空腹時血糖', unit: 'mg/dL', referenceUpper: 99,   points: fpg });
-  if (out.length === 0 && demoFallbackEnabled()) return demoMetricTrend();
+  if (out.length === 0 && demoFallbackEnabled(diagnosticUserId)) return demoMetricTrend();
   return out;
   } catch {
-    return demoFallbackEnabled() ? demoMetricTrend() : [];
+    return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend() : [];
   }
 }
 
@@ -334,7 +334,7 @@ export interface HealthAgeSummary {
  */
 export async function getHealthAge(diagnosticUserId: string): Promise<HealthAgeSummary> {
   const sb = getServerSupabase();
-  if (!sb) return demoHealthAge();
+  if (!sb) return demoHealthAge(diagnosticUserId);
   try {
     // 型未生成テーブルのため any 経由。
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -344,7 +344,7 @@ export async function getHealthAge(diagnosticUserId: string): Promise<HealthAgeS
       .eq('diagnostic_user_id', diagnosticUserId)
       .order('test_date', { ascending: true })
       .limit(24);
-    if (error || !data || data.length === 0) return demoHealthAge();
+    if (error || !data || data.length === 0) return demoHealthAge(diagnosticUserId);
 
     const points: MetricTrendPoint[] = [];
     for (const r of data) {
@@ -376,7 +376,7 @@ export async function getHealthAge(diagnosticUserId: string): Promise<HealthAgeS
       points.length > 0 ? { label: 'ウェルネス年齢', unit: '歳', points } : null;
     return { latest, trend };
   } catch {
-    return demoHealthAge();
+    return demoHealthAge(diagnosticUserId);
   }
 }
 
@@ -388,8 +388,8 @@ export async function getHealthAge(diagnosticUserId: string): Promise<HealthAgeS
  * demo-data.ts の他のダミーと同じ扱いで、`PUBLIC_DEMO_FALLBACK=false` で切れる。
  * **値は CABA で算出したものではなく固定のダミー**。DB に実データが入れば自動で消える。
  */
-function demoHealthAge(): HealthAgeSummary {
-  if (!demoFallbackEnabled()) return { latest: null, trend: null };
+function demoHealthAge(diagnosticUserId?: string | null): HealthAgeSummary {
+  if (!demoFallbackEnabled(diagnosticUserId)) return { latest: null, trend: null };
   const points: MetricTrendPoint[] = [
     { date: '2026-03-13', value: 60.8, raw: '60.8歳' },
     { date: '2026-05-02', value: 60.1, raw: '60.1歳' },

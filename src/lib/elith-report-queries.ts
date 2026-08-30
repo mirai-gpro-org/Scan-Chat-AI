@@ -51,8 +51,16 @@ function common(ctx: ReportContext): Omit<BuildInput, 'reportText' | 'checkup' |
   };
 }
 
-/** サンプル (実データが無いときの表示)。 */
+/**
+ * サンプル (実データが無いときの表示)。
+ *
+ * **admin 限定 (2026-08-30・発注者指示)。** 実顧客に他人名義のサンプルを
+ * 「自分の報告書」として見せないため、非 admin には `emptyVM` を返す
+ * (2 本柱の帯だけが立ち、材料の無い章は出ない)。
+ * 判定は `demoFallbackEnabled(uid)` に集約してある (`demo-data.ts`)。
+ */
 function sample(ctx: ReportContext): ReportVM {
+  if (!demoFallbackEnabled(ctx.diagnosticUserId)) return emptyVM(ctx);
   return buildReportVM({
     ...common(ctx),
     reportText: ELITH_REPORT_SAMPLE_TEXT,
@@ -100,7 +108,7 @@ export async function loadReportVM(ctx: ReportContext): Promise<ReportVM> {
     } catch {
       row = await fetchRow(false);
     }
-    if (!row) return demoFallbackEnabled() ? sample(ctx) : emptyVM(ctx);
+    if (!row) return sample(ctx); // 非 admin は sample() 内で emptyVM になる
 
     return buildReportVM({
       ...common(ctx),

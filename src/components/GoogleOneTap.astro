@@ -163,9 +163,16 @@ const enabled = !!clientId;
         }
         notify({ state: 'ready' });
 
-        const params = new URLSearchParams(window.location.search);
-        if (params.has('u') && params.get('u')) {
-          console.log('[OneTap] ?u= present, skip prompt');
+        /*
+         * 自動プロンプトを出すのは **サインインが必要な画面のときだけ**。
+         *
+         * 以前は「`?u=` があればスキップ」だったが、2026-08-30 に入場を Cookie へ移したので
+         * `?u=` の有無は本人かどうかを表さない。Cookie が切れた状態でブックマークの
+         * `?u=` 付き URL を開くと、プロンプトが出ないまま止まってしまう。
+         * → サインインパネル (`#gsi-button`) が描かれているかで判定する。
+         */
+        if (!slot) {
+          console.log('[OneTap] signed in (no sign-in panel), skip prompt');
           return;
         }
 
