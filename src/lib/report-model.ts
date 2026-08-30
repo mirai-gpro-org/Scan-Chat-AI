@@ -126,7 +126,7 @@ export interface ChapterVM {
 export interface CoverVM {
   /** 「〇〇様」。本人への画面表示なので PII 分離の対象外 (spec §4.0.0.1)。 */
   name: string;
-  /** 作成日 (受領日)。端末に残した控えの識別に要る (spec §3.6)。 */
+  /** 作成日 (受領日)。端末に残した控えの識別に要る (spec §4.4)。 */
   issuedOn: string;
   /** 紙面テンプレートの版 (spec §1.3.9)。 */
   sheetVersion: string;

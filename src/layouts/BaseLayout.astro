@@ -85,5 +85,33 @@ const WIDTH = {
     </div>
     {/* Google One Tap (PUBLIC_GOOGLE_CLIENT_ID 未設定なら何もレンダリングしない) */}
     <GoogleOneTap />
+
+    {/*
+      最小の Service Worker (オフライン案内だけ)。中身と「やらないこと」は public/sw.js を読む。
+      正本: docs/elith/AI疾病予防報告書_仕様書.md §4.4 (発注者判断 2026-08-28)。
+
+      **報告書をキャッシュするための仕組みではない。** `/report` は SSR なので、
+      キャッシュすると認証を通さず HTML を返すことになる。オフラインで残す手段は
+      「印刷ビュー → 共有 → PDF で『ファイル』へ保存」の方 (手段 A)。
+
+      登録に失敗しても画面は壊さない (SW が無い＝今までどおり)。
+      `?sw=off` で登録を解除できる — 実機で SW が悪さをしたときの逃げ道。
+    */}
+    <script is:inline>
+      (function () {
+        if (!('serviceWorker' in navigator)) return;
+        try {
+          if (new URL(location.href).searchParams.get('sw') === 'off') {
+            navigator.serviceWorker.getRegistrations()
+              .then(function (rs) { rs.forEach(function (r) { r.unregister(); }); })
+              .catch(function () {});
+            return;
+          }
+          addEventListener('load', function () {
+            navigator.serviceWorker.register('/sw.js').catch(function () {});
+          });
+        } catch (e) { /* 登録できない環境では何もしない */ }
+      })();
+    </script>
   </body>
 </html>

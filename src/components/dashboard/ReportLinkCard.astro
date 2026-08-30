@@ -43,9 +43,14 @@ const { href, receivedAt = null } = Astro.props as Props;
     報告書を読む<AppIcon name="next" size={18} />
   </a>
 
-  <span class="text-sm">
-    <span class="whitespace-nowrap">サマリー</span> ／
-    <span class="whitespace-nowrap">要注意の抜粋</span> ／
-    <span class="whitespace-nowrap">全編PDF</span>
-  </span>
+  {/*
+    **旧「サマリー ／ 要注意の抜粋 ／ 全編PDF」の 1 行は撤去した (2026-08-30)。** 理由は 3 つ:
+      ① `/report` にその 3 モードは無い (a/b/c は廃止・`report-view.ts:6`)。
+         押した先に無いものをタイルが約束していた
+      ② **「要注意」は使わない語** — がん早期発見が主軸のサービスで赤い「要注意」を出すと
+         「がんの疑い」と読まれる (確定事項)
+      ③ 受領 PDF は**原本として保管し表示の主役から外した**ので「全編PDF」も実態と違う
+    代わりの説明文は置いていない。**タイルが中身を先に名乗ると、名乗りに合わせて
+    紙面を作ることになる** (紙面の正はモック)。ラベルと受領日と導線だけで足りる。
+  */}
 </section>
