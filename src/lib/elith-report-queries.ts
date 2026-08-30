@@ -1,7 +1,7 @@
 /**
  * AI疾病予防報告書 (Elith の診断結果) の取得 — パイプライン⑥。
  *
- * 正本: docs/elith/ai_prevention_report_generation_spec.md §8
+ * 正本: docs/elith/AI疾病予防報告書_仕様書.md  ※ § 番号は旧版 docs/旧版・ボツ/ai_prevention_report_generation_spec.md §8
  *
  * 【データの所在】`diagnosis.diagnosis_results` が「Elith の診断結果 1 回分」を表す。
  *   report          … `report_text.json` (10 セクション ＋ `health_age`)

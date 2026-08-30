@@ -37,7 +37,7 @@ export const CONFIG_SPECS: ConfigSpec[] = [
       + ' **診断・治療の助言にならない範囲で書くこと** (アプリは独自に解釈しない方針)。'
       + ' 例: 「気になる点は次回の検査時に医師へご相談ください。」' },
 
-  // ── AI疾病予防報告書 (docs/elith/ai_prevention_report_generation_spec.md) ──
+  // ── AI疾病予防報告書 (docs/旧版・ボツ/ai_prevention_report_generation_spec.md) ──
   // A「初期がんの早期発見」のフォールバック文言 (spec §4.0.1)。
   // **既定は空**。本命は Elith に書いてもらうこと (spec §10.1 E-1)。当社の定型文は
   // 構造上「範囲の説明」にしかならず、「見た上で気になる点はなかった」と言えるのは Elith だけ。

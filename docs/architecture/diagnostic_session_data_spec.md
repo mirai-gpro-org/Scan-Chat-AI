@@ -386,7 +386,7 @@ elith_job_id        text       -- 監査用
 
 #### UI 変換戦略 (要点)
 
-詳細: `docs/elith/elith_report_integration.md`
+詳細: `docs/旧版・ボツ/elith_report_integration.md`
 
 | 用途 | 取得元 |
 |---|---|

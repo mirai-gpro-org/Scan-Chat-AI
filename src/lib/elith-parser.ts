@@ -3,7 +3,7 @@ import type { AppIconName } from '../components/AppIcon.astro';
  * Elith JSON (10 セクション、約 21K 字) からダッシュボードカード用の構造化値を抽出する。
  *
  * 本来は Phase 1.5 で `diagnosis_result_items` テーブルへ LLM 二次抽出する設計だが
- * (docs/elith/elith_report_integration.md §3.2)、Phase 1.0 の Quick demo として regex ベースで
+ * (docs/旧版・ボツ/elith_report_integration.md §3.2)、Phase 1.0 の Quick demo として regex ベースで
  * 主要項目のみ抜き出す。
  */
 

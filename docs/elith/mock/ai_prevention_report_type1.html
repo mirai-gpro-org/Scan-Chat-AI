@@ -4,129 +4,133 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 
 <style>
+  /*
+    ── フォーマット見本のトークン ─────────────────────────────
+    出どころ: docs/elith/フォーマット見本_AI疾病予防レポート.pdf
+    値は見本 PDF を 150dpi で描画して**採色・採寸した実測値**。目分量ではない。
+    仕様書 docs/elith/AI疾病予防報告書_仕様書.md §4.3.1 と同じ表。
+  */
   :root{
-    --page:#EFECE5;--ground:#FBFAF7;--surface:#FFFFFF;--alt:#F4F2EC;
-    --ink:#102B3A;--soft:#495B65;--faint:#6E7D85;--rule:#DED9CF;
-    --brand:#287F86;--brand-bg:#E4EFEE;--brand-dk:#1E6067;
-    --navy:#1D4356;--navy-bg:#E7ECEE;
-    --bronze:#A98558;
-    --warn:#96661F;--warn-bg:#F8F0E0;--warn-line:#DCBC83;
-    --alert:#A8443C;--alert-bg:#F9EAE8;--alert-line:#D89A93;
-    --ok:#2E7D5B;--ok-bg:#E6F1EB;
-    --shadow:0 1px 2px rgba(16,43,58,.05),0 10px 30px rgba(16,43,58,.06);
+    --teal:#3BB6AE;        /* 主色 (上部ルール/表ヘッダ/章バッジ) 【裁定 D-C1】 */
+    --teal-label:#4FBCB5;  /* 左ラベル型テーブルの左列 */
+    --teal-bg:#DFF2F0;     /* 章帯・淡色ラベル地 */
+    --teal-panel:#F0FAFB;  /* 表紙パネル地 */
+    --teal-circle:#A8DCD8; /* 表紙の円モチーフ */
+    --alert-bg:#FBE9E2;    /* 淡赤。救急サインにのみ使う (裁定 D-C3) */
+    --surface:#FFFFFF;
+    --page:#FFFFFF;
+    --ink:#1A1A1A;
+    --soft:#4A4A4A;
+    --faint:#8A8A8A;
+    --rule:#E2E2E2;
     --jp:"BIZ UDGothic","Hiragino Sans","Noto Sans JP",sans-serif;
     --sans:"IBM Plex Sans",var(--jp);
     --mono:"IBM Plex Mono","BIZ UDGothic",ui-monospace,monospace;
   }
-  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-    --page:#091419;--ground:#0E1F29;--surface:#142A36;--alt:#1B333F;
-    --ink:#EDEAE3;--soft:#B3C0C6;--faint:#8A999F;--rule:#2C4451;
-    --brand:#63B5B0;--brand-bg:#1C3A3C;--brand-dk:#8ACFC9;
-    --navy:#9FBCC9;--navy-bg:#17303C;
-    --bronze:#C0A075;
-    --warn:#D9A85A;--warn-bg:#32270F;--warn-line:#6B5626;
-    --alert:#E0857C;--alert-bg:#37201E;--alert-line:#7A413B;
-    --ok:#6FC095;--ok-bg:#17332A;
-    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.25);
-  }}
-  :root[data-theme="dark"]{
-    --page:#091419;--ground:#0E1F29;--surface:#142A36;--alt:#1B333F;
-    --ink:#EDEAE3;--soft:#B3C0C6;--faint:#8A999F;--rule:#2C4451;
-    --brand:#63B5B0;--brand-bg:#1C3A3C;--brand-dk:#8ACFC9;
-    --navy:#9FBCC9;--navy-bg:#17303C;
-    --bronze:#C0A075;
-    --warn:#D9A85A;--warn-bg:#32270F;--warn-line:#6B5626;
-    --alert:#E0857C;--alert-bg:#37201E;--alert-line:#7A413B;
-    --ok:#6FC095;--ok-bg:#17332A;
-    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.25);
-  }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--page);color:var(--ink);font-family:var(--jp);
+  body{margin:0;background:#F2F2F2;color:var(--ink);font-family:var(--jp);
        font-size:16px;line-height:1.8;-webkit-font-smoothing:antialiased}
-  .sheet{max-width:44rem;margin:2.5rem auto;background:var(--ground);
-         border:1px solid var(--rule);border-radius:8px;box-shadow:var(--shadow);overflow:hidden}
-  .inner{padding:2rem 1.6rem 3rem;display:flex;flex-direction:column;gap:1.4rem}
-  @media(max-width:520px){.inner{padding:1.5rem 1.05rem 2.5rem}body{font-size:15px}}
 
-  /* 表紙 */
-  .cover{background:var(--navy-bg);border-bottom:1px solid var(--rule);padding:1.8rem 1.6rem 1.5rem}
-  .cover .brand{font-family:var(--sans);font-size:.7rem;font-weight:600;letter-spacing:.16em;
-                text-transform:uppercase;color:var(--brand)}
-  .cover h1{margin:.5rem 0 0;font-size:1.55rem;font-weight:700;line-height:1.35;letter-spacing:-.01em}
-  .cover .meta{margin-top:.7rem;font-family:var(--sans);font-size:.76rem;color:var(--faint);
-               display:flex;gap:1rem;flex-wrap:wrap}
+  /* A4 紙面。見本の判型 595.32x841.92pt / 本文左端 8.1% を写す */
+  .sheet{max-width:44rem;margin:2.5rem auto;background:var(--surface);
+         border:1px solid var(--rule);overflow:hidden}
+  .inner{padding:2rem 8.1% 3rem;display:flex;flex-direction:column;gap:1.4rem}
+  @media(max-width:520px){.inner{padding:1.5rem 5.5% 2.5rem}body{font-size:15px}}
 
-  /* 主軸見出し */
-  .axis{margin-top:.6rem;padding:1rem 1.1rem;border-radius:6px;display:flex;flex-direction:column;gap:.25rem}
-  .axis.a{background:var(--navy-bg);border-left:4px solid var(--navy)}
-  .axis.b{background:var(--brand-bg);border-left:4px solid var(--brand)}
-  .axis .lab{font-family:var(--sans);font-size:.68rem;font-weight:600;letter-spacing:.12em;color:var(--faint)}
-  .axis h2{margin:0;font-size:1.2rem;font-weight:700;line-height:1.4}
+  /* ① 表紙 (見本 p1) */
+  .cover{position:relative;background:var(--teal-panel);
+         border-top:3px solid var(--teal);padding:2.2rem 8.1% 2rem;overflow:hidden}
+  .cover::after{content:"";position:absolute;right:-2rem;top:-1.5rem;
+                width:11rem;height:11rem;border-radius:50%;background:var(--teal-circle);opacity:.55}
+  .cover>*{position:relative;z-index:1}
+  .cover h1{margin:0;font-size:2rem;font-weight:700;line-height:1.3;letter-spacing:-.01em}
+  .cover .brand{margin-top:.5rem;font-family:var(--mono);font-size:.78rem;
+                letter-spacing:.14em;color:var(--teal)}
+  .cover .brand::after{content:"";display:block;width:18rem;max-width:100%;
+                       height:1px;background:var(--teal);margin-top:.5rem;opacity:.5}
+  .cover .name{margin-top:1.5rem;font-size:1.25rem;font-weight:700}
+  .cover .meta{margin-top:.4rem;font-size:.82rem;color:var(--soft)}
 
-  h3{margin:.5rem 0 0;font-size:1.02rem;font-weight:700;line-height:1.5;
-     display:flex;align-items:center;gap:.45rem;flex-wrap:wrap}
-  h4{margin:.3rem 0 0;font-size:.9rem;font-weight:700;line-height:1.5;color:var(--brand-dk)}
+  /* ② 2 連の大数字カード (見本 p1) — PDF 版のみ (裁定 D-C2) */
+  .nums{display:grid;grid-template-columns:1fr 1fr;gap:0;margin:1.2rem 0 .5rem;
+        border:1px solid var(--rule)}
+  .num{padding:1.1rem;text-align:center}
+  .num+.num{border-left:1px solid var(--rule)}
+  .num b{display:block;font-family:var(--sans);font-size:2.4rem;font-weight:600;
+         line-height:1;color:var(--teal)}
+  .num span{display:block;margin-top:.5rem;font-size:.88rem}
+  .num i{display:block;margin-top:.2rem;font-size:.76rem;color:var(--faint);font-style:normal}
+
+  /* ③ 注記 */
+  .note{font-size:.76rem;line-height:1.7;color:var(--faint)}
+
+  /* ⑤ 章扉 (見本 p2/p9) */
+  .axis{display:flex;align-items:center;gap:.7rem;background:var(--teal-bg);
+        padding:.75rem 1rem;margin-top:.6rem}
+  .axis .badge{flex:0 0 auto;width:1.5rem;height:1.5rem;border-radius:50%;
+               background:var(--teal);color:#fff;font-family:var(--sans);font-size:.78rem;
+               font-weight:600;display:grid;place-items:center}
+  .axis h2{margin:0;font-size:1.12rem;font-weight:700;line-height:1.4}
+
+  /* ⑥ 小見出し ■ + 左teal縦バー (見本 p3/p9) */
+  h3{margin:.6rem 0 0;font-size:1rem;font-weight:700;line-height:1.5;
+     border-left:4px solid var(--teal);padding-left:.6rem}
+  h3::before{content:"■ ";color:var(--ink)}
+  h4{margin:.3rem 0 0;font-size:.9rem;font-weight:700;line-height:1.5;color:var(--teal)}
   p{margin:0}
-  .card{background:var(--surface);border:1px solid var(--rule);border-radius:7px;
-        padding:1rem 1.1rem;display:flex;flex-direction:column;gap:.55rem}
+
+  .card{background:var(--surface);display:flex;flex-direction:column;gap:.55rem}
   .card>p{font-size:.92rem;line-height:1.8}
-  .filled{border-left:4px solid var(--navy)}
+  /* 救急サインのみ淡赤 (裁定 D-C3) */
+  .er{background:var(--alert-bg);border-left:4px solid #C0564C;padding:.9rem 1rem}
+  .pending{background:var(--teal-panel);padding:.9rem 1rem}
 
   .tag{font-family:var(--sans);font-size:.66rem;font-weight:600;padding:.14rem .5rem;
-       border-radius:2px;white-space:nowrap;letter-spacing:.03em}
-  .t-ok{background:var(--ok);color:var(--ok-bg)}
+       white-space:nowrap;letter-spacing:.03em}
+  .t-pending{background:var(--teal);color:#fff}
+  .t-ok{background:var(--teal);color:#fff}
 
+  /* ⑩ 横テーブル (見本 p9/p12/p17) — tealヘッダ・白抜き・ゼブラなし */
   table{border-collapse:collapse;width:100%;font-size:.86rem}
   .scroll{overflow-x:auto}
-  th{font-family:var(--sans);font-size:.68rem;font-weight:600;color:var(--faint);
-     text-align:left;padding:.3rem .35rem;border-bottom:1px solid var(--rule);white-space:nowrap}
-  td{padding:.38rem .35rem;border-bottom:1px solid var(--rule);vertical-align:baseline;line-height:1.6}
+  th{background:var(--teal);color:#fff;font-family:var(--sans);font-size:.78rem;
+     font-weight:600;text-align:left;padding:.55rem .6rem;white-space:nowrap}
+  td{padding:.5rem .6rem;border-bottom:1px solid var(--rule);vertical-align:top;line-height:1.7}
   tr:last-child td{border-bottom:none}
-  .num{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
-  .jdg{font-family:var(--sans);font-size:.76rem;line-height:1.6;white-space:nowrap}
-  .j-w{color:var(--warn);font-weight:600}
-  .j-o{color:var(--ok)}
-  .j-x{color:var(--faint)}
-  .ref{color:var(--faint);font-size:.78rem;white-space:nowrap}
+  .num-cell{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .ref{color:var(--soft);font-size:.8rem;white-space:nowrap}
+  .jdg{font-family:var(--sans);font-size:.78rem;line-height:1.6;min-width:11rem}
 
-  .lsblk{display:flex;flex-direction:column;gap:.85rem}
-  .lsit{display:flex;flex-direction:column;gap:.32rem;padding-bottom:.85rem;
-        border-bottom:1px dashed var(--rule)}
-  .lsit:last-child{border-bottom:none;padding-bottom:0}
-  .lsrow{display:grid;grid-template-columns:5.4rem 1fr;gap:.55rem;font-size:.88rem;line-height:1.75}
-  .lsrow .k{font-family:var(--sans);font-size:.72rem;font-weight:600;color:var(--faint);padding-top:.3rem}
-  @media(max-width:520px){.lsrow{grid-template-columns:1fr;gap:.1rem}.lsrow .k{padding-top:0}}
+  /* ⑨ 左ラベル型テーブル (見本 p3/p6) — 生活習慣の 現状評価/行動提案 */
+  .lsblk{display:flex;flex-direction:column;gap:1rem}
+  .lsit{display:flex;flex-direction:column;gap:0}
+  .lsit h4{margin:0 0 .35rem}
+  .lsrow{display:grid;grid-template-columns:6.2rem 1fr;font-size:.88rem;line-height:1.75}
+  .lsrow .k{background:var(--teal-label);color:#fff;font-family:var(--sans);font-size:.76rem;
+            font-weight:600;padding:.55rem .6rem}
+  .lsrow>span:last-child{padding:.55rem .8rem;border-bottom:1px solid var(--rule)}
+  .lsrow+.lsrow .k{border-top:1px solid rgba(255,255,255,.35)}
+  @media(max-width:520px){.lsrow{grid-template-columns:1fr}
+    .lsrow .k{padding:.3rem .6rem}.lsrow>span:last-child{padding:.5rem .6rem}}
 
-  ol.steps{margin:0;padding-left:1.2rem;display:flex;flex-direction:column;gap:.3rem;font-size:.9rem}
-  ol.steps li::marker{color:var(--brand);font-weight:600}
+  /* ⑪ 箇条書き */
+  ol.steps{margin:0;padding-left:1.2rem;display:flex;flex-direction:column;gap:.45rem;font-size:.9rem}
+  ol.steps li::marker{color:var(--teal);font-weight:600}
   ul.list{margin:0;padding-left:1.15rem;display:flex;flex-direction:column;gap:.35rem;font-size:.9rem;line-height:1.7}
-  ul.list li::marker{color:var(--bronze)}
+  ul.list li::marker{color:var(--teal)}
   .muted{color:var(--faint);font-size:.84rem;line-height:1.7}
 
-  .cycle{display:flex;gap:.35rem;margin:.2rem 0}
-  .cycle i{flex:1;height:.45rem;border-radius:2px;background:var(--rule);font-style:normal}
-  .cycle i.done{background:var(--navy)}
-  .cycle i.now{background:var(--brand)}
-  .cyclab{display:flex;justify-content:space-between;font-family:var(--sans);font-size:.68rem;color:var(--faint)}
-
+  /* 週プラン (見本の左ラベル型の応用) */
   .weeks{display:flex;flex-direction:column;gap:0}
-  .wk{display:grid;grid-template-columns:3.3rem 1fr;gap:.8rem;padding:.55rem 0;
-      border-bottom:1px solid var(--rule);font-size:.88rem;line-height:1.7}
-  .wk:last-child{border-bottom:none}
-  .wk b{font-family:var(--sans);font-size:.76rem;color:var(--brand-dk);padding-top:.15rem}
+  .wk{display:grid;grid-template-columns:4.2rem 1fr;font-size:.88rem;line-height:1.7}
+  .wk b{background:var(--teal-label);color:#fff;font-family:var(--sans);font-size:.76rem;
+        padding:.5rem .6rem}
+  .wk>span{padding:.5rem .8rem;border-bottom:1px solid var(--rule)}
 
+  /* ⑬ フッター相当の出典行 */
   .src{font-family:var(--mono);font-size:.68rem;color:var(--faint);margin-top:.15rem}
-  .banner{max-width:44rem;margin:0 auto 1rem;padding:.7rem 1rem;background:var(--warn-bg);
-          border:1px solid var(--warn-line);border-radius:6px;font-size:.84rem;color:var(--warn)}
-  .banner b{color:var(--warn)}
-
-  /* 注釈（モック上の解説。実紙面には出ない） */
-  .anno{background:var(--alt);border:1px dashed var(--rule);border-radius:6px;
-        padding:.7rem .9rem;font-size:.83rem;line-height:1.75;color:var(--soft)}
-  .anno .h{font-family:var(--sans);font-size:.66rem;font-weight:600;letter-spacing:.1em;
-           color:var(--bronze);display:block;margin-bottom:.2rem}
-  .anno b{color:var(--ink)}
-  q{quotes:"「" "」";font-style:normal}
+  .banner{max-width:44rem;margin:0 auto 1rem;padding:.7rem 1rem;background:var(--teal-bg);
+          border-left:4px solid var(--teal);font-size:.84rem;color:var(--soft)}
 </style>
 
 <div class="banner">
@@ -141,8 +145,8 @@
 <div class="sheet">
 
   <div class="cover">
-    <div class="brand">Welltect</div>
     <h1>AI疾病予防報告書</h1>
+    <div class="brand">Powered by Welltect AI Health Analysis</div>
     <div style="margin-top:.5rem;font-size:1.05rem;font-weight:700">（ご本人氏名）様</div>
     <div class="meta"><span>作成日 2026-08-07</span><span>紙面 v1.0</span><span>コースプラン</span></div>
     <div class="cyclab"><span>第 1 回 人間ドック</span><span>第 2 回</span><span>第 3 回</span><span>第 4 回</span></div>
@@ -161,7 +165,7 @@
 
     <!-- ══════════ A ══════════ -->
     <div class="axis a">
-      <span class="lab">主軸 A</span>
+      <span class="badge">A</span>
       <h2>初期がんの早期発見</h2>
     </div>
 
@@ -186,7 +190,7 @@
 
     <!-- ══════════ B ══════════ -->
     <div class="axis b">
-      <span class="lab">主軸 B</span>
+      <span class="badge">B</span>
       <h2>AI 診断による疾病予防アドバイス</h2>
     </div>
 
@@ -225,14 +229,14 @@
       <table>
         <thead><tr><th>項目</th><th>今回</th><th>判定</th><th>基準値</th></tr></thead>
         <tbody>
-          <tr><td>体重</td><td class="num">95.8 kg</td><td class="jdg j-w">注意・経過観察</td><td class="ref">—</td></tr>
-          <tr><td>腹囲</td><td class="num">99.0 cm</td><td class="jdg j-w">注意・経過観察</td><td class="ref">—</td></tr>
-          <tr><td>血圧</td><td class="num">136 / 84</td><td class="jdg j-w">注意・経過観察</td><td class="ref">—</td></tr>
-          <tr><td>総ビリルビン</td><td class="num">0.7</td><td class="jdg j-o">基準範囲内</td><td class="ref">0.3〜1.2 mg/dL</td></tr>
-          <tr><td>網赤血球数</td><td class="num">18 ‰</td><td class="jdg j-o">基準範囲内</td><td class="ref">2〜27 ‰</td></tr>
-          <tr><td>尿蛋白</td><td class="num">(-)</td><td class="jdg j-o">陰性</td><td class="ref">—</td></tr>
-          <tr><td>右視力</td><td class="num">1.50</td><td class="jdg j-x">—</td><td class="ref">—</td></tr>
-          <tr><td>眼底検査</td><td class="num">結果詳細なし</td><td class="jdg j-x">緊急 ※</td><td class="ref">—</td></tr>
+          <tr><td>体重</td><td class="num-cell">95.8 kg</td><td class="jdg j-w">注意・経過観察</td><td class="ref">—</td></tr>
+          <tr><td>腹囲</td><td class="num-cell">99.0 cm</td><td class="jdg j-w">注意・経過観察</td><td class="ref">—</td></tr>
+          <tr><td>血圧</td><td class="num-cell">136 / 84</td><td class="jdg j-w">注意・経過観察</td><td class="ref">—</td></tr>
+          <tr><td>総ビリルビン</td><td class="num-cell">0.7</td><td class="jdg j-o">基準範囲内</td><td class="ref">0.3〜1.2 mg/dL</td></tr>
+          <tr><td>網赤血球数</td><td class="num-cell">18 ‰</td><td class="jdg j-o">基準範囲内</td><td class="ref">2〜27 ‰</td></tr>
+          <tr><td>尿蛋白</td><td class="num-cell">(-)</td><td class="jdg j-o">陰性</td><td class="ref">—</td></tr>
+          <tr><td>右視力</td><td class="num-cell">1.50</td><td class="jdg j-x">—</td><td class="ref">—</td></tr>
+          <tr><td>眼底検査</td><td class="num-cell">結果詳細なし</td><td class="jdg j-x">緊急 ※</td><td class="ref">—</td></tr>
         </tbody>
       </table>
       </div>

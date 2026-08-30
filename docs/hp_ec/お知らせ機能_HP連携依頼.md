@@ -2,7 +2,7 @@
 
 宛先: HP / 管理者ダッシュボード担当
 発信: Web アプリ(Scan-Chat / マイページ)担当
-関連: `docs/architecture/data_integration_requirements.md`（PII分離原則）, `docs/elith/elith_report_integration.md`
+関連: `docs/architecture/data_integration_requirements.md`（PII分離原則）, `docs/旧版・ボツ/elith_report_integration.md`
 
 ---
 

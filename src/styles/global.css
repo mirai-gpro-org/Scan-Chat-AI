@@ -517,6 +517,106 @@
  */
 .report-prose { max-width: 38em; }
 
+/*
+ * ══════════════════════════════════════════════════════════════════
+ * AI疾病予防報告書 — フォーマット見本のトークンと要素
+ *
+ * 正本: docs/elith/AI疾病予防報告書_仕様書.md §4.3
+ * 見本: docs/elith/フォーマット見本_AI疾病予防レポート.pdf (A4 18 ページ)
+ *
+ * **値は見本 PDF を 150dpi で描画して採色・採寸した実測値。** 目分量ではない。
+ *
+ * 【なぜ Tailwind の brand を使わないか】報告書の主色は見本の #3BB6AE
+ * (発注者裁定 D-C1)。アプリの他画面はブランド確定色 #287F86 のままなので、
+ * **報告書だけのトークンをここに閉じる**。tailwind.config.mjs の brand は変えない。
+ * ══════════════════════════════════════════════════════════════════
+ */
+.report-sheet {
+  --rp-teal: #3BB6AE;        /* 主色: 上部ルール / 表ヘッダ / 章バッジ */
+  --rp-teal-label: #4FBCB5;  /* 左ラベル型テーブルの左列 */
+  --rp-teal-bg: #DFF2F0;     /* 章帯・淡色ラベル地 */
+  --rp-teal-panel: #F0FAFB;  /* 表紙パネル地 */
+  --rp-teal-circle: #A8DCD8; /* 表紙の円モチーフ */
+  --rp-alert-bg: #FBE9E2;    /* 淡赤。救急サインにのみ使う (裁定 D-C3) */
+  --rp-rule: #E2E2E2;
+}
+
+/* ① 表紙 (見本 p1) */
+.rp-cover {
+  position: relative;
+  overflow: hidden;
+  background: var(--rp-teal-panel);
+  border-top: 3px solid var(--rp-teal);
+}
+.rp-cover::after {
+  content: ""; position: absolute; right: -2rem; top: -1.5rem;
+  width: 11rem; height: 11rem; border-radius: 50%;
+  background: var(--rp-teal-circle); opacity: .55;
+}
+.rp-cover > * { position: relative; z-index: 1; }
+/* `Powered by …` の下の細い罫。見本 p1 のタイトル下と同じ */
+.rp-brandline::after {
+  content: ""; display: block; width: 18rem; max-width: 100%;
+  height: 1px; margin-top: .5rem; background: var(--rp-teal); opacity: .5;
+}
+
+/* ② 2 連の大数字カード (見本 p1)。PDF 版のみ (裁定 D-C2) */
+.rp-nums { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--rp-rule); }
+.rp-num { padding: 1.1rem; text-align: center; }
+.rp-num + .rp-num { border-left: 1px solid var(--rp-rule); }
+
+/* ⑤ 章扉のバッジ (見本 p2/p9) */
+.rp-badge {
+  flex: 0 0 auto; width: 1.5rem; height: 1.5rem; border-radius: 50%;
+  background: var(--rp-teal); color: #fff;
+  font-size: .78rem; font-weight: 600; display: grid; place-items: center;
+}
+.rp-axis { background: var(--rp-teal-bg); }
+
+/* ⑥ 小見出し ■ + 左 teal 縦バー (見本 p3/p9) */
+.rp-h3 { border-left: 4px solid var(--rp-teal); padding-left: .6rem; }
+.rp-h3::before { content: "■ "; }
+
+/* ⑩ 横テーブル (見本 p9/p12/p17) — teal ヘッダ・白抜き・ゼブラなし */
+.rp-table { border-collapse: collapse; width: 100%; }
+.rp-table th {
+  background: var(--rp-teal); color: #fff;
+  text-align: left; padding: .55rem .6rem; white-space: nowrap;
+  font-size: .78rem; font-weight: 600;
+}
+.rp-table td { padding: .5rem .6rem; border-bottom: 1px solid var(--rp-rule); vertical-align: top; }
+.rp-table tr:last-child td { border-bottom: none; }
+
+/* ⑨ 左ラベル型テーブル (見本 p3/p6) */
+.rp-lrow { display: grid; grid-template-columns: 6.2rem 1fr; }
+.rp-lrow > .rp-lkey {
+  background: var(--rp-teal-label); color: #fff;
+  font-size: .76rem; font-weight: 600; padding: .55rem .6rem;
+}
+.rp-lrow > .rp-lval { padding: .55rem .8rem; border-bottom: 1px solid var(--rp-rule); }
+.rp-lrow + .rp-lrow > .rp-lkey { border-top: 1px solid rgba(255,255,255,.35); }
+@media (max-width: 520px) {
+  .rp-lrow { grid-template-columns: 1fr; }
+  .rp-lrow > .rp-lkey { padding: .3rem .6rem; }
+  .rp-lrow > .rp-lval { padding: .5rem .6rem; }
+}
+
+/* 週プラン (左ラベル型の応用) */
+.rp-wrow { display: grid; grid-template-columns: 4.2rem 1fr; }
+.rp-wrow > .rp-wkey {
+  background: var(--rp-teal-label); color: #fff;
+  font-size: .76rem; font-weight: 600; padding: .5rem .6rem;
+}
+.rp-wrow > .rp-wval { padding: .5rem .8rem; border-bottom: 1px solid var(--rp-rule); }
+
+/* 救急サイン。**淡赤はここだけ** (裁定 D-C3 / 「赤は救急サインだけ」) */
+.rp-er { background: var(--rp-alert-bg); border-left: 4px solid #C0564C; }
+
+/* ⑬ フッター (見本 全ページ)。印刷時のみ */
+@media print {
+  .rp-sheet-foot { display: block !important; }
+}
+
 /* ─ サマリー / 要注意モードでの強調表示 ─ */
 /*
  * 長文の行間。2.0 は空きすぎで「間延びして 1 画面に入る量が少ない」ため 1.75 に。

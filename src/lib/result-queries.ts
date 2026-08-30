@@ -1,7 +1,7 @@
 /**
  * /result/[id] ページのデータ取得ヘルパ。
  *
- * 設計指針 (docs/architecture/wellfort_app_design_concept.md, docs/elith/elith_report_integration.md):
+ * 設計指針 (docs/architecture/wellfort_app_design_concept.md, docs/旧版・ボツ/elith_report_integration.md):
  *   - test_artifacts.display_mode: 'single' (1枚表示) | 'three_mode' (a/b/c タブ)
  *   - a) サマリー版 = Elith JSON 「アブストラクト」セクション
  *   - b) 要注意抜粋  = 「医療受診の目安」 + 「必要とする栄養素/サプリ情報」

@@ -1,7 +1,7 @@
 /**
  * admin: AI疾病予防報告書の **抽出監査** API。
  *
- * 正本: docs/elith/ai_prevention_report_generation_spec.md §1.3.6
+ * 正本: docs/elith/AI疾病予防報告書_仕様書.md  ※ § 番号は旧版 docs/旧版・ボツ/ai_prevention_report_generation_spec.md §1.3.6
  *
  * 【なぜ要るか】受領テキストからの抽出は fail-safe (拾えなければ何も出さない) にしてあるので、
  *   誤った要点は出ない代わりに**黙って空になる**。Stage2 → Stage3 で `判定区分` と `[pN]` が

@@ -1,7 +1,7 @@
 /**
  * AI疾病予防報告書の **表示モデル (ViewModel)**。
  *
- * 正本: docs/elith/ai_prevention_report_generation_spec.md
+ * 正本: docs/elith/AI疾病予防報告書_仕様書.md  ※ § 番号は旧版 docs/旧版・ボツ/ai_prevention_report_generation_spec.md
  *
  * 【この層の役割】受領 JSON の形式と、画面の描き方を切り離す (spec §1.3.3)。
  *   `受領JSON → アダプタ(report-adapter.ts) → 表示モデル(この型) → レンダラ(report.astro)`
@@ -126,7 +126,7 @@ export interface ChapterVM {
 export interface CoverVM {
   /** 「〇〇様」。本人への画面表示なので PII 分離の対象外 (spec §4.0.0.1)。 */
   name: string;
-  /** 作成日 (受領日)。端末に残した控えの識別に要る (spec §3.6)。 */
+  /** 作成日 (受領日)。端末に残した控えの識別に要る (spec §4.4)。 */
   issuedOn: string;
   /** 紙面テンプレートの版 (spec §1.3.9)。 */
   sheetVersion: string;

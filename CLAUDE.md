@@ -365,7 +365,7 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
   - **受取仕様は未確定** (`docs/lab/lab_data_pipeline_master_spec.md:98`)。命名規則・出力トリガ・
     世代管理・ひも付け・受領確認が決まったら自動受信へ差し替える。
   - **【仕様変更 2026-08-28・発注者指示】報告書は「Elith の PDF を見せる」から
-    「受領 JSON からアプリが生成する」へ変わる。正本 `docs/elith/ai_prevention_report_generation_spec.md`。**
+    「受領 JSON からアプリが生成する」へ変わる。正本 `docs/elith/AI疾病予防報告書_仕様書.md` ※ § 番号は旧版 `docs/旧版・ボツ/ai_prevention_report_generation_spec.md`。**
     目的は**フォーマット変換ではなく可読化** (Elith の出力は文章の羅列で一般ユーザーが読み通せない)。
     見本 PDF は**様式のお手本**であって埋める項目の一覧ではない。
     - **【前提】サービスの 2 本柱 = A 初期がんの早期発見 / B AI 診断による疾病予防アドバイス**
@@ -488,7 +488,7 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
       (要約/順位づけ/言い換え) は全て禁止事項と重なる。スキャン側の実績 (多数決撤回・
       inventoryReread の幻覚5件・VQA の捏造4件→「新規pushしない」) がそのまま効く。
       将来入れるなら **選択のみ/verbatim機械検証/取り込み時1回でDB保存/監査/既定off** が条件 (spec §5.5)。
-    - **【実装済み 2026-08-29・パイロット版 v0.1】正本 `docs/elith/ai_prevention_report_generation_spec.md` §9.3。**
+    - **【実装済み 2026-08-29・パイロット版 v0.1】正本 `docs/elith/AI疾病予防報告書_仕様書.md` ※ § 番号は旧版 `docs/旧版・ボツ/ai_prevention_report_generation_spec.md` §9.3。**
       対象は**タイプ2 (単品購入相当) のみ** (§0.0)。タイプ1 はがんリスク検査ありの JSON 2 点を
       Elith から受領してから v0.2。
       - **構成 = 3 層** (spec §1.3.3)。`report-model.ts` (型・画面はこれしか知らない) /
@@ -565,14 +565,73 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
       - **検証**: `npm run verify:report-model` 74/74 ・ `npm run verify:sheet-contract` 一致 ・
         `npm run verify:screen` 全ブレークポイント一致 ・ `astro check` 0 errors ・
         `astro build` 成功 ・ dev で `/report` `?print=1` `?save=1` とも 200。
-      - **パイロット版で実装しないもの**: サーバ側 PDF 生成 (§3.1・Vercel 実測が未) /
-        オフライン案内の最小 SW / iOS・Android 実機確認 / タイプ1 の紙面。
+      - **パイロット版で実装しないもの**: サーバ側 PDF 生成 (**決裁台帳 S-3 = 未裁定**。
+        CLAUDE.md 内でも「必要」と「しない」が併存しているので、**実装で答えを出さない**) /
+        iOS・Android 実機確認 (WebKit は手元で再現不可) / タイプ1 の紙面 (JSON 未受領)。
+      - **【最小 SW とダッシュボードのタイル 2026-08-30・実装済み】正本 spec §4.4。**
+        - **最小の SW を入れた** (発注者判断 2026-08-28 のとおり)。`public/sw.js` /
+          `public/offline.html` / 登録は `BaseLayout.astro`。**報告書はキャッシュしない** —
+          `/report` は SSR なので、キャッシュすると**認証を通さず HTML を返す**ことになる。
+          - **ナビゲーション要求だけを見る**。API・CSS・JS・画像は `respondWith` を呼ばない=挙動不変。
+          - **必ずネットワークが先**。失敗したときだけ案内を返す (古い結果・他人の結果を出さない)。
+          - **キャッシュに入るのは `offline.html` 1 枚だけ**。だからそのページに個人のデータを
+            1 文字も置かない (CSS もインライン。ビルドのハッシュ名 CSS は取れないため)。
+          - **`?sw=off` で登録解除できる** — 実機で SW が悪さをしたときの逃げ道。
+          - **実測 (Playwright)**: 登録=active / キャッシュ=`/offline.html` 1 件のみ /
+            オフライン遷移→案内が出て**検査データの語 0 件** / オンライン復帰→本物の紙面
+            (キャッシュを返し続けない) / 非ナビゲーション要求は素通し / `?sw=off` で 1→0。
+        - **ダッシュボードのタイルから「サマリー ／ 要注意の抜粋 ／ 全編PDF」の 1 行を撤去した**
+          (`ReportLinkCard.astro`)。理由 3 つ: ①`/report` にその 3 モードは無い (a/b/c は廃止)
+          ②**「要注意」は使わない語** ③受領 PDF は表示の主役から外したので「全編PDF」も実態と違う。
+          **代わりの説明文は置かない** — タイルが中身を先に名乗ると、名乗りに合わせて紙面を作る
+          ことになる (紙面の正はモック)。
+        - **【要裁定・実測 2026-08-30】3 モード (a/b/c) は `/result/[id]` に生きている。**
+          `result-queries.ts:162` が `display_mode === 'three_mode'` を読み、
+          `result/[id].astro:153,261,289` が a/b/c を描く。**そこには「要注意」の語も出る**
+          (`:169`/`:253`/`:266`/`:274`)。決裁台帳 D-19 の対象なので**こちらの判断で消していない**
+          (spec §6「ここに載っている項目に、実装で答えを出してはいけない」)。
+        - **コード内の `spec §3.x` 参照は現行 §4.4 へ直した**。旧番号は
+          `docs/旧版・ボツ/ai_prevention_report_generation_spec.md` のもので、
+          **現行 正本には存在しない節を指していた** (参照先が 旧版・ボツ になっていた)。
+      - **【デザイン見本のトレース 2026-08-30・発注者指示】正本 spec §4.3。**
+        Wellfort 提示の `docs/elith/フォーマット見本_AI疾病予防レポート.pdf` (A4 18 ページ・画像のみ) を
+        **画面と `?print=1` の両方で踏襲する**。**踏襲するのはデザインと様式だけで、項目と内容は踏襲しない**
+        (見本の検査項目・文章・章立ては一切使わない。中身は Elith の出力だけ)。
+        **見本は「様式のお手本」であって「埋める項目の一覧」ではない** — 過去に見本の 5 行テーブルを
+        「埋めるべき項目」と読んで Elith が書いていない行を作ろうとした経緯がある。**枠は借りる。中身は借りない。**
+        - **トークンは `global.css` の `.report-sheet` ブロックに閉じる**。**`tailwind.config.mjs` の
+          `brand` は変えない** — 報告書の主色は見本の `#3BB6AE` (裁定 D-C1) だが、アプリの他画面は
+          ブランド確定色 `#287F86` のままなので、**報告書だけのトークンを別に持つ**。
+          値は見本 PDF を 150dpi で描画して**採色・採寸した実測値** (目分量ではない)。
+        - **発注者裁定 3 件 (2026-08-29)**: **D-C1** 主色 = 見本の `#3BB6AE` を採る /
+          **D-C2** 表紙のウェルネス年齢 = **画面版には出さない・PDF 版は出す** (PDF はアプリから
+          切り離されて単体で読まれるため。画面はダッシュボード上部で表示済み) /
+          **D-C3** 見本 p1 の「要注意項目 / 良好な項目」の語は**使わない**。
+          **Elith の出力 JSON に無い文言・表現は一切使わない** (逐語ルールを見本にも適用)。
+          この裁定により、軸が空のときに出していた当社の散文 (「今回の受領分からは要点を…」) も撤去した。
+          **黙って空になることの検知は紙面ではなく抽出監査で行う。**
+        - **採った要素とクラス**: `.rp-cover`/`.rp-brandline` (表紙) / `.rp-nums`/`.rp-num` (2 連大数字・
+          **print のみ**) / `.rp-axis`/`.rp-badge` (章扉) / `.rp-h3` (`■` + 左 teal 縦バー) /
+          `.rp-table` (teal ヘッダ・白抜き・**ゼブラなし**) / `.rp-lrow`/`.rp-lkey`/`.rp-lval` (左ラベル型) /
+          `.rp-wrow` (週プラン) / `.rp-er` (**淡赤はここだけ**) / `.rp-sheet-foot` (印刷時のみ)。
+        - **採らなかった要素**: 見本の 注記 / 2 カラム対比ボックス / 番号つき小見出し /
+          teal ヘアライン見出し / 連絡先ボックス。**受領 JSON にその型で出す中身が無いため** —
+          **型を先に置くと、埋めるために中身を作ることになる**。受領側に材料が出たら足す。
+        - **フッターにページ番号を入れない**。CSS だけでは採番できず、書けば捏造になる。
+        - **契約は無変更で通った**: モックを見本のトークンで作り直しても `sheet_contract_type{1,2}.json` は
+          **バイト単位で不変** = **中身は 1 文字も動かしていない**ことの機械的な証拠 (契約は紙面の中身だけを
+          見て CSS を一切見ないため。spec §1.3.10)。
+        - **検証 (実測)**: `.rp-badge`/`.rp-table th` の地 = `rgb(59,182,174)`=`#3BB6AE` ・
+          表紙パネル = `rgb(240,250,251)`=`#F0FAFB` ・`.rp-nums` は `?print=1` にのみ存在 ・
+          `.rp-sheet-foot` は画面で `display:none` ・`verify:report-model` 74/74 ・
+          `verify:sheet-contract` 一致 ・`verify:screen` 全ブレークポイント一致 ・`astro check` 0 errors ・
+          `astro build` 成功 ・dev で `/report` `?print=1` `?save=1` とも 200。
     - **【1 回目はリバート済み 2026-08-29】上記の前に入れた実装 (P0〜P4) は全て取り消した。**
       理由は可読化 (spec §1.1) を満たしていないこと (画面本文 20,297 字 / 受領本文 20,490 字 =
       **削減率 1%**) と、設計ポリシー (spec §1.0 = サービスの 2 本柱) に従っていないこと。
-      **本機能は未実装。** 着手する人は `docs/elith/ai_prevention_report_HANDOVER.md` を先に読む。
-      仕様の正本は `docs/elith/ai_prevention_report_generation_spec.md`。
-      リバート内容の記録は `docs/elith/ai_prevention_report_REVERT_LIST.md`。
+      **本機能は未実装。** 着手する人は `docs/旧版・ボツ/ai_prevention_report_HANDOVER.md` を先に読む。
+      仕様の正本は `docs/旧版・ボツ/ai_prevention_report_generation_spec.md`。
+      リバート内容の記録は `docs/旧版・ボツ/ai_prevention_report_REVERT_LIST.md`。
       - **リバートで戻したもの**: `report.astro` (旧 3 モード a/b/c) / `elith-report-highlights.ts` /
         `elith-report-queries.ts` / `elith-report-sample.ts` / `report-view.ts` /
         `api/admin/elith-report/upload.ts` (PDF 必須へ戻る) / `app-config.ts` / `package.json`。
@@ -970,10 +1029,12 @@ Supabase database linter の指摘を棚卸しした結果。**テストフェ�
 | `docs/elith/elith_s3_data_handoff_spec.md` | **Elith S3 受け渡し仕様** (パス/命名/format_id/JSON) |
 | `docs/elith/elith_batch_centralization_design.md` | Elith バッチ**一元化設計**(キーは Vercel・役割分担・admin バッチ) |
 | `docs/elith/elith_assembly_wrapping_spec.md` | **納品セット アセンブリのラップ仕様(Elith向け説明)**。フォルダ/命名/ウェルネス年齢の時系列化(検査日毎・旧1件を撤回)・疑似データも同様に時系列生成・**LAiF AI疾病発症予測(Other/ai_prediction)のファイル仕様=Elith承諾により確定(§5・2026-08)。合成は data.items[] の発症率%/相対リスク比のみジッタ・昨年比は前年の相対リスク比を引継ぎ(実装済)**・manifest不一致の確認事項 |
-| `docs/elith/ai_prevention_report_HANDOVER.md` | **引き継ぎ書。新しく着手する人は最初にこれを読む**。ミッションの3層/**設計ポリシー=サービスの2本柱**/越えてはならない線/参照すべきドキュメントの順序/素材/回答待ち。**1 回目の実装はリバート済み・2 回目 (パイロット版 v0.1) が実装済み** (spec §9.2/§9.3) |
-| `docs/elith/ai_prevention_report_REVERT_LIST.md` | **リバート対象コミットの一覧**。Scan-Chat-AI 11 件 (うち 10 件は本番反映済み) / wellfort-site 2 件 / 併せて外すもの (CLAUDE.md の【実装】記述・`checkup_values` マイグレーション) |
+| **`docs/elith/AI疾病予防報告書_仕様書.md`** | **【この機能の唯一の入口。最初にこれを読む】** 紙面の正はモック 2 タイプで、仕様書は紙面を散文で書かない (2 回の作り直しの直接の対策)。目的 / 正の所在 / 素材 (sha256 つき) / デザイン見本 §4.3 / 変更手順 / 検証 / **決裁台帳 §6** |
+| `docs/旧版・ボツ/` | **食い違う旧版の置き場。参照しない。** 実装の根拠にしない。決裁台帳の引用元としてのみ生きている |
+| `docs/旧版・ボツ/ai_prevention_report_HANDOVER.md` | **【旧版】引き継ぎ書**。ミッションの3層/**設計ポリシー=サービスの2本柱**/越えてはならない線/参照すべきドキュメントの順序/素材/回答待ち。**1 回目の実装はリバート済み・2 回目 (パイロット版 v0.1) が実装済み** (spec §9.2/§9.3) |
+| `docs/旧版・ボツ/ai_prevention_report_REVERT_LIST.md` | **リバート対象コミットの一覧**。Scan-Chat-AI 11 件 (うち 10 件は本番反映済み) / wellfort-site 2 件 / 併せて外すもの (CLAUDE.md の【実装】記述・`checkup_values` マイグレーション) |
 | `docs/elith/mock/ai_prevention_report_type2.html` | **紙面モック (タイプ2)。飾りではなく契約の入力**。`npm run verify:sheet-contract` がここから紙面契約を抽出し実装と突き合わせる (spec §1.3.10)。冒頭コメントに annotation の意味とモック補正の記録 |
-| `docs/elith/ai_prevention_report_generation_spec.md` | **AI疾病予防報告書 生成機能の仕様 (パイプライン⑥・2026-08-28)**。受領 JSON 3 点 → アプリが可読な報告書を生成。入力仕様/出力は HTML+印刷CSS(PDF生成しない)/章立て/決定論の変換規則/**作れないもの①〜④と捏造ゼロの境界**/受領データの既知不具合/実装計画/Elith 確認事項 |
+| `docs/旧版・ボツ/ai_prevention_report_generation_spec.md` | **AI疾病予防報告書 生成機能の仕様 (パイプライン⑥・2026-08-28)**。受領 JSON 3 点 → アプリが可読な報告書を生成。入力仕様/出力は HTML+印刷CSS(PDF生成しない)/章立て/決定論の変換規則/**作れないもの①〜④と捏造ゼロの境界**/受領データの既知不具合/実装計画/Elith 確認事項 |
 | `docs/elith/batch_scan_to_elith_usage.md` | サンプル一括スキャン→S3 バッチ手順 (`scripts/batch-scan-to-elith.mjs`) |
 | `docs/lab/lab_data_pipeline_master_spec.md` | **検査データ・パイプライン 総合仕様書(E2E正本・上位文書)**。EC購入→キット/タイミング→発送指示/進捗→AI問診/検体返送→各社受渡→受領チェック(週次)→Elithラップ/S3書出→AI診断PDF受取/表示 を6ステップで連結。詳細は(a)(b)(c)へ委譲(二重管理しない) |
 | `docs/lab/lab_data_reception_overview.md` | **4検査のデータ受取 詳細**(血液=リージャー/RPA・がん=プリベント/専用ポータル+S3を提案中・AI疾病予測=LAiF/S3 URL・遺伝子=Genoplan/RPA。方式/経路/現状/課題/次アクション)。E2E全体像は上記 master_spec が上位 |

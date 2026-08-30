@@ -5,7 +5,7 @@
  * 同じ受領 JSON を実装 (`buildReportVM`) に通した結果と突き合わせる。
  * 食い違えば**紙面の言葉で**差分を出して落とす。
  *
- * 正本: docs/elith/ai_prevention_report_generation_spec.md §1.3.10
+ * 正本: docs/elith/AI疾病予防報告書_仕様書.md  ※ § 番号は旧版 docs/旧版・ボツ/ai_prevention_report_generation_spec.md §1.3.10
  *
  * 【使い方 (紙面を変えるとき)】
  *   1. モック HTML を直す (発注者に見せる版は Artifact へ再公開)
