@@ -638,6 +638,24 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
             **紙面の幅だけがモックと違う。これは裁定であってずれではない** (契約は中身しか見ないので落ちない)。
           - 実測: 器=紙面=1280px (ダッシュボードと一致) / 紙 `rgb(255,255,255)` /
             地 `rgb(242,242,242)` / 本文 608px / 表 1248px→**1079px**。
+      - **【本番の報告書が空だった 2026-08-30・発注者指摘「モックと全然ちがう」】正本 spec §4.5。**
+        **紙面の作りは壊れていない。材料が 1 件も無かった。**
+        `buildReportVM({reportText:null,checkup:null,issuedOn:''})` を通すと**画面と完全一致**
+        (作成日 空 / ダイジェスト 1 枚=`a:今回の所見` / 全編 0 章 / `isSample:false`) = `emptyVM`。
+        - **原因は仕様どおりの動作**。本番は `13a8a95` で「本番相当」へ切替済みで、
+          `demo-data.ts:50-54` が **①env `PUBLIC_DEMO_FALLBACK` が `'false'` でない かつ
+          ②uid が admin (`admin-auth.ts:44-51` のハードコード 7 件)** の AND。
+          実顧客に他人名義のサンプルを見せないための保護 (同 `:40-42` に明記)。
+        - **サンプルのゲートは緩めない。材料を実データとして入れる**。本番と同じ経路を通るので
+          表示も本番と同じ「実データの紙面」になる (「サンプル表示」バッジも出ない)。
+        - 入れ方 = `node scripts/ingest-elith-report.mjs --uid <diagnostic_user_id> --key <ADMIN_API_KEY>`。
+          **uid は `/dashboard` の「デバッグ」に出ている**。キーは **Vercel の環境変数が正**で
+          スクリプトは保存しない。経路は既存の `POST /api/admin/elith-report/upload`
+          (**admin 取込画面は作らない** = 発注者指示)。世代管理があるので何度流しても最新 1 件。
+        - **`admin_users` と `ADMIN_UIDS` の二重管理は既知の穴**: `ADMIN_EMAILS` には
+          `hamada@eentry.co.jp` が「開発用バックアップ」で入っている (`admin-auth.ts:21`) が、
+          `ADMIN_UIDS` に対応する行が無い = **email で admin・uid で非 admin** になり得る。
+          総合テストで `admin_users` 照会へ寄せるときに併せて潰す。
         - **検証 (実測)**: `.rp-badge`/`.rp-table th` の地 = `rgb(59,182,174)`=`#3BB6AE` ・
           表紙パネル = `rgb(240,250,251)`=`#F0FAFB` ・`.rp-nums` は `?print=1` にのみ存在 ・
           `.rp-sheet-foot` は画面で `display:none` ・`verify:report-model` 74/74 ・

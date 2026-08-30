@@ -372,6 +372,51 @@ iOS には 共有→**プリント**（印刷 CSS が効く）と 共有→**PDF
   オフライン遷移 → 案内が出て**検査データの語は 0 件** ／ オンライン復帰 → 本物の紙面が出る
   （キャッシュを返し続けない）／ 非ナビゲーション要求は素通し ／ `?sw=off` で登録数 1 → 0
 
+## 4.5 本番に材料を入れる【2026-08-30】
+
+> **2026-08-30・発注者指摘「モックと全然ちがう」。** 本番の `/report` が
+> **主軸の帯と主軸 A の 1 枚だけ**で、作成日も空だった。
+
+**紙面の作りは壊れていない。材料が 1 件も無かった。**
+`buildReportVM({ reportText: null, checkup: null, issuedOn: '' })` を通すと
+**スクリーンショットと完全一致**する（作成日 `""` ／ ダイジェスト 1 枚 = `a:今回の所見` ／
+全編 0 章 ／ `isSample: false`）。＝ `emptyVM` が出ていた。
+
+### なぜ材料が無いか（コードのフロー）
+
+| 位置 | 何が起きるか |
+|---|---|
+| `elith-report-queries.ts` `sample()` | `if (!demoFallbackEnabled(uid)) return emptyVM(ctx)` |
+| `demo-data.ts:50-54` | **① env `PUBLIC_DEMO_FALLBACK` が `'false'` でない かつ ② uid が admin** の AND |
+| `admin-auth.ts:44-51` | `ADMIN_UIDS` は**ハードコードの 7 件** |
+
+本番は「本番相当」へ切り替わっている（`13a8a95`「入場を Cookie 本人判定へ切替え、
+**デモ表示を admin 限定にする**」）。**これは意図された動作** — 実顧客に他人名義のサンプルを
+「自分の報告書」として見せないための保護であり、`demo-data.ts:40-42` に AND 条件として明記されている。
+
+> **ここでサンプルのゲートを緩めない。** 保護を外すのではなく、**材料を実データとして入れる**。
+> そうすれば本番と同じ経路を通り、表示も本番と同じ「実データの紙面」になる
+> （「サンプル表示」バッジも出ない）。
+
+### 入れ方
+
+```
+node scripts/ingest-elith-report.mjs --uid <diagnostic_user_id> --key <ADMIN_API_KEY>
+```
+
+- **`--uid`** … `/dashboard` の「デバッグ（テストフェーズ確認用）」に出ている `diagnostic_user_id`
+- **`--key`** … `ADMIN_API_KEY`。**値は Vercel の環境変数が正**で、スクリプトはどこにも保存しない
+- 送るのはリポジトリ同梱の受領 2026-08-26 分（`report_text` / `health_checkup` / PDF は任意）。
+  **中身は 1 バイトも加工しない**
+- 経路は既存の `POST /api/admin/elith-report/upload`（**admin 取込画面は作らない** — 発注者指示）
+- **世代管理あり**。同じユーザーの既存行を `superseded` に落として新しい行を足すので、
+  何度流しても表示は常に最新 1 件
+
+**動作確認（2026-08-30・ローカル dev で実測）**: ① 正しいキー → 認可通過・フォーム解釈まで到達し
+DB 手前で `503 supabase not configured`（ローカルに DB が無いため。ここまで通れば本番では入る）
+② 誤ったキー → `401 unauthorized`（fail-closed）③ uid が UUID でない → 送信前に停止。
+
+
 ---
 
 # 5. 手順と検証
