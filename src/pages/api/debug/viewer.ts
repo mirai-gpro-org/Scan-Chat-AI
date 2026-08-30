@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { resolveViewer, VIEWER_COOKIE, verifyViewer, uidEntryAllowed } from '../../../lib/viewer';
 import { demoFallbackEnabled } from '../../../lib/demo-data';
 import { getServerSupabase } from '../../../lib/supabase';
+import { loadReportVM } from '../../../lib/elith-report-queries';
 
 export const prerender = false;
 
@@ -62,6 +63,35 @@ export const GET: APIRoute = async (ctx) => {
     } catch (e) { dbError = String((e as Error)?.message ?? e); }
   }
 
+  /*
+   * **表示モデルそのものを返す。**
+   * DB の状態だけ見ても「紙面が空」の原因は割れない —
+   * ①VM が空なのか ②VM は出来ているのに画面が描いていないのか、が区別できない。
+   * `/report` と**同じ関数**を同じ引数で呼び、出てくる枚数を返す (本文は返さない)。
+   */
+  let vm: {
+    digest: number; digest_b: number; chapters: number; is_sample: boolean;
+    issued_on: string; titles: string[];
+  } | { error: string };
+  try {
+    const r = await loadReportVM({
+      diagnosticUserId: viewer.uid,
+      name: '', chronologicalAge: null, ourWellnessAge: null,
+      hasCancerRisk: false, cycleSeq: null,
+      viewerIsAdmin: demoOk,
+    });
+    vm = {
+      digest: r.digest.length,
+      digest_b: r.digest.filter((c) => c.axis === 'b').length,
+      chapters: r.chapters.length,
+      is_sample: r.isSample,
+      issued_on: r.cover.issuedOn,
+      titles: r.digest.map((c) => `${c.axis}:${c.title || '(無題)'}`),
+    };
+  } catch (e) {
+    vm = { error: String((e as Error)?.message ?? e) };
+  }
+
   const body = {
     // ① 閲覧者
     viewer: {
@@ -97,7 +127,9 @@ export const GET: APIRoute = async (ctx) => {
       rows, latest_received_at: latest, schema_version: schemaVersion,
       latest_sections: sections, latest_chars: chars, db_error: dbError,
     },
-    // ⑥ 読み方
+    // ⑥ /report が実際に組み立てる表示モデル (本文は返さない)
+    report_vm: vm,
+    // ⑦ 読み方
     hint: rows && rows > 0
       ? (chars != null && chars < 2000
           ? `最新行の中身が ${chars} 字しかありません (${sections} セクション)。`
