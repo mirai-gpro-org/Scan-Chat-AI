@@ -73,6 +73,53 @@ const ADMIN_UIDS: ReadonlySet<string> = new Set(
   ADMIN_MEMBERS.map((m) => m.uid).filter((u): u is string => !!u).map((u) => u.toLowerCase()),
 );
 
+/**
+ * **admin の正は `admin_users` テーブル**（2026-08-30）。
+ *
+ * wellfort-site の admin 画面が管理者を出し入れしているのは**このテーブル**で、
+ * 同じ Supabase の `public` スキーマに在る
+ * （実測: `wellfort-site/src/pages/api/admin/config.ts:35`
+ *  `/rest/v1/admin_users?email=eq.<email>&is_active=eq.true`）。
+ * Scan-Chat-AI は同じ `PUBLIC_SUPABASE_URL` を使うので**ここから引ける**。
+ *
+ * 【なぜ切り替えるか】`ADMIN_MEMBERS` は**手で書き写した写し**なので、必ずズレる。
+ * 実際、本番で admin にならず報告書が空になった（uid が実値と食い違うか、
+ * そもそも登録されていないか、どちらかを外から特定できなかった）。
+ * **管理者の追加登録は wellfort-site の admin 画面で行われる**（発注者 2026-08-30）ので、
+ * **そこが増えたら自動で追随する**のが正しい。
+ *
+ * 【フォールバック】テーブルを引けないとき（未設定・通信断・列違い）は
+ * `ADMIN_MEMBERS` の email で判定する。**引けないことを理由に admin を失わせない。**
+ * 逆に、テーブルに無くても `ADMIN_MEMBERS` に在れば admin（開発用の逃げ道）。
+ */
+export async function isAdminEmailAsync(email: string | null | undefined): Promise<boolean> {
+  const e = (email ?? '').trim().toLowerCase();
+  if (!e) return false;
+  if (ADMIN_EMAILS.has(e)) return true;          // 手元の登録簿が先（DB 障害でも admin を失わない）
+
+  const url = env('PUBLIC_SUPABASE_URL');
+  const key = env('SUPABASE_SERVICE_ROLE_KEY');
+  if (!url || !key) return false;
+  try {
+    const res = await fetch(
+      `${url}/rest/v1/admin_users?email=eq.${encodeURIComponent(e)}&is_active=eq.true&select=email&limit=1`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } },
+    );
+    if (!res.ok) return false;
+    const rows: unknown = await res.json();
+    return Array.isArray(rows) && rows.length > 0;
+  } catch {
+    return false;                                 // 引けないだけ。ADMIN_MEMBERS の判定は上で済んでいる
+  }
+}
+
+function env(name: string): string | undefined {
+  const m = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.[name];
+  if (m != null && m !== '') return m;
+  const p = typeof process !== 'undefined' ? process.env?.[name] : undefined;
+  return p != null && p !== '' ? p : undefined;
+}
+
 export function isAdminEmail(email: string | null | undefined): boolean {
   if (!email) return false;
   return ADMIN_EMAILS.has(email.trim().toLowerCase());

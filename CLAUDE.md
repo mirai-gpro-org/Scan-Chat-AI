@@ -1052,10 +1052,15 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
       「uid 未登録のため admin として扱われません」と名指しする**ので黙って放置されない。
     - **現状 8 名中 1 名が uid 未登録** (`開発用バックアップ`=`hamada@eentry.co.jp`)。
   - **【admin 判定は email からも成立する 2026-08-30・追加】spec §4.6。**
-    PR #189 で順序を直しても**本番の `/report` は空のままだった**。原因は
-    **admin 判定の実体が uid だけ**で、**管理者リストに email で載っているメンバーが
-    admin にならなかった**こと = 要件「リストにあるメンバーだけはデモを見る」に対し
-    **リストの半分 (email) を実装が読めていなかった**。
+    PR #189 で順序を直しても**本番の `/report` は空のままだった**。
+    **確かめられた事実は「本番のその uid がハードコード 7 件に無い」まで**
+    (氏名が出ていた=`data` は解決済み ⇒ `diagnosticUserId` は実在)。
+    **どのアカウントかは分かっていない** — 一度 `hamada@eentry.co.jp` と断定して
+    各文書に書いたが**出典ゼロの推測**だった (Claude のセッションの連絡先メールを
+    アプリのサインイン先と同一視した)。**撤回済み・spec §7 の失敗 #6 に記録**。
+    admin になれない経路は **①uid 未登録 / ②ハードコードの uid が本番の実値と食い違い**
+    の 2 つで、**どちらでも同じ症状**。下の対処は両方に効く。
+    **どちらだったかは `/dashboard` のデバッグ欄が答える** (admin 判定と根拠を表示)。
     - **サインイン時にサーバ検証済みの email から admin を判定し、署名付き Cookie に載せる**
       (`api/auth/resolve.ts` の `signViewer(uid, isAdminEmail(email))`)。email は
       `sb.auth.getUser(accessToken)` で**サーバが検証した値**でクライアントの申告ではない。
@@ -1071,6 +1076,23 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
     - **実測 (本番と同じ `PUBLIC_DEMO_FALLBACK=false` ＋認証有効)**: admin(email 登録のみ・
       uid 未登録)=見出し 42・Elith 本文あり / 一般顧客=1・**0** / **改竄=1・0** / 未サインイン=1・0。
       署名は単体でも検証済 (改竄 3 種棄却・期限切れ棄却・旧 3 分割互換)。
+    - **【admin の正は `admin_users` テーブル 2026-08-30 確定】** 手写しの `ADMIN_MEMBERS` を
+      判定の正にするのをやめた。**同じ Supabase の `public.admin_users`**(`email`/`is_active`) を
+      引く (`admin-auth.ts` `isAdminEmailAsync`)。出典 =
+      `wellfort-site/src/pages/api/admin/config.ts:35`。**管理者の追加登録は wellfort-site の
+      admin 画面で行われる**ので、そこが増えれば Scan-Chat-AI は何も直さずに追随する。
+      引けないとき (未設定・通信断) は `ADMIN_MEMBERS` の email へフォールバック
+      = **引けないことで admin を失わせない**。
+      **誤り撤回**: 「admin_users はこのリポジトリから引けない」と書いたが、
+      **wellfort-site はセッションで参照でき、テーブルは同じ Supabase に在る**。
+    - **【Cookie は自己修復する 2026-08-30】これが「直したのに直らない」の正体。**
+      **Cookie はサインイン時にしか発行されない** (`GoogleOneTap` は未サインインのときだけ
+      `prompt()` する = 既にサインイン済みなら `/api/auth/resolve` が走らない)。有効期間 30 日。
+      → **判定を変えても既存 Cookie の持ち主には最大 30 日届かない**。実測 2026-08-30:
+      email 由来の判定を本番へ入れた (PR #190) のに報告書は空のままだった。
+      → `verifyViewer` が旧形式 (3 分割) を `legacy` と印を付け、`GoogleOneTap` が手元の
+      Supabase セッションで `/api/auth/resolve` を呼び直して発行し直す
+      (`sessionStorage` で 1 回だけ・失敗しても画面は壊さない)。**サインインし直さなくても届く。**
     - **【dev 限定の落とし穴】`PUBLIC_GOOGLE_CLIENT_ID` 未設定だと `authEnabled=false` になり、
       未サインインでも `loadDashboard(null)`→`DEFAULT_USER`(`d0000001`=**admin uid**) に落ちて
       デモが出る**。本番は認証有効なのでこの経路に入らないが、ローカル検証では

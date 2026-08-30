@@ -78,10 +78,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * Cookie に載せる署名付きトークンを作る。鍵が無ければ null。
  *
  * 【admin フラグを載せる理由 (2026-08-30)】admin 判定の実体が `ADMIN_MEMBERS` の **uid** だけだと、
- * **uid が未登録のメンバーは管理者リストに載っていても admin にならない**
- * (実測: `hamada@eentry.co.jp` は email 側にしか無く、本番で `/report` が空になった)。
+ * **admin になれない経路が 2 つできる**:
+ *   ① uid が未登録のメンバー (管理者リストに email では載っている)
+ *   ② **ハードコードした uid が本番の実値と食い違っている** メンバー
+ *      — uid は手で書き写したものなので、顧客DBの採番と一致している保証が無い
  * サインイン時に**サーバで検証済みの email** から admin を判定してここに載せておけば、
- * **email を 1 行登録するだけで admin として扱える** (uid を調べて登録する手間が要らない)。
+ * **email を 1 行登録するだけで admin として扱える** (uid を調べて登録する手間が要らないし、
+ * uid が古くなっていても効く)。
  *
  * **改竄はできない** — payload に admin を含めて HMAC を取るので、`1` に書き換えると署名が合わない。
  */
@@ -98,6 +101,17 @@ export interface VerifiedViewer {
   uid: string;
   /** Cookie に admin フラグが載っていたか。**旧 3 分割の Cookie では false**。 */
   admin: boolean;
+  /**
+   * **admin フラグを持たない旧形式 (3 分割) の Cookie か。**
+   *
+   * 【なぜ要るか】Cookie は**サインイン時にしか発行されない** (`GoogleOneTap` は
+   * サインインパネルが在るときだけ One Tap を出すので、既にサインイン済みなら
+   * `/api/auth/resolve` は走らない)。有効期間は 30 日あるため、
+   * **email 由来の admin 判定を入れても、既存の Cookie を持っている人には
+   * 最大 30 日効かない** (実測 2026-08-30: 本番へ入れても報告書が空のままだった)。
+   * → この印を見て**その場で発行し直す** (`GoogleOneTap` の自己修復)。
+   */
+  legacy: boolean;
 }
 
 /**
@@ -126,7 +140,7 @@ export async function verifyViewer(token: string | undefined | null, now = Date.
     : `${uid.toLowerCase()}.${expRaw}.${adminRaw}`;
   const expected = await hmac(payload, key);
   if (!timingSafeEqual(sig, expected)) return null;
-  return { uid: uid.toLowerCase(), admin: adminRaw === '1' };
+  return { uid: uid.toLowerCase(), admin: adminRaw === '1', legacy: adminRaw === null };
 }
 
 /** `Set-Cookie` に載せる属性。 */
@@ -150,11 +164,26 @@ export interface Viewer {
   selfUid: string | null;
   /** 本人が admin か。デモ表示・デバッグ表示・admin 画面の可否に使う。 */
   isAdmin: boolean;
+  /**
+   * **何が根拠で admin になったか**。`null` は admin でない。
+   *   `'cookie'` … サインイン時に email から判定 (`ADMIN_MEMBERS.email`)
+   *   `'uid'`    … uid が `ADMIN_MEMBERS.uid` に在る
+   *
+   * **「admin にならない」の原因切り分けのために持つ。** 判定は静かに外れるので、
+   * 画面のデバッグ欄に根拠を出せないと「なぜダミーが出ないか」が誰にも分からない
+   * (実測 2026-08-30: 本番で報告書が空になり、原因の特定に何往復もした)。
+   */
+  adminBy: 'cookie' | 'uid' | null;
   /** admin が `?u=` で他人を表示している状態か。 */
   impersonating: boolean;
+  /**
+   * **Cookie が旧形式で、発行し直しが要る状態か。**
+   * `GoogleOneTap` がこれを見て `/api/auth/resolve` を呼び直す (自己修復)。
+   */
+  cookieStale: boolean;
 }
 
-const ANONYMOUS: Viewer = { uid: null, selfUid: null, isAdmin: false, impersonating: false };
+const ANONYMOUS: Viewer = { uid: null, selfUid: null, isAdmin: false, adminBy: null, impersonating: false, cookieStale: false };
 
 /**
  * リクエストから閲覧者を解決する。**すべてのユーザー向けページはこれを通すこと。**
@@ -172,7 +201,8 @@ export async function resolveViewer(ctx: AstroGlobal | APIContext): Promise<View
 
   if (!verified) {
     if (uidEntryAllowed() && requested) {
-      return { uid: requested, selfUid: requested, isAdmin: isAdminUid(requested), impersonating: false };
+      const byUid = isAdminUid(requested);
+      return { uid: requested, selfUid: requested, isAdmin: byUid, adminBy: byUid ? 'uid' : null, impersonating: false, cookieStale: false };
     }
     return ANONYMOUS;
   }
@@ -184,11 +214,12 @@ export async function resolveViewer(ctx: AstroGlobal | APIContext): Promise<View
    *   ② uid が `ADMIN_MEMBERS.uid` に在る … 旧形式 Cookie と `ALLOW_UID_ENTRY` 経路のため
    * **①があるので uid を登録しなくても email だけで admin になれる。**
    */
-  const isAdmin = verified.admin || isAdminUid(selfUid);
+  const adminBy: Viewer['adminBy'] = verified.admin ? 'cookie' : (isAdminUid(selfUid) ? 'uid' : null);
+  const isAdmin = adminBy !== null;
   if (isAdmin && requested && requested !== selfUid) {
-    return { uid: requested, selfUid, isAdmin, impersonating: true };
+    return { uid: requested, selfUid, isAdmin, adminBy, impersonating: true, cookieStale: verified.legacy };
   }
-  return { uid: selfUid, selfUid, isAdmin, impersonating: false };
+  return { uid: selfUid, selfUid, isAdmin, adminBy, impersonating: false, cookieStale: verified.legacy };
 }
 
 /** `?u=` の短縮形（先頭8桁）も従来どおり受ける。 */
