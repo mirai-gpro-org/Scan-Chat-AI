@@ -613,6 +613,25 @@
 .rp-num { padding: 1.1rem; text-align: center; }
 .rp-num + .rp-num { border-left: 1px solid var(--rp-rule); }
 
+/*
+ * ②の下の数直線 (見本には無い型・発注者指示 2026-08-30)。
+ * ダッシュボードの `HealthAgeCard.astro` の数直線を紙面へ移植したもの。
+ *   - 中立色は紙面側の寒色グレーに合わせる (ダッシュボードの `slate-100` = Warm Ivory は
+ *     白い紙の上で色味が浮くため)。帯は紙面の淡 teal。`--rp-teal-bg` (#DFF2F0) はトラック上でほぼ見えなかった (実測) ため、
+ *     見本の表紙円と同じ `--rp-teal-circle` (#A8DCD8) を使う。
+ *   - **点は `--rp-teal` (#3BB6AE) にしない** — 白地に 2.5:1 で WCAG 1.4.11 (3:1) に届かない。
+ *     ダッシュボードと同じ brand-600 (#287F86 = 4.7:1) を使う。
+ *   - **背景色だけで成立する図なので `print-color-adjust: exact`**。これが無いと
+ *     「共有 → プリント」経路でブラウザが地色を落とし、点も帯も消えて空白の帯になる。
+ */
+.rp-gauge { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.rp-gauge-track { background: #F1F1F1; }
+.rp-gauge-tick { background: #DEDEDE; }
+.rp-gauge-band { background: var(--rp-teal-circle); }
+.rp-gauge-dot { border: 3px solid var(--rp-paper); }
+.rp-gauge-dot-well { background: #287F86; }  /* brand-600 = ウェルネス年齢 */
+.rp-gauge-dot-age { background: #3E4C52; }   /* slate-700 = 実年齢 (上の大数字と同色) */
+
 /* ⑤ 章扉のバッジ (見本 p2/p9) */
 .rp-badge {
   flex: 0 0 auto; width: 1.5rem; height: 1.5rem; border-radius: 50%;
