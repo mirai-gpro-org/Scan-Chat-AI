@@ -5,12 +5,17 @@
  * **表示モデルが正しくても、`.astro` が描き落とせば画面は空になる。**
  * ここで「表示モデル ↔ 実際の画面」を閉じ、併せて幅を測る。
  *
- * 見るのは 3 つだけ:
+ * 見るのは 4 つだけ:
  *   ① 契約の文が**実際に画面に出ている**こと (レンダラの描き落としの検知)
  *   ② `/report` の器の幅が `/dashboard` と**全ブレークポイントで一致**すること
  *      — 幅は実際に 1 度壊れた (`/report` だけ `width="flow"` で 672px 止まり・spec §9.3.2)
  *   ③ ダイジェスト本文の行長が 38em (=608px) を超えないこと
- * 色・余白・影は見ない (デザインの微調整で落ちる検査は誰も直さなくなる)。
+ *   ④ **紙面 (白いシート) が地の上に在る**こと (仕様書 §4.3.5)
+ *      — ここが**実際に抜けていた**。色や見出しや表の型は入っていたのに、
+ *        それを載せる紙が無く「アプリの画面に要素が並んでいるだけ」で、
+ *        ①②③ は全部通っていた (2026-08-30・発注者指摘「モックと全く違う」)。
+ *        **だから "紙が在るか" だけは見る。** 色の細部・余白・影は見ない
+ *        (デザインの微調整で落ちる検査は誰も直さなくなる)。
  *
  * 前提: `npm run dev` が起動していること。URL は `VERIFY_URL` で差し替えられる。
  */
@@ -95,6 +100,36 @@ const shellWidth = async (page, path) => {
   await ctx.close();
 }
 
+// ── ④ 紙面が在るか ────────────────────────────────────────────
+// 「白い紙が地の上に在る」ことだけを見る。**紙の幅は見ない** —
+// 幅はダッシュボードに合わせる裁定 (2026-08-30) なので器の幅と一致するのが正。
+{
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/report`, { waitUntil: 'networkidle' });
+  const sheet = await page.evaluate(() => {
+    const el = document.querySelector('main.rp-sheet');
+    if (!el) return null;
+    return {
+      paper: getComputedStyle(el).backgroundColor,
+      ground: getComputedStyle(document.body).backgroundColor,
+      cover: !!document.querySelector('.rp-cover'),
+      inner: !!document.querySelector('.rp-inner'),
+    };
+  });
+  if (!sheet) {
+    fails.push('紙面 (main.rp-sheet) が無い — 紙が無く要素が並んでいるだけになっている');
+    console.log('✗ 紙面           main.rp-sheet が無い');
+  } else {
+    const ok = sheet.paper !== sheet.ground && sheet.cover && sheet.inner;
+    console.log(`${ok ? '✓' : '✗'} 紙面           紙=${sheet.paper} 地=${sheet.ground} 表紙=${sheet.cover} 本文枠=${sheet.inner}`);
+    if (sheet.paper === sheet.ground) fails.push('紙面と地が同色 — 紙が地に浮いて見えない');
+    if (!sheet.cover) fails.push('表紙 (.rp-cover) が無い');
+    if (!sheet.inner) fails.push('本文の左右マージン (.rp-inner) が無い');
+  }
+  await ctx.close();
+}
+
 // ── ②③ 幅と行長 ──────────────────────────────────────────────
 for (const [width, height, label] of SIZES) {
   const ctx = await browser.newContext({ viewport: { width, height } });
@@ -123,4 +158,4 @@ if (fails.length) {
   for (const f of fails) console.log(`  - ${f}`);
   process.exit(1);
 }
-console.log('\n✓ 幅はダッシュボードと一致し、行長も上限内です。');
+console.log('\n✓ 紙面が在り、幅はダッシュボードと一致し、行長も上限内です。');

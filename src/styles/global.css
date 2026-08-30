@@ -539,7 +539,51 @@
   --rp-teal-circle: #A8DCD8; /* 表紙の円モチーフ */
   --rp-alert-bg: #FBE9E2;    /* 淡赤。救急サインにのみ使う (裁定 D-C3) */
   --rp-rule: #E2E2E2;
+  --rp-ground: #F2F2F2;      /* 紙面の外の地 (見本 = 紙が地に浮く) */
+  --rp-paper: #FFFFFF;       /* 紙面 */
 }
+
+/*
+ * ⓪ 紙面 (白いシート)【発注者裁定 2026-08-30】
+ *
+ * **これが無かったのが「モックと全く違う」の正体** (実測: モック 紙面 704px /
+ * 実装 1280px・表 588px → 1248px・地の色が出ない)。色や見出しや表の型は入っていたが、
+ * **それを載せる紙が無く、アプリの画面に要素が並んでいるだけ**だった。
+ *
+ * 【衝突していた確定事項】
+ *   ① 2026-08-29「/report はダッシュボードと同じ幅 (width=app)」
+ *   ② 2026-08-29「フォーマット見本 = A4 紙面をトレース」
+ *
+ * 【裁定 2026-08-30・発注者】**幅は ① を採る。紙面の器は ② を採る。**
+ *   - **`max-width` を置かない** = 器 (BaseLayout `width="app"`) の幅まで広がる。
+ *     **モックの 44rem 固定は採らない** (発注者指示「幅はモックと同じ固定にしないで、
+ *     ダッシュボードと一緒にして」)。
+ *   - 白地・上部の teal ルール・本文左右 8.1%・地に浮く見え方は**見本どおり**。
+ *   - 長文の行長は器でなく本文側で 38em に止める (`.report-prose`)。
+ *
+ * 値はモックの `.sheet` / `.inner` / `.cover` と同じ (= 見本 PDF の実測: 本文左端 8.1%)。
+ * **幅だけがモックと違う。これは裁定によるもので、ずれではない。**
+ */
+.rp-sheet {
+  width: 100%;
+  margin: 2.5rem auto;
+  background: var(--rp-paper);
+  border: 1px solid var(--rp-rule);
+  overflow: hidden;
+}
+/* 本文の左右マージン。見本の本文左端 8.1% を写す */
+.rp-inner {
+  padding: 2rem 8.1% 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.4rem;
+}
+@media (max-width: 520px) {
+  .rp-sheet { margin: 0 auto; border-left: 0; border-right: 0; }
+  .rp-inner { padding: 1.5rem 5.5% 2.5rem; }
+}
+/* `?print=1` は紙が主役なので、地から浮かせる枠と余白を外す */
+.rp-sheet.rp-plain { margin-top: 0; border: 0; }
 
 /* ① 表紙 (見本 p1) */
 .rp-cover {
@@ -547,6 +591,10 @@
   overflow: hidden;
   background: var(--rp-teal-panel);
   border-top: 3px solid var(--rp-teal);
+  padding: 2.2rem 8.1% 2rem;   /* 見本 p1。紙面の中の一区画として収める */
+}
+@media (max-width: 520px) {
+  .rp-cover { padding: 1.75rem 5.5% 1.5rem; }
 }
 .rp-cover::after {
   content: ""; position: absolute; right: -2rem; top: -1.5rem;
