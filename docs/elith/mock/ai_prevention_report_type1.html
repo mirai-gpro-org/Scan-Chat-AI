@@ -65,7 +65,7 @@
        font-size:16px;line-height:1.8;-webkit-font-smoothing:antialiased}
 
   /* A4 紙面。見本の判型 595.32x841.92pt / 本文左端 8.1% を写す */
-  .sheet{max-width:44rem;margin:2.5rem auto;background:var(--surface);
+  .sheet{margin:2.5rem auto;background:var(--surface);
          border:1px solid var(--rule);overflow:hidden}
   .inner{padding:2rem 8.1% 3rem;display:flex;flex-direction:column;gap:1.4rem}
   @media(max-width:520px){.inner{padding:1.5rem 5.5% 2.5rem}body{font-size:15px}}
@@ -163,8 +163,30 @@
 
   /* ⑬ フッター相当の出典行 */
   .src{font-family:var(--mono);font-size:.68rem;color:var(--faint);margin-top:.15rem}
-  .banner{max-width:44rem;margin:0 auto 1rem;padding:.7rem 1rem;background:var(--teal-bg);
+  .banner{margin:0 auto 1rem;padding:.7rem 1rem;background:var(--teal-bg);
           border-left:4px solid var(--teal);font-size:.84rem;color:var(--soft)}
+
+  /*
+    ── 器の幅 = ダッシュボードと同じ (発注者指示 2026-08-30) ──────────
+    実装 `/report` は BaseLayout width="app" の段を使う (仕様書 §4.3.5 の裁定
+    「幅は① / 紙面の器は②」)。モックだけ 44rem 固定だと、**同じものを見比べたときに
+    紙面の幅だけが食い違う**ので、段をそのまま写して揃える。
+    出どころ: `src/layouts/BaseLayout.astro` の WIDTH.app
+      base 28rem / sm640 42rem / md768 48rem / lg1024 64rem / xl1280 80rem / 2xl1536 88rem
+  */
+  .sheet,.banner{width:100%;max-width:28rem}
+  @media (min-width:640px) {.sheet,.banner{max-width:42rem}}
+  @media (min-width:768px) {.sheet,.banner{max-width:48rem}}
+  @media (min-width:1024px){.sheet,.banner{max-width:64rem}}
+  @media (min-width:1280px){.sheet,.banner{max-width:80rem}}
+  @media (min-width:1536px){.sheet,.banner{max-width:88rem}}
+
+  /*
+    本文の行長。器を広げたので、**行長は本文側で止める** (実装 `.report-prose` と同じ 38em)。
+    無いと 1 行が和文 90 字を超えて目線が戻れない (仕様書 §4.3.5 / CLAUDE.md 和文の組版)。
+    表・数直線・解説ブロックは対象外 (実装と同じ扱い)。
+  */
+  .card > p, .card > ul, .card > ol, .lsrow > div, .wk > div{max-width:38em}
 </style>
 
 <div class="banner">
