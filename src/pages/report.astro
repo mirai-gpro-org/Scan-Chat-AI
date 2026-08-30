@@ -42,7 +42,6 @@ const viewer = await resolveViewer(Astro);
  * デモ表示の可否は**閲覧している本人が admin か**で決まる (spec §4.6)。
  * **代理表示中 (`?u=` で他人を見ている) は渡さない** — 相手の実データを見せるため。
  */
-const demoOk = viewer.isAdmin && !viewer.impersonating;
 const u = viewer.uid;
 /** 印刷/PDF 用ビュー。全展開・UI なし・ウェルネス年齢を冒頭に出す。 */
 const isPrint = url.searchParams.get('print') === '1';
@@ -52,14 +51,19 @@ const showSave = url.searchParams.get('save') === '1';
 const authEnabled = !!import.meta.env.PUBLIC_GOOGLE_CLIENT_ID;
 const needsSignIn = authEnabled && !u;
 
-const result = needsSignIn ? null : await loadDashboard(u, demoOk);
-const data = !result || 'error' in result ? null : result;
-const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId, demoOk) : 0;
-
+/*
+ * **app_config はデータ取得より前に読み込む。**
+ * デモ用アカウントの一覧 (`demo.account_uids`) をここから引くため、
+ * 後ろに置くと初回リクエストで admin の登録が効かない (コード既定に落ちる)。
+ */
 await refreshConfig();
+const result = needsSignIn ? null : await loadDashboard(u);
+const data = !result || 'error' in result ? null : result;
+const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;
+
 const supportContact = cfg('ui.support_contact');
 
-const healthAge = data ? await getHealthAge(data.diagnosticUserId, demoOk) : null;
+const healthAge = data ? await getHealthAge(data.diagnosticUserId) : null;
 
 /**
  * その回の入力にがんリスク検査があったか (spec §1.0.3)。**アプリが判定する。**
@@ -83,7 +87,6 @@ const vm = await loadReportVM({
   // タイプ判定はアプリが持つ (spec §1.0.3)。Elith 出力から推測しない。
   hasCancerRisk: !!cancerArtifact,
   cycleSeq: data?.subscription?.current_cycle_seq ?? null,
-  viewerIsAdmin: demoOk,
 });
 
 

@@ -37,6 +37,17 @@ export const CONFIG_SPECS: ConfigSpec[] = [
       + ' **診断・治療の助言にならない範囲で書くこと** (アプリは独自に解釈しない方針)。'
       + ' 例: 「気になる点は次回の検査時に医師へご相談ください。」' },
 
+  // ── デモ用アカウント (UI確認 / 機能確認 / パートナーお披露目・PR) ──
+  // **admin 権限とは無関係**。デモを見せる相手は「デモ用アカウント」であって管理者ではない
+  // (2026-08-30 発注者指示)。管理者を 1 人増やすたびにダミーの閲覧者が増える形を避ける。
+  // ここに載っていない uid は、env にも組み込みにも無ければ**自分の実データだけ**を見る。
+  // 判定の実体は `demo-data.ts` の `demoFallbackEnabled` (uid 1 本・同期・外部依存ゼロ)。
+  { key: 'demo.account_uids', type: 'string', group: 'デモ', label: 'デモ用アカウントの uid', default: '',
+    description: 'ダミーデータを表示する diagnostic_user_id をカンマ / 空白 / 改行 区切りで。'
+      + ' **組み込みの 2 件 (テスト用 d0000001… / OEM 用 da000001…) と env DEMO_ALLOWED_UIDS に足される** '
+      + '(ここを空にしても組み込みは消えない)。uid は当人の /dashboard「デバッグ」に出ている。'
+      + ' 全部止めるときは env PUBLIC_DEMO_FALLBACK=false。' },
+
   // ── AI疾病予防報告書 (docs/旧版・ボツ/ai_prevention_report_generation_spec.md) ──
   // A「初期がんの早期発見」のフォールバック文言 (spec §4.0.1)。
   // **既定は空**。本命は Elith に書いてもらうこと (spec §10.1 E-1)。当社の定型文は

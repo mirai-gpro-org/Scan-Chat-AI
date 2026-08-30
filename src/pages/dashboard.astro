@@ -17,6 +17,7 @@ import { loadDashboard, formatGreeting, getHealthAge, formatJpDate, testTypeLabe
 import { getLatestMeasurements } from '../lib/measurement-queries';
 import { countUnreadImportant } from '../lib/notice-queries';
 import { refreshConfig, cfg } from '../lib/app-config';
+import { demoFallbackEnabled } from '../lib/demo-data';
 import { isBridgeConfigured } from '../lib/supabase';
 import { resolveViewer } from '../lib/viewer';
 import {
@@ -39,7 +40,6 @@ const viewer = await resolveViewer(Astro);
  * デモ表示の可否は**閲覧している本人が admin か**で決まる (spec §4.6)。
  * **代理表示中 (`?u=` で他人を見ている) は渡さない** — 相手の実データを見せるため。
  */
-const demoOk = viewer.isAdmin && !viewer.impersonating;
 const u = viewer.uid;
 
 // === [一時デバッグ] HP↔#2 ブリッジ接続状態の可視化 ===
@@ -78,22 +78,33 @@ console.log('[bridge-debug]', { bridgeConfigured, bridgeUrlSeen, bridgeKeySeen, 
 const authEnabled = !!import.meta.env.PUBLIC_GOOGLE_CLIENT_ID;
 const needsSignIn = authEnabled && !u;
 
-const result = needsSignIn ? null : await loadDashboard(u, demoOk);
+/*
+ * **app_config はデータ取得より前に読み込む。**
+ * デモ用アカウントの一覧 (`demo.account_uids`) をここから引くため、
+ * 後ろに置くと初回リクエストで admin の登録が効かない (コード既定に落ちる)。
+ */
+await refreshConfig();
+const result = needsSignIn ? null : await loadDashboard(u);
 
 const hasError = result ? 'error' in result : false;
 const data = !result || hasError ? null : (result as Exclude<typeof result, { error: string }>);
 
+/*
+ * デバッグ欄の表示用。**判定そのものは各クエリの中で同じ関数が使われている**ので、
+ * ここは「表示中の uid でデモが出るか」を見せているだけ (二重管理にならない)。
+ */
+const demoShown = demoFallbackEnabled(data?.diagnosticUserId);
+
 // ── 実データ (STEP 1/2 で作った diagnosis.measurement_values から読む) ──
 // 判定・助言はアプリで作らない。検査票の値・基準値と、検査機関が付けた flag のみを渡す。
-const latest = data ? await getLatestMeasurements(data.resultUid, demoOk) : null;
+const latest = data ? await getLatestMeasurements(data.resultUid) : null;
 
 // ウェルネス年齢 (選択ユーザー本人の diagnostic_user_id で取得)
-const healthAge = data ? await getHealthAge(data.diagnosticUserId, demoOk) : null;
+const healthAge = data ? await getHealthAge(data.diagnosticUserId) : null;
 
-const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId, demoOk) : 0;
+const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;
 
 // 画面文言 (app_config)。未設定なら空文字が返り、UI 側で非表示になる。
-await refreshConfig();
 const healthAgeFollowup = cfg('ui.health_age_followup');
 const supportContact = cfg('ui.support_contact');
 
@@ -291,7 +302,18 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
                 )}
               </dd>
             </div>
-            <div class="flex justify-between gap-3"><dt>デモ表示:</dt><dd>{demoOk ? '出す' : '出さない'}</dd></div>
+            {/*
+              **デモ表示は uid だけで決まる** (admin 権限とは無関係)。
+              「出さない」なら、その uid をデモ用アカウントに登録すれば出る
+              (wellfort-site admin → 設定「デモ」→「デモ用アカウントの uid」に上の
+              diagnostic_user_id を足す。再デプロイ不要・反映は最大 45 秒)。
+            */}
+            <div class="flex justify-between gap-3">
+              <dt>デモ表示:</dt>
+              <dd>
+                {demoShown ? '出す（デモ用アカウント）' : '出さない（このアカウントは実データのみ）'}
+              </dd>
+            </div>
             <div class="flex justify-between gap-3"><dt>検査アーティファクト:</dt><dd class="tnum">{data?.artifacts.length} 件</dd></div>
             <div class="flex justify-between gap-3"><dt>検査値 (最新回):</dt><dd class="tnum">{latest?.items.length ?? 0} 件</dd></div>
             <div class="flex justify-between gap-3"><dt>キット出荷:</dt><dd class="tnum">{data?.shipments.length} 件</dd></div>

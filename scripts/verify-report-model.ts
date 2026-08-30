@@ -286,21 +286,41 @@ for (const c of oldB) {
  * → ここで **DB 非依存**に固定する (`loadReportVM` は Supabase 未設定なら `sample()` へ落ちる)。
  */
 {
-  const asAdminWithCancer = await loadReportVM({
-    diagnosticUserId: null,
+  /*
+   * **デモ用アカウントとして引く。** サンプルはデモ用アカウントにしか出ない
+   * (`demo-data.ts` の `demoFallbackEnabled`・2026-08-30 再設計)。
+   * `d0000001…` は組み込みのデモ用 uid = テストフェーズの標準デモ (真鍋)。
+   */
+  const DEMO_UID = 'd0000001-0000-0000-0000-000000000000';
+  const asDemoWithCancer = await loadReportVM({
+    diagnosticUserId: DEMO_UID,
     name: 'テスト 様',
     chronologicalAge: 56,
     ourWellnessAge: null,
-    // **本番の admin と同じ条件**: 別の回のがんリスク検査を持っている
+    // **本番のデモ環境と同じ条件**: 別の回のがんリスク検査を持っている
     hasCancerRisk: true,
     cycleSeq: null,
-    viewerIsAdmin: true,
   });
-  check('サンプルはタイプ2 (isSample)', asAdminWithCancer.isSample === true,
-    `isSample=${asAdminWithCancer.isSample}`);
-  const aCards = asAdminWithCancer.digest.filter((c) => c.axis === 'a').length;
+  check('サンプルはタイプ2 (isSample)', asDemoWithCancer.isSample === true,
+    `isSample=${asDemoWithCancer.isSample}`);
+  const aCards = asDemoWithCancer.digest.filter((c) => c.axis === 'a').length;
   check('サンプルで主軸 A のカードが出る (hasCancerRisk:true でも消えない)', aCards >= 1,
     `A 軸のカード ${aCards} 枚`);
+
+  /*
+   * **一般顧客にはサンプルが出ないこと。** ここが逆になると、実顧客の画面に
+   * 他人名義のダミーが「自分の報告書」として出る (`13a8a95` が塞いだ事故)。
+   */
+  const asCustomer = await loadReportVM({
+    diagnosticUserId: 'aaaaaaaa-1111-2222-3333-444444444444',
+    name: '顧客 様',
+    chronologicalAge: 56,
+    ourWellnessAge: null,
+    hasCancerRisk: false,
+    cycleSeq: null,
+  });
+  check('一般顧客にサンプルを出さない', asCustomer.isSample === false && asCustomer.chapters.length === 0,
+    `isSample=${asCustomer.isSample} / 全編 ${asCustomer.chapters.length} 章`);
 }
 
 // ── 結果 ──────────────────────────────────────────────────────────

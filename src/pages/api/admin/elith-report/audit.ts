@@ -40,7 +40,6 @@ export const GET: APIRoute = async ({ request }) => {
     hasCancerRisk: false, cycleSeq: null,
     // この API は Bearer ADMIN_API_KEY で保護された admin 専用。
     // 受領前でも抽出規則の効きを確認できるよう、サンプルを組ませる。
-    viewerIsAdmin: true,
   });
 
   const shown = new Set(vm.chapters.map((c) => c.key));

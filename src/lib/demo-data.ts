@@ -11,6 +11,7 @@
  * ※ これは表示用フォールバックであり DB には書き込まない。
  */
 
+import { cfg } from './app-config';
 import type { ElithSection } from './elith-parser';
 import type { DashboardData, MetricTrendSeries } from './dashboard-queries';
 import type { NoticesData } from './notice-queries';
@@ -26,63 +27,98 @@ import type {
 /**
  * ダミーフォールバックが有効か。
  *
- * **admin 限定 (2026-08-30・発注者指示)。**
- *   以前は env だけで判定していたため、**検査結果がまだ無い実顧客**
- *   (購入直後は必ずこの状態) にもダミーが出た。ダッシュボード側に admin 判定は無く
- *   (`dashboard-queries.loadDashboard`)、サインイン後は一般顧客も本人の uid で
- *   `?u=` に redirect されて admin と同じコードパスに入る
- *   (`GoogleOneTap.astro` の resolve → redirect)。
- *   さらにフォールバック2 (`buildDemoDashboard`) は DB を見ないコード内ダミーなので、
- *   seed の有無に関わらず必ず発火していた。
- *   → **「自分のものではない検査結果が、自分の画面に出る」**。9/1 ローンチ前に塞ぐ。
+ * ══════════════════════════════════════════════════════════════════════
+ * 【2026-08-30 再設計】**デモを見せる相手 = デモ用アカウント。admin ではない。**
+ * ══════════════════════════════════════════════════════════════════════
  *
- * 【判定 (2026-08-30 発注者指示で順序を確定)】
+ * 判定は **uid がデモ用アカウントの一覧に在るか、それだけ**。
+ * Cookie も HP Edge も `admin_users` も見ない。**同期・毎リクエスト評価。**
  *
- *   1. **admin はダミーを見る。env で塞がない。**
- *      本番と総合テストに臨むため、**管理者リストのメンバーだけ**は従来どおり
- *      テストのダミーデータで画面を確認できる必要がある (発注者指示 2026-08-30)。
- *      **旧実装は env との AND だったので `PUBLIC_DEMO_FALLBACK=false` を入れると
- *      admin まで塞がれ、`/report` がほぼ空になっていた** (実測 2026-08-30)。
- *      それでは「デモ表示を admin 限定にする」(`13a8a95`) という宣言自体が
- *      本番で成立しない (admin 限定の枝が死ぬ) ので、admin を先に見る。
- *   2. env `PUBLIC_DEMO_FALLBACK=false` は **admin 以外**をまとめて切るスイッチ。
- *   3. admin ではないがデモを出してよい uid (`DEMO_ALLOWED_UIDS`)。
+ * 【デモの目的】UI デザインの確認 / 機能確認 / **ビジネスパートナーへのお披露目・PR**
+ * (発注者 2026-08-30)。権限の確認ではないので、権限の仕組みに乗せる必要が無い。
+ * **サインインは通常どおり Google 認証を通る**。デモ用アカウントは「素性の分かっている
+ * 実在の Google アカウント」であって、認証の抜け道ではない。
  *
- * → **Google 認証で入った一般ユーザー (顧客DBに登録あり・admin でない) は、
- *    env の設定に関わらずダミーを一切見ない。自分の実データだけ。**
+ * 【なぜ admin から切り離したか — 実際に踏んだ失敗】
+ *   直前まで第 1 条件が `viewerIsAdmin` で、その値は
+ *   **Cookie の署名 → HP Edge の `resolve-customer` → Wellfort 側 `admin_users`**
+ *   という 3 段の外部依存で決まっていた。どこか 1 つが落ちても結果は同じ `false` で、
+ *   画面は**黙って空になる**。原因の切り分けに何往復も費やした。
+ *   さらに admin と束ねていると、**管理者を 1 人増やすたびにダミーの閲覧者が増える**。
+ *   ローンチ後も社外デモでこのモードは残るので、そこは分かれていないと困る。
  *
- * **uid を渡さない呼び出しは false**（＝ダミーを出さない）。
- * 呼び出し側が uid を持っていない経路で誤ってダミーが出るより、
- * 空表示になる方が安全なため fail-safe をこちら側に倒す。
+ * 【判定】
+ *   1. env `PUBLIC_DEMO_FALLBACK=false` … 全停止スイッチ (誰にも出さない)。
+ *   2. uid が `demoUids()` (組み込み ∪ env ∪ app_config) に在れば出す。無ければ出さない。
  *
- * @param uid 閲覧中の diagnostic_user_id。省略・null は非 admin 扱い。
- * @param viewerIsAdmin **閲覧している本人**が admin か (`resolveViewer().isAdmin`)。
- *   uid リストに載っていない admin (email だけで登録されたメンバー) を拾うために要る。
- *   省略時は uid リストだけで判定する = 従来どおり。
- *   **`uid` は「表示中のユーザー」で、これは「見ている人」。** admin が `?u=` で他人を
- *   代理表示しているときは別人になり、その場合は**相手の実データを見たいはず**なので
- *   デモを出さないのが正しい → 呼び出し側は代理表示中に true を渡さないこと。
+ * **app_config 経由なので admin から即時に増減できる** (再デプロイ不要・TTL 45 秒)。
+ * ただし `cfg()` は事前に `refreshConfig()` が要る — **各ページはデータ取得より前に呼ぶこと**。
+ * 呼ばれていなくてもコード既定 (組み込み ∪ env) に落ちるので、画面が壊れることはない。
+ *
+ * → **Google 認証で入った一般顧客は、何があってもダミーを見ない。自分の実データだけ。**
+ *
+ * **uid を渡さない呼び出しは false**（＝ダミーを出さない）。fail-safe をこちらへ倒す。
+ *
+ * **admin が `?u=` で他人を代理表示しているときは、渡る uid が相手のもの**になる。
+ * 相手はデモ用アカウントではないので自動的にデモは出ない = 相手の実データが見える。
+ * 呼び出し側で場合分けする必要は無い (以前は第 2 引数の渡し忘れが穴だった)。
+ *
+ * @param uid 閲覧中の diagnostic_user_id。
  */
-export function demoFallbackEnabled(uid?: string | null, viewerIsAdmin?: boolean): boolean {
-  // ① admin は env に関わらずダミーを見る (発注者指示 2026-08-30)
-  if (viewerIsAdmin) return true;
-  // ② admin 以外は env のスイッチで一括して切れる
+export function demoFallbackEnabled(uid?: string | null): boolean {
+  // ① 全停止スイッチ (誰にも出さない)
   if (import.meta.env.PUBLIC_DEMO_FALLBACK === 'false') return false;
-  // ③ admin ではないがデモを出してよい uid (OEM デモ顧客)
-  return DEMO_ALLOWED_UIDS.has((uid ?? '').trim().toLowerCase());
+  // ② デモ用アカウントか。**これだけ。** 外部依存ゼロ・毎リクエスト評価。
+  return demoUids().has((uid ?? '').trim().toLowerCase());
 }
 
 /**
- * admin ではないが**デモを出してよい** uid。
+ * **デモ用アカウントの `diagnostic_user_id` 一覧。**
  *
- * OEM 相手先ブランド向けデモ顧客 (山田太郎)。`supabase/demo_oem_account.sql` が
- * `test_artifacts` / `diagnosis_results` を実際に投入するので通常はフォールバック不要だが、
- * seed 未適用の環境で画面が空になるのを避けるために残す。
- * **admin 権限は与えない** (管理者リストには入れない)。
+ * 3 つの供給元の**和**。どれか 1 つが空でも他が生きる。
+ *
+ *   1. **組み込み** (`BUILTIN_DEMO_UIDS`) … テスト用と OEM デモ。消えない下限。
+ *   2. **env `DEMO_ALLOWED_UIDS`** … 再デプロイが要るが DB 障害に影響されない。
+ *   3. **app_config `demo.account_uids`** … **admin から即時に増減できる**(TTL 45 秒・再デプロイ不要)。
+ *      パートナーへのお披露目・PR で当日アカウントを足す、という使い方を想定。
+ *
+ * **和にした理由**: 上書きにすると、admin で 1 件登録した瞬間に組み込みと env が消え、
+ * それまで見えていた画面が黙って空になる。**足すことはできても消せない**方が事故が軽い。
+ * 全部止めたいときは env `PUBLIC_DEMO_FALLBACK=false` (これだけが唯一の停止手段)。
+ *
+ * 【アカウントの増やし方】
+ *   1. そのアカウントで Google サインインして `/dashboard` の「デバッグ」を開く
+ *   2. `diagnostic_user_id` をコピー
+ *   3. wellfort-site admin の設定画面「デモ」→「デモ用アカウントの uid」に足す (即時)
+ *
+ * **キャッシュしない**。`cfg()` は TTL 45 秒で入れ替わるので、ここで固定すると
+ * admin の変更が反映されない。文字列の分割だけなので毎回計算してよい。
  */
-const DEMO_ALLOWED_UIDS: ReadonlySet<string> = new Set([
+function demoUids(): ReadonlySet<string> {
+  return new Set([
+    ...BUILTIN_DEMO_UIDS,
+    ...splitUids(String(import.meta.env.DEMO_ALLOWED_UIDS ?? '')),
+    ...splitUids(cfg('demo.account_uids')),
+  ]);
+}
+
+function splitUids(raw: string): string[] {
+  return raw.split(/[\s,]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+
+/**
+ * 組み込みのデモ用アカウント。
+ *
+ * - `d0000001…` … テストフェーズの標準デモ (真鍋)。`supabase/seed.sql` の投入先で、
+ *   `dashboard-queries.DEFAULT_USER` でもある。ダミー一式が最も揃っている。
+ * - `da000001…` … OEM 相手先ブランド向けデモ (山田太郎)。`supabase/demo_oem_account.sql`。
+ *
+ * **どちらも実顧客ではない**ので、ここに在ってもローンチの妨げにならない。
+ */
+const BUILTIN_DEMO_UIDS: readonly string[] = [
+  'd0000001-0000-0000-0000-000000000000',
   'da000001-0000-0000-0000-000000000000',
-]);
+];
 
 const now = () => new Date();
 const daysAgo = (d: number) => new Date(Date.now() - d * 86400_000).toISOString();

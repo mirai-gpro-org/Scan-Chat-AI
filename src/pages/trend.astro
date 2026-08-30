@@ -38,18 +38,23 @@ const viewer = await resolveViewer(Astro);
  * デモ表示の可否は**閲覧している本人が admin か**で決まる (spec §4.6)。
  * **代理表示中 (`?u=` で他人を見ている) は渡さない** — 相手の実データを見せるため。
  */
-const demoOk = viewer.isAdmin && !viewer.impersonating;
 const u = viewer.uid;
 const type = url.searchParams.get('type');
 
 const authEnabled = !!import.meta.env.PUBLIC_GOOGLE_CLIENT_ID;
 const needsSignIn = authEnabled && !u;
 
-const result = needsSignIn ? null : await loadDashboard(u, demoOk);
+/*
+ * **app_config はデータ取得より前に読み込む。**
+ * デモ用アカウントの一覧 (`demo.account_uids`) をここから引くため、
+ * 後ろに置くと初回リクエストで admin の登録が効かない (コード既定に落ちる)。
+ */
+await refreshConfig();
+const result = needsSignIn ? null : await loadDashboard(u);
 const hasError = result ? 'error' in result : false;
 const data = !result || hasError ? null : (result as Exclude<typeof result, { error: string }>);
 
-const candidates = data ? await getTrendCandidates(data.resultUid, type ?? undefined, demoOk) : [];
+const candidates = data ? await getTrendCandidates(data.resultUid, type ?? undefined) : [];
 
 // 既定の選択: 従来出していた項目のうち実在するもの → 足りなければ候補の先頭から補う。
 const preferred = candidates.filter((n) => (DEFAULT_TREND_ITEMS as readonly string[]).includes(n));
@@ -62,12 +67,10 @@ const series = data
       candidates.length > 0 ? candidates : undefined,
       12,
       type ?? undefined,
-      demoOk,
     )
   : [];
 
-const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId, demoOk) : 0;
-await refreshConfig();
+const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;
 const supportContact = cfg('ui.support_contact');
 
 const typeName = type ? testTypeLabel(type).name : null;
