@@ -57,7 +57,7 @@ const needsCookieRefresh = !!viewer?.selfUid || !!viewer?.cookieStale;
     <script is:inline async defer src="https://accounts.google.com/gsi/client"></script>
 
     {/*
-      旧形式 Cookie の持ち主に、その場で発行し直させるための印。
+      **admin フラグを取り直す必要がある人**への印 (旧形式 Cookie / まだ admin でない)。
       **1 回だけ**試す (sessionStorage で番をする) — 失敗したときに再読込を繰り返さない。
     */}
     {needsCookieRefresh && <span id="viewer-cookie-stale" hidden data-stale="1"></span>}
@@ -69,9 +69,10 @@ const needsCookieRefresh = !!viewer?.selfUid || !!viewer?.cookieStale;
       const supabaseAnon = import.meta.env.PUBLIC_SUPABASE_ANON_KEY as string;
 
       /**
-       * **Cookie の自己修復。** 旧形式 (admin フラグ無し) の Cookie を持っていたら、
-       * 手元の Supabase セッションで `/api/auth/resolve` を呼び直して発行し直す。
-       * サインインし直さなくても判定の変更が届くようにするため (理由は frontmatter)。
+       * **Cookie の自己修復。** admin フラグを取り直す必要があるとき
+       * (旧形式 Cookie / まだ admin でない) に、手元の Supabase セッションで
+       * `/api/auth/refresh-admin` を呼んで発行し直す。
+       * **サインインし直さなくても、管理者リストへの登録がその場で届く。**
        *
        * **1 回だけ**試す。失敗しても画面は壊さない (今までどおり表示されるだけ)。
        */

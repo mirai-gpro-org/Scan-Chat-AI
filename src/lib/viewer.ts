@@ -172,8 +172,17 @@ export interface Viewer {
   /** admin が `?u=` で他人を表示している状態か。 */
   impersonating: boolean;
   /**
-   * **Cookie が旧形式で、発行し直しが要る状態か。**
-   * `GoogleOneTap` がこれを見て `/api/auth/resolve` を呼び直す (自己修復)。
+   * **Cookie の admin フラグを取り直す必要があるか。**
+   * `GoogleOneTap` がこれを見て `/api/auth/refresh-admin` を呼ぶ (自己修復)。
+   *
+   * 【2026-08-30・実測で拡張】以前は **旧 3 分割 Cookie のときだけ** true にしていた。
+   * ところが `admin=0` の 4 分割 Cookie は「旧形式ではない」ので**自己修復が一度も
+   * 走らず、admin に昇格できないまま最大 30 日固定**になる。
+   * 実際にこれで管理者が admin を失った (uid 一覧による判定を撤去した際、
+   * 既に `admin=0` の Cookie を持っていた人に回復手段が無かった)。
+   * → **admin でないときは毎セッション 1 回だけ取り直す。**
+   *   admin の人は取り直さない (既に true なので変化しない)。
+   *   剥奪は次のサインイン時に反映される。
    */
   cookieStale: boolean;
 }
@@ -218,9 +227,9 @@ export async function resolveViewer(ctx: AstroGlobal | APIContext): Promise<View
   const adminBy: Viewer['adminBy'] = verified.admin ? 'cookie' : null;
   const isAdmin = adminBy !== null;
   if (isAdmin && requested && requested !== selfUid) {
-    return { uid: requested, selfUid, isAdmin, adminBy, impersonating: true, cookieStale: verified.legacy };
+    return { uid: requested, selfUid, isAdmin, adminBy, impersonating: true, cookieStale: verified.legacy || !isAdmin };
   }
-  return { uid: selfUid, selfUid, isAdmin, adminBy, impersonating: false, cookieStale: verified.legacy };
+  return { uid: selfUid, selfUid, isAdmin, adminBy, impersonating: false, cookieStale: verified.legacy || !isAdmin };
 }
 
 /** `?u=` の短縮形（先頭8桁）も従来どおり受ける。 */
