@@ -66,6 +66,13 @@ export const GET: APIRoute = async (ctx) => {
           customer_note: r.customer ? null : 'Wellfort 側 customer_profiles に該当なし / 退会',
           // 管理者リスト (admin_users) の答え。氏名や uid は出さない。
           is_admin: r.isAdmin,
+          /*
+           * false だったときの内訳。**「載っていない」と「引けなかった」を区別する。**
+           *   readable:false      → 権限/スキーマ側の問題 (コードで直す)
+           *   active_count:0      → リスト自体が空
+           *   matched:false かつ active_count>0 → この email が載っていないだけ
+           */
+          admin_lookup: r.adminLookup ?? '(旧 Edge Function・内訳なし)',
         };
       } catch (e) {
         edge = { called: true, error: e instanceof Error ? e.message : String(e) };
@@ -103,6 +110,23 @@ export const GET: APIRoute = async (ctx) => {
       ALLOW_UID_ENTRY: uidEntryAllowed() ? 'on' : '(off/未設定)',
     },
     edge,
+    /*
+     * **Cookie の admin と、管理者リストの答えが食い違っていないか。**
+     *
+     * Cookie はサインイン時にしか発行されず有効期間 30 日なので、
+     * 判定を変えても**既に admin=1 を持っている人は当面 admin のまま動く**。
+     * その間は「直っているように見えて直っていない」= 期限切れで静かに失う。
+     * 逆向き (Cookie=false / リスト=true) は次のサインインか自己修復で解消する。
+     */
+    warning: edge && typeof (edge as { is_admin?: unknown }).is_admin === 'boolean'
+      && viewer.isAdmin !== (edge as { is_admin: boolean }).is_admin
+      ? (viewer.isAdmin
+          ? 'Cookie は admin だが管理者リストは admin ではない。'
+            + 'いま admin として動いているのは古い Cookie の残存効果で、期限切れ (最長30日) で失う。'
+            + 'admin_lookup を見て、リストに載っていないのか照会が失敗しているのかを切り分けること。'
+          : 'Cookie は admin でないが管理者リストは admin。'
+            + '次のサインイン、または cookie_stale による自己修復で解消する。')
+      : null,
     hint: '?email=<サインインに使っている Google アカウント> を足すと、'
       + '管理者リストまで届いているかを直接確認できる。',
   });

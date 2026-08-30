@@ -45,6 +45,22 @@ export interface ResolveOutcome {
    * 古い Edge Function は返さないので、その場合は false。
    */
   isAdmin: boolean;
+  /**
+   * **admin 判定が false だったときに、原因を切り分けるための内訳。**
+   *
+   * fail-closed なので「リストに載っていない」も「照会が失敗した」も同じ false になる。
+   * それでは原因が分からず推測が始まるので、Edge 側が内訳を返す (2026-08-30)。
+   * 古い Edge Function は返さないので省略可。**PII は含まない** (人数と真偽だけ)。
+   */
+  adminLookup?: {
+    /** `admin_users` を読めたか。false なら権限/スキーマ側の問題。 */
+    readable: boolean;
+    /** 現役の管理者の総数。0 ならリスト自体が空。一致したときは null。 */
+    active_count: number | null;
+    /** この email が一致したか。 */
+    matched: boolean;
+    error?: string;
+  };
 }
 
 /**
@@ -73,13 +89,20 @@ export async function resolveCustomerWithAdmin(email: string): Promise<ResolveOu
   });
   if (!res.ok) throw new Error(`resolve-customer HTTP ${res.status}`);
   const payload = (await res.json().catch(() => null)) as
-    | { success: boolean; data: ResolvedCustomer | null; is_admin?: boolean; error?: string }
+    | {
+        success: boolean;
+        data: ResolvedCustomer | null;
+        is_admin?: boolean;
+        admin_lookup?: ResolveOutcome['adminLookup'];
+        error?: string;
+      }
     | null;
   if (!payload?.success) throw new Error(payload?.error ?? 'resolve-customer failed');
   return {
     customer: payload.data ?? null,
     // top-level を正とし、無ければ data 内 (旧形式) を見る。
     isAdmin: payload.is_admin === true || payload.data?.is_admin === true,
+    adminLookup: payload.admin_lookup,
   };
 }
 
