@@ -83,8 +83,14 @@ const needsSignIn = authEnabled && !u;
  * デモ用アカウントの一覧 (`demo.account_uids`) をここから引くため、
  * 後ろに置くと初回リクエストで admin の登録が効かない (コード既定に落ちる)。
  */
+/*
+ * デモを見せる相手 = **デモ用アカウント** (uid 一覧) が本線。
+ * これは「**admin の登録者も見られる**」ぶんの追加条件 (発注者指示 2026-08-30)。
+ * **代理表示中 (`?u=`) は渡さない** = 相手の実データを見せる。
+ */
+const demoOk = viewer.isAdmin && !viewer.impersonating;
 await refreshConfig();
-const result = needsSignIn ? null : await loadDashboard(u);
+const result = needsSignIn ? null : await loadDashboard(u, demoOk);
 
 const hasError = result ? 'error' in result : false;
 const data = !result || hasError ? null : (result as Exclude<typeof result, { error: string }>);
@@ -93,16 +99,16 @@ const data = !result || hasError ? null : (result as Exclude<typeof result, { er
  * デバッグ欄の表示用。**判定そのものは各クエリの中で同じ関数が使われている**ので、
  * ここは「表示中の uid でデモが出るか」を見せているだけ (二重管理にならない)。
  */
-const demoShown = demoFallbackEnabled(data?.diagnosticUserId);
+const demoShown = demoFallbackEnabled(data?.diagnosticUserId, demoOk);
 
 // ── 実データ (STEP 1/2 で作った diagnosis.measurement_values から読む) ──
 // 判定・助言はアプリで作らない。検査票の値・基準値と、検査機関が付けた flag のみを渡す。
-const latest = data ? await getLatestMeasurements(data.resultUid) : null;
+const latest = data ? await getLatestMeasurements(data.resultUid, demoOk) : null;
 
 // ウェルネス年齢 (選択ユーザー本人の diagnostic_user_id で取得)
-const healthAge = data ? await getHealthAge(data.diagnosticUserId) : null;
+const healthAge = data ? await getHealthAge(data.diagnosticUserId, demoOk) : null;
 
-const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;
+const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId, demoOk) : 0;
 
 // 画面文言 (app_config)。未設定なら空文字が返り、UI 側で非表示になる。
 const healthAgeFollowup = cfg('ui.health_age_followup');

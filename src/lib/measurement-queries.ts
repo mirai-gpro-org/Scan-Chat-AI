@@ -135,9 +135,11 @@ function demoLatest(): LatestMeasurements {
 /** 直近 1 回分の検査値を取得する。無ければ null (テストフェーズはデモへ)。 */
 export async function getLatestMeasurements(
   diagnosticUserId: string,
+  /** デモの追加条件: **閲覧者**が admin か (本線は uid のデモ用アカウント一覧)。 */
+  viewerIsAdmin?: boolean,
 ): Promise<LatestMeasurements | null> {
   const sb = getServerSupabase();
-  if (!sb) return demoFallbackEnabled(diagnosticUserId) ? demoLatest() : null;
+  if (!sb) return demoFallbackEnabled(diagnosticUserId, viewerIsAdmin) ? demoLatest() : null;
   try {
     // 最新の test_date を持つ 1 検査分だけを取る。
     const { data, error } = await sb
@@ -152,7 +154,7 @@ export async function getLatestMeasurements(
       .limit(400);
 
     const rows = (data ?? []) as unknown as Row[];
-    if (error || rows.length === 0) return demoFallbackEnabled(diagnosticUserId) ? demoLatest() : null;
+    if (error || rows.length === 0) return demoFallbackEnabled(diagnosticUserId, viewerIsAdmin) ? demoLatest() : null;
 
     const newest = rows[0];
     const same = rows.filter(
@@ -172,7 +174,7 @@ export async function getLatestMeasurements(
       flaggedCount: flagged.length,
     };
   } catch {
-    return demoFallbackEnabled(diagnosticUserId) ? demoLatest() : null;
+    return demoFallbackEnabled(diagnosticUserId, viewerIsAdmin) ? demoLatest() : null;
   }
 }
 
@@ -213,10 +215,12 @@ function seriesKey(r: { canonical_name: string | null; item_name?: string | null
 export async function getTrendCandidates(
   diagnosticUserId: string,
   testType?: string,
+  /** デモの追加条件: **閲覧者**が admin か (本線は uid のデモ用アカウント一覧)。 */
+  viewerIsAdmin?: boolean,
 ): Promise<string[]> {
   const sb = getServerSupabase();
   // 実データ層が無いテストフェーズでは、デモの系列名をそのまま候補にする。
-  if (!sb) return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend().map((x) => x.label) : [];
+  if (!sb) return demoFallbackEnabled(diagnosticUserId, viewerIsAdmin) ? demoMetricTrend().map((x) => x.label) : [];
   try {
     let q = sb
       .schema('diagnosis')
@@ -231,7 +235,7 @@ export async function getTrendCandidates(
       { canonical_name: string | null; item_name: string | null; test_date: string | null }[];
     if (error || rows.length === 0) {
       if (testType) return [];
-      return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend().map((x) => x.label) : [];
+      return demoFallbackEnabled(diagnosticUserId, viewerIsAdmin) ? demoMetricTrend().map((x) => x.label) : [];
     }
 
     const dates = new Map<string, Set<string>>();
@@ -249,7 +253,7 @@ export async function getTrendCandidates(
     return [...head, ...rest];
   } catch {
     if (testType) return [];
-    return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend().map((x) => x.label) : [];
+    return demoFallbackEnabled(diagnosticUserId, viewerIsAdmin) ? demoMetricTrend().map((x) => x.label) : [];
   }
 }
 
@@ -270,11 +274,13 @@ export async function getMeasurementTrend(
   canonicalNames: readonly string[] = DEFAULT_TREND_ITEMS,
   maxPoints = 12,
   testType?: string,
+  /** デモの追加条件: **閲覧者**が admin か (本線は uid のデモ用アカウント一覧)。 */
+  viewerIsAdmin?: boolean,
 ): Promise<MetricTrendSeries[]> {
   const sb = getServerSupabase();
   // 旧 getMetricTrend が持っていたデモフォールバックを踏襲する
   // (テストフェーズでクライアントに推移グラフを見てもらうために必要)。
-  if (!sb || canonicalNames.length === 0) return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend() : [];
+  if (!sb || canonicalNames.length === 0) return demoFallbackEnabled(diagnosticUserId, viewerIsAdmin) ? demoMetricTrend() : [];
   try {
     const { data, error } = await sb
       .schema('diagnosis')
@@ -299,7 +305,7 @@ export async function getMeasurementTrend(
     });
     if (error || rows.length === 0) {
       if (testType) return [];
-      return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend() : [];
+      return demoFallbackEnabled(diagnosticUserId, viewerIsAdmin) ? demoMetricTrend() : [];
     }
 
     const byName = new Map<string, Row[]>();
@@ -341,10 +347,10 @@ export async function getMeasurementTrend(
         points,
       });
     }
-    if (out.length === 0 && !testType && demoFallbackEnabled(diagnosticUserId)) return demoMetricTrend();
+    if (out.length === 0 && !testType && demoFallbackEnabled(diagnosticUserId, viewerIsAdmin)) return demoMetricTrend();
     return out;
   } catch {
     if (testType) return [];
-    return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend() : [];
+    return demoFallbackEnabled(diagnosticUserId, viewerIsAdmin) ? demoMetricTrend() : [];
   }
 }

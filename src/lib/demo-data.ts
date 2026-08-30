@@ -49,11 +49,26 @@ import type {
  *
  * 【判定】
  *   1. env `PUBLIC_DEMO_FALLBACK=false` … 全停止スイッチ (誰にも出さない)。
- *   2. uid が `demoUids()` (組み込み ∪ env ∪ app_config) に在れば出す。無ければ出さない。
+ *   2. **uid が `demoUids()` (組み込み ∪ env ∪ app_config) に在れば出す。← 本線。**
+ *   3. **admin の登録者も出す** (発注者指示 2026-08-30)。
  *
  * **app_config 経由なので admin から即時に増減できる** (再デプロイ不要・TTL 45 秒)。
  * ただし `cfg()` は事前に `refreshConfig()` が要る — **各ページはデータ取得より前に呼ぶこと**。
  * 呼ばれていなくてもコード既定 (組み込み ∪ env) に落ちるので、画面が壊れることはない。
+ *
+ * ── ③ を「本線にしない」理由 (順序が要件そのもの) ──────────────────
+ *
+ * `viewerIsAdmin` は **Cookie の署名 → HP Edge の `resolve-customer` → Wellfort 側
+ * `admin_users`** という 3 段の外部依存で決まる。どこか 1 つが落ちても結果は同じ
+ * `false` で、**画面は黙って空になる** (2026-08-30 に実測。切り分けに何往復も要した)。
+ *
+ * だから **② が先で ③ が後**。この順序なら:
+ *   - admin 判定が壊れても、uid で登録したデモ用アカウントは**確実に**デモを見られる
+ *   - admin 判定が直れば、登録者は**何もしなくても**追随する
+ *
+ * **③ を ② より前に置いたり、② を消して ③ だけにしないこと。**
+ * それをやると 2026-08-30 の障害 (お披露目当日に画面が空) がそのまま再発する。
+ * `verify:demo-gate` がこの順序を機械で見張っている。
  *
  * → **Google 認証で入った一般顧客は、何があってもダミーを見ない。自分の実データだけ。**
  *
@@ -65,11 +80,13 @@ import type {
  *
  * @param uid 閲覧中の diagnostic_user_id。
  */
-export function demoFallbackEnabled(uid?: string | null): boolean {
+export function demoFallbackEnabled(uid?: string | null, viewerIsAdmin?: boolean): boolean {
   // ① 全停止スイッチ (誰にも出さない)
   if (import.meta.env.PUBLIC_DEMO_FALLBACK === 'false') return false;
-  // ② デモ用アカウントか。**これだけ。** 外部依存ゼロ・毎リクエスト評価。
-  return demoUids().has((uid ?? '').trim().toLowerCase());
+  // ② デモ用アカウントか。**本線。** 外部依存ゼロ・毎リクエスト評価。
+  if (demoUids().has((uid ?? '').trim().toLowerCase())) return true;
+  // ③ admin の登録者も見られる (発注者指示)。**外部依存があるので本線にしない。**
+  return viewerIsAdmin === true;
 }
 
 /**

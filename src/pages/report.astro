@@ -56,14 +56,20 @@ const needsSignIn = authEnabled && !u;
  * デモ用アカウントの一覧 (`demo.account_uids`) をここから引くため、
  * 後ろに置くと初回リクエストで admin の登録が効かない (コード既定に落ちる)。
  */
+/*
+ * デモを見せる相手 = **デモ用アカウント** (uid 一覧) が本線。
+ * これは「**admin の登録者も見られる**」ぶんの追加条件 (発注者指示 2026-08-30)。
+ * **代理表示中 (`?u=`) は渡さない** = 相手の実データを見せる。
+ */
+const demoOk = viewer.isAdmin && !viewer.impersonating;
 await refreshConfig();
-const result = needsSignIn ? null : await loadDashboard(u);
+const result = needsSignIn ? null : await loadDashboard(u, demoOk);
 const data = !result || 'error' in result ? null : result;
-const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;
+const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId, demoOk) : 0;
 
 const supportContact = cfg('ui.support_contact');
 
-const healthAge = data ? await getHealthAge(data.diagnosticUserId) : null;
+const healthAge = data ? await getHealthAge(data.diagnosticUserId, demoOk) : null;
 
 /**
  * その回の入力にがんリスク検査があったか (spec §1.0.3)。**アプリが判定する。**

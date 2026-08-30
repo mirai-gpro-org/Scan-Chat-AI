@@ -32,6 +32,13 @@ export interface ReportContext {
   /** その回の入力にがんリスク検査があったか。**アプリが判定する** (spec §1.0.3)。 */
   hasCancerRisk: boolean;
   cycleSeq: number | null;
+  /**
+   * **閲覧している本人**が admin か (`resolveViewer().isAdmin`)。
+   * デモ (受領サンプル) の**追加**条件。**本線は uid のデモ用アカウント一覧**で、
+   * これは「admin の登録者も見られる」ぶん (発注者指示 2026-08-30)。
+   * **代理表示中 (`?u=`) は渡さない** = 相手の実データを見せる。
+   */
+  viewerIsAdmin?: boolean;
 }
 
 type CheckupValues = Record<string, { date?: string; value?: unknown }[]>;
@@ -59,7 +66,7 @@ function common(ctx: ReportContext): Omit<BuildInput, 'reportText' | 'checkup' |
  * 判定は `demo-data.ts` の `demoFallbackEnabled` に集約してある (uid 1 本・外部依存ゼロ)。
  */
 function sample(ctx: ReportContext): ReportVM {
-  if (!demoFallbackEnabled(ctx.diagnosticUserId)) return emptyVM(ctx);
+  if (!demoFallbackEnabled(ctx.diagnosticUserId, ctx.viewerIsAdmin)) return emptyVM(ctx);
   return buildReportVM({
     ...common(ctx),
     /*
@@ -143,7 +150,7 @@ export async function loadReportVM(ctx: ReportContext): Promise<ReportVM> {
      *   - **現行形式 (dict) の実データが入れば、この分岐は通らない** = 本物が勝つ
      *   - 旧形式の行を消したり書き換えたりはしない (監査のため残す)
      */
-    if (Array.isArray(row.report) && demoFallbackEnabled(ctx.diagnosticUserId)) {
+    if (Array.isArray(row.report) && demoFallbackEnabled(ctx.diagnosticUserId, ctx.viewerIsAdmin)) {
       return sample(ctx);
     }
 
