@@ -1,34 +1,18 @@
 /**
- * レポート表示 (3 モード + PDF deep-link) の共通ロジック。
+ * レポート本文の**和文組版**。内容には一切触れない (要約・言い換え・並べ替えをしない = ミッション④)。
  *
- * 正本: docs/architecture/test_data_storage_and_db_design.md §6.4
- *   a) サマリー / b) 要注意抜粋 / c) 全編 の 3 モードを切り替え、
- *   a/b の各項目に置かれた `[pN]` から c) の PDF 該当ページへ飛ぶ。
+ * 正本: docs/elith/ai_prevention_report_generation_spec.md §4.3
  *
- * この変換を /result/[id] と /report で二重管理しないため、ここに集約する。
+ * 【3 モードと `[pN]` は廃止】旧実装は a) サマリー / b) 要注意抜粋 / c) 全編 の 3 モードを
+ *   切り替え、本文中の `[pN]` から原本 PDF の該当ページへ飛ばしていた。
+ *   **新形式に `[pN]` は 0 件** (実測)。旧サンプルにあった `[pN]` はアプリが PDF 抽出時に
+ *   付けたページマーカーで Elith 由来ではなかった (Stage2 PDF 原本も 0 件)。
+ *   → ページジャンプは成立しないので廃止し、章の切り替えは表示モデル側が持つ (spec §5.1)。
+ *
+ * ここに残すのは組版だけ。`/report` から使う。
  */
 
 import { marked } from 'marked';
-import { ICON_SVG } from './icon-svg';
-
-/*
-  旧 3 モード (a サマリー / b 要注意 / c 全編 PDF) の型とヘルパ
-  (`ReportMode` / `REPORT_MODES` / `isReportMode` / `modeHref`) は削除した。
-  新形式に `[pN]` が無く原本 PDF へのページジャンプが成立しないため 3 モードは廃止され
-  (spec §5.1 / §9.1)、参照が 0 になっていた。
-*/
-
-interface LinkOpts {
-  /** テストフェーズの ?u= を引き継ぐ。 */
-  u?: string | null;
-  /** 遷移先パス (既定は現在のページ = 空文字)。 */
-  basePath?: string;
-}
-
-/**
- * 本文 Markdown を HTML 化し、`[pN]` を「原本 PDF の N ページ目へ飛ぶリンク」に変換する。
- * クリック時はページ遷移せず iframe を直接更新する (ページ側のスクリプトが拾う)。
- */
 
 /**
  * 長い一続きの本文を、文の切れ目で段落に割る。
@@ -151,20 +135,10 @@ export function headingizeBoldLines(text: string): string {
     .join('\n');
 }
 
-export function renderReportMarkdown(text: string, opts: LinkOpts = {}): string {
+export function renderReportMarkdown(text: string): string {
   if (!text) return '';
-  const linked = emphasizeTopicJa(paragraphizeJa(headingizeBoldLines(text))).replace(/\[p(\d+)\]/g, (_m, n: string) => {
-    const qs = new URLSearchParams();
-    if (opts.u) qs.set('u', opts.u);
-    qs.set('mode', 'full');
-    qs.set('page', n);
-    const cls =
-      'pdf-page-link inline-flex min-h-touch items-center gap-1.5 rounded-full border border-brand-300 '
-      + 'bg-brand-50 px-3 py-0.5 text-sm font-medium text-brand-800 no-underline hover:bg-brand-100';
-    // ページ番号は読み手には意味が無いので出さない (飛び先の指定には引き続き使う)。
-    // 絵文字は本番素材に使わない規則があるため、アイコンは Lucide の SVG を使う。
-    return `<a href="${opts.basePath ?? ''}?${qs.toString()}#pdf-viewer" class="${cls}"`
-      + ` data-pdf-page="${n}" title="原本レポートの該当ページを開く">${ICON_SVG.report}説明</a>`;
-  });
-  return marked.parse(linked, { async: false }) as string;
+  return marked.parse(
+    emphasizeTopicJa(paragraphizeJa(headingizeBoldLines(text))),
+    { async: false },
+  ) as string;
 }

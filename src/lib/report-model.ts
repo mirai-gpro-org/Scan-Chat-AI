@@ -1,226 +1,184 @@
 /**
  * AI疾病予防報告書の **表示モデル (ViewModel)**。
  *
- * 正本: `docs/elith/ai_prevention_report_generation_spec.md` §1.3.3 / §4。
+ * 正本: docs/elith/ai_prevention_report_generation_spec.md
  *
- * 【なぜ型を先に置くか (P0)】
- *   `受領JSON → 表示モデル → レンダラ` の 3 層にし、層をまたいだ直参照を作らないため
- *   (spec §1.3.3)。Elith の出力形式は **既に 1 度変わっている** —
- *   Stage2 → Stage3 で `（判定区分：X）` と `[pN]` が消え、
- *   `elith-report-highlights.ts` が**無言で空になる**状態になった (spec §5.2)。
- *   次も変わる前提で、**形式変更はアダプタ 1 枚で吸収する**。
- *   画面 (`report.astro`) と印刷ビュー (`?print=1`) はこの型しか知らない。
+ * 【この層の役割】受領 JSON の形式と、画面の描き方を切り離す (spec §1.3.3)。
+ *   `受領JSON → アダプタ(report-adapter.ts) → 表示モデル(この型) → レンダラ(report.astro)`
+ *   **画面はこの型しか知らない。** Elith の形式が変わってもアダプタ 1 枚で吸収する
+ *   (Stage2→Stage3 で `判定区分` と `[pN]` が実際に消えた実績がある)。
  *
- * 【この層がしないこと】
- *   要約・言い換え・並べ替え・良否の判定 (ミッション④)。
- *   `body` に入るのは **Elith の原文 Markdown そのまま**で、
- *   組版 (段落化・主題強調・h4 化) は描画時に `report-view.ts` が行う。
+ * 【この型が持たないもの】
+ *   - 当社が書いた散文。**紙面に出る文はすべて受領データからの逐語** (spec §1.0.0)。
+ *     この型の文字列フィールドに入れてよいのは Elith の原文だけで、
+ *     見出し・ラベルなどの「枠」はレジストリ (report-sections.ts) が持つ。
+ *   - 良否の判定。判定は Elith が書いた文をそのまま運ぶ (ミッション④)。
  */
 
-import type { ChapterKey } from './report-sections';
+/** 2 本柱 (spec §1.0)。**章ではなく報告書の骨格**なので常設・並べ替えも非表示もしない。 */
+export type AxisKey = 'a' | 'b';
 
-/** 受領 `report_text.json` の 1 セクション (新形式・spec §2.1)。 */
-export interface ReportSectionRaw {
-  section_name: string;
-  /** 受領 JSON のキー名。実測では `actual_chars`。 */
-  actual_chars?: number;
+export interface AxisVM {
+  key: AxisKey;
+  /** 見出しのみ。**リードを持たせない** (ポリシーの説明文は紙面に載せない・spec §4.-1)。 */
+  title: string;
+}
+
+// ── ダイジェスト (紙面の要点) ────────────────────────────────
+//
+// 可読化の実体はここ (spec §1.1)。受領本文 20,046 字をそのまま流すのではなく、
+// **出す文を選んで構造に置く**。選ぶのは当社の仕事だが、出す文は 1 文字も変えない。
+
+/** 見出し＋本文。Elith の `###` / `【】` 見出しをそのまま使う。 */
+export interface DigestItem {
+  /** Elith の見出し (無ければ空)。当社が言い換えた見出しを作らない。 */
+  heading: string;
+  /** Elith の原文 (逐語)。複数文になることがある。 */
   text: string;
 }
 
-/** 受領 `health_checkup.json` の 1 項目 (spec §2.2)。基準値・判定は持たない。 */
-export interface CheckupPoint {
-  date: string;
-  value: number | string;
-}
-
-/**
- * 章の材料 (どの受領キーから作るか)。
- * 受領 JSON のキーと 1:1 ではない — `diet_plan` は `diet` の一部、
- * `measurements` は `health_checkup.json` ＋ `blood_analysis` の散文から組む。
- */
-export type ChapterSource =
-  | 'abstract'
-  | 'summary'
-  | 'blood_analysis'
-  | 'diet'
-  | 'exercise'
-  | 'sleep'
-  | 'lifestyle'
-  | 'medical_visit'
-  | 'nutrients'
-  | 'references'
-  /** A の章。Elith にフィールドの新設を依頼中 (spec §4.0.1)。無ければ章ごと非表示。 */
-  | 'cancer_finding'
-  /** `diet` の「1 か月の食事改善プラン」だけを前に出す (spec §4.1 の 7.5)。 */
-  | 'diet_plan'
-  /** 検査値テーブル。値=health_checkup / 基準値=blood_analysis 本文の 8 件のみ。 */
-  | 'measurements';
-
-/** サービスの 2 本柱 (spec §1.0)。章がどちらに属するか。 */
-export type ReportAxis = 'A' | 'B';
-
-/**
- * 章内のトピック (spec §5.4)。
- * `### N. 見出し` / `【項目】` から決定論で作る。**LLM は使わない** (spec §5.5)。
- */
-export interface TopicVM {
-  /** 同一 HTML 内アンカー。`章key + 見出しのハッシュ` で決定論生成する
-   *  (連番にすると章を並べ替えたときにリンクが壊れる・spec §5.4)。 */
-  id: string;
-  /** 見出し (原文のまま)。 */
-  heading: string;
-  /** 冒頭 1 文 (原文のまま)。要約ではない。 */
-  teaser: string;
-}
-
-/**
- * 検査値の出どころ (spec §7.2)。
- * **2 ファイルは包含関係にない** — `health_checkup.json` だけで表を組むと、
- * 本文が最優先の所見として扱う値 (実測: ヘマトクリット 55.6 %) が落ちる。
- * 両方を載せたうえで、どちらから来た値かを持たせる。
- */
-export type MeasurementSource = 'checkup' | 'report_text';
-
-/**
- * 検査値 1 行 (spec §5.3)。
- * **アプリは値と基準値を比べない。** `judgement` は Elith が本文に書いた判定文のみ。
- */
-export interface MeasurementVM {
-  /** 項目名 (受領キーから単位を除いたもの)。 */
+/** 検査値テーブルの 1 行。 */
+export interface MeasurementRow {
   name: string;
-  /** 単位。受領キーの `[...]` 部分。無ければ null。 */
-  unit: string | null;
+  /** 値＋単位。受領データの表記のまま。 */
   value: string;
-  /** `blood_analysis` の散文から拾えた基準値のみ。無ければ null (外部マスタで補完しない)。 */
-  reference: string | null;
-  /** Elith 自身の判定文 (例「基準範囲を上回っています」)。当社が作った語は入れない。 */
-  judgement: string | null;
-  date: string | null;
-  /** この値がどのファイル由来か (spec §7.2)。 */
-  source: MeasurementSource;
+  /** 基準値。本文から取れた分だけ。無ければ空 (外部マスタで補完しない = 捏造ゼロ)。 */
+  reference: string;
+  /** Elith が書いた判定句の逐語。書いていなければ空。 */
+  judgement: string;
   /**
-   * 同じ項目名で**別の値が届いている**とき、届いた値すべて (spec §7.1)。
-   * **どちらかを勝手に選ばない。** 画面には「値が 2 通り届いている」と出す。
-   * 競合が無ければ null。
+   * 判定の向き。**アプリが値と基準値を比べて決めない** — Elith の判定句の文言から引く。
+   * `flagged` = 基準範囲を外れたと Elith が書いた / `within` = 基準範囲内と書いた /
+   * `unknown` = Elith が判定を書いていない (「印が無い」であって「基準値内」ではない)。
    */
-  conflict: string[] | null;
+  tone: 'flagged' | 'within' | 'unknown';
+  /** 値の出どころ。2 ファイルは包含関係でないため両方から集める (spec §7.2)。 */
+  source: 'checkup' | 'report_text';
+  /** 同名別値が届いたときの通数。1 なら競合なし (spec §7.1)。 */
+  variants: number;
 }
 
-/** 生活習慣の 1 項目 (spec §4.2.2)。維持/改善の自動分類はしない。 */
-export interface LifestylePairVM {
-  /** 見出し (飲酒 / 喫煙 / 仕事中の過ごし方 …)。 */
-  topic: string;
-  /** 【現状評価】の本文 (原文)。 */
-  current: string;
-  /** 【行動提案】の本文 (原文)。 */
-  proposal: string;
-}
-
-/**
- * 章の中の見出しブロック 1 つ。`### 見出し` 単位。
- *
- * 画面ではこの単位で折りたためる (spec §4.3)。
- * **`?print=1` では折りたたまず、見出し＋本文をそのまま並べる** —
- * 畳んだ状態が紙面に漏れると本文が欠落するため (spec §3.2)。
- */
-export interface ChapterBlockVM {
-  /** 同一 HTML 内アンカー。`TopicVM.id` と同じ値になる (同じ見出しから作るため)。 */
-  id: string;
-  /** 見出し (原文のまま)。章に見出しが無ければ空。 */
+/** 生活習慣の 1 項目 = 【現状評価】と【行動提案】のペア (spec §4.2.2)。 */
+export interface LifestylePair {
+  /** Elith の節見出し (例: 飲酒習慣)。 */
   heading: string;
-  /** 本文 Markdown (原文のまま)。 */
-  body: string;
+  /** 【現状評価】の冒頭文 (逐語)。 */
+  current: string;
+  /** 【行動提案】の冒頭文 (逐語)。 */
+  action: string;
 }
 
-/**
- * 章 1 つ分。
- * `body` / `blocks` / `topics` / `measurements` / `pairs` のうち、その章が持つものだけが埋まる。
- */
-export interface ChapterVM {
-  key: ChapterKey;
-  /** 表示名。レジストリのコード既定を `app_config` が上書きし得る。 */
+export type DigestBlock =
+  | { kind: 'paragraphs'; items: string[] }
+  | { kind: 'steps'; items: DigestItem[] }
+  | { kind: 'table'; rows: MeasurementRow[] }
+  | { kind: 'pairs'; items: LifestylePair[] }
+  | { kind: 'weeks'; items: DigestItem[] };
+
+export interface DigestCardVM {
+  /** レジストリのキー (report-sections.ts)。 */
+  key: string;
+  /** カード見出し。Elith の `section_name` か、レジストリ／`app_config` の上書き。 */
   title: string;
-  axis: ReportAxis;
-  source: ChapterSource;
-  /** 本文 Markdown (Elith の原文のまま・章まるごと)。 */
-  body: string;
-  /** `body` を見出し単位に割ったもの。折りたたみと目次アンカーはこの単位。 */
-  blocks: ChapterBlockVM[];
-  topics: TopicVM[];
-  /** `measurements` 章のみ。 */
-  measurements: MeasurementVM[];
-  /** `lifestyle` 章のみ。 */
-  pairs: LifestylePairVM[];
-  /** 既定で畳むか。**`?print=1` では常に false** (畳んだ状態が紙面に漏れると本文が欠ける・spec §3.2)。 */
-  collapsed: boolean;
-  /** 同一 HTML 内アンカー。 */
-  anchor: string;
-}
-
-/** 検査サイクル (spec §4.0.0.2)。出どころは `customer.subscriptions`。 */
-export interface CycleVM {
-  /** 第 N 回。 */
-  seq: number;
-  /** 全 N 回 (最上位プランは 4)。 */
-  total: number;
-  /** 次回予定日 (`next_test_at`)。無ければ null。 */
-  nextAt: string | null;
-}
-
-/** 表紙 (spec §4.0.0)。 */
-export interface CoverVM {
-  /** 氏名。**本人への表示なので出す** (spec §4.0.0.1)。取得できなければ null。 */
-  name: string | null;
-  /** 報告書の作成日 (受領日)。 */
-  issuedOn: string;
-  /** 紙面テンプレートの版。端末に保存された控えの識別に要る (spec §1.3.9 / §3.6)。 */
-  templateVersion: string;
-  /** ウェルネス年齢。**Elith 出力の値のみ**・併記しない (spec §1.3.8)。無ければ null。 */
-  wellnessAge: number | null;
-  /** 実年齢。数直線での比較用。無ければ null。 */
-  actualAge: number | null;
-  /** アブストラクト本文 (原文)。 */
-  abstract: string;
-  /** **タイプ 2 (単品購入) では null** — `subscriptions` 行が無い (spec §4.0.0.2)。 */
-  cycle: CycleVM | null;
-}
-
-/**
- * 報告書のタイプ (spec §1.0.3)。
- * **アプリが持つ** (その回の入力にがんリスク検査があったか)。Elith 出力から推測しない。
- */
-export type ReportType = 'course' | 'single';
-
-/**
- * 抽出監査 (spec §1.3.6)。
- * fail-safe な抽出は**黙って空になる**ので、何を認識し何を落としたかを admin に出す。
- * **表示データには混ぜない** (スキャン側 `vqa_audit` と同じ流儀)。
- */
-export interface ReportAudit {
-  /** 受領 JSON で認識できた `section_name` の一覧。 */
-  recognizedSections: string[];
-  /** レジストリにあるが**材料が無くて出さなかった**章。空カードを出さないための記録。 */
-  skippedChapters: ChapterKey[];
-  /** `app_config` で非表示にされた章。 */
-  hiddenChapters: ChapterKey[];
-  topicCount: number;
-  measurementCount: number;
-  /** 基準値を拾えた項目数 (spec §5.3 では実測 8 件)。 */
-  referenceCount: number;
+  /** どちらの主軸に属すか。 */
+  axis: AxisKey;
   /**
-   * 気づきたい異常。
-   * 例: ウェルネス年齢が当社 CABA と一致しない (本来必ず一致する・spec §1.3.8)、
-   *     同名別値 (自動採用しない・spec §7.1)。
+   * `emergency` は**救急サインのみ**。所見に赤を使わない (spec §4.2.1)。
+   * Elith が救急受診を促す文を書いた回だけ立つ。
    */
+  tone: 'normal' | 'emergency';
+  blocks: DigestBlock[];
+  /** 出典表示 (例: 医療受診の目安 §1〜§4)。どこから引いたかを紙面で辿れるようにする。 */
+  source: string;
+}
+
+// ── 全編 ────────────────────────────────────────────────
+//
+// ダイジェストの下に置く。**畳んで置く**ので最初の読み出しはダイジェストで終わる。
+
+/** 全編の 1 トピック (`### N.` / `【項目】` 単位)。 */
+export interface TopicVM {
+  /** 同一 HTML 内のアンカー。見出しのハッシュから決定論的に作る (spec §5.4)。 */
+  anchor: string;
+  heading: string;
+  /** 本文 (Markdown)。組版は report-view.ts が行う。 */
+  body: string;
+}
+
+export interface ChapterVM {
+  key: string;
+  /** 章見出し。既定は Elith の `section_name`。 */
+  title: string;
+  axis: AxisKey;
+  /** 既定で畳むか (`report.sections.collapsed`)。**印刷ビューでは無視する**。 */
+  collapsed: boolean;
+  topics: TopicVM[];
+  /**
+   * 検査値の全行 (`measurements` 章のみ)。
+   * ダイジェストには Elith が判定を書いた項目だけを出し、**受領した全項目はここに出す**。
+   * 可読化 = 出す文を選ぶことなので、選から漏れた分を捨てるのではなく後段に置く。
+   */
+  table?: MeasurementRow[];
+}
+
+// ── 表紙 ────────────────────────────────────────────────
+
+export interface CoverVM {
+  /** 「〇〇様」。本人への画面表示なので PII 分離の対象外 (spec §4.0.0.1)。 */
+  name: string;
+  /** 作成日 (受領日)。端末に残した控えの識別に要る (spec §3.6)。 */
+  issuedOn: string;
+  /** 紙面テンプレートの版 (spec §1.3.9)。 */
+  sheetVersion: string;
+  /** 検査日。受領 `health_checkup.json` から取れた分。 */
+  testedOn: string | null;
+  /** 第 N 回 / 全 4 回。`customer.subscriptions` 由来で、タイプ 2 では null。 */
+  cycleSeq: number | null;
+  cycleTotal: number;
+  /**
+   * ウェルネス年齢 (Elith 出力の値)。
+   * **画面版では描かない。PDF 版 (`?print=1`) の冒頭にだけ置く** (spec §4.0.0.3)。
+   */
+  wellnessAge: number | null;
+  /** 実年齢 (当社 `health_age_scores` 由来)。ウェルネス年齢と並べるときだけ使う。 */
+  chronologicalAge: number | null;
+}
+
+// ── 監査 (紙面には出さない) ──────────────────────────────
+
+export interface ReportAudit {
+  /** 認識できたセクション名。 */
+  sections: string[];
+  /** ダイジェストに出したカードのキー。 */
+  digestCards: string[];
+  /** 材料が無くて出さなかったカードのキー。**0 件は異常の兆候** (spec §1.3.6)。 */
+  emptyCards: string[];
+  /** `report.sections.hidden` で落とした章。 */
+  hiddenChapters: string[];
+  /** `app_config` に書かれていたが解釈できなかった章キー。 */
+  unknownChapterKeys: string[];
+  /** 全編のトピック数。 */
+  topicCount: number;
+  /** 検査値の行数と、基準値が付いた数。 */
+  measurementCount: number;
+  referenceCount: number;
+  /** 受領データの異常。 */
   anomalies: string[];
 }
 
-/** 画面と `?print=1` が共有する、報告書 1 部の表示モデル。 */
+// ── ルート ──────────────────────────────────────────────
+
 export interface ReportVM {
-  type: ReportType;
-  cover: CoverVM;
-  chapters: ChapterVM[];
-  audit: ReportAudit;
+  /** タイプ 2 = 単品購入相当 (がんリスク検査なし)。**アプリが判定する** (spec §1.0.3)。 */
+  reportType: 1 | 2;
   /** true = Elith 提供サンプルを表示している (実データ未受領)。 */
   isSample: boolean;
+  cover: CoverVM;
+  /** 2 本柱。**常設** — 材料の有無で消さない (spec §4.-1)。 */
+  axes: AxisVM[];
+  /** 紙面の要点。 */
+  digest: DigestCardVM[];
+  /** 全編。 */
+  chapters: ChapterVM[];
+  audit: ReportAudit;
 }

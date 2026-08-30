@@ -1,204 +1,282 @@
 /**
- * AI疾病予防報告書: 章レジストリとアダプタの回帰チェック。
+ * AI疾病予防報告書 — 表示モデルの回帰チェック。
  *
- * 正本: `docs/elith/ai_prevention_report_generation_spec.md` §1.3.7。
- * 実行: `npm run verify:report-model`
+ * 正本: docs/elith/ai_prevention_report_generation_spec.md §1.3.7
  *
- * 【何を守るか】
- *   ① **文言を書き換えていないこと** — 本文はアダプタを通しても Elith の原文と一致する
- *      (要約・言い換え・並べ替えをしない = ミッション④)。
- *   ② **黙って空にならないこと** — 抽出はフォーマット依存で fail-safe (拾えなければ出さない)
- *      なので、実測値を数で固定しておかないと形式変更に気づけない (spec §1.3.6)。
- *      Stage2 → Stage3 で `判定区分` と `[pN]` が消えた実績がある。
- *   ③ **設定の打ち間違いで報告書が真っ白にならないこと** (spec §9.2)。
+ * 【担保したいこと】**文言を書き換えていないこと。**
+ *   可読化は「選択」で行い「圧縮」で行わない (spec §1.0.0) ので、紙面に出る文はすべて
+ *   受領 JSON の**部分文字列**でなければならない。要約・言い換え・語順の入れ替えが
+ *   混ざれば、この検査が落ちる。章の並べ替えや設定変更で本文が変質しないことも見る。
  *
- * 【fixture】`src/data/elith/` の 2 点は 2026-08-26 受領分。**合成検体**で PII を含まない
- *   (氏名・生年月日・連絡先の記載なしを確認済み・spec §7.0)。
- *   実データ受領までのサンプル表示にも同じファイルを使う (`elith-report-sample.ts`) —
- *   **1 か所に置いて二重管理しない**。
+ * 実行: npm run verify:report-model
  */
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import REPORT_TEXT from '../src/data/elith/report_text_20260826.json';
+import HEALTH_CHECKUP from '../src/data/elith/health_checkup_20260826.json';
+import { buildReportVM, PILOT_CANCER_FINDING_TEXT, leadSentences } from '../src/lib/report-adapter';
+import { anchorFor, resolveChapters } from '../src/lib/report-sections';
+import type { ReportVM } from '../src/lib/report-model';
 
-import {
-  buildReportVM, extractFindings, extractTopPriority, parseCheckup, parseReportText,
-} from '../src/lib/report-adapter';
-import { CHAPTER_REGISTRY, REPORT_AXES, anchorFor, resolveChapters } from '../src/lib/report-sections';
-import { ELITH_REPORT_SAMPLE } from '../src/lib/elith-report-sample';
-
-// バンドルして `node --input-type=module` で走らせるため import.meta.url は使えない
-// (eval のパスになる)。npm run はパッケージルートを cwd にするのでそれを基点にする。
-const ROOT = process.cwd();
-const load = (f: string): unknown => JSON.parse(readFileSync(join(ROOT, 'src/data/elith', f), 'utf8'));
-
-let failed = 0;
-function eq(name: string, got: unknown, want: unknown): void {
-  const a = JSON.stringify(got);
-  const b = JSON.stringify(want);
-  if (a === b) { console.log(`  ok  ${name}`); return; }
-  console.log(`  NG  ${name}\n        got  ${a}\n        want ${b}`);
-  failed++;
+let pass = 0;
+const fails: string[] = [];
+function check(name: string, ok: boolean, detail = ''): void {
+  if (ok) { pass++; return; }
+  fails.push(`${name}${detail ? ` — ${detail}` : ''}`);
 }
 
-// ── 章レジストリ ────────────────────────────────────────────────
-console.log('\n[章レジストリ]');
-const cfgOf = (o: Record<string, string>) => (k: string): string => o[k] ?? '';
+const checkup = HEALTH_CHECKUP as unknown as Record<string, { date?: string; value?: unknown }[]>;
 
-eq('既定 = コード既定の全章', resolveChapters(cfgOf({})).chapters.length, CHAPTER_REGISTRY.length);
-eq('先頭は A 軸 (がん早期発見)',
-  [CHAPTER_REGISTRY[0].key, CHAPTER_REGISTRY[0].axis], ['cancer_finding', 'A']);
-eq('B の先頭は medical_visit', CHAPTER_REGISTRY[1].key, 'medical_visit');
-eq('キー重複なし', new Set(CHAPTER_REGISTRY.map((c) => c.key)).size, CHAPTER_REGISTRY.length);
-eq('order は書いた章を書いた順で',
-  resolveChapters(cfgOf({ 'report.sections.order': 'summary, medical_visit' })).chapters.map((c) => c.key),
-  ['summary', 'medical_visit']);
-eq('hidden は order の後に効く',
-  resolveChapters(cfgOf({ 'report.sections.order': 'summary,medical_visit', 'report.sections.hidden': 'summary' }))
-    .chapters.map((c) => c.key),
-  ['medical_visit']);
-eq('labels で見出しを差し替えられる',
-  resolveChapters(cfgOf({ 'report.sections.labels': 'summary=まとめ' }))
-    .chapters.find((c) => c.key === 'summary')?.title,
-  'まとめ');
-eq('collapsed を指定できる',
-  resolveChapters(cfgOf({ 'report.sections.collapsed': 'diet,sleep' }))
-    .chapters.filter((c) => c.collapsed).map((c) => c.key),
-  ['diet', 'sleep']);
-// 打ち間違いで真っ白にしない (spec §9.2)
-eq('区切りだけの指定は既定へ戻る',
-  resolveChapters(cfgOf({ 'report.sections.order': ' , , ' })).chapters.length, CHAPTER_REGISTRY.length);
-eq('未知キーだけの指定も既定へ戻る',
-  resolveChapters(cfgOf({ 'report.sections.order': 'typo_a,typo_b' })).chapters.length, CHAPTER_REGISTRY.length);
-eq('未知キーは監査へ出る',
-  resolveChapters(cfgOf({ 'report.sections.order': 'summary,typo_a' })).unknown, ['typo_a']);
-eq('全章 hidden は 0 件を許す',
-  resolveChapters(cfgOf({ 'report.sections.hidden': CHAPTER_REGISTRY.map((c) => c.key).join(',') })).chapters.length, 0);
-eq('アンカーは決定論', anchorFor('diet', '1. 食事改善の目的'), anchorFor('diet', '1. 食事改善の目的'));
-eq('アンカーは見出しごとに別', anchorFor('diet', 'A') !== anchorFor('diet', 'B'), true);
+function build(readConfig: (k: string) => string = () => ''): ReportVM {
+  return buildReportVM({
+    reportText: REPORT_TEXT,
+    checkup,
+    name: '相川 佳之 様',
+    issuedOn: '2026-08-26',
+    isSample: true,
+    hasCancerRisk: false,
+    cycleSeq: null,
+    chronologicalAge: 56,
+    readConfig,
+  });
+}
 
-// ── 新形式 (2026-08-26 受領分) ──────────────────────────────────
-console.log('\n[新形式アダプタ — 2026-08-26 受領分]');
-const reportText = load('report_text_20260826.json');
-const checkup = load('health_checkup_20260826.json');
-const { byKey, healthAge } = parseReportText(reportText);
+const vm = build();
 
-eq('セクション 10 件', byKey.size, 10);
-eq('ウェルネス年齢 (Elith 出力の値)', healthAge, 46.6);
-eq('検査値 40 項目', parseCheckup(checkup).length, 40);
+// ── 受領本文を 1 本の文字列にして、部分文字列判定の母体にする ──────────────
+let corpus = '';
+const walk = (v: unknown): void => {
+  if (typeof v === 'string') corpus += `\n${v}`;
+  else if (Array.isArray(v)) v.forEach(walk);
+  else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+};
+walk(REPORT_TEXT);
+const norm = (s: string) => s.replace(/\s+/g, '');
+const CORPUS = norm(corpus);
 
-const findings = extractFindings(byKey);
-eq('所見 5 ブロック', findings.length, 5);
-eq('所見は Elith が書いた順のまま',
-  findings.map((f) => f.category),
-  ['赤血球・ヘモグロビン・ヘマトクリット', '尿素窒素', 'ALT(GPT)', '総コレステロール', 'eGFR・クレアチニン']);
-// 判定は Elith の原文そのまま。誤字「上上回っており」も直さない (spec §7.3)。
-eq('判定文は原文のまま (誤字も含む)', findings[2].judgement, '基準範囲を上上回っており');
-eq('値と基準値が 8 件読める', findings.reduce((n, f) => n + f.items.length, 0), 8);
-eq('単一項目ブロックの名前は見出しから', findings[1].items[0].name, '尿素窒素');
+/** 紙面に出る文が受領本文の逐語かを見る。 */
+function verbatim(label: string, text: string): void {
+  if (!text) return;
+  check(`逐語: ${label}`, CORPUS.includes(norm(text)), `"${text.slice(0, 40)}…"`);
+}
 
-const top = extractTopPriority(byKey);
-eq('最優先の所見を拾える', top?.heading, '1. 最優先の所見とその理由');
+// ── 1) ダイジェストの全文が逐語であること ────────────────────────────
+for (const card of vm.digest) {
+  for (const b of card.blocks) {
+    if (b.kind === 'paragraphs') {
+      for (const t of b.items) {
+        // 主軸 A のパイロット暫定文だけは受領データに無い (発注者指示の唯一の例外)。
+        if (PILOT_CANCER_FINDING_TEXT.includes(t)) continue;
+        verbatim(`${card.key}/paragraph`, t);
+      }
+    }
+    if (b.kind === 'steps' || b.kind === 'weeks') {
+      for (const i of b.items) verbatim(`${card.key}/${i.heading}`, i.text);
+    }
+    if (b.kind === 'pairs') {
+      for (const p of b.items) {
+        verbatim(`${card.key}/${p.heading}/現状`, p.current);
+        verbatim(`${card.key}/${p.heading}/提案`, p.action);
+      }
+    }
+    if (b.kind === 'table') {
+      // 判定は Elith の原文の部分文字列でなければならない (当社が判定を作らない)。
+      for (const r of b.rows) verbatim(`${card.key}/${r.name}/判定`, r.judgement);
+    }
+  }
+}
 
-const vm = buildReportVM({
-  reportText, checkup, type: 'single', issuedOn: '2026-08-26',
-  name: 'テスト 太郎', actualAge: 55, ownWellnessAge: 46.6,
-  chapters: CHAPTER_REGISTRY.slice(),
+// ── 2) 可読化: 最初に読む面が受領本文より十分に短いこと ─────────────────
+let digestChars = 0;
+for (const c of vm.digest) for (const b of c.blocks) {
+  if (b.kind === 'paragraphs') b.items.forEach((t) => { digestChars += norm(t).length; });
+  if (b.kind === 'steps' || b.kind === 'weeks') b.items.forEach((i) => { digestChars += norm(i.text).length; });
+  if (b.kind === 'pairs') b.items.forEach((p) => { digestChars += norm(p.current).length + norm(p.action).length; });
+  if (b.kind === 'table') b.rows.forEach((r) => { digestChars += norm(r.name + r.value + r.reference + r.judgement).length; });
+}
+const reduction = 100 - (digestChars / CORPUS.length) * 100;
+// 前回の実装は削減率 1% でリバートされた (spec §9.2)。**80% を下回ったら可読化していない。**
+check('可読化: ダイジェストの削減率 ≥ 80%', reduction >= 80, `${reduction.toFixed(1)}%`);
+check('全編を捨てていない', vm.chapters.length >= 9, `${vm.chapters.length} 章`);
+// 全編を開いたまま置くとダイジェストと同じ内容が二重に流れ、旧実装と同じ画面になる。
+check('全編は既定で畳む', vm.chapters.every((c) => c.collapsed),
+  vm.chapters.filter((c) => !c.collapsed).map((c) => c.key).join(','));
+
+// ── 3) 実測値の固定 (spec の記載と一致すること) ─────────────────────────
+check('セクション 10 件', vm.audit.sections.length === 10, String(vm.audit.sections.length));
+check('トピック 39 件 (spec §5.4)', vm.audit.topicCount === 39, String(vm.audit.topicCount));
+check('基準値は 8 件のみ (spec §6 ④)', vm.audit.referenceCount === 8, String(vm.audit.referenceCount));
+check('ウェルネス年齢 46.6', vm.cover.wellnessAge === 46.6, String(vm.cover.wellnessAge));
+check('タイプ 2 と判定', vm.reportType === 2, String(vm.reportType));
+
+// ── 4) 2 本柱は常設 ────────────────────────────────────────────────
+check('主軸は常に 2 本', vm.axes.length === 2);
+check('主軸 A が先頭', vm.axes[0]?.key === 'a');
+// 帯にリードを持たせない (ポリシーの説明文を紙面に載せない・spec §4.-1)。
+check('軸は見出しだけを持つ',
+  vm.axes.every((a) => Object.keys(a).length === 2 && !!a.title));
+
+// ── 5) 捏造ゼロの境界 ──────────────────────────────────────────────
+const allRows = vm.chapters.find((c) => c.key === 'measurements')?.table ?? [];
+check('基準値が無い項目は空のまま (外部マスタで補完しない)',
+  allRows.filter((r) => !r.reference).length > 0);
+check('Elith が判定を書いていない行は判定が空',
+  allRows.every((r) => r.judgement === '' || CORPUS.includes(norm(r.judgement))));
+// 同名別値は自動採用しない (spec §7.1)。
+check('同名別値を競合として残す', allRows.some((r) => r.variants > 1));
+// 誤字は直さない (spec §7.3)。
+check('誤字「上上回っており」を直さず出す',
+  allRows.some((r) => r.judgement.includes('上上回っており')));
+// 2 ファイルは包含関係でない (spec §7.2)。
+check('本文にしかない値も表に載る',
+  allRows.some((r) => r.source === 'report_text'));
+
+// ── 6) 章立ての設定 ────────────────────────────────────────────────
+const cfgOf = (m: Record<string, string>) => (k: string) => m[k] ?? '';
+
+const ordered = build(cfgOf({ 'report.sections.order': 'measurements,medical_visit' }));
+check('order: 書いた章だけを書いた順で出す',
+  ordered.chapters.map((c) => c.key).join(',') === 'measurements,medical_visit',
+  ordered.chapters.map((c) => c.key).join(','));
+
+const hidden = build(cfgOf({ 'report.sections.hidden': 'references,nutrients' }));
+check('hidden: 指定した章が消える',
+  !hidden.chapters.some((c) => ['references', 'nutrients'].includes(c.key)));
+
+const labeled = build(cfgOf({ 'report.sections.labels': 'medical_visit=今回いちばん大事なこと' }));
+check('labels: 見出しを差し替えられる',
+  labeled.chapters.find((c) => c.key === 'medical_visit')?.title === '今回いちばん大事なこと');
+
+// **打ち間違いで報告書を真っ白にしない** (spec §1.3.2)。
+const garbage = build(cfgOf({ 'report.sections.order': ' , , ' }));
+check('order が空白だけならコード既定へ落ちる', garbage.chapters.length >= 9,
+  String(garbage.chapters.length));
+const unknownOnly = build(cfgOf({ 'report.sections.order': 'nope,typo' }));
+check('order が未知キーだけでもコード既定へ落ちる', unknownOnly.chapters.length >= 9,
+  String(unknownOnly.chapters.length));
+check('未知キーは監査に出る', unknownOnly.audit.unknownChapterKeys.join(',') === 'nope,typo',
+  unknownOnly.audit.unknownChapterKeys.join(','));
+
+const { chapters: allHidden } = resolveChapters(cfgOf({
+  'report.sections.hidden': 'cancer_finding,medical_visit,measurements,summary,abstract,lifestyle,diet_plan,diet,exercise,sleep,nutrients,references',
+}));
+check('全章を明示 hidden にしたときだけ 0 件を許す', allHidden.length === 0, String(allHidden.length));
+
+// ── 7) アンカーは並べ替えで壊れない (spec §5.4) ────────────────────────
+const a1 = anchorFor('diet', '食材の選び方');
+const a2 = anchorFor('diet', '食材の選び方');
+const a3 = anchorFor('sleep', '食材の選び方');
+check('アンカーは決定論', a1 === a2);
+check('アンカーは章キーを含むので章間で衝突しない', a1 !== a3);
+const anchors = vm.chapters.flatMap((c) => c.topics.map((t) => t.anchor));
+check('アンカーが重複しない', new Set(anchors).size === anchors.length,
+  `${anchors.length} 件中 ${new Set(anchors).size} 件がユニーク`);
+
+// ── 8) 文の切り出しは文字を足さない ───────────────────────────────────
+check('leadSentences は 1 文を「。」付きで返す',
+  leadSentences('あいう。えお。かき。', 1) === 'あいう。');
+check('leadSentences は n 文を連結する',
+  leadSentences('あいう。えお。かき。', 2) === 'あいう。えお。');
+check('leadSentences は「。」が無ければ原文のまま',
+  leadSentences('あいう', 1) === 'あいう');
+check('leadSentences は空文字で空を返す', leadSentences('', 1) === '');
+
+// ── 9) タイプ 1 で Elith の記述が無ければカードごと非表示 (spec §4.0.1) ──
+const type1 = buildReportVM({
+  reportText: REPORT_TEXT, checkup, name: '', issuedOn: '2026-08-26', isSample: true,
+  hasCancerRisk: true, cycleSeq: 1, chronologicalAge: 56, readConfig: () => '',
 });
+check('タイプ 1 と判定', type1.reportType === 1);
+check('タイプ 1 で記述が無ければ A のカードを出さない',
+  !type1.digest.some((c) => c.key === 'cancer_finding'));
+check('タイプ 1 でも主軸の帯は立つ', type1.axes.length === 2);
+check('カードを出さなかったことは監査に出る',
+  type1.audit.emptyCards.includes('cancer_finding'));
 
-eq('材料の無い A の章は出さない', vm.audit.skippedChapters, ['cancer_finding']);
-eq('出る章', vm.chapters.map((c) => c.key), [
-  'medical_visit', 'measurements', 'summary', 'diet', 'exercise',
-  'sleep', 'lifestyle', 'diet_plan', 'nutrients', 'references',
-]);
-eq('タイプ 2 は検査サイクルを出さない', vm.cover.cycle, null);
-eq('トピック 37 件', vm.audit.topicCount, 37);
-eq('生活習慣は 6 ペア', vm.chapters.find((c) => c.key === 'lifestyle')?.pairs.length, 6);
-eq('基準値が付いたのは 8 件 (本文にしかない 1 件を表へ足した分を含む)', vm.audit.referenceCount, 8);
-
-// ── 2 本柱と A の所見 (設計ポリシー / spec §4.0.1 / §0.3) ────────
-console.log('\n[2 本柱と A の所見]');
-// 軸の帯は章ではなく報告書の骨格。レジストリに入れず、章が 0 件でも画面は必ず描く。
-eq('軸は 2 本', REPORT_AXES.map((a) => a.key), ['A', 'B']);
-eq('A の見出しは「初期がんの早期発見」', REPORT_AXES[0].title, '初期がんの早期発見');
-// **軸は見出しの文字列だけを持つ。** 設計ポリシーの説明文を紙面に載せると
-// 当社が書いた散文になり「Elith の出力以上の表記をしない」に反する。
-eq('軸は見出し以外のテキストを持たない',
-  REPORT_AXES.flatMap((a) => Object.keys(a)).filter((k) => k !== 'key' && k !== 'title'), []);
-eq('軸はレジストリに入っていない',
-  CHAPTER_REGISTRY.some((c) => (c.key as string) === 'A' || (c.key as string) === 'B'), false);
-// 予備の文言が空 (既定) → A の章は出ない。**アプリが代わりを書かない**。
-eq('予備の文言が空なら A の章は出ない', vm.audit.skippedChapters, ['cancer_finding']);
-// 文言が admin で設定されたら、コード変更なしで出る (§0.3)。
-const FALLBACK = 'この報告書は、がんリスク検査を含まない検査データをもとに作成しています。';
-const vmFb = buildReportVM({
-  reportText, checkup, type: 'single', issuedOn: '2026-08-26',
-  chapters: CHAPTER_REGISTRY.slice(), cancerFallbackText: FALLBACK,
+// ── 10) Elith が書けば、そちらが優先される ────────────────────────────
+const withElith = buildReportVM({
+  reportText: { ...(REPORT_TEXT as object), cancer_screening: { status: 'no_notable_finding', text: 'Elith が書いた所見です。' } },
+  checkup, name: '', issuedOn: '2026-08-26', isSample: true,
+  hasCancerRisk: true, cycleSeq: 1, chronologicalAge: 56, readConfig: () => '',
 });
-eq('文言を入れると A の章が出る', vmFb.audit.skippedChapters, []);
-eq('本文は設定した文言そのもの',
-  vmFb.chapters.find((c) => c.key === 'cancer_finding')?.body, FALLBACK);
-eq('A の章は A 軸に属する',
-  vmFb.chapters.find((c) => c.key === 'cancer_finding')?.axis, 'A');
+const cancerCard = withElith.digest.find((c) => c.key === 'cancer_finding');
+check('Elith の記述があればそれを出す',
+  cancerCard?.blocks[0]?.kind === 'paragraphs'
+  && (cancerCard.blocks[0] as { items: string[] }).items[0] === 'Elith が書いた所見です。');
 
-// ── データ品質ガード (spec §7) ──────────────────────────────────
-console.log('\n[データ品質ガード]');
-const meas = vm.chapters.find((c) => c.key === 'measurements')!.measurements;
-// §7.2 本文にしかない値も表に載せ、出どころを持たせる
-const ht = meas.find((m) => m.name === 'ヘマトクリット');
-eq('本文にしかないヘマトクリットが表にある', [ht?.value, ht?.source], ['55.6', 'report_text']);
-eq('検査値ファイル由来の行は source=checkup',
-  meas.find((m) => m.name === 'ALT(GPT)')?.source, 'checkup');
-eq('表の行数は 40 + 本文由来 1', meas.length, 41);
-// §7.1 同名別値は自動採用せず、行に印を付ける
-const tc = meas.filter((m) => m.name === '総コレステロール');
-eq('総コレステロールは 2 行とも残る', tc.map((m) => m.value).sort(), ['210', '251']);
-eq('2 行とも競合の印が付く', tc.map((m) => m.conflict?.length ?? 0), [2, 2]);
-eq('競合のない行に印は付かない', meas.find((m) => m.name === 'AFP')?.conflict, null);
-eq('競合している項目は 9 種',
-  new Set(meas.filter((m) => m.conflict).map((m) => m.name)).size, 9);
-// 受領データの既知の状態 (spec §7.1 / §7.2)。**自動採用も補完もしない**。
-eq('同名別値 9 組を監査に出す',
-  vm.audit.anomalies.filter((a) => a.startsWith('同名別値')).length, 9);
-eq('本文が参照するヘマトクリットが検査値に無いことを検知',
-  vm.audit.anomalies.some((a) => a.includes('ヘマトクリット')), true);
-
-// ① 文言を書き換えていない
-const summaryRaw = byKey.get('summary')!.text;
-eq('本文は原文と 1 文字も違わない', vm.chapters.find((c) => c.key === 'summary')?.body, summaryRaw);
-const dietRaw = byKey.get('diet')!.text;
-const diet = vm.chapters.find((c) => c.key === 'diet')!;
-const plan = vm.chapters.find((c) => c.key === 'diet_plan')!;
-eq('食事プランを別章に出したので本文からは消える', /か\s*月.*プラン/.test(diet.body), false);
-eq('食事プランの本文は原文に含まれる', dietRaw.includes(plan.body), true);
-
-// ── DB 往復 (jsonb) ─────────────────────────────────────────────
-// `report` は jsonb で保存する (§8.2)。**jsonb はキー順を保持しない**ので、
-// 並びに依存した読み方をしていないことを確認する。
-console.log('\n[jsonb のキー順に依存しない]');
-const shuffled = Object.fromEntries(
-  Object.entries(reportText as Record<string, unknown>).reverse(),
-);
-const vmShuffled = buildReportVM({
-  reportText: shuffled, checkup, type: 'single', issuedOn: '2026-08-26',
-  chapters: CHAPTER_REGISTRY.slice(),
+// ── 11) 新旧どちらの形式も読む (spec §5.1) ────────────────────────────
+const legacy = buildReportVM({
+  reportText: [{ section_name: '医療受診の目安', char_count: 10, text: '### 1. 見出し\nこれは本文です。' }],
+  checkup: null, name: '', issuedOn: '2026-08-26', isSample: true,
+  hasCancerRisk: false, cycleSeq: null, chronologicalAge: null, readConfig: () => '',
 });
-const shape = (v: typeof vm) => v.chapters.map((c) => [c.key, c.title, c.body.length, c.topics.length]);
-eq('キー順を入れ替えても章の並びと中身が同じ', shape(vmShuffled), shape(vm));
-eq('キー順を入れ替えても監査値が同じ',
-  [vmShuffled.audit.topicCount, vmShuffled.audit.measurementCount, vmShuffled.audit.referenceCount],
-  [vm.audit.topicCount, vm.audit.measurementCount, vm.audit.referenceCount]);
+check('旧形式 (配列) も読める', legacy.chapters.some((c) => c.key === 'medical_visit'));
 
-// ── 旧形式 (Stage2 サンプル) ─────────────────────────────────────
-// 実データ受領までサンプルが表示される。検出ルールを変えたときに
-// **こちらが無言で空になっていない**ことを見る (実際に一度 0 件にした)。
-console.log('\n[旧形式 — Stage2 サンプル]');
-const legacy = parseReportText(ELITH_REPORT_SAMPLE);
-eq('セクション 10 件', legacy.byKey.size, 10);
-const legacyFindings = extractFindings(legacy.byKey);
-eq('所見が空にならない', legacyFindings.length, 3);
-eq('旧形式の判定区分も読める', legacyFindings[0].judgement, '注意・経過観察');
-eq('最優先も読める', extractTopPriority(legacy.byKey) != null, true);
+// ── 12) 旧世代の受領形式でも主軸 B が白紙にならない (2026-08-29 の実障害) ──
+//
+// 本番 DB の検体で主軸 B が**帯だけの白紙**になった。原因は 3 つとも
+// 「受領形式の世代差を認識できていない」もので、内容の不足ではない:
+//   ① `検査値フィードバック` の節が `【】` でなく `###`
+//      → `buildMeasurements` が `splitByBracket` 決め打ちで 0 ブロック
+//   ② 基準値のコロンが半角 `（基準値: 〜129 mmHg）`
+//      → `VALUE_RE` が全角 `：` しか見ておらず 0 件
+//   ③ `医療受診の目安` / `必要とする栄養素` に見出しが 1 つも無い
+//      → `splitTopics` が 0 件を返しカードごと消える
+// **中身を作って埋めたのではない。**出せる文が実際にあるのに認識できていなかった。
+const OLD_GEN = [
+  {
+    section_name: '医療受診の目安', char_count: 0,
+    text: '今回の健診結果では、血圧の改善が見られた一方で、尿酸値や空腹時血糖、腎機能の数値に注意が必要な状態です。'
+      + 'これらの数値は、生活習慣病の重症化を防ぐためにも、早めの医療機関への受診が望まれます。'
+      + 'まずは、眼科への予約を取り、精密検査を受けることを最優先に考えてみてください。',
+  },
+  {
+    section_name: '検査値フィードバック', char_count: 0,
+    text: '### 血圧\n最高血圧は127 mmHg（基準値: 〜129 mmHg）、最低血圧は82 mmHg（基準値: 〜84 mmHg）と、'
+      + 'どちらも正常範囲内に収まっています。\n'
+      + '### 腎機能・尿酸\nクレアチニンは1.03 mg/dl（基準値: 〜1.00 mg/dl）と基準値をわずかに超え、'
+      + 'eGFRは56.6 ml/min（基準値: 60以上）と基準値を下回っています。',
+  },
+  {
+    section_name: '必要とする栄養素/サプリ情報', char_count: 0,
+    text: 'ビタミンC（成人100 mg/日）：尿酸値が高い場合は補給優先候補になります。'
+      + 'ビタミンC不足が続くと、歯ぐきから血が出る、傷が治りにくいなどの具体的症状につながります。',
+  },
+];
+const oldGen = buildReportVM({
+  reportText: OLD_GEN, checkup: null, name: '', issuedOn: '2026-01-24', isSample: false,
+  hasCancerRisk: false, cycleSeq: null, chronologicalAge: null, readConfig: () => '',
+});
+const oldB = oldGen.digest.filter((c) => c.axis === 'b');
+check('旧世代: 主軸 B が白紙にならない', oldB.length >= 3, `${oldB.length} カード`);
+check('旧世代: 見出しの無い章もダイジェストに出る',
+  oldB.some((c) => c.key === 'medical_visit') && oldB.some((c) => c.key === 'nutrients'),
+  oldB.map((c) => c.key).join(','));
+const oldRows = oldGen.chapters.find((c) => c.key === 'measurements')?.table ?? [];
+check('旧世代: `###` 節 + 半角コロンでも検査値を拾う', oldRows.length >= 4,
+  `${oldRows.length} 行`);
+check('旧世代: 基準値が半角コロンでも結べる',
+  oldRows.some((r) => r.name === '最高血圧' && r.reference === '〜129 mmHg'),
+  oldRows.map((r) => `${r.name}=${r.reference}`).join(' / '));
+// 旧世代でも紙面の文はすべて逐語。
+const OLD_CORPUS = norm(OLD_GEN.map((s) => s.text).join(''));
+for (const c of oldB) {
+  for (const b of c.blocks) {
+    const texts = b.kind === 'paragraphs' ? b.items
+      : b.kind === 'steps' || b.kind === 'weeks' ? b.items.map((i) => i.text)
+      : [];
+    for (const t of texts) {
+      check(`旧世代 逐語: ${c.key}`, OLD_CORPUS.includes(norm(t)), t.slice(0, 30));
+    }
+  }
+}
 
-console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`);
-process.exit(failed === 0 ? 0 : 1);
+// ── 結果 ──────────────────────────────────────────────────────────
+console.log(`\n受領本文 ${CORPUS.length} 字 / ダイジェスト ${digestChars} 字 (削減率 ${reduction.toFixed(1)}%)`);
+console.log(`検査値 ${vm.audit.measurementCount} 行・基準値 ${vm.audit.referenceCount} 件・トピック ${vm.audit.topicCount} 件`);
+if (vm.audit.anomalies.length) {
+  console.log(`\n受領データの異常 ${vm.audit.anomalies.length} 件 (紙面には出さない):`);
+  for (const a of vm.audit.anomalies) console.log(`  - ${a}`);
+}
+console.log(`\n${fails.length ? '✗' : '✓'} ${pass} / ${pass + fails.length} 件`);
+for (const f of fails) console.log(`  ✗ ${f}`);
+if (fails.length) process.exit(1);

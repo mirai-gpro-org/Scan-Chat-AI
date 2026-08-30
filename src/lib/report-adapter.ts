@@ -1,653 +1,736 @@
 /**
- * AI疾病予防報告書の **アダプタ** — 受領 JSON → 表示モデル (`ReportVM`)。
+ * AI疾病予防報告書 — **受領 JSON → 表示モデル** の変換規則。
  *
- * 正本: `docs/elith/ai_prevention_report_generation_spec.md` §5 / §1.3.3 / §1.3.4。
+ * 正本: docs/elith/ai_prevention_report_generation_spec.md §5
  *
- * 【この 1 モジュールが変換規則を所有する】`.astro` に正規表現を散らさない (spec §1.3.4)。
- *   本リポジトリの前例は `elith-export.ts` の `sanitizeMeasurementsForDelivery()` —
- *   「納品整形は 1 箇所に集約し二重管理しない」と CLAUDE.md に明記されている。同じ扱いにする。
+ * 【このモジュールが唯一の変換本体】抽出・整形の規則をここに集約し、`.astro` に
+ *   正規表現を散らさない (spec §1.3.4)。本リポジトリには同じ規律の前例がある —
+ *   納品整形は `elith-export.ts` の `sanitizeMeasurementsForDelivery()` に集約し、
+ *   CLAUDE.md に「二重管理しない」と明記されている。
  *
- * 【すべて決定論。LLM を通さない】(spec §5.5)
- *   ここでやるのは **切り出しと構造化だけ**。要約・言い換え・並べ替え・良否の判定はしない
- *   (ミッション④)。本文は Elith の原文 Markdown がそのまま `body` に入り、
- *   組版 (段落化・主題強調・h4 化) は描画時に `report-view.ts` が行う。
+ * 【絶対の制約 — 紙面に出る文はすべて逐語】(spec §1.0.0)
+ *   可読化は **「選択」で行い「圧縮」で行わない**。どの文を出すかを決めるのは当社の仕事だが、
+ *   出すと決めた文は 1 文字も変えない。要約・言い換え・語順の入れ替えをしない。
+ *   **原文の誤字も直さない** (実データの「基準範囲を上上回っており」はそのまま出す・spec §7.3)。
  *
- * 【並べ替えをしない】検査値の所見は **Elith が書いた順のまま**返す。
- *   旧 `elith-report-highlights.ts` は判定区分のラダーで並べ替えていたが、
- *   どれが重いかを当社が決めることになる。最優先は Elith 自身が
- *   「医療受診の目安 §1 最優先の所見」に書いているので、そちらを使う (spec §4.2.1)。
+ * 【アプリは値を評価しない】判定は Elith が書いた文をそのまま運ぶ。
+ *   値と基準値を比べて良し悪しを決めない (ミッション④)。
+ *
+ * 【LLM を使わない】(spec §5.5) 決定論のみ。スキャン側で LLM を後段に置いて
+ *   繰り返し捏造を踏んだ実績 (多数決撤回・inventoryReread の幻覚 5 件・VQA の捏造 4 件) が
+ *   そのままここにも効く。
  */
 
-import { anchorFor, resolveChapters, type ChapterKey, type ChapterSpec } from './report-sections';
-import { cfg } from './app-config';
+import type { ElithSection } from './elith-parser';
 import type {
-  ChapterBlockVM, ChapterVM, CoverVM, CycleVM, LifestylePairVM, MeasurementVM,
-  ReportAudit, ReportSectionRaw, ReportType, ReportVM, TopicVM,
+  ChapterVM, CoverVM, DigestBlock, DigestCardVM, DigestItem,
+  LifestylePair, MeasurementRow, ReportAudit, ReportVM, TopicVM,
 } from './report-model';
+import { CHAPTER_REGISTRY, REPORT_AXES, anchorFor, resolveChapters } from './report-sections';
 
-/** 紙面テンプレートの版。紙面を変えたら上げ、紙面に印字する (spec §1.3.9)。 */
-export const REPORT_TEMPLATE_VERSION = 'v1.0';
+/** 紙面テンプレートの版 (spec §1.3.9)。紙面を変えたら上げ、紙面に印字する。 */
+export const SHEET_VERSION = 'v1.0';
 
-// ───────────────────────────────────────────────────────────────
-// 受領ファイルのパース (spec §2.1 / §2.2)
-// ───────────────────────────────────────────────────────────────
+/** 検査サイクルの総数 (年 4 回・spec §1.0.1)。 */
+export const CYCLE_TOTAL = 4;
+
+/**
+ * 【パイロット版 v0.1 の唯一の例外・発注者指示 2026-08-29】
+ *
+ * タイプ 2 の主軸 A「今回の所見」に出す 2 文。**これは Elith の原文ではない。**
+ * spec §10.1 E-1 で Elith に出力を依頼している文型そのもので、受領データにはまだ無い。
+ *
+ * 発注者判断: **パイロット版ではこのまま出す。** 依頼の内容をそのまま Wellfort と Elith に
+ * 見てもらい、回答を得てから修正する。確定したら
+ *   ① Elith が `cancer_screening.text` を返すようになれば、そちらが優先される
+ *   ② それでも来なければ `ui.cancer_screening_not_included` (admin から入力) へ降りる
+ * のどちらかに置き換わり、この定数は消える。
+ *
+ * **これ以外に、当社が書いた文を紙面へ出してはならない** (spec §1.0.0)。
+ */
+export const PILOT_CANCER_FINDING_TEXT = [
+  '今回お預かりした人間ドックの結果と問診の範囲では、がんに関して特に気になる点は見当たりませんでした。',
+  'なお、がんリスク検査は今回の検査には含まれていません。',
+];
+
+// ── 受領 JSON の取り込み (spec §5.1) ──────────────────────────
+
+/** 新形式 (dict) の 1 セクション。 */
+interface RawSection { section_name?: unknown; actual_chars?: unknown; text?: unknown }
 
 export interface ParsedReportText {
-  /** 受領キー → セクション。 */
-  byKey: Map<string, ReportSectionRaw>;
-  /** ウェルネス年齢。受領キーは `health_age` (内部識別子なので据え置き・spec §1.3.8)。 */
-  healthAge: number | null;
-}
-
-function asText(v: unknown): string {
-  return typeof v === 'string' ? v : '';
+  sections: ElithSection[];
+  /** セクション key (`medical_visit` 等) → セクション。章レジストリの `sourceKey` で引く。 */
+  byKey: Map<string, ElithSection>;
+  /** Elith 出力のウェルネス年齢。無ければ null。 */
+  wellnessAge: number | null;
+  /** Elith が返した場合のがん所見 (spec §4.0.1 の依頼形)。未受領なら null。 */
+  cancerText: string | null;
 }
 
 /**
- * `report_text.json` (新形式 dict) を読む。
+ * `report_text.json` を取り込む。
  *
- * 旧形式 (`ElithSection[]` の配列) で渡されたときも読めるようにしてある —
- * `elith-report-sample.ts` の Stage2 サンプルが配列で、実データ受領までは
- * こちらが表示される (`elith-report-queries.ts` のフォールバック)。
+ * **新旧どちらの形式も読む。** 新形式 = dict (`{ health_age, <key>: {section_name, text} }`)、
+ * 旧形式 = `ElithSection[]` (`schema_version='elith-v1.0'` の既存行)。
+ * DB に旧形式の行が残っているあいだ、片方しか読めないと黙って空になる。
  */
 export function parseReportText(raw: unknown): ParsedReportText {
-  const byKey = new Map<string, ReportSectionRaw>();
-  let healthAge: number | null = null;
+  const sections: ElithSection[] = [];
+  const byKey = new Map<string, ElithSection>();
+  let wellnessAge: number | null = null;
+  let cancerText: string | null = null;
+
+  const push = (key: string, s: ElithSection) => {
+    sections.push(s);
+    byKey.set(key, s);
+  };
 
   if (Array.isArray(raw)) {
-    // 旧形式: [{ section_name, char_count, text }, …]。キーが無いので section_name を鍵にする。
-    for (const s of raw as Array<Record<string, unknown>>) {
-      const name = asText(s?.section_name);
-      if (!name) continue;
-      byKey.set(name, { section_name: name, text: asText(s?.text) });
+    // 旧形式: section_name しか無いので、レジストリの sourceKey とは section_name で突き合わせる。
+    for (const v of raw as ElithSection[]) {
+      if (!v || typeof v.section_name !== 'string') continue;
+      const s: ElithSection = {
+        section_name: v.section_name,
+        char_count: Number(v.char_count ?? 0),
+        text: String(v.text ?? ''),
+      };
+      push(legacyKeyOf(v.section_name), s);
     }
-    return { byKey, healthAge };
+    return { sections, byKey, wellnessAge, cancerText };
   }
 
-  if (!raw || typeof raw !== 'object') return { byKey, healthAge };
+  if (!raw || typeof raw !== 'object') return { sections, byKey, wellnessAge, cancerText };
 
   for (const [key, v] of Object.entries(raw as Record<string, unknown>)) {
     if (key === 'health_age') {
       const n = Number(v);
-      if (Number.isFinite(n)) healthAge = n;
+      if (Number.isFinite(n)) wellnessAge = n;
+      continue;
+    }
+    // Elith へ依頼中の独立フィールド (spec §4.0.1)。未受領のあいだは通らない。
+    if (key === 'cancer_screening' && v && typeof v === 'object') {
+      const t = (v as { text?: unknown }).text;
+      if (typeof t === 'string' && t.trim()) cancerText = t.trim();
       continue;
     }
     if (!v || typeof v !== 'object') continue;
-    const o = v as Record<string, unknown>;
-    const text = asText(o.text);
-    if (!text) continue;
-    byKey.set(key, {
-      section_name: asText(o.section_name) || key,
-      actual_chars: typeof o.actual_chars === 'number' ? o.actual_chars : undefined,
-      text,
+    const r = v as RawSection;
+    if (typeof r.text !== 'string') continue;
+    push(key, {
+      section_name: typeof r.section_name === 'string' ? r.section_name : key,
+      char_count: Number(r.actual_chars ?? String(r.text).length),
+      text: r.text,
     });
   }
-  return { byKey, healthAge };
+  return { sections, byKey, wellnessAge, cancerText };
 }
 
-/** 受領キー `項目名 [単位]` を名前と単位に割る。 */
-function splitUnit(key: string): { name: string; unit: string | null } {
-  const m = /^(.*?)\s*\[([^\]]*)\]\s*$/.exec(key);
-  return m ? { name: m[1].trim(), unit: m[2].trim() || null } : { name: key.trim(), unit: null };
+/** 旧形式 (配列) の `section_name` を新形式のキーへ寄せる。 */
+const LEGACY_KEY_BY_NAME: Record<string, string> = {
+  'アブストラクト': 'abstract',
+  '総評': 'summary',
+  '検査値フィードバック': 'blood_analysis',
+  '食事アドバイス': 'diet',
+  '運動アドバイス': 'exercise',
+  '睡眠・ストレス管理': 'sleep',
+  'ライフスタイル総合': 'lifestyle',
+  '医療受診の目安': 'medical_visit',
+  '必要とする栄養素/サプリ情報': 'nutrients',
+  'リファレンス': 'references',
+};
+function legacyKeyOf(name: string): string {
+  return LEGACY_KEY_BY_NAME[name] ?? name;
 }
+
+// ── 文の切り出し ────────────────────────────────────────
 
 /**
- * `health_checkup.json` を読む (spec §2.2)。
- * **基準値・判定は入っていない**ので、ここでは値と日付だけを持つ。
+ * 冒頭 n 文を**逐語で**返す。文字を足さない・削らない。
+ *
+ * 「。」で割って先頭から n 個を戻すだけ。原文に「。」が無ければ全体を返す。
  */
-export function parseCheckup(raw: unknown): MeasurementVM[] {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
-  const out: MeasurementVM[] = [];
-  for (const [key, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (!Array.isArray(v) || v.length === 0) continue;
-    // 日付が複数ある形式に備えて最新を採る。実測では 1 件のみ (時系列にならない)。
-    const points = (v as Array<Record<string, unknown>>)
-      .filter((p) => p && (typeof p.value === 'number' || typeof p.value === 'string'))
-      .sort((a, b) => String(a.date ?? '').localeCompare(String(b.date ?? '')));
-    const last = points[points.length - 1];
-    if (!last) continue;
-    const { name, unit } = splitUnit(key);
-    out.push({
-      name, unit,
-      value: String(last.value),
-      reference: null,
-      judgement: null,
-      date: typeof last.date === 'string' ? last.date : null,
-      source: 'checkup',
-      conflict: null,
-    });
-  }
-  return out;
+export function leadSentences(text: string, n = 1): string {
+  const body = text.trim();
+  if (!body) return '';
+  // 区切り「。」ごと取り出す。**`split('。')` して後から `。` を付け直さないこと** —
+  // 原文に「。」が無い断片にまで句点が生えて**原文改変**になる (回帰テストで検出した)。
+  const parts = body.match(/[^。]+。|[^。]+$/g);
+  if (!parts) return body;
+  return parts.slice(0, n).join('').trim();
 }
 
-// ───────────────────────────────────────────────────────────────
-// 章内の切り出し
-// ───────────────────────────────────────────────────────────────
-
-const HEADING_RE = /^###\s*(.+?)\s*$/;
-/**
- * `【項目】` 見出し。**行頭にあれば見出しとして扱い、同じ行の続きは本文**にする。
- * 新形式は `【項目】` が単独行だが、Stage2 サンプルは PDF 抽出のため
- * `【体格・腹囲】体重は 95.8 kg…` と本文が地続きになっている。両方読めないと
- * サンプル表示が無言で空になる (実測)。
- */
-const BLOCK_RE = /^【([^】]+)】\s*(.*)$/;
-/** `【現状評価】` のように、行がその小見出しだけでできているか。 */
-const BLOCK_ONLY_RE = /^【[^】]+】\s*$/;
-/** 旧形式の先頭ページマーカー `[p4]`。新形式には無い (spec §5.1)。 */
-const PAGE_MARK_RE = /^\s*\[p\d+\]\s*/;
-
+/** `### N. 見出し` / `【見出し】` でブロックに割る。見出しと本文を逐語で返す。 */
 interface Block { heading: string; body: string }
 
-/**
- * 章本文を見出し単位に割る。`### 見出し` と `【項目】` の両方を見出しとして扱う。
- * 見出しより前の文 (章の導入文) は `heading: ''` のブロックになる。
- */
-function splitBlocks(text: string, mode: 'both' | 'hash' = 'both'): Block[] {
+function splitByHash(text: string): Block[] {
   const out: Block[] = [];
-  let heading = '';
-  let buf: string[] = [];
-  const flush = (): void => {
-    const body = buf.join('\n').trim();
-    if (heading || body) out.push({ heading, body });
-    buf = [];
-  };
-  for (const raw of text.split('\n')) {
-    // 旧形式は `[p4] 【体格・腹囲】…` と、見出しの前にページマーカーが付く。
-    // 剥がしてから見出し判定する (剥がさないと最初のブロックを取りこぼす)。
-    const line = raw.replace(PAGE_MARK_RE, '');
-    const hh = HEADING_RE.exec(line);
-    if (hh) { flush(); heading = hh[1].trim(); continue; }
-    const hb = mode === 'both' ? BLOCK_RE.exec(line) : null;
-    if (hb) {
-      flush();
-      heading = hb[1].trim();
-      if (hb[2].trim()) buf.push(hb[2]); // 同じ行の続きは本文
-      continue;
-    }
-    buf.push(line);
-  }
-  flush();
-  return out;
-}
-
-/** その本文が `### 見出し` を持っているか。 */
-function hasHashHeading(text: string): boolean {
-  return text.split('\n').some((l) => HEADING_RE.test(l));
-}
-
-/**
- * 冒頭 1 文を原文のまま返す (要約ではない)。
- * 先頭の Markdown 構造行 (`## 一覧` のような見出し) は本文ではないので飛ばす。
- */
-function firstSentence(body: string): string {
-  const lines = body.split('\n').map((l) => l.trim());
-  // 見出し・箇条書き・表・引用、および `【現状評価】` のような小見出しだけの行は本文でない
-  const start = lines.findIndex((l) => l && !/^(#{1,6}\s|[-*+]\s|\||>)/.test(l) && !BLOCK_ONLY_RE.test(l));
-  if (start < 0) return '';
-  const flat = lines.slice(start).join('').trim();
-  if (!flat) return '';
-  const i = flat.indexOf('。');
-  return i >= 0 ? flat.slice(0, i + 1) : flat;
-}
-
-/**
- * トピック一覧 (spec §5.4)。**見出し + 冒頭 1 文 (原文) + アンカー**。
- *
- * 見出しを持たない章 (アブストラクト / リファレンス) は、
- * **Elith が付けた `section_name` を見出しとして** 章まるごと 1 トピックにする
- * (当社が見出しを創作しない)。
- */
-export function extractTopics(key: ChapterKey, section: ReportSectionRaw): TopicVM[] {
-  // **`###` があればそれだけを見出しとする。** `【】` は章の中の小分け
-  // (食事の食材カテゴリ・生活習慣の【現状評価】/【行動提案】) で、トピックにすると
-  // 一覧が細かくなりすぎる (実測: 39 のはずが 74 件になった)。
-  // `【】` を構造に使っている章 (検査値フィードバック) は `###` を持たないので、
-  // その場合だけ `【】` へ落ちる。
-  const mode = hasHashHeading(section.text) ? 'hash' : 'both';
-  const blocks = splitBlocks(section.text, mode).filter((b) => b.heading);
-  if (blocks.length === 0) {
-    const teaser = firstSentence(section.text);
-    return teaser ? [{ id: anchorFor(key, section.section_name), heading: section.section_name, teaser }] : [];
-  }
-  return blocks.map((b) => ({
-    id: anchorFor(key, b.heading),
-    heading: b.heading,
-    teaser: firstSentence(b.body),
-  }));
-}
-
-/**
- * 章本文を見出し単位のブロックに割る (折りたたみと目次アンカーの単位・spec §4.3)。
- * `extractTopics` と**同じ割り方・同じアンカー**を使う (目次とリンク先がずれないように)。
- */
-export function extractBlocks(key: ChapterKey, section: ReportSectionRaw): ChapterBlockVM[] {
-  const mode = hasHashHeading(section.text) ? 'hash' : 'both';
-  const blocks = splitBlocks(section.text, mode);
-  const withHeading = blocks.filter((b) => b.heading);
-  if (withHeading.length === 0) {
-    return section.text.trim()
-      ? [{ id: anchorFor(key, section.section_name), heading: '', body: section.text.trim() }]
-      : [];
-  }
-  // 見出しより前の導入文があれば、見出しなしのブロックとして先頭に残す (取りこぼさない)。
-  const out: ChapterBlockVM[] = [];
-  const lead = blocks.find((b) => !b.heading && b.body);
-  if (lead) out.push({ id: anchorFor(key, '__lead__'), heading: '', body: lead.body });
-  for (const b of withHeading) {
-    out.push({ id: anchorFor(key, b.heading), heading: b.heading, body: b.body });
+  const parts = text.split(/^###\s*/m).slice(1);
+  for (const p of parts) {
+    const nl = p.indexOf('\n');
+    const headRaw = (nl < 0 ? p : p.slice(0, nl)).trim();
+    const body = (nl < 0 ? '' : p.slice(nl + 1)).trim();
+    // 「1. 飲酒習慣」→「飲酒習慣」。番号は Elith の採番であって内容ではない。
+    out.push({ heading: headRaw.replace(/^\d+\.\s*/, ''), body });
   }
   return out;
 }
 
-/**
- * 生活習慣を【現状評価】→【行動提案】のペアにする (spec §4.2.2)。
- * **維持／改善の自動分類はしない** — 語尾判別は「続け**ながら**」を取りこぼす脆い判定。
- */
-export function extractLifestylePairs(text: string): LifestylePairVM[] {
-  const out: LifestylePairVM[] = [];
-  // `### N. 見出し` 単位に割り、その中の【現状評価】【行動提案】を拾う
-  const sections = text.split(/^###\s*/m).slice(1);
-  for (const s of sections) {
-    const nl = s.indexOf('\n');
-    const topic = (nl >= 0 ? s.slice(0, nl) : s).trim();
-    const rest = nl >= 0 ? s.slice(nl + 1) : '';
-    const cur = /【現状評価】([\s\S]*?)(?=【|$)/.exec(rest);
-    const pro = /【行動提案】([\s\S]*?)(?=【|$)/.exec(rest);
-    if (!topic || (!cur && !pro)) continue;
-    out.push({ topic, current: (cur?.[1] ?? '').trim(), proposal: (pro?.[1] ?? '').trim() });
+function splitByBracket(text: string): Block[] {
+  const out: Block[] = [];
+  const parts = text.split(/【([^】]+)】/);
+  for (let i = 1; i < parts.length; i += 2) {
+    out.push({ heading: parts[i].trim(), body: (parts[i + 1] ?? '').trim() });
   }
   return out;
 }
 
-/**
- * 食事アドバイスから「1 か月の食事改善プラン」の見出しブロックを切り出す (spec §4.1 の 7.5)。
- * 見出しの表記ゆれ (`1か月` / `1 か月`) を吸収する。無ければ null。
- */
-export function extractDietPlan(text: string): { heading: string; body: string } | null {
-  for (const b of splitBlocks(text)) {
-    if (b.heading && /か\s*月/.test(b.heading) && /プラン/.test(b.heading)) return b;
-  }
-  return null;
+/** 章を「トピック」に割る。`###` があればそれだけを使う (無いときだけ `【】`)。 */
+export function splitTopics(text: string): Block[] {
+  const hash = splitByHash(text);
+  if (hash.length) return hash;
+  const bracket = splitByBracket(text);
+  if (bracket.length) return bracket;
+  return [];
 }
 
-/** 切り出したブロックを本文から取り除く (同じ文章を 2 か所に出さないため)。 */
-function removeBlock(text: string, heading: string): string {
-  const lines = text.split('\n');
-  const out: string[] = [];
-  let skipping = false;
-  for (const line of lines) {
-    const h = HEADING_RE.exec(line) ?? BLOCK_RE.exec(line);
-    if (h) skipping = h[1].trim() === heading;
-    if (!skipping) out.push(line);
-  }
-  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-}
-
-// ───────────────────────────────────────────────────────────────
-// 検査値と所見 (spec §5.2 / §5.3)
-// ───────────────────────────────────────────────────────────────
-
 /**
- * Elith 自身が書いた判定句。**当社が語を作らない** (spec §4.2.1)。
+ * 見出しが 1 つも無い章を **章まるごと 1 ブロック**として返す。
  *
- * 誤字「基準範囲を**上上**回っており」が実データにあるため `上+` にしてある。
- * **原文は直さない**(§7.3) が、拾えなくなるのは別の問題なので検出だけ許容する。
- */
-const JUDGEMENT_PATTERNS: RegExp[] = [
-  /基準範囲を上+回っています/,
-  /基準範囲を上+回っており/,
-  /基準範囲内であり/,
-  /基準範囲内です/,
-  /基準範囲内に収まっており/,
-  /基準範囲内に収まっています/,
-  /基準値を下回っています/,
-  /基準値を下回っており/,
-  /基準範囲を下回っています/,
-  /基準範囲を下回っており/,
-];
-
-/** 旧形式 (Stage2) の `（判定区分：X）`。新形式には 0 件だが、サンプル表示のため残す。 */
-const LEGACY_JUDGEMENT_RE = /判定区分[：:]\s*([^）)、。]+)/;
-
-/** `赤血球数は585 10^4/ul（基準値：400〜539 10^4/ul）` を拾う。 */
-const VALUE_WITH_REF_RE = /([^\s、。は（(]{1,20})は\s*([^（(、。]{1,24}?)\s*[（(]基準値[：:]\s*([^）)]+)[）)]/g;
-
-/** 項目名の位置に来る「項目名でない主語」。この場合はブロック見出しを項目名にする。 */
-const GENERIC_SUBJECT_RE = /^(?:今回の(?:測定値|結果|値)|測定値|結果|値|数値)$/;
-
-/** `585 10^4/ul` → 値 `585` / 単位 `10^4/ul`。最初の空白で割る。 */
-function splitValueUnit(s: string): { value: string; unit: string | null } {
-  const m = /^(\S+)\s+(.+)$/.exec(s);
-  return m ? { value: m[1], unit: m[2].trim() } : { value: s, unit: null };
-}
-
-export interface ReportFinding {
-  /** 【】で括られたカテゴリ名。 */
-  category: string;
-  /** **Elith の原文のまま**の判定句。無ければ null。 */
-  judgement: string | null;
-  /** 判定句を含む一文 (原文のまま。要約しない)。 */
-  sentence: string;
-  /** そのブロックで値と基準値が読み取れた項目。 */
-  items: MeasurementVM[];
-  anchor: string;
-}
-
-const FEEDBACK_KEYS = ['blood_analysis', '検査値フィードバック'];
-
-function findFeedback(byKey: Map<string, ReportSectionRaw>): ReportSectionRaw | null {
-  for (const k of FEEDBACK_KEYS) {
-    const s = byKey.get(k);
-    if (s) return s;
-  }
-  return null;
-}
-
-/**
- * 「検査値フィードバック」から Elith 自身の判定文を拾う (spec §5.2)。
+ * 【なぜ要るか】受領形式は世代で変わる。実測 (2026-08-29・本番 DB の 真鍋検体) では
+ *   `医療受診の目安` / `ライフスタイル総合` / `必要とする栄養素/サプリ情報` に
+ *   `###` も `【】` も無く、`splitTopics` が 0 件を返して**ダイジェストのカードが
+ *   全部消えた** (主軸 B が帯だけの白紙になる)。全編の章側は既にこの受け皿を持っていた
+ *   (「見出しの無い章は章まるごと 1 トピック」) が、ダイジェスト側に無かった。
  *
- * **アプリは値と基準値を比べない。** 拾うのは Elith が明記した判定文だけ。
- * 判定文が無いブロックは所見にしない (fail-safe: 拾えなければ何も出さない)。
- * **並べ替えない** — Elith が書いた順のまま返す。
+ * **中身は足さない。** 見出しが無いことを「見出し = 章名」として扱うだけで、
+ * 本文は 1 文字も変えない (spec §1.0.0)。
  */
-export function extractFindings(byKey: Map<string, ReportSectionRaw>): ReportFinding[] {
-  const fb = findFeedback(byKey);
-  if (!fb) return [];
-
-  const out: ReportFinding[] = [];
-  for (const b of splitBlocks(fb.text)) {
-    if (!b.heading || !b.body) continue;
-    const flat = b.body.replace(/\s*\n+\s*/g, '');
-
-    let judgement: string | null = null;
-    let sentence = '';
-    for (const s of flat.split(/(?<=。)/)) {
-      const hit = JUDGEMENT_PATTERNS.map((re) => re.exec(s)).find((m) => m != null);
-      if (hit) { judgement = hit[0]; sentence = s.trim(); break; }
-    }
-    if (!judgement) {
-      const legacy = LEGACY_JUDGEMENT_RE.exec(flat);
-      if (legacy) {
-        judgement = legacy[1].trim();
-        sentence = (flat.split('です。')[0] || flat.slice(0, 120)) + (flat.includes('です。') ? 'です。' : '');
-      }
-    }
-    if (!judgement) continue;
-
-    const items: MeasurementVM[] = [];
-    for (const m of flat.matchAll(VALUE_WITH_REF_RE)) {
-      // 単一項目のブロックでは Elith が「**今回の測定値**は27.9 mg/dL（基準値：…）」と書く。
-      // 主語が項目名になっていないので、そのブロックの見出し (=項目名) を使う。
-      // これも Elith の文字列であって、当社が名前を作っているわけではない。
-      const raw = m[1].trim();
-      const name = GENERIC_SUBJECT_RE.test(raw) ? b.heading : raw;
-      const { value, unit } = splitValueUnit(m[2].trim());
-      items.push({
-        name, unit, value, reference: m[3].trim(), judgement, date: null,
-        source: 'report_text', conflict: null,
-      });
-    }
-
-    out.push({ category: b.heading, judgement, sentence, items, anchor: anchorFor('measurements', b.heading) });
-  }
-  return out;
+function topicsOrWhole(section: ElithSection): Block[] {
+  const blocks = splitTopics(section.text);
+  if (blocks.length) return blocks;
+  const body = section.text.trim();
+  return body ? [{ heading: '', body }] : [];
 }
 
-/**
- * 「医療受診の目安」の最優先所見 (spec §4.2.1「医師に相談する項目」)。
- * 新形式の `### N. 最優先…` と旧形式の `**最優先…**` の両方に対応する。
- */
-export function extractTopPriority(byKey: Map<string, ReportSectionRaw>): { heading: string; text: string } | null {
-  const s = byKey.get('medical_visit') ?? byKey.get('医療受診の目安');
-  if (!s) return null;
-  for (const b of splitBlocks(s.text)) {
-    if (!/最優先/.test(b.heading)) continue;
-    const text = firstSentence(b.body);
-    if (text) return { heading: b.heading, text };
-  }
-  // 旧形式: 見出しが `**最優先の所見**` のように太字で書かれている
-  const m = /\*\*([^*]*最優先[^*]*)\*\*\s*([\s\S]+?)(?=\n\n\*\*|$)/.exec(s.text);
-  if (!m) return null;
-  const text = firstSentence(m[2]);
-  return text ? { heading: m[1].trim(), text } : null;
-}
+// ── 検査値 (spec §5.3 / §7.1 / §7.2) ─────────────────────────
 
 /**
- * 検査値へ、本文から拾えた基準値と判定を重ねる。
- * **拾えないものは空のまま** (外部マスタで補完しない = 捏造ゼロ・spec §5.3)。
+ * Elith 自身が書いた判定句。**アプリが値と基準値を比べて作った文ではない。**
  *
- * 【単位まで一致させる理由】この検体には `総コレステロール [mg/dL]`=210 と
- * `[mg/dl]`=251 の 2 行がある。**大文字小文字は 2 検査の混在を意味する** (spec §7.0) ので、
- * 名前だけで結ぶと Elith が触れていない方の値にまで基準値が付いてしまう。
- * 一意に決まらないときは**付けない**。
+ * `上+` は実データの誤字「基準範囲を**上上**回っており」を拾うため (spec §7.3)。
+ * **原文は直さないが、検出はする。**
  */
-function applyReferences(
-  rows: MeasurementVM[],
-  findings: ReportFinding[],
-): { hit: number; notes: string[] } {
-  const notes: string[] = [];
-  let hit = 0;
+const JUDGEMENT_RE =
+  /(基準範囲を上+回って(?:います|おり)|基準範囲内|基準範囲に収まって(?:います|おり)|基準値を下回って(?:います|おり))/;
 
-  for (const f of findings) {
-    for (const it of f.items) {
-      if (!it.reference) continue;
-      let cands = rows.filter((r) => r.name === it.name);
-      if (cands.length === 0) {
-        /*
-          本文が参照している値が `health_checkup.json` に無い (spec §7.2)。
-          **2 ファイルは包含関係にない**ので、検査値ファイルだけで表を組むと
-          本文が最優先の所見として扱う項目 (実測: ヘマトクリット 55.6 %) が落ちる。
-          → **本文由来の行として表に足す。** 出どころは `source` で分かるようにする。
-        */
-        rows.push({ ...it, source: 'report_text', conflict: null });
-        notes.push(`本文にしかない値を表へ追加: ${it.name} = ${it.value}`);
-        hit++;
-        continue;
-      }
-      if (it.unit && cands.length > 1) {
-        const byUnit = cands.filter((r) => r.unit === it.unit);
-        if (byUnit.length > 0) cands = byUnit;
-      }
-      if (cands.length !== 1) {
-        notes.push(`基準値の対応先が一意でない: ${it.name} (候補 ${cands.length} 件)`);
-        continue;
-      }
-      cands[0].reference = it.reference;
-      cands[0].judgement = it.judgement;
-      hit++;
-    }
-  }
-  return { hit, notes };
+function toneOf(judgement: string): MeasurementRow['tone'] {
+  if (!judgement) return 'unknown';
+  if (/基準範囲内|収まって/.test(judgement)) return 'within';
+  return 'flagged';
 }
 
 /**
- * 同名別値を検出する (spec §7.1)。**自動採用しない** — 両方残し、監査に出すだけ。
- * 単位の大文字小文字違い (`mg/dL` / `mg/dl`) は 2 検査の混在を意味する (spec §7.0)。
+ * `名前は 値（基準値：〜）` を拾う。
  *
- * **名前は完全一致で見る。** 括弧を落として `ALT` と `ALT(GPT)` を同一視すると、
- * 「この 2 つは同じ項目だ」という判断を当社がすることになる (ミッション④)。
- * 受領キーが別なら別項目として扱い、実測 9 組を検出する。
+ * **コロンは全角 `：` と半角 `:` の両方を受ける。** 受領世代によって揺れており、
+ * 全角だけを見ていたため本番 DB の検体 (半角 `（基準値: 〜129 mmHg）` が 12 箇所) で
+ * **1 件も拾えず、検査値の表が空になった** (実測 2026-08-29)。
  */
-function markConflicts(rows: MeasurementVM[]): string[] {
-  const seen = new Map<string, string[]>();
-  for (const r of rows) {
-    const base = r.name;
-    const list = seen.get(base) ?? [];
-    list.push(r.value);
-    seen.set(base, list);
-  }
-  const conflicting = [...seen.entries()]
-    .filter(([, vals]) => vals.length > 1 && new Set(vals).size > 1);
+const VALUE_RE = /([^\s、。（(]+?)(?:は|が)((?:[0-9][^（(、。]*?))（基準値[：:]\s*([^）]*)）/g;
 
-  // **行にも印を付ける。** 監査に出すだけでは画面が「値が 2 通り届いている」と言えない。
-  // **どちらかを勝手に選ばない** (spec §7.1・`observation-dedup` と同じ流儀)。
-  const byName = new Map(conflicting);
-  for (const r of rows) {
-    const vals = byName.get(r.name);
-    r.conflict = vals ? [...vals] : null;
-  }
-
-  return conflicting.map(([name, vals]) => `同名別値: ${name} = ${vals.join(' / ')}`);
+/** `health_checkup.json` のキー `項目名 [単位]` を分解する。 */
+function splitCheckupKey(key: string): { name: string; unit: string } {
+  const m = /^(.*?)\s*\[(.*)\]\s*$/.exec(key);
+  return m ? { name: m[1].trim(), unit: m[2].trim() } : { name: key.trim(), unit: '' };
 }
 
-// ───────────────────────────────────────────────────────────────
-// 表示モデルの組み立て
-// ───────────────────────────────────────────────────────────────
+/**
+ * `585 10^4/ul` → `10^4/ul`。先頭の数値トークンだけを落として残りを単位とみなす。
+ *
+ * **文字クラスに空白を入れて貪欲に消さないこと。** `[\d.,\s]+` にすると
+ * `585 10^4/ul` の単位側の `10` まで食って `^4/ul` になり、単位が一致せず
+ * 本文の基準値が結べなくなる (実測)。
+ */
+function unitOfValue(value: string): string {
+  return value.replace(/^[\d.,]+\s*/, '').trim();
+}
 
-export interface BuildReportInput {
-  /** `report_text.json` の中身 (新形式 dict / 旧形式 配列 のどちらでも)。 */
-  reportText: unknown;
-  /** `health_checkup.json` の中身。無ければ検査値の章は出ない。 */
-  checkup?: unknown;
-  /** 報告書のタイプ。**アプリが持つ** (Elith 出力から推測しない・spec §1.0.3)。 */
-  type: ReportType;
-  issuedOn: string;
-  /** 氏名。本人への表示なので出す (spec §4.0.0.1)。 */
-  name?: string | null;
-  actualAge?: number | null;
-  /** 検査サイクル。タイプ 2 (単品購入) では null (spec §4.0.0.2)。 */
-  cycle?: CycleVM | null;
-  isSample?: boolean;
-  /** 当社 CABA の算出値。**本来 Elith の値と一致する**ので、ズレは異常として監査に出す (spec §1.3.8)。 */
-  ownWellnessAge?: number | null;
-  /** 章立ての解決を差し替える (テスト用)。既定は `app_config` を重ねた結果。 */
-  chapters?: ChapterSpec[];
+/**
+ * 本文と `health_checkup.json` を突き合わせるキー。
+ *
+ * **単位の大文字・小文字を潰さないこと。** 2026-08-26 受領分は合成検体で、
+ * **単位の小文字 `l` = 人間ドック / 大文字 `L` = 血液検査**という規則で 2 つの検査が
+ * 混ざっている (spec §7.0)。`toLowerCase()` すると別検査の値が同一視され、
+ * Elith が判定していない行に判定が付く。空白だけ落として大小はそのまま比べる。
+ */
+function textKey(name: string, unit: string): string {
+  return `${name}|${unit.replace(/\s+/g, '')}`;
+}
+
+export interface MeasurementResult {
+  /** 受領した全行。**受領ファイルのキー順のまま**にする (原票と並びが揃う)。全編の表に出す。 */
+  rows: MeasurementRow[];
   /**
-   * A の予備の文言 (spec §4.0.1)。既定は `app_config` の
-   * `ui.cancer_screening_not_included`。**空なら文言を出さない** (§0.3)。
-   * テストから差し込めるように引数にしてある (`chapters` と同じ流儀)。
+   * ダイジェストの表に出す行 = **Elith が本文で取り上げた項目**を、
+   * **Elith が本文で言及した順**に並べたもの (spec §1.3.10 / モック契約)。
+   *
+   * 【なぜ受領順ではないか】`health_checkup.json` のキー順は検査票の様式順で、
+   * Elith の話の流れとは無関係。そのまま出すと、Elith が最初に取り上げた
+   * 赤血球・ヘモグロビン・ヘマトクリットの 3 点セットが表の中ほどにばらけ、
+   * 直前の「医療受診の目安」の話と繋がらない (モックとの差分で発覚)。
+   *
+   * 【なぜ当社の解釈ではないか】並べ替えの根拠は **Elith が本文に書いた順序そのもの**。
+   * 値と基準値を当社が比べて優先順位を付けているのではないので、
+   * 整理であって解釈ではない (ミッション④)。
    */
-  cancerFallbackText?: string;
+  digestRows: MeasurementRow[];
+  anomalies: string[];
 }
 
-/** 章 1 つ分の本文を作る。材料が無ければ null を返し、**章ごと出さない** (spec §0.3)。 */
-function buildChapter(
-  spec: ChapterSpec,
-  byKey: Map<string, ReportSectionRaw>,
-  ctx: {
-    dietPlanEnabled: boolean;
-    measurements: MeasurementVM[];
-    findings: ReportFinding[];
-    cancerFallback: string;
-  },
-): ChapterVM | null {
-  const base = {
-    key: spec.key, title: spec.title, axis: spec.axis, source: spec.source,
-    blocks: [] as ChapterBlockVM[], topics: [] as TopicVM[],
-    measurements: [] as MeasurementVM[], pairs: [] as LifestylePairVM[],
-    collapsed: spec.collapsed, anchor: anchorFor(spec.key),
-  };
+/**
+ * 検査値の表を組む。
+ *
+ * - 値 = `health_checkup.json` (受領そのまま)。
+ * - **本文にしかない値も載せる** (spec §7.2)。2 ファイルは包含関係でないため、
+ *   検査値ファイルだけで組むと本文が最優先扱いする項目 (実測: ヘマトクリット) が落ちる。
+ * - 基準値・判定 = `blood_analysis` の本文から取れた分だけ。**無い項目は空**
+ *   (外部マスタで補完しない = 捏造ゼロ)。
+ * - **同名別値は自動採用しない** (spec §7.1)。両方を行として残し `variants` で通数を持つ。
+ */
+export function buildMeasurements(
+  checkup: Record<string, { date?: string; value?: unknown }[]> | null,
+  bloodAnalysis: ElithSection | null,
+): MeasurementResult {
+  const anomalies: string[] = [];
 
-  if (spec.source === 'cancer_finding') {
-    /*
-      A の所見 (spec §4.0.1)。**軸の見出しはここではなく `REPORT_AXES` が常設で描く** —
-      2 本柱は設計ポリシーで決めた報告書の骨格で、章の出し分けより上位。
-      ここが受け持つのは**中身**だけ。
+  // ① 本文から 値・基準値・判定 を拾う (`項目名|単位` → 情報)
+  //    **キーに単位を含める。** 同じ項目名で単位違いの値が届くことがあり
+  //    (実測: 赤血球数 [10^4/ul]=585 と [万/μL]=504)、名前だけで突き合わせると
+  //    Elith が判定していない行に判定が付く = 書いていない判定を作ることになる (spec §7.1)。
+  interface FromText { name: string; unit: string; value: string; reference: string; judgement: string }
+  const fromText = new Map<string, FromText>();
 
-      1. Elith の記述があればそれ (本命・§10.1 E-1 で依頼中)
-      2. 無ければ `ui.cancer_screening_not_included` (当社の定型文)。
-         **既定は空 = 文言を出さない** (§0.3)。文言が確定したら admin から入れれば出る。
-      **アプリが代わりを書くことはしない。**
-    */
-    const s = byKey.get('cancer_finding');
-    const body = s?.text?.trim() || ctx.cancerFallback;
-    return body
-      ? { ...base, body, blocks: [{ id: base.anchor, heading: '', body }] }
-      : null;
+  if (bloodAnalysis) {
+    // **`【】` 決め打ちにしない。** 受領世代によって節の書き方が `###` に変わる
+    // (実測 2026-08-29: 本番 DB の検体は `### 血圧` 形式で `【` が 0 件)。
+    // `splitByBracket` しか見ていなかったため 1 ブロックも取れず表が空になった。
+    // 見出しがまったく無い章は章まるごと 1 ブロックとして扱う。
+    for (const block of topicsOrWhole(bloodAnalysis)) {
+      const found: FromText[] = [];
+      VALUE_RE.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = VALUE_RE.exec(block.body))) {
+        // 「今回の測定値は27.9 mg/dL（基準値：…）」のように項目名が入らない書き方がある。
+        // その場合はブロック見出しが項目名 (単一項目ブロック)。
+        const raw = m[1].trim();
+        const name = /測定値|結果$/.test(raw)
+          ? (block.heading.trim() || bloodAnalysis.section_name.trim())
+          : raw;
+        if (!name) continue;
+        const value = m[2].trim();
+        const entry: FromText = { name, unit: unitOfValue(value), value, reference: m[3].trim(), judgement: '' };
+        found.push(entry);
+        fromText.set(textKey(entry.name, entry.unit), entry);
+      }
+      if (!found.length) continue;
+
+      // ② 判定句を項目へ割り当てる。
+      //    まず「<項目>は…<判定句>」の形で項目名に隣接するものだけを引く。
+      //    「クレアチニンについても基準値との関係において…」のように判定句を伴わない
+      //    言及に判定を付けないため (Elith が書いていない判定を作らない)。
+      for (const e of found) {
+        const esc = e.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const hit = new RegExp(`${esc}(?:は|も|が)[^。]{0,12}?${JUDGEMENT_RE.source}`).exec(block.body);
+        if (hit) e.judgement = hit[1];
+      }
+      // 一括表明を当てる。次の 2 つだけを対象にする:
+      //   - 「これら3つの項目すべてが基準範囲を上回っています」= 明示的に全項目
+      //   - 単一項目ブロック = 「今回の結果は基準範囲を上回っており」の主語がその項目しかない
+      // どちらでもないブロックには当てない (どの項目の判定か決められないため)。
+      const blanket = new RegExp(`(?:すべてが|今回の結果は)[^。]{0,10}?${JUDGEMENT_RE.source}`).exec(block.body);
+      if (blanket && (found.length === 1 || /すべてが/.test(blanket[0]))) {
+        for (const e of found) if (!e.judgement) e.judgement = blanket[1];
+      }
+    }
   }
 
-  if (spec.source === 'measurements') {
-    if (ctx.measurements.length === 0 && ctx.findings.length === 0) return null;
-    return {
-      ...base,
-      body: '',
-      measurements: ctx.measurements,
-      topics: ctx.findings.map((f) => ({ id: f.anchor, heading: f.category, teaser: f.sentence })),
+  // ③ health_checkup.json を行にする。同名別値は競合として両方残す。
+  const rows: MeasurementRow[] = [];
+  const seenNames = new Map<string, number>();
+  const entries = Object.entries(checkup ?? {});
+
+  for (const [key] of entries) {
+    const { name } = splitCheckupKey(key);
+    seenNames.set(name, (seenNames.get(name) ?? 0) + 1);
+  }
+
+  // 行 → 本文での言及順。`fromText` は Map なので**挿入順 = 本文に現れた順**。
+  // **行を作るその場で記録する。** 後から名前で引き当てると、同名別値 (総コレステロール
+  // 210 mg/dL と 251 mg/dl) で**単位違いの別の行に順序が付く** (実測で末尾へ飛んだ)。
+  const mentionAt = new Map<string, number>();
+  [...fromText.keys()].forEach((k, i) => mentionAt.set(k, i));
+  const rowMention = new Map<MeasurementRow, number>();
+
+  const usedFromText = new Set<string>();
+  for (const [key, arr] of entries) {
+    const { name, unit } = splitCheckupKey(key);
+    const first = Array.isArray(arr) ? arr[0] : undefined;
+    if (!first || first.value === undefined || first.value === null) continue;
+    // 単位まで一致したときだけ本文の基準値・判定を結ぶ。一致しなければ空のまま。
+    const k = textKey(name, unit);
+    const t = fromText.get(k);
+    if (t) usedFromText.add(k);
+    const row: MeasurementRow = {
+      name,
+      value: unit ? `${first.value} ${unit}` : String(first.value),
+      reference: t?.reference ?? '',
+      judgement: t?.judgement ?? '',
+      tone: toneOf(t?.judgement ?? ''),
+      source: 'checkup',
+      variants: seenNames.get(name) ?? 1,
     };
+    rows.push(row);
+    const at = mentionAt.get(k);
+    if (at !== undefined) rowMention.set(row, at);
   }
 
-  if (spec.source === 'diet_plan') {
-    const diet = byKey.get('diet') ?? byKey.get('食事アドバイス');
-    const plan = diet ? extractDietPlan(diet.text) : null;
-    return plan?.body
-      ? { ...base, body: plan.body, blocks: [{ id: base.anchor, heading: '', body: plan.body }] }
-      : null;
+  for (const [name, count] of seenNames) {
+    if (count > 1) anomalies.push(`同名別値: ${name} が ${count} 通り届いています (自動採用しません)`);
   }
 
-  const s = byKey.get(spec.source);
-  if (!s?.text) return null;
 
-  let body = s.text;
-  // 「1 か月の食事プラン」を別章にしているときは、食事の本文から取り除いて重複を避ける。
-  if (spec.source === 'diet' && ctx.dietPlanEnabled) {
-    const plan = extractDietPlan(body);
-    if (plan) body = removeBlock(body, plan.heading);
+
+  // ④ 本文にしかない項目を足す (spec §7.2)。
+  //    2 ファイルは包含関係でないので、検査値ファイルだけで組むと本文が最優先扱いする
+  //    項目 (実測: ヘマトクリット) が落ちる。
+  for (const [k, t] of fromText) {
+    if (usedFromText.has(k)) continue;
+    rows.push({
+      name: t.name,
+      value: t.value,
+      reference: t.reference,
+      judgement: t.judgement,
+      tone: toneOf(t.judgement),
+      source: 'report_text',
+      variants: 1,
+    });
+    if (!seenNames.has(t.name)) {
+      anomalies.push(`本文が扱う ${t.name} が health_checkup.json に無いため、本文から拾いました`);
+    }
+    rowMention.set(rows[rows.length - 1], mentionAt.get(k) ?? Number.MAX_SAFE_INTEGER);
   }
 
-  const shaped: ReportSectionRaw = { ...s, text: body };
-  const chapter: ChapterVM = {
-    ...base, body,
-    blocks: extractBlocks(spec.key, shaped),
-    topics: extractTopics(spec.key, shaped),
-  };
-  if (spec.source === 'lifestyle') chapter.pairs = extractLifestylePairs(body);
-  return chapter;
+  // ダイジェスト = 本文が取り上げた行 (基準値が付いた行) を、**本文での言及順**に。
+  // 言及順が取れなかった行は末尾へ回し、その中では受領順を保つ (安定ソート)。
+  const digestRows = rows
+    .filter((r) => r.reference)
+    .map((r, i) => ({ r, i, m: rowMention.get(r) ?? Number.MAX_SAFE_INTEGER }))
+    .sort((a, b) => a.m - b.m || a.i - b.i)
+    .map((x) => x.r);
+
+  return { rows, digestRows, anomalies };
 }
 
-/** 受領 JSON から表示モデルを組み立てる。 */
-export function buildReportVM(input: BuildReportInput): ReportVM {
-  const { byKey, healthAge } = parseReportText(input.reportText);
-  const resolved = input.chapters ? { chapters: input.chapters, hidden: [], unknown: [] } : resolveChapters();
+// ── ダイジェストのカード ────────────────────────────────
 
-  const findings = extractFindings(byKey);
-  const measurements = parseCheckup(input.checkup);
-  const { hit: referenceCount, notes: refNotes } = applyReferences(measurements, findings);
+/** Elith が救急受診を促した文。**赤を使ってよいのはここだけ** (spec §4.2.1)。 */
+const EMERGENCY_RE = /(?:早急な医療確認|救急|ただちに医療機関|直ちに医療機関)/;
 
-  const dietPlanEnabled = resolved.chapters.some((c) => c.key === 'diet_plan');
-  const ctx = {
-    dietPlanEnabled, measurements, findings,
-    cancerFallback: (input.cancerFallbackText ?? cfg('ui.cancer_screening_not_included')).trim(),
-  };
+/** 章タイトル。レジストリ／`app_config` の上書きが空なら受領 JSON の `section_name`。 */
+function titleOf(key: string, label: string, section: ElithSection | null): string {
+  if (label) return label;
+  return section?.section_name ?? key;
+}
 
+function card(
+  key: string, title: string, axis: 'a' | 'b', source: string,
+  blocks: DigestBlock[], tone: DigestCardVM['tone'] = 'normal',
+): DigestCardVM | null {
+  const filled = blocks.filter((b) =>
+    (b.kind === 'paragraphs' && b.items.length) ||
+    (b.kind === 'steps' && b.items.length) ||
+    (b.kind === 'table' && b.rows.length) ||
+    (b.kind === 'pairs' && b.items.length) ||
+    (b.kind === 'weeks' && b.items.length));
+  if (!filled.length) return null;
+  return { key, title, axis, tone, blocks: filled, source };
+}
+
+// ── 本体 ────────────────────────────────────────────────
+
+export interface BuildInput {
+  reportText: unknown;
+  checkup: Record<string, { date?: string; value?: unknown }[]> | null;
+  name: string;
+  issuedOn: string;
+  isSample: boolean;
+  /** その回の入力にがんリスク検査があったか。**アプリが判定する** (spec §1.0.3)。 */
+  hasCancerRisk: boolean;
+  cycleSeq: number | null;
+  chronologicalAge: number | null;
+  /** 当社 CABA の算出値。Elith 出力との突合に使う (紙面には出さない・spec §1.3.8)。 */
+  ourWellnessAge?: number | null;
+  /** `ui.cancer_screening_not_included`。空なら使わない (spec §0.3)。 */
+  cancerFallbackText?: string;
+  /** 章立ての設定リーダ。回帰テストで差し替える。 */
+  readConfig?: (key: string) => string;
+}
+
+export function buildReportVM(input: BuildInput): ReportVM {
+  const parsed = parseReportText(input.reportText);
+  const { chapters: specs, hidden, unknown } = resolveChapters(input.readConfig);
+  const sec = (k: string | null) => (k ? parsed.byKey.get(k) ?? null : null);
+
+  const anomalies: string[] = [];
+  const digest: DigestCardVM[] = [];
+  const emptyCards: string[] = [];
+
+  const measured = buildMeasurements(input.checkup, sec('blood_analysis'));
+  anomalies.push(...measured.anomalies);
+
+  // ウェルネス年齢は当社が算出して Elith へ渡した値がそのまま返る = 本来必ず一致する。
+  // 不一致は往復のどこかでデータが壊れた兆候 (spec §1.3.8)。**紙面には出さず監査に出す。**
+  if (parsed.wellnessAge != null && input.ourWellnessAge != null
+      && Math.abs(parsed.wellnessAge - input.ourWellnessAge) > 0.05) {
+    anomalies.push(
+      `ウェルネス年齢が当社 CABA と不一致: Elith ${parsed.wellnessAge} / 当社 ${input.ourWellnessAge}`);
+  }
+
+  for (const spec of specs) {
+    const section = sec(spec.sourceKey);
+    const title = titleOf(spec.key, spec.label, section);
+    let built: DigestCardVM | null = null;
+
+    switch (spec.key) {
+      // ── 主軸 A ──────────────────────────────────────
+      case 'cancer_finding': {
+        const texts = cancerFindingTexts(parsed.cancerText, input);
+        built = card(spec.key, title, 'a',
+          parsed.cancerText ? '総評' : 'Elith へ依頼中 (spec §10.1 E-1)',
+          [{ kind: 'paragraphs', items: texts }]);
+        break;
+      }
+
+      // ── 主軸 B ──────────────────────────────────────
+      case 'medical_visit': {
+        if (!section) break;
+        // 見出しの無い世代でも空にしない (`topicsOrWhole` のコメントを参照)。
+        const blocks = topicsOrWhole(section);
+        // 救急サインは別カードに切り出す。**赤はここだけ** (spec §4.2.1)。
+        const emergency = findEmergencySentence(section.text);
+        if (emergency) {
+          const e = card('emergency', '', 'b', `${section.section_name}`,
+            [{ kind: 'paragraphs', items: [emergency] }], 'emergency');
+          if (e) digest.push(e);
+        }
+        const lead = blocks[0];
+        const steps: DigestItem[] = blocks.slice(1).map((b) => ({
+          heading: b.heading, text: leadSentences(b.body, 1),
+        })).filter((s) => s.heading && s.text);
+        built = card(spec.key, title, 'b',
+          steps.length ? `${section.section_name} §1〜§${blocks.length}`
+                       : `${section.section_name} 冒頭 2 文`, [
+            ...(lead ? [{ kind: 'paragraphs' as const, items: [leadSentences(lead.body, 2)] }] : []),
+            { kind: 'steps' as const, items: steps },
+          ]);
+        break;
+      }
+
+      case 'measurements': {
+        // ダイジェストには **Elith が本文で取り上げた項目だけ**を出す (基準値が付いた行)。
+        // 受領した全 40 項目は全編の章に出る (可読化 = 出す文を選ぶこと・spec §1.1)。
+        // 判定が無い行 (実測: クレアチニン) も、Elith が触れている以上は落とさず
+        // 判定欄を空で出す。「印が無い」を「基準値内」と読み替えない (ミッション④)。
+        //
+        // 並びは **Elith が本文で言及した順** (`measured.digestRows`・spec §1.3.10)。
+        // 受領ファイルのキー順ではない。当社が優先順位を決めているのでもない。
+        const rows = measured.digestRows;
+        built = card(spec.key, title, 'b',
+          `${section?.section_name ?? '検査値フィードバック'} (値・基準値・判定はすべて本文からの逐語)`,
+          [{ kind: 'table', rows }]);
+        break;
+      }
+
+      case 'lifestyle': {
+        if (!section) break;
+        const pairs = buildLifestylePairs(section.text);
+        built = card(spec.key, title, 'b',
+          `${section.section_name} §1〜§${pairs.length}（各節の【現状評価】【行動提案】冒頭文）`,
+          [{ kind: 'pairs', items: pairs }]);
+        break;
+      }
+
+      case 'diet_plan': {
+        const diet = sec('diet');
+        if (!diet) break;
+        const plan = splitTopics(diet.text).find((b) => /食事改善プラン/.test(b.heading));
+        if (!plan) break;
+        const weeks = splitWeeks(plan.body);
+        built = card(spec.key, spec.label || plan.heading, 'b',
+          `${diet.section_name} §4`, [
+            { kind: 'paragraphs', items: [leadSentences(plan.body.split('【第')[0], 2)] },
+            { kind: 'weeks', items: weeks },
+          ]);
+        break;
+      }
+
+      case 'nutrients': {
+        if (!section) break;
+        const blocks = topicsOrWhole(section);
+        const hasHeadings = blocks.some((b) => b.heading);
+        // 見出しがある世代は各節の冒頭 1 文。無い世代は章の冒頭 2 文
+        // (節が無いのに「§1〜§1」と書かないため、出典表記も分ける)。
+        const items = hasHeadings
+          ? blocks.map((b) => leadSentences(b.body, 1)).filter(Boolean)
+          : [leadSentences(blocks[0]?.body ?? '', 2)].filter(Boolean);
+        built = card(spec.key, title, 'b',
+          hasHeadings ? `${section.section_name} §1〜§${blocks.length}`
+                      : `${section.section_name} 冒頭 2 文`,
+          [{ kind: 'paragraphs', items }]);
+        break;
+      }
+
+      // それ以外の章はダイジェストに出さず、全編にだけ出す。
+      default: break;
+    }
+
+    if (built) digest.push(built);
+    else if (isDigestChapter(spec.key)) emptyCards.push(spec.key);
+  }
+
+  // ── 全編 ────────────────────────────────────────────
   const chapters: ChapterVM[] = [];
-  const skipped: ChapterKey[] = [];
-  for (const spec of resolved.chapters) {
-    const ch = buildChapter(spec, byKey, ctx);
-    if (ch) chapters.push(ch);
-    else skipped.push(spec.key);
-  }
-
-  const abstract = byKey.get('abstract') ?? byKey.get('アブストラクト');
-  // **applyReferences の後に呼ぶ** — 本文由来の行を足したあとで競合を見る必要がある。
-  const anomalies = [...markConflicts(measurements), ...refNotes];
-  if (resolved.unknown.length > 0) {
-    anomalies.push(`app_config に未知の章キー: ${resolved.unknown.join(', ')}`);
-  }
-  // ウェルネス年齢はアプリが算出して Elith へ渡した値がそのまま返る = 本来必ず一致する (spec §1.3.8)。
-  if (healthAge != null && input.ownWellnessAge != null && Math.abs(healthAge - input.ownWellnessAge) > 0.05) {
-    anomalies.push(`ウェルネス年齢が当社算出と不一致: Elith ${healthAge} / 当社 ${input.ownWellnessAge}`);
+  for (const spec of specs) {
+    const section = sec(spec.sourceKey);
+    if (!section || !section.text.trim()) continue;
+    const blocks = splitTopics(section.text);
+    const topics: TopicVM[] = blocks.length
+      ? blocks.map((b) => ({ anchor: anchorFor(spec.key, b.heading), heading: b.heading, body: b.body }))
+      // 見出しの無い章 (アブストラクト / リファレンス) は章まるごと 1 トピック。
+      : [{ anchor: anchorFor(spec.key, section.section_name), heading: '', body: section.text.trim() }];
+    chapters.push({
+      key: spec.key,
+      title: titleOf(spec.key, spec.label, section),
+      axis: spec.axis,
+      collapsed: spec.collapsed,
+      topics,
+      ...(spec.key === 'measurements' ? { table: measured.rows } : {}),
+    });
   }
 
   const cover: CoverVM = {
-    name: input.name ?? null,
+    name: input.name,
     issuedOn: input.issuedOn,
-    templateVersion: REPORT_TEMPLATE_VERSION,
-    wellnessAge: healthAge,
-    actualAge: input.actualAge ?? null,
-    abstract: abstract?.text ?? '',
-    cycle: input.type === 'course' ? input.cycle ?? null : null,
+    sheetVersion: SHEET_VERSION,
+    testedOn: firstCheckupDate(input.checkup),
+    cycleSeq: input.cycleSeq,
+    cycleTotal: CYCLE_TOTAL,
+    wellnessAge: parsed.wellnessAge,
+    chronologicalAge: input.chronologicalAge,
   };
 
   const audit: ReportAudit = {
-    recognizedSections: [...byKey.values()].map((s) => s.section_name),
-    skippedChapters: skipped,
-    hiddenChapters: resolved.hidden,
+    sections: parsed.sections.map((s) => s.section_name),
+    digestCards: digest.map((c) => c.key),
+    emptyCards,
+    hiddenChapters: hidden,
+    unknownChapterKeys: unknown,
     topicCount: chapters.reduce((n, c) => n + c.topics.length, 0),
-    measurementCount: measurements.length,
-    referenceCount,
+    measurementCount: measured.rows.length,
+    referenceCount: measured.rows.filter((r) => r.reference).length,
     anomalies,
   };
 
-  return { type: input.type, cover, chapters, audit, isSample: input.isSample ?? false };
+  return {
+    reportType: input.hasCancerRisk ? 1 : 2,
+    isSample: input.isSample,
+    cover,
+    axes: [...REPORT_AXES],
+    digest,
+    chapters,
+    audit,
+  };
 }
+
+// ── 補助 ────────────────────────────────────────────────
+
+/** ダイジェストに出す想定の章か (出なかったら監査で「0 件」を報せる対象)。 */
+function isDigestChapter(key: string): boolean {
+  return ['cancer_finding', 'medical_visit', 'measurements', 'lifestyle', 'diet_plan', 'nutrients']
+    .includes(key);
+}
+
+/**
+ * A の「今回の所見」に出す文を決める (spec §4.0.1)。
+ *   ① Elith が書いていれば**その本文**
+ *   ② `ui.cancer_screening_not_included` (admin から入力・既定は空)
+ *   ③ パイロット版の暫定文 (`PILOT_CANCER_FINDING_TEXT`・発注者指示)
+ *
+ * タイプ 1 で Elith の記述が無いのはイレギュラーなので、**カードごと非表示**にする
+ * (アプリが代わりを書かない)。
+ */
+function cancerFindingTexts(cancerText: string | null, input: BuildInput): string[] {
+  // ① Elith が書いていれば、その本文をそのまま。当社は但し書きを足さない
+  //    (Stage2 では Elith 自身が「がんがないことを断定するものではない」と書いている)。
+  if (cancerText) return [cancerText];
+  // ② タイプ 1 で Elith の記述が無いのはイレギュラー。**カードごと非表示**にして、
+  //    アプリが代わりを書かない。欠落は監査に出る (spec §4.0.1「記載が無いこと ≠ 所見が無いこと」)。
+  if (input.hasCancerRisk) return [];
+  // ③ タイプ 2。admin で文言が確定していればそれを使う。
+  const fallback = (input.cancerFallbackText ?? '').trim();
+  if (fallback) return [fallback];
+  // ④ パイロット版のみの暫定文 (発注者指示・上の定数のコメントを参照)。
+  return [...PILOT_CANCER_FINDING_TEXT];
+}
+
+/** Elith が救急受診を促した文を 1 文だけ逐語で取り出す。無ければ null。 */
+function findEmergencySentence(text: string): string | null {
+  for (const raw of text.split('。')) {
+    const s = raw.trim();
+    if (s && EMERGENCY_RE.test(s)) return `${s}。`;
+  }
+  return null;
+}
+
+/** `lifestyle` を【現状評価】/【行動提案】のペアにする (spec §4.2.2)。 */
+export function buildLifestylePairs(text: string): LifestylePair[] {
+  const out: LifestylePair[] = [];
+  for (const b of splitByHash(text)) {
+    const cur = b.body.split('【現状評価】')[1]?.split('【行動提案】')[0] ?? '';
+    const act = b.body.split('【行動提案】')[1] ?? '';
+    const current = leadSentences(cur, 1);
+    const action = leadSentences(act, 1);
+    if (!current && !action) continue;
+    out.push({ heading: b.heading, current, action });
+  }
+  return out;
+}
+
+/** `【第1週】…` を週ごとに割る。 */
+function splitWeeks(text: string): DigestItem[] {
+  const out: DigestItem[] = [];
+  const parts = text.split(/【(第\s*\d+\s*週)】/);
+  for (let i = 1; i < parts.length; i += 2) {
+    const t = leadSentences(parts[i + 1] ?? '', 1);
+    if (t) out.push({ heading: parts[i].replace(/\s+/g, ''), text: t });
+  }
+  return out;
+}
+
+/** 受領 `health_checkup.json` から検査日を 1 つ取る。 */
+function firstCheckupDate(
+  checkup: Record<string, { date?: string; value?: unknown }[]> | null,
+): string | null {
+  for (const arr of Object.values(checkup ?? {})) {
+    const d = Array.isArray(arr) ? arr[0]?.date : undefined;
+    if (typeof d === 'string' && d) return d;
+  }
+  return null;
+}
+
+/** 全編の章のうち、ダイジェストに同じ内容を出したもの (章側では畳んでよい)。 */
+export const DIGEST_BACKED_CHAPTERS = new Set(['medical_visit', 'lifestyle', 'nutrients']);
+
+/** レジストリの既定キー一覧 (admin の監査表示で使う)。 */
+export const ALL_CHAPTER_KEYS = CHAPTER_REGISTRY.map((c) => c.key);
