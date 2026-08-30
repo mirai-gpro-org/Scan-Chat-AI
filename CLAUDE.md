@@ -1022,7 +1022,29 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
   - 判定レベルを値と基準値から算出しない。助言文・受診勧告文を生成しない。
   - 表示してよいのは 検査票の値・単位・基準値 と、**検査機関が付けた** `flag` / `assessment`。
     `flag` が null は「印が無い」であって「基準値内」ではない → **判定を表示しない**。
-- **テストフェーズの前提 (維持)**: admin なら誰でもアクセスでき全員が同じデータ・同じ表示になる。
+- **【誰にダミーを出すか 2026-08-30 確定・発注者指示】正本 spec §4.6。**
+  **admin の管理者リストのメンバーだけ**が現状と同じテストのダミーを見る。
+  **Google 認証で入った一般顧客 (admin でない) は env に関わらずダミーを一切見ず、自分の実データだけ。**
+  - 実装 = `demo-data.ts` `demoFallbackEnabled` の**順序が要件そのもの**:
+    **①admin なら true (env で塞がない) → ②`PUBLIC_DEMO_FALLBACK==='false'` なら false
+    (admin 以外を一括で切る) → ③`DEMO_ALLOWED_UIDS`**。
+    **旧実装は ①②が AND (②が先) で、本番 env を false にすると admin まで塞がれ
+    `/report` が `emptyVM` になっていた** (実測 2026-08-30)。それでは `13a8a95` の
+    「デモ表示を**admin 限定**にする」の admin 限定の枝が本番で死ぬ。
+  - **既に入っていたもの (総合テストのセッション `13a8a95`・実測)**: 全ユーザー向けページ 9/10 が
+    `resolveViewer` を通る (残る `index.astro` はリダイレクトのみ) / **`?u=` は admin の代理表示のみ**
+    (admin 画面のゲートも Cookie の本人。`?u=` に admin uid を書いても通らない) /
+    デモ経路は全て `demoFallbackEnabled(uid)` の内側 / 未サインインでは `loadDashboard` を
+    呼ばないので `DEFAULT_USER` フォールバックは本番経路に出ない。
+  - **検証 `npm run verify:demo-gate`** (`verify:report` に同梱)。表を実装と独立に書き下して
+    突き合わせ、**①→②→③ の順序**も見る。**順序を旧に戻すと落ちることを確認済み**。
+    ここは**静かに壊れる** — admin が全画面空になるか、実顧客に他人名義のダミーが出るかの
+    どちらかが起き、**どちらも画面を見ただけでは気づけない**。
+  - **残る宿題 = `ADMIN_EMAILS`(7) と `ADMIN_UIDS`(7) の二重管理**。`hamada@eentry.co.jp` は
+    email 側にだけ在り (`admin-auth.ts:21`)、uid 側に対応行が無い = **email で admin・uid で非 admin**。
+    デモ判定は uid 側なのでこのアカウントでは admin 扱いにならない。**総合テストで
+    `admin_users` 照会へ寄せるときに潰す。**
+- **テストフェーズの前提 (旧・上記で更新)**: admin なら誰でもアクセスでき全員が同じデータ・同じ表示になる。
   `?u=` 入場 (`dashboard.astro`) / `DEFAULT_USER` フォールバック (`dashboard-queries.ts`) /
   デモ層 (`demo-data.ts`・env `PUBLIC_DEMO_FALLBACK`) / デバッグフッタ。**クライアントの UI 確認に必要なので触らない。**
   本番相当への切替は**総合テスト段階**で行う。

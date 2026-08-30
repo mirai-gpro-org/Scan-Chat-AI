@@ -417,6 +417,61 @@ DB 手前で `503 supabase not configured`（ローカルに DB が無いため�
 ② 誤ったキー → `401 unauthorized`（fail-closed）③ uid が UUID でない → 送信前に停止。
 
 
+## 4.6 誰にダミーデータを出すか【確定・発注者指示 2026-08-30】
+
+> 「**admin の管理者リストにあるメンバーだけ**は、現状と同じテストのダミーデータを表示する
+> モードにして、他のユーザー（Google 認証でログインして顧客DBに登録があって、admin の
+> 管理者でないもの）は、**正規に自分のデータしかアクセスできないように本番設定に**して」
+
+| 閲覧者 | ダミー | 実データ |
+|---|---|---|
+| **admin（管理者リストのメンバー）** | **出す**（env に関わらず） | 出す |
+| Google 認証済みの一般顧客（admin でない） | **出さない** | **本人のぶんだけ** |
+| 未サインイン | 出さない | 出さない |
+| OEM デモ顧客（`DEMO_ALLOWED_UIDS`） | env が `false` でなければ出す | — |
+
+### 実装（`demo-data.ts` `demoFallbackEnabled`）
+
+**順序が要件そのもの。**
+
+```
+① admin なら true            ← env で塞がない
+② env PUBLIC_DEMO_FALLBACK === 'false' なら false   ← admin 以外を一括で切る
+③ DEMO_ALLOWED_UIDS
+```
+
+**旧実装は ① と ② が AND（②が先）だった。** そのため本番で `PUBLIC_DEMO_FALLBACK=false` を
+入れると **admin まで塞がれ**、`/report` が `emptyVM`（主軸の帯と主軸 A の 1 枚だけ）になっていた
+（実測 2026-08-30・§4.5）。これでは `13a8a95` が宣言した「デモ表示を**admin 限定**にする」の
+admin 限定の枝が本番で死ぬ。→ **admin を先に見る**。
+
+### すでに入っていたもの（総合テストのセッション・`13a8a95`／実測 2026-08-30）
+
+- **全ユーザー向けページ 9/10 が `resolveViewer` を通る**（残る 1 つ `index.astro` は
+  リダイレクトのみでデータを出さない）
+- **`?u=` は admin の代理表示のときだけ効く。** admin 画面のゲートも Cookie の本人（`viewer.isAdmin`）で、
+  `?u=` に admin の uid を書いても通らない
+- **デモ経路は全て `demoFallbackEnabled(uid)` の内側**（dashboard / notices / result / measurement / report）
+- **未サインインでは `loadDashboard` を呼ばない**（`needsSignIn = authEnabled && !u`）ので、
+  `DEFAULT_USER` フォールバックは本番の経路に出てこない
+
+### 検証
+
+`npm run verify:demo-gate`（`npm run verify:report` に同梱）。上の表を**実装とは独立に**書き下して
+突き合わせ、**①→②→③ の順序**も見る。**順序を旧に戻すと落ちることを確認済み**。
+
+> ここは**静かに壊れる**。判定が 1 つ変わるだけで、admin が全画面ほぼ空になるか、
+> 逆に実顧客へ他人名義のダミーが「自分の結果」として出るかのどちらかが起き、
+> **どちらも画面を見ただけでは気づけない。**
+
+### 残っている宿題
+
+**`ADMIN_EMAILS`（7 件）と `ADMIN_UIDS`（7 件）の二重管理。** `hamada@eentry.co.jp` は
+email 側にだけ在り（`admin-auth.ts:21`「開発用バックアップ」）、uid 側に対応する行が無い
+= **email で admin・uid で非 admin** になり得る。デモ表示の判定は uid 側なので、
+このアカウントで入ると admin 扱いにならない。**総合テストで `admin_users` 照会へ寄せるときに潰す。**
+
+
 ---
 
 # 5. 手順と検証
