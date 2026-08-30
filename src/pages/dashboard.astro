@@ -320,6 +320,18 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
             <div class="flex justify-between gap-3"><dt>キット出荷:</dt><dd class="tnum">{data?.shipments.length} 件</dd></div>
             <div class="flex justify-between gap-3"><dt>Elith sections:</dt><dd class="tnum">{sections.length} 件 / {totalChars.toLocaleString()} 字</dd></div>
             <div class="flex justify-between gap-3"><dt>abstract:</dt><dd>{abstract ? `${abstract.char_count}字` : 'なし'}</dd></div>
+            {/*
+              **紙面モック**。タイプ1 (コースプラン) は該当検体の JSON が Elith から
+              未受領で**実装は v0.2** (仕様書 §2.1) だが、先に関係者へイメージを見せる
+              目的で `docs/elith/mock/*.html` をそのまま出す (発注者指示 2026-08-30)。
+              **実装ではなくモックそのもの**なので、PDF から推測して作り込む線は越えない。
+              デバッグ欄を遮蔽するときに `/report-mock/[type]` も一緒に閉じる。
+            */}
+            <p class="pt-3">紙面モック (実装ではなく紙面の案):</p>
+            <div class="flex flex-wrap gap-2 pt-1">
+              <a href="/report-mock/1" class="chip">タイプ1 コースプラン (v0.2 予定)</a>
+              <a href="/report-mock/2" class="chip">タイプ2 単品購入相当 (実装済み)</a>
+            </div>
             <p class="pt-3">他ユーザーで試す:</p>
             <div class="flex flex-wrap gap-2 pt-1">
               <a href="/dashboard?u=d0000001-0000-0000-0000-000000000000" class="chip">真鍋 (横ばい)</a>

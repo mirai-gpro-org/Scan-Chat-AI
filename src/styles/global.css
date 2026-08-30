@@ -541,6 +541,20 @@
   --rp-rule: #E2E2E2;
   --rp-ground: #F2F2F2;      /* 紙面の外の地 (見本 = 紙が地に浮く) */
   --rp-paper: #FFFFFF;       /* 紙面 */
+
+  /*
+   * **紙面の色は「飾り」ではなく中身**なので、印刷でも必ず出す (発注者指示 2026-08-30)。
+   *
+   * ブラウザの印刷ダイアログの「背景のグラフィック」は**既定がオフ**で、オフのままだと
+   * `background` で塗っている色が全部落ちる。実測 (Chromium `printBackground:false`)で
+   * **表紙の淡 teal パネル・円モチーフ・章扉の帯・丸バッジ・表の teal ヘッダが白く抜け**、
+   * 見本 PDF をトレースした紙面が文字と罫線だけになった。
+   * この宣言があると、利用者が何も設定しなくても見本どおりの色で刷れる。
+   *
+   * **効くのは紙面 (`.report-sheet`) の中だけ**で、アプリの他の画面には広げない。
+   */
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
 
 /*
@@ -621,10 +635,9 @@
  *     見本の表紙円と同じ `--rp-teal-circle` (#A8DCD8) を使う。
  *   - **点は `--rp-teal` (#3BB6AE) にしない** — 白地に 2.5:1 で WCAG 1.4.11 (3:1) に届かない。
  *     ダッシュボードと同じ brand-600 (#287F86 = 4.7:1) を使う。
- *   - **背景色だけで成立する図なので `print-color-adjust: exact`**。これが無いと
- *     「共有 → プリント」経路でブラウザが地色を落とし、点も帯も消えて空白の帯になる。
+ *   - **背景色だけで成立する図**なので、地色が落ちると点も帯も消えて空白の帯になる。
+ *     `print-color-adjust: exact` は `.report-sheet` が紙面ごとまとめて持っている。
  */
-.rp-gauge { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .rp-gauge-track { background: #F1F1F1; }
 .rp-gauge-tick { background: #DEDEDE; }
 .rp-gauge-band { background: var(--rp-teal-circle); }
