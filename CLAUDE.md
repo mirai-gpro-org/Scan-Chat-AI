@@ -649,8 +649,16 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
         - **admin は全員こうなる**: `seed_admin_users.sql` が `d0000001` の
           `diagnosis_results` を各 admin uid へコピーするため。`loadReportVM` は
           「実データ → サンプル」の順なので**サンプルには永久に落ちない**。
-        - **直し方 = サンプル優先に変えない。受領 JSON を実データとして取り込む**
-          (`scripts/ingest-elith-report.mjs`)。世代管理で旧デモ行は `superseded` に落ちる。
+        - **直し方 (実装済み)**: 当初「サンプル優先に変えない」と書いたが、**それでは admin が
+          手作業で取り込むまで紙面を確認できない** (しかも admin 全員が同じ状態)。運用でなく
+          コードで閉じた → `loadReportVM` が**旧形式 (`elith-v1.0` 配列) の行を admin の
+          デモ表示のときだけ飛ばし**、現行形式のサンプルを出す。
+          **実顧客への影響は無い** (デモ表示が無効なのでこの分岐に入らない) /
+          **現行形式の実データが入れば本物が勝つ** / **旧行は消さない**(監査のため)。
+          実測: ダイジェスト 2→**7 枚** / 主軸 B **1→6 枚** / 全編 2→**10 章**。
+          `verify:demo-gate` が**この分岐が `demoFallbackEnabled` の内側にある**ことを機械で見る
+          (外に出ると実顧客の実データを隠すため)。
+          受領 JSON を**本物として**入れるなら従来どおり `scripts/ingest-elith-report.mjs`。
         - **再発防止**: `/api/debug/viewer` の `received` に `schema_version` /
           `latest_sections` / `latest_chars` を出し、2,000 字未満なら
           「紙面が薄いのは実装ではなく行の中身」と明示する。
