@@ -37,9 +37,20 @@ import type {
  *   seed の有無に関わらず必ず発火していた。
  *   → **「自分のものではない検査結果が、自分の画面に出る」**。9/1 ローンチ前に塞ぐ。
  *
- * 判定は 2 条件の AND:
- *   1. env `PUBLIC_DEMO_FALLBACK` が `'false'` でない (従来どおり。全体を切るスイッチ)
- *   2. **閲覧中の uid が admin** (`admin-auth.isAdminUid`)
+ * 【判定 (2026-08-30 発注者指示で順序を確定)】
+ *
+ *   1. **admin はダミーを見る。env で塞がない。**
+ *      本番と総合テストに臨むため、**管理者リストのメンバーだけ**は従来どおり
+ *      テストのダミーデータで画面を確認できる必要がある (発注者指示 2026-08-30)。
+ *      **旧実装は env との AND だったので `PUBLIC_DEMO_FALLBACK=false` を入れると
+ *      admin まで塞がれ、`/report` がほぼ空になっていた** (実測 2026-08-30)。
+ *      それでは「デモ表示を admin 限定にする」(`13a8a95`) という宣言自体が
+ *      本番で成立しない (admin 限定の枝が死ぬ) ので、admin を先に見る。
+ *   2. env `PUBLIC_DEMO_FALLBACK=false` は **admin 以外**をまとめて切るスイッチ。
+ *   3. admin ではないがデモを出してよい uid (`DEMO_ALLOWED_UIDS`)。
+ *
+ * → **Google 認証で入った一般ユーザー (顧客DBに登録あり・admin でない) は、
+ *    env の設定に関わらずダミーを一切見ない。自分の実データだけ。**
  *
  * **uid を渡さない呼び出しは false**（＝ダミーを出さない）。
  * 呼び出し側が uid を持っていない経路で誤ってダミーが出るより、
@@ -48,8 +59,11 @@ import type {
  * @param uid 閲覧中の diagnostic_user_id。省略・null は非 admin 扱い。
  */
 export function demoFallbackEnabled(uid?: string | null): boolean {
-  if (import.meta.env.PUBLIC_DEMO_FALLBACK === 'false') return false;
+  // ① admin は env に関わらずダミーを見る (発注者指示 2026-08-30)
   if (isAdminUid(uid)) return true;
+  // ② admin 以外は env のスイッチで一括して切れる
+  if (import.meta.env.PUBLIC_DEMO_FALLBACK === 'false') return false;
+  // ③ admin ではないがデモを出してよい uid (OEM デモ顧客)
   return DEMO_ALLOWED_UIDS.has((uid ?? '').trim().toLowerCase());
 }
 

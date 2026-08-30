@@ -638,6 +638,24 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
             **紙面の幅だけがモックと違う。これは裁定であってずれではない** (契約は中身しか見ないので落ちない)。
           - 実測: 器=紙面=1280px (ダッシュボードと一致) / 紙 `rgb(255,255,255)` /
             地 `rgb(242,242,242)` / 本文 608px / 表 1248px→**1079px**。
+      - **【本番の報告書が空だった 2026-08-30・発注者指摘「モックと全然ちがう」】正本 spec §4.5。**
+        **紙面の作りは壊れていない。材料が 1 件も無かった。**
+        `buildReportVM({reportText:null,checkup:null,issuedOn:''})` を通すと**画面と完全一致**
+        (作成日 空 / ダイジェスト 1 枚=`a:今回の所見` / 全編 0 章 / `isSample:false`) = `emptyVM`。
+        - **原因は仕様どおりの動作**。本番は `13a8a95` で「本番相当」へ切替済みで、
+          `demo-data.ts:50-54` が **①env `PUBLIC_DEMO_FALLBACK` が `'false'` でない かつ
+          ②uid が admin (`admin-auth.ts:44-51` のハードコード 7 件)** の AND。
+          実顧客に他人名義のサンプルを見せないための保護 (同 `:40-42` に明記)。
+        - **サンプルのゲートは緩めない。材料を実データとして入れる**。本番と同じ経路を通るので
+          表示も本番と同じ「実データの紙面」になる (「サンプル表示」バッジも出ない)。
+        - 入れ方 = `node scripts/ingest-elith-report.mjs --uid <diagnostic_user_id> --key <ADMIN_API_KEY>`。
+          **uid は `/dashboard` の「デバッグ」に出ている**。キーは **Vercel の環境変数が正**で
+          スクリプトは保存しない。経路は既存の `POST /api/admin/elith-report/upload`
+          (**admin 取込画面は作らない** = 発注者指示)。世代管理があるので何度流しても最新 1 件。
+        - **`admin_users` と `ADMIN_UIDS` の二重管理は既知の穴**: `ADMIN_EMAILS` には
+          `hamada@eentry.co.jp` が「開発用バックアップ」で入っている (`admin-auth.ts:21`) が、
+          `ADMIN_UIDS` に対応する行が無い = **email で admin・uid で非 admin** になり得る。
+          総合テストで `admin_users` 照会へ寄せるときに併せて潰す。
         - **検証 (実測)**: `.rp-badge`/`.rp-table th` の地 = `rgb(59,182,174)`=`#3BB6AE` ・
           表紙パネル = `rgb(240,250,251)`=`#F0FAFB` ・`.rp-nums` は `?print=1` にのみ存在 ・
           `.rp-sheet-foot` は画面で `display:none` ・`verify:report-model` 74/74 ・
@@ -1004,7 +1022,41 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
   - 判定レベルを値と基準値から算出しない。助言文・受診勧告文を生成しない。
   - 表示してよいのは 検査票の値・単位・基準値 と、**検査機関が付けた** `flag` / `assessment`。
     `flag` が null は「印が無い」であって「基準値内」ではない → **判定を表示しない**。
-- **テストフェーズの前提 (維持)**: admin なら誰でもアクセスでき全員が同じデータ・同じ表示になる。
+- **【誰にダミーを出すか 2026-08-30 確定・発注者指示】正本 spec §4.6。**
+  **admin の管理者リストのメンバーだけ**が現状と同じテストのダミーを見る。
+  **Google 認証で入った一般顧客 (admin でない) は env に関わらずダミーを一切見ず、自分の実データだけ。**
+  - 実装 = `demo-data.ts` `demoFallbackEnabled` の**順序が要件そのもの**:
+    **①admin なら true (env で塞がない) → ②`PUBLIC_DEMO_FALLBACK==='false'` なら false
+    (admin 以外を一括で切る) → ③`DEMO_ALLOWED_UIDS`**。
+    **旧実装は ①②が AND (②が先) で、本番 env を false にすると admin まで塞がれ
+    `/report` が `emptyVM` になっていた** (実測 2026-08-30)。それでは `13a8a95` の
+    「デモ表示を**admin 限定**にする」の admin 限定の枝が本番で死ぬ。
+  - **既に入っていたもの (総合テストのセッション `13a8a95`・実測)**: 全ユーザー向けページ 9/10 が
+    `resolveViewer` を通る (残る `index.astro` はリダイレクトのみ) / **`?u=` は admin の代理表示のみ**
+    (admin 画面のゲートも Cookie の本人。`?u=` に admin uid を書いても通らない) /
+    デモ経路は全て `demoFallbackEnabled(uid)` の内側 / 未サインインでは `loadDashboard` を
+    呼ばないので `DEFAULT_USER` フォールバックは本番経路に出ない。
+  - **検証 `npm run verify:demo-gate`** (`verify:report` に同梱)。表を実装と独立に書き下して
+    突き合わせ、**①→②→③ の順序**も見る。**順序を旧に戻すと落ちることを確認済み**。
+    ここは**静かに壊れる** — admin が全画面空になるか、実顧客に他人名義のダミーが出るかの
+    どちらかが起き、**どちらも画面を見ただけでは気づけない**。
+  - **【管理者の登録は `ADMIN_MEMBERS` 1 箇所 2026-08-30】** ローンチ後も開発・社外デモで
+    このモードは残り**管理者は追加登録されていく** (発注者指示)。→ `admin-auth.ts` の
+    **`ADMIN_MEMBERS`(`{label,email,uid}`) 1 本**にまとめ、`ADMIN_EMAILS`/`ADMIN_UIDS` は
+    そこからの**導出**にした。**追加は 1 行**。
+    - **統合前は手書き 2 本がズレていた上、admin 判定は uid 側しか見ておらず
+      `isAdminEmail`/`gateByUid` は参照ゼロの死んだコードだった** (実測)。
+      つまり **email 側に足しただけでは admin にならない**のに登録したつもりになる罠。
+    - **uid が判定の実体**。uid は当人の `/dashboard`「デバッグ」に出ている。
+      分からなければ `uid: null` で登録してよい — **`verify:demo-gate` が
+      「uid 未登録のため admin として扱われません」と名指しする**ので黙って放置されない。
+    - **現状 8 名中 1 名が uid 未登録** (`開発用バックアップ`=`hamada@eentry.co.jp`)。
+  - **【分離の実測 2026-08-30】本番と同じ `PUBLIC_DEMO_FALLBACK=false` で `/report` を描いて比較**:
+    admin = カード見出し 42 / 表 2 / 全編 10 章 / Elith 本文の語 (ヘマトクリット16・基準範囲20・尿素窒素8)。
+    一般顧客 = **1 / 0 / 0 / 0・0・0** (主軸 A の当社定型文のみ)。
+    **一般顧客の画面にデモ由来の語が 1 つも出ない。** admin のデモは読み取りだけで
+    一般顧客のデータに書き込まない (デモは `demo-data.ts` の定数と受領 JSON で DB を経由しない)。
+- **テストフェーズの前提 (旧・上記で更新)**: admin なら誰でもアクセスでき全員が同じデータ・同じ表示になる。
   `?u=` 入場 (`dashboard.astro`) / `DEFAULT_USER` フォールバック (`dashboard-queries.ts`) /
   デモ層 (`demo-data.ts`・env `PUBLIC_DEMO_FALLBACK`) / デバッグフッタ。**クライアントの UI 確認に必要なので触らない。**
   本番相当への切替は**総合テスト段階**で行う。
