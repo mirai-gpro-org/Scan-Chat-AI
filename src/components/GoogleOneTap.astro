@@ -49,6 +49,22 @@ const viewer = enabled ? await resolveViewer(Astro) : null;
  * 実際に呼ぶかは `sessionStorage` が番をするので、タブあたり 1 回で済む。
  */
 const needsCookieRefresh = !!viewer?.selfUid || !!viewer?.cookieStale;
+
+/**
+ * **番人の鍵にデプロイの版を混ぜる (2026-08-30・実測)。**
+ *
+ * `sessionStorage` は**リロードでは消えない**。固定の鍵で番をすると、
+ * **一度試したタブでは判定を直して再デプロイしても二度と取り直されない**。
+ * 実際にこれで「本番に修正が入っているのに、再読込しても admin に戻らない」
+ * 状態になった (タブを開き直すまで直らない)。
+ * → 鍵にビルドの SHA を混ぜ、**デプロイのたびに 1 回だけ再試行**する。
+ *   同じ版の中ではタブあたり 1 回のままなので、通常の負荷は変わらない。
+ */
+const buildSha = (
+  (import.meta.env as Record<string, string | undefined>).VERCEL_GIT_COMMIT_SHA
+  ?? (typeof process !== 'undefined' ? process.env?.VERCEL_GIT_COMMIT_SHA : '')
+  ?? ''
+).slice(0, 7) || 'local';
 ---
 
 {enabled && (
@@ -60,7 +76,7 @@ const needsCookieRefresh = !!viewer?.selfUid || !!viewer?.cookieStale;
       **admin フラグを取り直す必要がある人**への印 (旧形式 Cookie / まだ admin でない)。
       **1 回だけ**試す (sessionStorage で番をする) — 失敗したときに再読込を繰り返さない。
     */}
-    {needsCookieRefresh && <span id="viewer-cookie-stale" hidden data-stale="1"></span>}
+    {needsCookieRefresh && <span id="viewer-cookie-stale" hidden data-stale="1" data-build={buildSha}></span>}
 
     <script>
       import { createClient } from '@supabase/supabase-js';
@@ -77,8 +93,10 @@ const needsCookieRefresh = !!viewer?.selfUid || !!viewer?.cookieStale;
        * **1 回だけ**試す。失敗しても画面は壊さない (今までどおり表示されるだけ)。
        */
       async function refreshViewerCookie(): Promise<void> {
-        if (!document.getElementById('viewer-cookie-stale')) return;
-        const KEY = 'welltect.cookie.refreshed';
+        const mark = document.getElementById('viewer-cookie-stale');
+        if (!mark) return;
+        // 鍵にビルドの版を混ぜる (固定の鍵だとタブを開き直すまで再試行されない)。
+        const KEY = `welltect.cookie.refreshed.${mark.dataset.build ?? 'x'}`;
         try { if (sessionStorage.getItem(KEY)) return; sessionStorage.setItem(KEY, '1'); } catch { /* 使えなくても進む */ }
         try {
           const sb = createClient(supabaseUrl, supabaseAnon);
