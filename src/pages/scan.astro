@@ -6,8 +6,12 @@ import { getUserUploads } from '../lib/scan-queries';
 import { testTypeLabel, formatJpDate } from '../lib/dashboard-queries';
 import { qrSvgPath } from '../lib/qr';
 import { resolveViewer } from '../lib/viewer';
+import { noStore } from '../lib/http-cache';
 
 export const prerender = false;
+
+// Cookie で個人化される SSR ページ: 共有キャッシュに保存させない
+noStore(Astro.response);
 
 // PC ではカメラ撮影を提供しない (要件 F-A5) ため、同じページをスマートフォンで
 // 開いてもらうための QR を作る。?u= を含めるので端末を移しても同じユーザーで開く。

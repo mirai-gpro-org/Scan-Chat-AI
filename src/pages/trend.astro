@@ -9,6 +9,7 @@ import { getMeasurementTrend, getTrendCandidates, DEFAULT_TREND_ITEMS } from '..
 import { countUnreadImportant } from '../lib/notice-queries';
 import { refreshConfig, cfg } from '../lib/app-config';
 import { resolveViewer } from '../lib/viewer';
+import { noStore } from '../lib/http-cache';
 
 /**
  * 検査値の推移 (グラフ)。ダッシュボードの検査カードにある「グラフ」の遷移先。
@@ -23,6 +24,9 @@ import { resolveViewer } from '../lib/viewer';
  * 既定は `DEFAULT_TREND_ITEMS` のうち実在するもの (従来の表示と同じ) を上限 8 件まで。
  */
 export const prerender = false;
+
+// Cookie で個人化される SSR ページ: 共有キャッシュに保存させない
+noStore(Astro.response);
 
 /** 同時に表示できる項目数の上限 (モックの既定 8 件に合わせる)。 */
 const MAX_ITEMS = 8;
