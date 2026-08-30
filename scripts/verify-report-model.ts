@@ -16,6 +16,7 @@ import HEALTH_CHECKUP from '../src/data/elith/health_checkup_20260826.json';
 import { buildReportVM, PILOT_CANCER_FINDING_TEXT, leadSentences } from '../src/lib/report-adapter';
 import { anchorFor, resolveChapters } from '../src/lib/report-sections';
 import type { ReportVM } from '../src/lib/report-model';
+import { loadReportVM } from '../src/lib/elith-report-queries';
 
 let pass = 0;
 const fails: string[] = [];
@@ -268,6 +269,38 @@ for (const c of oldB) {
       check(`旧世代 逐語: ${c.key}`, OLD_CORPUS.includes(norm(t)), t.slice(0, 30));
     }
   }
+}
+
+/*
+ * ── サンプルは必ずタイプ2 で組まれること ────────────────────────────
+ *
+ * 【なぜ要るか】タイプは `hasCancerRisk` で決まるが、その値は**閲覧者の
+ * `test_artifacts`** から作られる。サンプルの中身は 2026-08-26 受領の
+ * **タイプ2 の検体**なので、別の回のデータでタイプを決めるとカードが消える。
+ *
+ * 実害 (2026-08-30): `seed_admin_users.sql` が 真鍋の `test_artifacts`
+ * (`cancer_urine` 含む) を各 admin の uid へ**コピー**しているため、admin は
+ * `hasCancerRisk: true` になり、サンプルがタイプ1 (未実装) に反転して
+ * **A 軸のカードが消えていた**。しかも**ローカルには Supabase が無いので再現しない** —
+ * 「ローカルで緑」を根拠にできない類のバグだった。
+ * → ここで **DB 非依存**に固定する (`loadReportVM` は Supabase 未設定なら `sample()` へ落ちる)。
+ */
+{
+  const asAdminWithCancer = await loadReportVM({
+    diagnosticUserId: null,
+    name: 'テスト 様',
+    chronologicalAge: 56,
+    ourWellnessAge: null,
+    // **本番の admin と同じ条件**: 別の回のがんリスク検査を持っている
+    hasCancerRisk: true,
+    cycleSeq: null,
+    viewerIsAdmin: true,
+  });
+  check('サンプルはタイプ2 (isSample)', asAdminWithCancer.isSample === true,
+    `isSample=${asAdminWithCancer.isSample}`);
+  const aCards = asAdminWithCancer.digest.filter((c) => c.axis === 'a').length;
+  check('サンプルで主軸 A のカードが出る (hasCancerRisk:true でも消えない)', aCards >= 1,
+    `A 軸のカード ${aCards} 枚`);
 }
 
 // ── 結果 ──────────────────────────────────────────────────────────

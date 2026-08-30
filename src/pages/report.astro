@@ -66,24 +66,14 @@ const healthAge = data ? await getHealthAge(data.diagnosticUserId, demoOk) : nul
  * 見つかればその結果ページへ送れるので、主軸 A の導線もここから決まる。
  */
 /*
- * **デモで借りた artifacts に報告書のタイプを決めさせない (2026-08-30・実測で特定)。**
+ * その回の入力にがんリスク検査があったか (spec §1.0.3)。**アプリが判定する。**
+ * 見つかればその結果ページへ送れるので、主軸 A の導線もここから決まる。
  *
- * 【何が起きていたか】admin 本人には検査結果が無いので、デモフォールバックが
- * 真鍋 (`d0000001`) の artifacts を貸す (`dashboard-queries.ts` のフォールバック1)。
- * その seed には `cancer_urine` が在る (`supabase/seed.sql` の `a0000004`)。
- * → `hasCancerRisk: true` → 報告書が **タイプ1 (course)** に反転
- * → `report-adapter.ts` の `cancerFindingTexts()` が `[]` を返し、**A 軸のカードが消える**。
- * 実測: admin の `/report` で `vm_digest: 6` が全て B 軸 (A は 0 枚)。
- * 紙面は 73KB・カード 16 枚が描かれていたのに、先頭の A 軸だけが空だったため
- * 「画面が空」と受け取られていた。
- *
- * **サンプルはタイプ2 の検体** (仕様 §2.1「対象はタイプ2 のみ」/ 紙面契約も
- * `hasCancerRisk: false` 前提)。借り物のデータで型を切り替えてはいけない。
- * `usingDemoData` は借り物かどうかを表す既存のフラグ (`dashboard-queries.ts`)。
+ * **サンプル表示のときはこれでタイプを決めない** (2026-08-30)。判定は
+ * `elith-report-queries.ts` の `sample()` に置いてある — 紙面の材料を選ぶ場所と
+ * タイプを決める場所は同じでなければ食い違う (詳細はそのコメント)。
  */
-const cancerArtifact = data?.usingDemoData
-  ? null
-  : ((data?.artifacts ?? []).find((a) => a.test_type === 'cancer_urine') ?? null);
+const cancerArtifact = (data?.artifacts ?? []).find((a) => a.test_type === 'cancer_urine') ?? null;
 
 const vm = await loadReportVM({
   diagnosticUserId: data?.diagnosticUserId ?? null,
@@ -311,7 +301,7 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
           存在しないので出さない — 押せば 404 になるリンクを置かない。
           A に材料が無い回でも帯は立つ。**アプリが代わりの所見を書かない** (spec §4.0.1)。
         */}
-        {axis.key === 'a' && cancerArtifact && (
+        {axis.key === 'a' && !vm.isSample && cancerArtifact && (
           <p class="px-1 text-sm text-slate-600">
             <a class="font-semibold text-brand-700 underline" href={`/result/${cancerArtifact.id}${u ? `?u=${u}` : ''}`}>
               がんリスク検査の結果を見る →

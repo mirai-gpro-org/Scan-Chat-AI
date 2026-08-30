@@ -71,6 +71,27 @@ function sample(ctx: ReportContext): ReportVM {
   if (!demoFallbackEnabled(ctx.diagnosticUserId, ctx.viewerIsAdmin)) return emptyVM(ctx);
   return buildReportVM({
     ...common(ctx),
+    /*
+     * **サンプルは必ずタイプ2 として組む (2026-08-30・実測で確定)。**
+     *
+     * タイプは「その回の入力にがんリスク検査があったか」で決まる (spec §1.0.3)。
+     * サンプルの中身は 2026-08-26 受領の**タイプ2 の検体**なので、
+     * **紙面の材料と、タイプを決める根拠は同じ回のものでなければならない。**
+     * `ctx.hasCancerRisk` は閲覧者の `test_artifacts` から作られており、
+     * サンプルとは別の回のデータ。これを使うとタイプが食い違う。
+     *
+     * 実害: admin は `seed_admin_users.sql:137-145` が 真鍋の `test_artifacts`
+     * (`cancer_urine` を含む) を**自分の uid へコピー**しているため
+     * `hasCancerRisk: true` になり、サンプルが**タイプ1 (未実装) に反転**して
+     * A 軸 (初期がんの早期発見) のカードが消えていた
+     * (`report-adapter.cancerFindingTexts()` が `[]` を返す)。
+     * 紙面の先頭が空になるため「画面が空」と受け取られていた。
+     *
+     * **借り物かどうか (`usingDemoData`) で判定してはいけない** — admin の行は
+     * seed でコピー済みの**自分の行**なのでそのフラグは立たない (2026-08-30 に実測で判明)。
+     * 判定はここ、**材料を選ぶのと同じ場所**に置く。
+     */
+    hasCancerRisk: false,
     reportText: ELITH_REPORT_SAMPLE_TEXT,
     checkup: ELITH_REPORT_SAMPLE_CHECKUP,
     issuedOn: ELITH_SAMPLE_ISSUED_ON,
