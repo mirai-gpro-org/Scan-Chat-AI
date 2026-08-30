@@ -40,7 +40,15 @@ const enabled = !!clientId;
  * → 旧形式の Cookie を見つけたら、**その場で `/api/auth/resolve` を呼び直す**。
  */
 const viewer = enabled ? await resolveViewer(Astro) : null;
-const needsCookieRefresh = !!viewer?.cookieStale;
+/**
+ * **タブごとに 1 回、admin フラグを取り直す。**
+ *
+ * 旧形式 Cookie だけを対象にしていたのは誤りだった —
+ * **`admin=0` で発行された新形式 Cookie も 30 日そのまま**なので、
+ * 判定を直しても届かない (実測 2026-08-30)。サインイン済みなら常に印を出す。
+ * 実際に呼ぶかは `sessionStorage` が番をするので、タブあたり 1 回で済む。
+ */
+const needsCookieRefresh = !!viewer?.selfUid || !!viewer?.cookieStale;
 ---
 
 {enabled && (
@@ -76,12 +84,25 @@ const needsCookieRefresh = !!viewer?.cookieStale;
           const { data } = await sb.auth.getSession();
           const accessToken = data.session?.access_token;
           if (!accessToken) return;                      // セッションが無いなら何もしない
-          const res = await fetch('/api/auth/resolve', {
+          // admin フラグだけを入れ直す軽い口。Cookie が無ければ本来の resolve へ。
+          const res = await fetch('/api/auth/refresh-admin', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ accessToken }),
           });
-          if (res.ok) location.reload();                 // 新しい Cookie で描き直す
+          if (res.status === 401) {                      // Cookie が無い/切れている → 本解決
+            const r2 = await fetch('/api/auth/resolve', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ accessToken }),
+            });
+            if (r2.ok) location.reload();
+            return;
+          }
+          if (!res.ok) return;
+          const payload = await res.json().catch(() => ({} as { changed?: boolean }));
+          // **変わったときだけ**描き直す (毎回リロードしない)。
+          if (payload && (payload as { changed?: boolean }).changed) location.reload();
         } catch { /* 失敗しても従来どおり */ }
       }
       void refreshViewerCookie();
