@@ -69,6 +69,44 @@ const vm = buildReportVM({
 const impl = contractFromVM(vm);
 const diffs = diffContract(mock, impl);
 
+/*
+ * **タイプが反転したことを検出する (2026-08-30 追加)。**
+ *
+ * 【なぜ要るか】この検証は `hasCancerRisk: false` を**決め打ち**しており、
+ * タイプ2 の紙面しか通していなかった。ところが本番の admin では、デモが貸した
+ * 真鍋の `cancer_urine` artifact を拾って `hasCancerRisk: true` になり、
+ * **タイプ1 (未実装) に反転して A 軸のカードが消えていた** (実測 2026-08-30)。
+ * 検証は全部緑なのに紙面が違う、という状態がここで見逃されていた。
+ *
+ * → 同じ素材を `hasCancerRisk: true` でも組み、**A 軸のカードが消えること**を
+ *   「タイプ1 は未実装」という**既知の事実として固定**する。
+ *   将来 A が出るようになったら、ここが落ちて「タイプ1 の契約を作れ」と教える。
+ */
+const vmAsCourse = buildReportVM({
+  reportText: REPORT_TEXT,
+  checkup: HEALTH_CHECKUP as unknown as Record<string, { date?: string; value?: unknown }[]>,
+  name: '相川 佳之 様',
+  issuedOn: '2026-08-28',
+  isSample: true,
+  hasCancerRisk: true,
+  cycleSeq: null,
+  chronologicalAge: 56,
+  readConfig: () => '',
+});
+const aInType2 = vm.digest.filter((c) => c.axis === 'a').length;
+const aInType1 = vmAsCourse.digest.filter((c) => c.axis === 'a').length;
+const typeFlip: string[] = [];
+if (aInType2 === 0) {
+  typeFlip.push('タイプ2 で A 軸 (初期がんの早期発見) のカードが 0 枚。モックには在る。');
+}
+if (aInType1 !== 0) {
+  typeFlip.push(
+    `タイプ1 で A 軸のカードが ${aInType1} 枚出た。未実装のはずなので、`
+    + 'タイプ1 の紙面契約 (sheet_contract_type1.json) を作って照合対象に加えること。',
+  );
+}
+console.log(`タイプ判定: A 軸カード = タイプ2 ${aInType2} 枚 / タイプ1 ${aInType1} 枚 (タイプ1 は未実装のため 0 が正)`);
+
 console.log(`タイプ2: モック ${mock.cards.length} カード / 実装 ${impl.cards.length} カード`);
 // タイプ 1 は実装が無い (JSON 未受領・v0.2)。契約だけを記録し、照合はしない。
 console.log(`タイプ1: モック ${mock1.cards.length} カード / 実装 なし (JSON 未受領・照合は v0.2 から)`);
@@ -88,5 +126,10 @@ if (diffs.length) {
   console.log('どちらであれ **両方を突き合わせて直す** こと。片方だけ直して通すのは契約の放棄です。');
 }
 
-if (diffs.length || stale) process.exit(1);
+if (typeFlip.length) {
+  console.log(`\n✗ 報告書タイプの前提が崩れています (${typeFlip.length} 件):\n`);
+  for (const t of typeFlip) console.log(`  ● ${t}`);
+}
+
+if (diffs.length || stale || typeFlip.length) process.exit(1);
 console.log('\n✓ モックの紙面を実装が再現しています。');

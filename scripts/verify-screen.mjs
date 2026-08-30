@@ -67,11 +67,19 @@ const shellWidth = async (page, path) => {
 
 // ── ① 契約の文が画面に出ているか (レンダラの描き落としの検知) ──────────
 //
-// 契約は**タイプ 2 (がんリスク検査なし)** の紙面。ローカル/デモ層はがんリスク検査を
-// 持つのでタイプ 1 になり、そのとき主軸 A の「今回の所見」は **出ないのが正** —
-// Elith が `cancer_screening` を書いていないタイプ 1 ではカードごと非表示にする
-// (spec §4.0.1「記載が無いこと ≠ 所見が無いこと」)。
-// → **紙面のタイプを画面から判定し、それに応じて出る/出ないの両方を検査する。**
+/*
+ * 契約は**タイプ 2 (がんリスク検査なし)** の紙面。**デモ/サンプル表示は必ずタイプ 2 が正**
+ * (仕様書 §2.1「対象はタイプ2 のみ」/ 契約 JSON も `hasCancerRisk: false` 前提)。
+ *
+ * 【2026-08-30 修正・重要】ここには以前、
+ *   「ローカル/デモ層はがんリスク検査を持つのでタイプ 1 になり、主軸 A は出ないのが正」
+ * と書いてあり、**A 軸のカードが出ないことを合格条件にしていた**。
+ * ところがそれは仕様ではなく**不具合**だった —
+ * デモが貸した真鍋の `cancer_urine` artifact を拾って `hasCancerRisk: true` になり、
+ * タイプ 1 (未実装) に反転して A 軸が消えていた (実測: 本番 admin で `vm_digest` 6 枚が全て B)。
+ * **検証が不具合を「正」として取り込んでいたため、全部緑なのに紙面が違う**状態が続いた。
+ * → デモ表示は `report.astro` でタイプ 2 に固定した。ここでは**それを機械で見張る**。
+ */
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
@@ -80,21 +88,39 @@ const shellWidth = async (page, path) => {
   const raw = await page.evaluate(() => document.body.textContent ?? '');
   const body = raw.replace(/\s+/g, '');
   const isType1 = body.includes('がんリスク検査の結果を見る');
-  console.log(`  紙面のタイプ: ${isType1 ? '1 (がんリスク検査あり)' : '2 (がんリスク検査なし)'}`);
+  if (isType1) {
+    console.log('✗ 紙面がタイプ 1 になっている — デモ/サンプル表示はタイプ 2 が正');
+    fails.push('デモ表示がタイプ 1 に反転している (借り物の cancer_urine を拾っていないか)');
+  } else {
+    console.log('✓ 紙面のタイプ: 2 (がんリスク検査なし)');
+  }
+
+  // **A 軸のカードが在ること。** ここが実際に落ちていた箇所なので名指しで見る。
+  const axisA = await page.evaluate(() => {
+    const bands = [...document.querySelectorAll('.rp-axis')];
+    const a = bands.find((b) => (b.textContent ?? '').includes('初期がんの早期発見'));
+    if (!a) return { band: false, cards: 0 };
+    // 軸の <section> = 帯の親。その中の .rp-card がその軸のダイジェスト。
+    const section = a.parentElement;
+    return { band: true, cards: section ? section.querySelectorAll('.rp-card').length : 0 };
+  });
+  if (!axisA.band) {
+    console.log('✗ 主軸 A の帯が無い');
+    fails.push('主軸 A (初期がんの早期発見) の帯が画面に無い');
+  } else if (axisA.cards === 0) {
+    console.log('✗ 主軸 A の帯は在るがカードが 0 枚 — 発注者に「画面が空」と見える状態');
+    fails.push('主軸 A のカードが 0 枚 (タイプ反転か材料欠落)');
+  } else {
+    console.log(`✓ 主軸 A のカード ${axisA.cards} 枚`);
+  }
 
   for (const card of contractCards()) {
-    // タイプ 1 かつ Elith 未記載 → このカードは出ないのが正。**出ていたら異常。**
-    const expected = !(isType1 && card.key === 'cancer_finding');
     const missing = card.texts.filter((t) => !body.includes(t.replace(/\s+/g, '')));
-    const shown = missing.length < card.texts.length;
-    if (expected && missing.length) {
+    if (missing.length) {
       console.log(`✗ ${card.key} — 画面に出ていない文 ${missing.length}/${card.texts.length} 件`);
       for (const m of missing.slice(0, 5)) fails.push(`${card.key}: 画面に無い「${m.slice(0, 36)}」`);
-    } else if (!expected && shown) {
-      console.log(`✗ ${card.key} — タイプ 1 では出ないはずのカードが出ている`);
-      fails.push(`${card.key}: タイプ 1 で表示されている (spec §4.0.1)`);
     } else {
-      console.log(`✓ ${card.key}${expected ? '' : ' (タイプ 1 のため非表示・仕様どおり)'}`);
+      console.log(`✓ ${card.key}`);
     }
   }
   await ctx.close();
