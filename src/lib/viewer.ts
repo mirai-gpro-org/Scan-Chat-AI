@@ -74,27 +74,59 @@ function timingSafeEqual(a: string, b: string): boolean {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Cookie に載せる署名付きトークンを作る。鍵が無ければ null。 */
-export async function signViewer(uid: string, now = Date.now()): Promise<string | null> {
+/**
+ * Cookie に載せる署名付きトークンを作る。鍵が無ければ null。
+ *
+ * 【admin フラグを載せる理由 (2026-08-30)】admin 判定の実体が `ADMIN_MEMBERS` の **uid** だけだと、
+ * **uid が未登録のメンバーは管理者リストに載っていても admin にならない**
+ * (実測: `hamada@eentry.co.jp` は email 側にしか無く、本番で `/report` が空になった)。
+ * サインイン時に**サーバで検証済みの email** から admin を判定してここに載せておけば、
+ * **email を 1 行登録するだけで admin として扱える** (uid を調べて登録する手間が要らない)。
+ *
+ * **改竄はできない** — payload に admin を含めて HMAC を取るので、`1` に書き換えると署名が合わない。
+ */
+export async function signViewer(uid: string, isAdmin = false, now = Date.now()): Promise<string | null> {
   const key = secret();
   if (!key || !UUID_RE.test(uid)) return null;
   const exp = Math.floor(now / 1000) + MAX_AGE_SEC;
-  const payload = `${uid.toLowerCase()}.${exp}`;
+  const payload = `${uid.toLowerCase()}.${exp}.${isAdmin ? '1' : '0'}`;
   return `${payload}.${await hmac(payload, key)}`;
 }
 
-/** 署名付きトークンを検証して uid を返す。不正・期限切れは null。 */
-export async function verifyViewer(token: string | undefined | null, now = Date.now()): Promise<string | null> {
+/** 検証済みの閲覧者。`admin` は Cookie 発行時に email から判定した値。 */
+export interface VerifiedViewer {
+  uid: string;
+  /** Cookie に admin フラグが載っていたか。**旧 3 分割の Cookie では false**。 */
+  admin: boolean;
+}
+
+/**
+ * 署名付きトークンを検証して uid を返す。不正・期限切れは null。
+ *
+ * **旧形式 (`uid.exp.sig` の 3 分割) も受ける。** 発行済みの Cookie を一斉に無効化すると
+ * 全員がサインインし直しになるため。旧形式は `admin: false` で返り、
+ * `resolveViewer` 側が uid リストで補う。
+ */
+export async function verifyViewer(token: string | undefined | null, now = Date.now()): Promise<VerifiedViewer | null> {
   const key = secret();
   if (!key || !token) return null;
   const parts = token.split('.');
-  if (parts.length !== 3) return null;
-  const [uid, expRaw, sig] = parts;
+  if (parts.length !== 3 && parts.length !== 4) return null;
+
+  const [uid, expRaw] = parts;
+  const adminRaw = parts.length === 4 ? parts[2] : null;
+  const sig = parts[parts.length - 1];
   if (!UUID_RE.test(uid)) return null;
+  if (adminRaw !== null && adminRaw !== '0' && adminRaw !== '1') return null;
   const exp = Number(expRaw);
   if (!Number.isFinite(exp) || exp * 1000 < now) return null;
-  const expected = await hmac(`${uid.toLowerCase()}.${expRaw}`, key);
-  return timingSafeEqual(sig, expected) ? uid.toLowerCase() : null;
+
+  const payload = adminRaw === null
+    ? `${uid.toLowerCase()}.${expRaw}`
+    : `${uid.toLowerCase()}.${expRaw}.${adminRaw}`;
+  const expected = await hmac(payload, key);
+  if (!timingSafeEqual(sig, expected)) return null;
+  return { uid: uid.toLowerCase(), admin: adminRaw === '1' };
 }
 
 /** `Set-Cookie` に載せる属性。 */
@@ -136,16 +168,23 @@ export async function resolveViewer(ctx: AstroGlobal | APIContext): Promise<View
   const url = new URL(ctx.request.url);
   const requested = normalizeUid(url.searchParams.get('u'));
 
-  const selfUid = await verifyViewer(ctx.cookies.get(VIEWER_COOKIE)?.value);
+  const verified = await verifyViewer(ctx.cookies.get(VIEWER_COOKIE)?.value);
 
-  if (!selfUid) {
+  if (!verified) {
     if (uidEntryAllowed() && requested) {
       return { uid: requested, selfUid: requested, isAdmin: isAdminUid(requested), impersonating: false };
     }
     return ANONYMOUS;
   }
+  const selfUid = verified.uid;
 
-  const isAdmin = isAdminUid(selfUid);
+  /*
+   * admin は **2 つの経路のどちらか**で成立する (2026-08-30):
+   *   ① Cookie の admin フラグ … サインイン時に **email** から判定 (`ADMIN_MEMBERS.email`)
+   *   ② uid が `ADMIN_MEMBERS.uid` に在る … 旧形式 Cookie と `ALLOW_UID_ENTRY` 経路のため
+   * **①があるので uid を登録しなくても email だけで admin になれる。**
+   */
+  const isAdmin = verified.admin || isAdminUid(selfUid);
   if (isAdmin && requested && requested !== selfUid) {
     return { uid: requested, selfUid, isAdmin, impersonating: true };
   }

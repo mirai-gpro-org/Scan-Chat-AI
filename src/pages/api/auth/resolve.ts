@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { getServerSupabase } from '../../../lib/supabase';
 import { isHpEdgeConfigured, resolveCustomerByEmail } from '../../../lib/hp-edge';
 import { VIEWER_COOKIE, signViewer, viewerCookieOptions } from '../../../lib/viewer';
+import { isAdminEmail } from '../../../lib/admin-auth';
 
 export const prerender = false;
 
@@ -86,7 +87,16 @@ export const POST: APIRoute = async ({ request, cookies }) => {
    * （`src/lib/viewer.ts`）。`?u=` は admin の代理表示のときだけ効く。
    * 署名鍵が無い環境では null が返るので Cookie を発行しない（fail-closed）。
    */
-  const token = await signViewer(diagnosticUserId);
+  /*
+   * admin かどうかは**ここで email から決める** (2026-08-30)。
+   * `email` は `sb.auth.getUser(accessToken)` で**サーバが検証した値**で、
+   * クライアントの申告ではない。判定結果は署名付き Cookie に載るので改竄できない。
+   *
+   * **これで uid を調べて登録しなくても、`ADMIN_MEMBERS` に email を 1 行足すだけで
+   * admin として扱われる。** (uid 未登録のメンバーが管理者リストに載っているのに
+   * admin にならず、`/report` が空になっていた実測への対処・spec §4.6)
+   */
+  const token = await signViewer(diagnosticUserId, isAdminEmail(email));
   if (token) cookies.set(VIEWER_COOKIE, token, viewerCookieOptions());
 
   return json({ linked: true, diagnosticUserId }, 200);

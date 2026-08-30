@@ -42,6 +42,7 @@ export interface LoadNoticesOptions {
 export async function loadNotices(
   diagnosticUserId: string,
   opts: LoadNoticesOptions = {},
+  viewerIsAdmin?: boolean,
 ): Promise<NoticesData | { error: string }> {
   const sb = getServerSupabase();
   if (!sb) return { error: 'Supabase が未設定です。.env.local を確認してください。' };
@@ -104,7 +105,7 @@ export async function loadNotices(
     (importantRaw?.length ?? 0) === 0 &&
     (generalRaw?.length ?? 0) === 0 &&
     (newsRaw?.length ?? 0) === 0;
-  if (demoFallbackEnabled(diagnosticUserId) && (anyErr || allEmpty)) {
+  if (demoFallbackEnabled(diagnosticUserId, viewerIsAdmin) && (anyErr || allEmpty)) {
     return buildDemoNotices(diagnosticUserId, userName);
   }
 
@@ -128,7 +129,7 @@ export async function loadNotices(
  * ヘッダーのバッジ用 — 未読の重要なお知らせ件数。
  * Supabase 未設定や該当なしは 0 を返す (画面側でバッジ非表示)。
  */
-export async function countUnreadImportant(diagnosticUserId: string): Promise<number> {
+export async function countUnreadImportant(diagnosticUserId: string, viewerIsAdmin?: boolean): Promise<number> {
   const sb = getServerSupabase();
   if (!sb) return 0;
   const { count, error } = await sb
@@ -137,7 +138,7 @@ export async function countUnreadImportant(diagnosticUserId: string): Promise<nu
     .select('id', { count: 'exact', head: true })
     .eq('diagnostic_user_id', diagnosticUserId)
     .is('read_at', null);
-  if (error) return demoFallbackEnabled(diagnosticUserId) ? demoUnreadImportant() : 0;
-  if ((count ?? 0) === 0 && demoFallbackEnabled(diagnosticUserId)) return demoUnreadImportant();
+  if (error) return demoFallbackEnabled(diagnosticUserId, viewerIsAdmin) ? demoUnreadImportant() : 0;
+  if ((count ?? 0) === 0 && demoFallbackEnabled(diagnosticUserId, viewerIsAdmin)) return demoUnreadImportant();
   return count ?? 0;
 }
