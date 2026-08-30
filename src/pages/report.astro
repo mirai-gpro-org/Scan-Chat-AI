@@ -90,37 +90,24 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
 
   <main class={`report-sheet flex flex-1 flex-col gap-4 px-5 pb-12 ${isPrint ? 'pt-6' : 'pt-5'}`}>
 
-    {/* ══════════ 表紙 ══════════ */}
-    <header class="rounded-lg border border-slate-200 bg-navy-50 px-5 py-5">
-      <p class="text-xs font-semibold uppercase tracking-[0.16em] text-brand-700">Welltect</p>
-      <h1 class="mt-1.5 text-2xl font-bold leading-snug tracking-tight text-navy-800">
+    {/* ══════════ ① 表紙 (見本 p1) ══════════
+        見本の表紙は 上端 teal ルール / 淡色パネル / 右上の円モチーフ / タイトル /
+        Powered by 行と細罫 / 氏名 / メタ の順。**要素の順序と装飾だけを写す**もので、
+        中身 (氏名・作成日・第 N 回) はアプリのデータ (仕様書 §4.3)。 */}
+    <header class="rp-cover -mx-5 px-5 py-7 sm:px-7">
+      <h1 class="text-[1.75rem] font-bold leading-tight tracking-tight text-navy-800 sm:text-[2rem]">
         {AI_PREVENTION_REPORT_LABEL}
       </h1>
-      <p class="mt-1.5 text-base font-bold text-navy-800">{vm.cover.name}</p>
-      <p class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600">
+      <p class="rp-brandline mt-2 font-mono text-xs tracking-[0.14em] text-brand-700">
+        Powered by Welltect AI Health Analysis
+      </p>
+      <p class="mt-5 text-lg font-bold text-navy-800">{vm.cover.name}</p>
+      <p class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600">
         <span>作成日 {formatJpDate(vm.cover.issuedOn) || vm.cover.issuedOn}</span>
         <span>紙面 {vm.cover.sheetVersion}</span>
         {vm.cover.testedOn && <span>検査 {formatJpDate(vm.cover.testedOn)}</span>}
         {vm.cover.cycleSeq && <span>第 {vm.cover.cycleSeq} 回 / 全 {vm.cover.cycleTotal} 回</span>}
       </p>
-
-      {/*
-        ウェルネス年齢は**画面版に出さない** (ダッシュボード上部で表示済み・spec §4.0.0.3)。
-        PDF 版はアプリから切り離されて単体で読まれるので、冒頭に置く。
-      */}
-      {isPrint && vm.cover.wellnessAge != null && (
-        <div class="mt-4 flex items-baseline gap-3 border-t border-slate-200 pt-4">
-          <b class="font-mono text-3xl font-medium tabular-nums leading-none text-brand-800">
-            {vm.cover.wellnessAge}
-          </b>
-          <span class="text-sm text-slate-700">
-            {WELLNESS_AGE_LABEL}
-            {vm.cover.chronologicalAge != null && (
-              <span class="ml-2 text-slate-600">実年齢 {vm.cover.chronologicalAge} 歳</span>
-            )}
-          </span>
-        </div>
-      )}
 
       {vm.isSample && !isPrint && (
         <p class="mt-3 inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-sm text-amber-800">
@@ -130,33 +117,49 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
       )}
     </header>
 
+    {/* ══════════ ② 2 連の大数字カード (見本 p1) ══════════
+        【発注者裁定 D-C2・2026-08-29】見本は表紙に大数字を 2 連で置く。
+        **画面版には出さない**（ダッシュボード上部で表示済み）が、**PDF 版は出す**
+        — アプリから切り離されて単体で読まれるため (仕様書 §4.3.3)。 */}
+    {isPrint && vm.cover.wellnessAge != null && (
+      <div class="rp-nums">
+        <div class="rp-num">
+          <b class="block font-mono text-[2.4rem] font-medium leading-none text-brand-700">
+            {vm.cover.wellnessAge}
+          </b>
+          <span class="mt-2 block text-sm text-slate-800">{WELLNESS_AGE_LABEL}</span>
+        </div>
+        <div class="rp-num">
+          <b class="block font-mono text-[2.4rem] font-medium leading-none text-slate-700">
+            {vm.cover.chronologicalAge ?? '—'}
+          </b>
+          <span class="mt-2 block text-sm text-slate-800">実年齢</span>
+        </div>
+      </div>
+    )}
+
     {/* ══════════ 2 本柱 × ダイジェスト ══════════
         軸の帯は**常設**。材料が無い回でも消さない (spec §4.-1)。
-        帯が持つのは見出しだけで、ポリシーの説明文は紙面に載せない。 */}
+        帯が持つのは見出しだけで、ポリシーの説明文は紙面に載せない。
+        ⑤ 章扉 = 淡 teal 地 + 丸バッジ + 見出し (見本 p2/p9)。 */}
     {vm.axes.map((axis) => (
       <section class="flex flex-col gap-4">
-        <div class={`mt-2 rounded-md px-4 py-3 ${
-          axis.key === 'a'
-            ? 'border-l-4 border-navy-700 bg-navy-50'
-            : 'border-l-4 border-brand-600 bg-brand-50'
-        }`}>
-          <span class="text-xs font-semibold tracking-[0.12em] text-slate-600">
-            主軸 {axis.key === 'a' ? 'A' : 'B'}
-          </span>
-          <h2 class="mt-0.5 text-lg font-bold leading-snug text-navy-800">{axis.title}</h2>
+        <div class="rp-axis mt-2 flex items-center gap-3 px-4 py-3">
+          <span class="rp-badge">{axis.key === 'a' ? 'A' : 'B'}</span>
+          <h2 class="text-lg font-bold leading-snug text-navy-800">{axis.title}</h2>
         </div>
 
         {digestByAxis(axis.key).map((card) => (
-          <article class={`card flex flex-col gap-2 ${
-            card.tone === 'emergency' ? 'border-l-4 border-l-status-action bg-status-action-bg' : ''
+          <article class={`rp-card flex flex-col gap-2.5 ${
+            card.tone === 'emergency' ? 'rp-er px-4 py-3.5' : ''
           }`}>
             {card.tone === 'emergency' && (
-              <p class="inline-flex w-fit items-center gap-1.5 rounded px-2 py-0.5 text-xs font-semibold text-status-action">
+              <p class="inline-flex w-fit items-center gap-1.5 text-xs font-semibold text-status-action">
                 <AppIcon name="error" size={14} />すぐ受診
               </p>
             )}
             {card.title && (
-              <h3 class="text-base font-bold leading-snug text-navy-800">{card.title}</h3>
+              <h3 class="rp-h3 text-base font-bold leading-snug text-navy-800">{card.title}</h3>
             )}
 
             {card.blocks.map((block) => (
@@ -165,8 +168,9 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
                   <p class="report-prose text-base leading-relaxed text-slate-800">{t}</p>
                 ))}
 
+                {/* ⑪ 箇条書き — marker は teal (見本 p3) */}
                 {block.kind === 'steps' && (
-                  <ol class="ml-5 flex list-decimal flex-col gap-2 text-base marker:font-semibold marker:text-brand-700">
+                  <ol class="ml-5 flex list-decimal flex-col gap-2 text-base marker:font-semibold marker:text-brand-600">
                     {block.items.map((s) => (
                       <li>
                         <b class="text-navy-800">{s.heading}</b>
@@ -176,21 +180,22 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
                   </ol>
                 )}
 
+                {/* ⑩ 横テーブル — teal ヘッダ・白抜き・ゼブラなし (見本 p9/p12/p17) */}
                 {block.kind === 'table' && (
                   <div class="-mx-1 overflow-x-auto">
-                    <table class="w-full border-collapse text-sm">
+                    <table class="rp-table text-sm">
                       <thead>
-                        <tr class="border-b border-slate-200 text-xs text-slate-600">
-                          <th class="whitespace-nowrap px-1.5 py-1 text-left font-semibold">項目</th>
-                          <th class="whitespace-nowrap px-1.5 py-1 text-left font-semibold">今回</th>
-                          <th class="whitespace-nowrap px-1.5 py-1 text-left font-semibold">基準値</th>
-                          <th class="whitespace-nowrap px-1.5 py-1 text-left font-semibold">判定</th>
+                        <tr>
+                          <th>項目</th>
+                          <th>今回</th>
+                          <th>基準値</th>
+                          <th>判定</th>
                         </tr>
                       </thead>
                       <tbody>
                         {block.rows.map((r) => (
-                          <tr class="border-b border-slate-100 align-baseline last:border-b-0">
-                            <td class="px-1.5 py-1.5">
+                          <tr>
+                            <td>
                               {r.name}
                               {/* 2 ファイルは包含関係でないので、本文にしかない値も載せる (spec §7.2)。 */}
                               {r.source === 'report_text' && (
@@ -202,12 +207,10 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
                                 </span>
                               )}
                             </td>
-                            <td class="whitespace-nowrap px-1.5 py-1.5 font-mono tabular-nums">{r.value}</td>
-                            <td class="whitespace-nowrap px-1.5 py-1.5 text-xs text-slate-600">
-                              {r.reference || '—'}
-                            </td>
+                            <td class="whitespace-nowrap font-mono tabular-nums">{r.value}</td>
+                            <td class="whitespace-nowrap text-xs text-slate-600">{r.reference || '—'}</td>
                             {/* 判定は Elith の原文をそのまま。色だけで意味を伝えない (アイコン+テキスト+色)。 */}
-                            <td class={`px-1.5 py-1.5 text-xs leading-snug ${
+                            <td class={`min-w-[11rem] text-xs leading-snug ${
                               r.tone === 'flagged' ? 'font-semibold text-status-watch'
                               : r.tone === 'within' ? 'text-status-ok' : 'text-slate-500'
                             }`}>
@@ -220,28 +223,32 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
                   </div>
                 )}
 
+                {/* ⑨ 左ラベル型テーブル (見本 p3/p6) — 現状評価 / 行動提案 */}
                 {block.kind === 'pairs' && (
-                  <dl class="flex flex-col gap-3">
+                  <div class="flex flex-col gap-4">
                     {block.items.map((p) => (
-                      <div class="border-b border-dashed border-slate-200 pb-3 last:border-b-0 last:pb-0">
-                        <dt class="text-base font-bold text-navy-800">{p.heading}</dt>
-                        <dd class="report-prose mt-1 grid grid-cols-[5.4rem_1fr] gap-x-2 gap-y-1 text-base leading-relaxed max-[520px]:grid-cols-1">
-                          <span class="pt-0.5 text-xs font-semibold text-slate-600">現状評価</span>
-                          <span class="text-slate-800">{p.current}</span>
-                          <span class="pt-0.5 text-xs font-semibold text-slate-600">行動提案</span>
-                          <span class="text-slate-800">{p.action}</span>
-                        </dd>
+                      <div>
+                        <h4 class="mb-1.5 text-sm font-bold text-brand-700">{p.heading}</h4>
+                        <div class="rp-lrow text-base">
+                          <span class="rp-lkey">現状評価</span>
+                          <span class="rp-lval report-prose leading-relaxed text-slate-800">{p.current}</span>
+                        </div>
+                        <div class="rp-lrow text-base">
+                          <span class="rp-lkey">行動提案</span>
+                          <span class="rp-lval report-prose leading-relaxed text-slate-800">{p.action}</span>
+                        </div>
                       </div>
                     ))}
-                  </dl>
+                  </div>
                 )}
 
+                {/* 週プラン (左ラベル型の応用) */}
                 {block.kind === 'weeks' && (
                   <div class="flex flex-col">
                     {block.items.map((w) => (
-                      <div class="grid grid-cols-[3.6rem_1fr] gap-3 border-b border-slate-100 py-2 text-base last:border-b-0">
-                        <b class="pt-0.5 text-sm text-brand-800">{w.heading}</b>
-                        <span class="report-prose leading-relaxed text-slate-800">{w.text}</span>
+                      <div class="rp-wrow text-base">
+                        <b class="rp-wkey">{w.heading}</b>
+                        <span class="rp-wval report-prose leading-relaxed text-slate-800">{w.text}</span>
                       </div>
                     ))}
                   </div>
@@ -257,8 +264,6 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
           主軸 A の導線 (spec §4.0.1「詳細はリンクで別画面へ送る」)。
           **その回にがんリスク検査があったときだけ出す。** 無い回 (タイプ 2) は送る先が
           存在しないので出さない — 押せば 404 になるリンクを置かない。
-          (モックの「がんリスク検査について →」は遷移先が未定のため保留・spec §1.3.10 の
-           モック補正 ③。作るなら別途。)
           A に材料が無い回でも帯は立つ。**アプリが代わりの所見を書かない** (spec §4.0.1)。
         */}
         {axis.key === 'a' && cancerArtifact && (
@@ -287,14 +292,14 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
       <section class="mt-4 flex flex-col gap-3">
         <h2 class="border-t border-slate-200 pt-5 text-lg font-bold text-navy-800">全編</h2>
         {(['a', 'b'] as const).flatMap((ax) => chaptersByAxis(ax)).map((ch) => (
-          <details class="card" open={isPrint || !ch.collapsed}>
+          <details class="rp-card card" open={isPrint || !ch.collapsed}>
             <summary class={`cursor-pointer text-base font-bold text-navy-800 ${isPrint ? 'list-none' : ''}`}>
               {ch.title}
             </summary>
             <div class="md-region md-summary mt-3 flex flex-col gap-4">
               {ch.topics.map((t) => (
                 <div id={t.anchor}>
-                  {t.heading && <h3 class="text-base font-bold text-navy-800">{t.heading}</h3>}
+                  {t.heading && <h3 class="rp-h3 text-base font-bold text-navy-800">{t.heading}</h3>}
                   <div set:html={renderReportMarkdown(t.body)} />
                 </div>
               ))}
@@ -302,19 +307,19 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
               {/* 受領した検査値の全行。ダイジェストは Elith が取り上げた 8 項目だけを出している。 */}
               {ch.table && !!ch.table.length && (
                 <div class="overflow-x-auto">
-                  <table class="w-full border-collapse text-sm">
+                  <table class="rp-table text-sm">
                     <thead>
-                      <tr class="border-b border-slate-200 text-xs text-slate-600">
-                        <th class="px-1.5 py-1 text-left font-semibold">項目</th>
-                        <th class="px-1.5 py-1 text-left font-semibold">今回</th>
-                        <th class="px-1.5 py-1 text-left font-semibold">基準値</th>
-                        <th class="px-1.5 py-1 text-left font-semibold">判定</th>
+                      <tr>
+                        <th>項目</th>
+                        <th>今回</th>
+                        <th>基準値</th>
+                        <th>判定</th>
                       </tr>
                     </thead>
                     <tbody>
                       {ch.table.map((r) => (
-                        <tr class="border-b border-slate-100 align-baseline last:border-b-0">
-                          <td class="px-1.5 py-1.5">
+                        <tr>
+                          <td>
                             {r.name}
                             {r.source === 'report_text' && (
                               <span class="ml-1 rounded bg-slate-100 px-1 text-[11px] text-slate-600">本文</span>
@@ -325,9 +330,9 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
                               </span>
                             )}
                           </td>
-                          <td class="whitespace-nowrap px-1.5 py-1.5 font-mono tabular-nums">{r.value}</td>
-                          <td class="whitespace-nowrap px-1.5 py-1.5 text-xs text-slate-600">{r.reference || '—'}</td>
-                          <td class="px-1.5 py-1.5 text-xs leading-snug text-slate-600">{r.judgement || '—'}</td>
+                          <td class="whitespace-nowrap font-mono tabular-nums">{r.value}</td>
+                          <td class="whitespace-nowrap text-xs text-slate-600">{r.reference || '—'}</td>
+                          <td class="text-xs leading-snug text-slate-600">{r.judgement || '—'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -339,6 +344,15 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
         ))}
       </section>
     )}
+
+    {/* ══════════ ⑬ フッター (見本 全ページ) ══════════
+        見本は全ページ下に 左=報告書名/氏名・中央=ページ番号・右=作成日 の帯を置く。
+        画面では不要なので **印刷時だけ** 出す (`.rp-sheet-foot`)。
+        ページ番号は CSS だけでは採番できないため入れない (捏造しない)。 */}
+    <div class="rp-sheet-foot hidden border-t border-slate-200 pt-2 font-mono text-[10px] text-slate-500">
+      <span>{AI_PREVENTION_REPORT_LABEL}｜{vm.cover.name}</span>
+      <span class="float-right">{formatJpDate(vm.cover.issuedOn) || vm.cover.issuedOn}</span>
+    </div>
 
     {/* ══════════ 端末に残す (spec §3.6) ══════════
         主要利用者は 50〜65 代。共有シートを自力で辿らせない。
@@ -385,7 +399,7 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
   @media print {
     nav, header.app-nav, .no-print { display: none !important; }
     .report-sheet { padding: 0 !important; }
-    .card, .report-sheet table, .report-sheet details { break-inside: avoid; }
+    .card, .rp-card, .report-sheet table, .report-sheet details { break-inside: avoid; }
     details > summary { list-style: none; }
   }
 </style>
