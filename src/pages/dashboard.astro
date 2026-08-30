@@ -285,10 +285,9 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
               <dt>admin 判定:</dt>
               <dd>
                 {viewer.isAdmin ? '✓ admin' : '✗ admin ではない'}
-                {viewer.adminBy === 'cookie' && <span class="ml-1">（根拠: サインイン時の email）</span>}
-                {viewer.adminBy === 'uid' && <span class="ml-1">（根拠: uid が登録済み）</span>}
+                {viewer.adminBy === 'cookie' && <span class="ml-1">（根拠: サインイン時に管理者リストで確認）</span>}
                 {!viewer.isAdmin && (
-                  <span class="ml-1">（この uid も、サインインした email も ADMIN_MEMBERS に無い）</span>
+                  <span class="ml-1">（サインインした email が admin の管理者リストに無いか、リストを引けていない）</span>
                 )}
               </dd>
             </div>

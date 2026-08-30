@@ -28,35 +28,44 @@ const pick = (text, name) => {
   return [...body.matchAll(/'([0-9a-f-]{36})'/g)].map((m) => m[1]);
 };
 
-/** 管理者メンバー登録 (`ADMIN_MEMBERS`) を読む。**admin を足す唯一の場所。** */
-const membersBlock = adminSrc.slice(
-  adminSrc.indexOf('export const ADMIN_MEMBERS'),
-  adminSrc.indexOf('/** 管理者のメール'),
-);
-const ADMIN_MEMBERS = [...membersBlock.matchAll(
-  /\{\s*label:\s*'([^']*)',\s*email:\s*(?:'([^']*)'|null),\s*uid:\s*(?:'([^']*)'|null)\s*\}/g,
-)].map((m) => ({ label: m[1], email: m[2] ?? null, uid: m[3] ?? null }));
-
-const ADMIN_UIDS = ADMIN_MEMBERS.map((m) => m.uid).filter(Boolean);
-const ADMIN_EMAILS = ADMIN_MEMBERS.map((m) => m.email).filter(Boolean);
 const DEMO_ALLOWED = pick(src, 'DEMO_ALLOWED_UIDS');
 
-if (ADMIN_MEMBERS.length === 0) { console.error('✗ ADMIN_MEMBERS を読めなかった'); process.exit(1); }
-if (ADMIN_UIDS.length === 0) { console.error('✗ uid を持つ管理者が 1 人もいない'); process.exit(1); }
+const fails = [];
 
-/** 期待する規則 (発注者指示 2026-08-30)。実装とは独立にここへ書く。 */
-function expected(uid, envFalse) {
-  if (uid && ADMIN_UIDS.includes(uid)) return true;   // ① admin は env に関わらず出る
-  if (envFalse) return false;                          // ② env は admin 以外を一括で切る
-  return !!uid && DEMO_ALLOWED.includes(uid);          // ③ デモ許可 uid
+/*
+ * ── ベタ書きの管理者一覧が復活していないこと (2026-08-30) ──────────
+ *
+ * 以前は `admin-auth.ts` に `ADMIN_MEMBERS` という手書きの一覧があり、
+ * **それが唯一動いている admin 判定**だった。`admin_users` を引く側は
+ * **別プロジェクトの Supabase を叩いていて常に 404** だったため
+ * (Scan-Chat-AI = nfubaio… / wellfort-site = nlydlve…)、
+ * **管理者リストに登録しても診断アプリには一生届かない**うえ、
+ * **リストから外しても admin のまま**という状態だった。
+ * → 一覧は撤去。**戻ってきたらここで落とす。**
+ */
+for (const name of ['ADMIN_MEMBERS', 'ADMIN_EMAILS', 'ADMIN_UIDS', 'isAdminUid']) {
+  if (adminSrc.includes(`const ${name}`) || adminSrc.includes(`function ${name}`)) {
+    fails.push(`admin-auth.ts: ベタ書きの管理者判定 ${name} が復活している`
+      + ' — admin の正は wellfort-site の管理者リスト (admin_users) だけ');
+  }
+}
+// uid だけで admin になれる経路が残っていないこと
+const viewerSrc = readFileSync(resolve(ROOT, 'src/lib/viewer.ts'), 'utf8');
+if (/isAdminUid\s*\(/.test(viewerSrc)) {
+  fails.push('viewer.ts: uid の一覧で admin を判定している — URL に uid を書くだけで admin になれる');
 }
 
-const fails = [];
+/** 期待する規則 (発注者指示 2026-08-30)。実装とは独立にここへ書く。 */
+function expected(isAdmin, uid, envFalse) {
+  if (isAdmin) return true;                    // ① admin は env に関わらず出る
+  if (envFalse) return false;                  // ② env は admin 以外を一括で切る
+  return !!uid && DEMO_ALLOWED.includes(uid);  // ③ デモ許可 uid
+}
 
 /** 実装のソースが ①→②→③ の順になっているか (順序が入れ替わると ① が死ぬ)。 */
 const fn = src.slice(src.indexOf('export function demoFallbackEnabled'));
 const body = fn.slice(0, fn.indexOf('\n}'));
-const iAdmin = body.indexOf('isAdminUid');
+const iAdmin = body.indexOf('viewerIsAdmin');
 const iEnv = body.indexOf('PUBLIC_DEMO_FALLBACK');
 const iAllowed = body.indexOf('DEMO_ALLOWED_UIDS');
 
@@ -66,21 +75,21 @@ else if (!(iAdmin < iEnv && iEnv < iAllowed)) {
     + ' — env が先だと PUBLIC_DEMO_FALLBACK=false で **admin まで塞がれる**');
 }
 
-const ADMIN = ADMIN_UIDS[0];
-const CUSTOMER = 'aaaaaaaa-1111-2222-3333-444444444444'; // Google 認証済みの一般顧客
+const SOMEONE = 'aaaaaaaa-1111-2222-3333-444444444444';
 const OEM = DEMO_ALLOWED[0] ?? null;
 
+// [ラベル, 閲覧者が admin か, 表示中の uid, env=false か, 期待]
 const cases = [
-  ['admin                / env 未設定', ADMIN, false, true],
-  ['admin                / env=false ', ADMIN, true, true],   // ← ここが要件
-  ['一般顧客(非admin)     / env 未設定', CUSTOMER, false, false],
-  ['一般顧客(非admin)     / env=false ', CUSTOMER, true, false],
-  ['未サインイン(uid無し) / env 未設定', null, false, false],
-  ['未サインイン(uid無し) / env=false ', null, true, false],
+  ['admin                / env 未設定', true,  SOMEONE, false, true],
+  ['admin                / env=false ', true,  SOMEONE, true,  true],  // ← ここが要件
+  ['一般顧客(非admin)     / env 未設定', false, SOMEONE, false, false],
+  ['一般顧客(非admin)     / env=false ', false, SOMEONE, true,  false],
+  ['未サインイン          / env 未設定', false, null,    false, false],
+  ['未サインイン          / env=false ', false, null,    true,  false],
 ];
 if (OEM) cases.push(
-  ['OEMデモ顧客           / env 未設定', OEM, false, true],
-  ['OEMデモ顧客           / env=false ', OEM, true, false],
+  ['OEMデモ顧客           / env 未設定', false, OEM, false, true],
+  ['OEMデモ顧客           / env=false ', false, OEM, true,  false],
 );
 
 // ── 引数の伝播チェック ────────────────────────────────────────
@@ -116,11 +125,21 @@ if (OEM) cases.push(
     fails.push('api/auth/resolve.ts: Cookie の admin フラグを email から決めていない'
       + ' — 手写しの uid/email に依存すると管理者が admin にならない');
   }
-  // admin の正は admin_users テーブル (wellfort-site の admin 画面が出し入れする実体)
-  const aa = readFileSync(resolve(ROOT, 'src/lib/admin-auth.ts'), 'utf8');
-  if (!/admin_users\?email=eq\./.test(aa)) {
-    fails.push('admin-auth.ts: admin_users を引いていない'
-      + ' — 管理者が追加登録されても追随できない');
+  /*
+   * admin の正は **wellfort-site の管理者リスト**。
+   * **自前の Supabase を直接引かないこと** — `admin_users` は別プロジェクトに在り、
+   * 直引きすると 404 になって「常に非 admin」になる (2026-08-30 に実測)。
+   */
+  // **コメント行は見ない** — 経緯の説明に旧コードが書いてあるため。
+  const aa = readFileSync(resolve(ROOT, 'src/lib/admin-auth.ts'), 'utf8')
+    .split('\n').filter((ln) => !/^\s*(\*|\/\/|\/\*)/.test(ln)).join('\n');
+  if (/PUBLIC_SUPABASE_URL[\s\S]{0,400}admin_users/.test(aa)) {
+    fails.push('admin-auth.ts: 自前の Supabase から admin_users を直引きしている'
+      + ' — 別プロジェクトなので必ず 404 になり、管理者が誰も admin にならない');
+  }
+  if (!/resolveCustomerByEmail/.test(aa)) {
+    fails.push('admin-auth.ts: HP Edge (resolve-customer) 経由で管理者リストを引いていない'
+      + ' — 顧客DB と管理者リストは Wellfort 側にしか無く、この経路が正');
   }
   // 旧形式 (elith-v1.0 配列) の seed 行より現行サンプルを優先する分岐が、
   // **必ず demoFallbackEnabled の内側**にあること (= 実顧客には影響しない)。
@@ -140,30 +159,9 @@ if (OEM) cases.push(
   }
 }
 
-// ── 管理者メンバー登録の棚卸し ────────────────────────────────
-// **uid が admin 判定の実体**なので、uid の無いメンバーは admin にならない。
-// 黙って非 admin のまま放置されないよう、毎回名指しで出す (落としはしない —
-// uid がまだ分からない期間は正当にあり得るため)。
-console.log(`管理者メンバー ${ADMIN_MEMBERS.length} 名 (admin を足すのは ADMIN_MEMBERS だけ)\n`);
-const noUid = ADMIN_MEMBERS.filter((m) => !m.uid);
-for (const m of ADMIN_MEMBERS) {
-  const mark = m.uid ? '✓' : (m.email ? '~' : '!');
-  const note = m.uid ? ''
-    : m.email ? '  ← uid 未登録 (サインインし直せば email 経由で admin になります)'
-    : '  ← email も uid も無く **admin になれません**';
-  console.log(`  ${mark} ${m.label.padEnd(18)} ${(m.email ?? '(email 不明)').padEnd(26)}${note}`);
-}
-if (noUid.length) {
-  console.log(`\n  ⚠ uid 未登録 ${noUid.length} 名: ${noUid.map((m) => m.label).join(' / ')}`);
-  console.log('    → email が登録されていれば **サインインし直せば admin として扱われます**');
-  console.log('      (Cookie の admin フラグは resolve 時に email から決まるため)。');
-  console.log('    uid を埋めておくと `?u=` 入場など Cookie 以外の経路でも admin になります。');
-}
-console.log(`\n  email 登録 ${ADMIN_EMAILS.length} 名 / uid 登録 ${ADMIN_UIDS.length} 名`);
-
 console.log('\nダミーデータを出すか (◯=出す / ✗=出さない)\n');
-for (const [label, uid, envFalse, want] of cases) {
-  const got = expected(uid, envFalse);
+for (const [label, isAdmin, uid, envFalse, want] of cases) {
+  const got = expected(isAdmin, uid, envFalse);
   const ok = got === want;
   if (!ok) fails.push(`${label}: 期待 ${want} / 規則 ${got}`);
   console.log(`  ${ok ? '✓' : '✗'} ${label}  → ${got ? '◯' : '✗'}`);
@@ -175,3 +173,4 @@ if (fails.length) {
   process.exit(1);
 }
 console.log('\n✓ admin だけがダミーを見る。一般顧客は env に関わらず自分の実データだけ。');
+console.log('  admin の正 = wellfort-site の管理者リスト (admin_users)。このリポジトリに名簿は持たない。');

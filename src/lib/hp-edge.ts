@@ -2,7 +2,7 @@
  * HP/EC #1 の Edge Function をサーバー間で呼び出すヘルパ (SSR / API ルート専用)。
  *
  * 統合仕様書 §6:
- *   - resolve-customer : email → { diagnostic_user_id, display_name }
+ *   - resolve-customer : email → { diagnostic_user_id, display_name, is_admin }
  *   - kit-self-report  : 受取/返送の自己申告 → orders (正本) を更新
  *
  * 認証は共有シークレット `x-resolve-secret`。クライアントには絶対に出さない。
@@ -21,6 +21,15 @@ export function isHpEdgeConfigured(): boolean {
 export interface ResolvedCustomer {
   diagnostic_user_id: string;
   display_name: string | null;
+  /**
+   * **admin の管理者リスト (`admin_users`) に載っている現役の管理者か。**
+   *
+   * 顧客DB も管理者リストも **Wellfort 側の Supabase にしか無い**
+   * (個人情報は Wellfort 側でしか持たない取り決め)。したがって admin 判定も
+   * **この経路で受け取る**のが正で、Scan-Chat-AI 側に名簿を持たない。
+   * 古い Edge Function がまだ返さない場合に備えて省略可 (その場合は false 扱い)。
+   */
+  is_admin?: boolean;
 }
 
 /**

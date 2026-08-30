@@ -38,6 +38,8 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   // 1) email → diagnostic_user_id + 表示名(姓)
   let diagnosticUserId: string | null = null;
   let bareName: string | null = null;
+  /** 管理者リスト (Wellfort 側 `admin_users`) に載っているか。解決と同じ応答で受け取る。 */
+  let isAdmin = false;
 
   if (isHpEdgeConfigured()) {
     const resolved = await resolveCustomerByEmail(email).catch((e: unknown) => {
@@ -46,6 +48,8 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     if (resolved) {
       diagnosticUserId = resolved.diagnostic_user_id;
       bareName = resolved.display_name;
+      // **同じ応答に載っている。** admin 判定のために 2 回呼ばない。
+      isAdmin = resolved.is_admin === true;
     }
   } else {
     // dev フォールバック: モック customer_profiles を email で解決
@@ -94,11 +98,11 @@ export const POST: APIRoute = async ({ request, cookies }) => {
    *
    * **判定の正は `admin_users` テーブル** — wellfort-site の admin 画面が管理者を
    * 出し入れしている実体で、同じ Supabase に在る。**そこに管理者が増えたら自動で追随する**
-   * （手で写した `ADMIN_MEMBERS` はフォールバック兼・開発用の逃げ道として残す）。
+   * 判定の実体は wellfort-site の管理者リスト (`public.admin_users`)。ベタ書きの一覧は撤去した。
    * 実測 2026-08-30: 手写しの uid/email に依存していたため本番で admin にならず、
    * 報告書が空のままだった (spec §4.6)。
    */
-  const token = await signViewer(diagnosticUserId, await isAdminEmailAsync(email));
+  const token = await signViewer(diagnosticUserId, isAdmin || await isAdminEmailAsync(email));
   if (token) cookies.set(VIEWER_COOKIE, token, viewerCookieOptions());
 
   return json({ linked: true, diagnosticUserId }, 200);

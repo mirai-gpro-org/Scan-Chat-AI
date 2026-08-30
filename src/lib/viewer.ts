@@ -20,7 +20,6 @@
  */
 
 import type { APIContext, AstroGlobal } from 'astro';
-import { isAdminUid } from './admin-auth';
 
 /** Cookie 名。値は署名付きなので中身を書き換えても通らない。 */
 export const VIEWER_COOKIE = 'welltect_v';
@@ -77,14 +76,11 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /**
  * Cookie に載せる署名付きトークンを作る。鍵が無ければ null。
  *
- * 【admin フラグを載せる理由 (2026-08-30)】admin 判定の実体が `ADMIN_MEMBERS` の **uid** だけだと、
- * **admin になれない経路が 2 つできる**:
- *   ① uid が未登録のメンバー (管理者リストに email では載っている)
- *   ② **ハードコードした uid が本番の実値と食い違っている** メンバー
- *      — uid は手で書き写したものなので、顧客DBの採番と一致している保証が無い
- * サインイン時に**サーバで検証済みの email** から admin を判定してここに載せておけば、
- * **email を 1 行登録するだけで admin として扱える** (uid を調べて登録する手間が要らないし、
- * uid が古くなっていても効く)。
+ * 【admin フラグを載せる理由】判定は**サインインのときに 1 回だけ**行う。
+ * その場でしか**サーバで検証済みの email** が手に入らないため
+ * (`sb.auth.getUser(accessToken)`)。判定結果をここに載せておけば、以後のページ表示で
+ * 毎回 wellfort-site の管理者リストへ問い合わせずに済む。
+ * **管理者リストから外れた場合は、次のサインイン (または Cookie の再発行) で反映される。**
  *
  * **改竄はできない** — payload に admin を含めて HMAC を取るので、`1` に書き換えると署名が合わない。
  */
@@ -166,14 +162,13 @@ export interface Viewer {
   isAdmin: boolean;
   /**
    * **何が根拠で admin になったか**。`null` は admin でない。
-   *   `'cookie'` … サインイン時に email から判定 (`ADMIN_MEMBERS.email`)
-   *   `'uid'`    … uid が `ADMIN_MEMBERS.uid` に在る
+   *   `'cookie'` … サインイン時に **wellfort-site の管理者リスト**へ問い合わせて判定
    *
    * **「admin にならない」の原因切り分けのために持つ。** 判定は静かに外れるので、
    * 画面のデバッグ欄に根拠を出せないと「なぜダミーが出ないか」が誰にも分からない
    * (実測 2026-08-30: 本番で報告書が空になり、原因の特定に何往復もした)。
    */
-  adminBy: 'cookie' | 'uid' | null;
+  adminBy: 'cookie' | null;
   /** admin が `?u=` で他人を表示している状態か。 */
   impersonating: boolean;
   /**
@@ -201,20 +196,26 @@ export async function resolveViewer(ctx: AstroGlobal | APIContext): Promise<View
 
   if (!verified) {
     if (uidEntryAllowed() && requested) {
-      const byUid = isAdminUid(requested);
-      return { uid: requested, selfUid: requested, isAdmin: byUid, adminBy: byUid ? 'uid' : null, impersonating: false, cookieStale: false };
+      /*
+       * 緊急復旧用の `?u=` 入場。**admin は与えない** (2026-08-30)。
+       * 以前はここで uid のベタ書き一覧と照合して admin にしていたが、
+       * その一覧は撤去した (admin の正は wellfort-site の管理者リストだけ)。
+       * URL に uid を書くだけで admin になれる経路を残さない。
+       */
+      return { uid: requested, selfUid: requested, isAdmin: false, adminBy: null, impersonating: false, cookieStale: false };
     }
     return ANONYMOUS;
   }
   const selfUid = verified.uid;
 
   /*
-   * admin は **2 つの経路のどちらか**で成立する (2026-08-30):
-   *   ① Cookie の admin フラグ … サインイン時に **email** から判定 (`ADMIN_MEMBERS.email`)
-   *   ② uid が `ADMIN_MEMBERS.uid` に在る … 旧形式 Cookie と `ALLOW_UID_ENTRY` 経路のため
-   * **①があるので uid を登録しなくても email だけで admin になれる。**
+   * **admin の成立経路は Cookie の admin フラグ 1 本だけ** (2026-08-30)。
+   * そのフラグはサインイン時に、**wellfort-site の管理者リスト (`admin_users`)** へ
+   * 問い合わせて載せる (`api/auth/resolve.ts` → `isAdminEmailAsync`)。
+   * uid のベタ書き一覧による判定は撤去した — 管理者リストから外しても admin のまま、
+   * という**権限剥奪の効かない**状態を作っていたため。
    */
-  const adminBy: Viewer['adminBy'] = verified.admin ? 'cookie' : (isAdminUid(selfUid) ? 'uid' : null);
+  const adminBy: Viewer['adminBy'] = verified.admin ? 'cookie' : null;
   const isAdmin = adminBy !== null;
   if (isAdmin && requested && requested !== selfUid) {
     return { uid: requested, selfUid, isAdmin, adminBy, impersonating: true, cookieStale: verified.legacy };

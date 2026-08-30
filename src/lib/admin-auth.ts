@@ -1,151 +1,83 @@
 /**
- * Scan-Chat-AI 内 admin ページの認証ガード。
+ * admin 判定 — **正は wellfort-site の管理者リスト (`public.admin_users`) だけ**。
  *
- * 隔離ポリシー:
- *   - admin_users (6 名) の email のみ通過
- *   - それ以外は 404 で「存在しないように見せる」(403 だと admin の存在が露呈する)
- *   - 認証情報は Google One Tap 経由で Supabase Auth セッションに保存済の email を使う
+ * 正本: `docs/elith/AI疾病予防報告書_仕様書.md` §4.6「admin の正は `admin_users` テーブル」。
  *
- * ⚠️ サーバ側でしか呼ばないこと (browser に admin email リストを露出させない)
- */
-
-/**
  * ══════════════════════════════════════════════════════════════════════
- * 管理者メンバー登録 — **admin を足すときはここだけを直す**
+ * 【2026-08-30・実測】ソースにベタ書きしていた管理者一覧は**全て削除した**
  * ══════════════════════════════════════════════════════════════════════
  *
- * 正本: docs/elith/AI疾病予防報告書_仕様書.md §4.6
+ * 削除した理由は「重複していたから」ではない。**それが唯一動いている判定だったから**。
  *
- * 【なぜ 1 本にまとめたか】以前は `ADMIN_EMAILS` と `ADMIN_UIDS` の**2 つの手書きリスト**が
- *   並んでいて、対応が取れていなかった。しかも**アプリの admin 判定は uid 側しか見ておらず、
- *   `isAdminEmail` は参照ゼロの死んだコードだった** (実測 2026-08-30)。
- *   → **email 側に足しただけでは admin にならない**のに、足した人は登録したつもりになる。
- *   ローンチ後も管理者は追加登録されていく (発注者 2026-08-30) ので、この罠は潰しておく。
+ *   旧 `isAdminEmailAsync` の順序:
+ *     ① ベタ書きの `ADMIN_EMAILS` に在れば true
+ *     ② `${PUBLIC_SUPABASE_URL}/rest/v1/admin_users` を引く ← **参照先を間違えていた**
  *
- * 【追加のしかた】この配列に 1 行足すだけ。**uid が admin 判定の実体**なので uid は必須。
- *   uid は当人の `/dashboard` →「デバッグ (テストフェーズ確認用)」に出ている
- *   `diagnostic_user_id`。まだ分からないときは `uid: null` で登録してよい —
- *   **`npm run verify:demo-gate` が「uid 未登録」として名前を出す**ので、
- *   黙って admin にならないまま放置されることがない。
+ * **2 つのアプリは別の Supabase プロジェクト**で、顧客DB と管理者リストは
+ * Wellfort 側にしか無い (実測):
  *
- * 【この登録が効く範囲】admin 画面の入場 / `?u=` の代理表示 / **デモデータの表示**。
- *   一般顧客 (Google 認証・顧客DBに登録あり・admin でない) の経路とは**完全に分かれている**
- *   — 一般顧客はこの配列に一切触れず、自分の実データだけを見る (spec §4.6)。
+ *   Scan-Chat-AI  `https://nfubaioudhggqbzaussw.supabase.co`
+ *   wellfort-site `https://nlydlveiokiivjwpnnaf.supabase.co`  ← `admin_users` はこちら
+ *
+ * Scan-Chat-AI 側で引くと **`HTTP 404 / PGRST205 Could not find the table
+ * 'public.admin_users' in the schema cache`**。つまり ② は常に false で、
+ * **Scan-Chat-AI は管理者リストを一度も読めていなかった**。
+ * admin 画面で登録しても診断アプリには届かず、**ベタ書きの 8 行だけが admin 判定**だった。
+ * 仕様書が「手で書き写した `ADMIN_MEMBERS` に依存するのをやめた」と宣言していたのに、
+ * 実装ではやめられておらず、しかも「フォールバック」と書かれた側が本番の実体だった。
+ *
+ * さらに悪いことに、この構成では **`admin_users` から外しても admin のまま**になる
+ * (ベタ書きに残っている限り true)。**管理者権限の剥奪が効かない。**
+ *
+ * 【いまの方式】**既存の経路で Wellfort 側へ聞く。新しい口は作らない。**
+ *   顧客DB も管理者リストも **Wellfort 側の Supabase にしか無い**
+ *   (個人情報は Wellfort 側でしか持たない取り決め)。Scan-Chat-AI からの解決経路は
+ *   **HP Edge の `resolve-customer`** (`hp-edge.ts`・共有シークレット `x-resolve-secret`) で、
+ *   これは既に email → `diagnostic_user_id` を解決している。
+ *   → **同じ応答に `is_admin` を足した**。呼び出しも鍵も増えない。
+ *
+ * 【失敗したときは admin にしない (fail-closed)】
+ *   引けなかったことを「admin である」と読み替えない。**代わりにサーバログへ理由を出す**ので、
+ *   「静かに admin でなくなる」ことは無い。`/dashboard` のデバッグ欄にも根拠が出る。
+ *
+ * ⚠️ サーバ側でしか呼ばないこと。
  */
-export interface AdminMember {
-  /** 表示用のラベル (ログにも画面にも出さない。ここを読む人間のため)。 */
-  label: string;
-  /** Google アカウントのメール (小文字)。不明なら null。 */
-  email: string | null;
-  /**
-   * `diagnostic_user_id`。**admin 判定の実体はこちら。**
-   * 不明なら null で登録し、`verify:demo-gate` の「uid 未登録」で拾う。
-   */
-  uid: string | null;
-}
+
+import { isHpEdgeConfigured, resolveCustomerByEmail } from './hp-edge';
 
 /**
- * **登録済みの管理者メンバー。**
+ * この email が**管理者リストに載っている現役の管理者**か。
  *
- * email と uid の対応は、統合前の `ADMIN_UIDS` に元から付いていたコメントに従っている
- * (捏造していない)。対応が分からない 2 件は片側 null のまま残してある。
- */
-export const ADMIN_MEMBERS: readonly AdminMember[] = [
-  { label: '濱田',              email: 'unfix.hamada@gmail.com',  uid: '14410d5a-d515-4fe9-9a8e-bbb1040021ac' },
-  { label: '宮澤',              email: 'miyazawa@wellfort.co.jp', uid: '1c1ded05-6cce-4880-a5d8-3f964a43ba54' },
-  { label: '新藤',              email: 'shindo@wellfort.co.jp',   uid: '46b3651a-f14b-46bd-a24f-fe01256a1709' },
-  { label: '大川',              email: 'ohkawa@wellfort.co.jp',   uid: '7cbe6588-5a99-4068-9c40-5fa2427c7122' },
-  { label: '岡部',              email: 'okabe@wellfort.co.jp',    uid: 'f9d47b45-45ad-4ffc-bad3-1bf4de130a1c' },
-  { label: '本田',              email: 'honda@wellfort.co.jp',    uid: 'c0000020-0000-0000-0000-000000000000' },
-  { label: '開発用 (物部/真鍋)', email: null,                      uid: 'd0000001-0000-0000-0000-000000000000' },
-  // **uid 未登録**。email 側にしか無かったので、この状態では admin 判定に効かない。
-  // uid が分かったら埋める (verify:demo-gate が毎回この行を名指しする)。
-  { label: '開発用バックアップ', email: 'hamada@eentry.co.jp',     uid: null },
-];
-
-/** 管理者のメール (小文字統一)。**`ADMIN_MEMBERS` から導出**。 */
-const ADMIN_EMAILS: ReadonlySet<string> = new Set(
-  ADMIN_MEMBERS.map((m) => m.email).filter((e): e is string => !!e).map((e) => e.toLowerCase()),
-);
-
-/** 管理者の diagnostic_user_id。**`ADMIN_MEMBERS` から導出**。判定の実体はこちら。 */
-const ADMIN_UIDS: ReadonlySet<string> = new Set(
-  ADMIN_MEMBERS.map((m) => m.uid).filter((u): u is string => !!u).map((u) => u.toLowerCase()),
-);
-
-/**
- * **admin の正は `admin_users` テーブル**（2026-08-30）。
+ * 問い合わせ先は **HP Edge の `resolve-customer`**（`hp-edge.ts`）。
+ * Scan-Chat-AI から Wellfort 側 DB を読む経路はこれが正で、**新しい口を増やさない**。
+ * 応答の `is_admin` をそのまま使う（`admin_users` を `is_active=true` で照会した結果）。
  *
- * wellfort-site の admin 画面が管理者を出し入れしているのは**このテーブル**で、
- * 同じ Supabase の `public` スキーマに在る
- * （実測: `wellfort-site/src/pages/api/admin/config.ts:35`
- *  `/rest/v1/admin_users?email=eq.<email>&is_active=eq.true`）。
- * Scan-Chat-AI は同じ `PUBLIC_SUPABASE_URL` を使うので**ここから引ける**。
- *
- * 【なぜ切り替えるか】`ADMIN_MEMBERS` は**手で書き写した写し**なので、必ずズレる。
- * 実際、本番で admin にならず報告書が空になった（uid が実値と食い違うか、
- * そもそも登録されていないか、どちらかを外から特定できなかった）。
- * **管理者の追加登録は wellfort-site の admin 画面で行われる**（発注者 2026-08-30）ので、
- * **そこが増えたら自動で追随する**のが正しい。
- *
- * 【フォールバック】テーブルを引けないとき（未設定・通信断・列違い）は
- * `ADMIN_MEMBERS` の email で判定する。**引けないことを理由に admin を失わせない。**
- * 逆に、テーブルに無くても `ADMIN_MEMBERS` に在れば admin（開発用の逃げ道）。
+ * **引けなかったときは false**（fail-closed）。引けないことを「admin である」と
+ * 読み替えない。理由はサーバログに出るので、静かに admin でなくなることは無い。
  */
 export async function isAdminEmailAsync(email: string | null | undefined): Promise<boolean> {
   const e = (email ?? '').trim().toLowerCase();
   if (!e) return false;
-  if (ADMIN_EMAILS.has(e)) return true;          // 手元の登録簿が先（DB 障害でも admin を失わない）
-
-  const url = env('PUBLIC_SUPABASE_URL');
-  const key = env('SUPABASE_SERVICE_ROLE_KEY');
-  if (!url || !key) return false;
+  if (!isHpEdgeConfigured()) {
+    console.error('[admin-auth] HP_EDGE_BASE_URL 未設定のため管理者リストを引けません。admin として扱いません。');
+    return false;
+  }
   try {
-    const res = await fetch(
-      `${url}/rest/v1/admin_users?email=eq.${encodeURIComponent(e)}&is_active=eq.true&select=email&limit=1`,
-      { headers: { apikey: key, Authorization: `Bearer ${key}` } },
-    );
-    if (!res.ok) return false;
-    const rows: unknown = await res.json();
-    return Array.isArray(rows) && rows.length > 0;
-  } catch {
-    return false;                                 // 引けないだけ。ADMIN_MEMBERS の判定は上で済んでいる
+    const resolved = await resolveCustomerByEmail(e);
+    return resolved?.is_admin === true;
+  } catch (err) {
+    console.error('[admin-auth] 管理者リストの照会に失敗:', err instanceof Error ? err.message : err);
+    return false;
   }
 }
 
-function env(name: string): string | undefined {
-  const m = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.[name];
-  if (m != null && m !== '') return m;
-  const p = typeof process !== 'undefined' ? process.env?.[name] : undefined;
-  return p != null && p !== '' ? p : undefined;
-}
-
-export function isAdminEmail(email: string | null | undefined): boolean {
-  if (!email) return false;
-  return ADMIN_EMAILS.has(email.trim().toLowerCase());
-}
-
 /**
- * 未認証 / 非 admin の場合に投げる 404 Response。
+ * 未認証 / 非 admin の場合に返す 404。
+ * 403 だと admin 画面の存在が露呈するので 404 で「無いように見せる」。
+ *
  * Astro page の frontmatter で:
  *   if (!viewer.isAdmin) return notFoundForNonAdmin();
  */
 export function notFoundForNonAdmin(): Response {
   return new Response('Not found', { status: 404 });
-}
-
-export function isAdminUid(uid: string | null | undefined): boolean {
-  if (!uid) return false;
-  return ADMIN_UIDS.has(uid.trim().toLowerCase());
-}
-
-/** ?u= から admin かどうかを判定 (Astro page で使用) */
-export function gateByUid(uid: string | null | undefined): { allowed: boolean; uid: string | null } {
-  if (!uid) return { allowed: false, uid: null };
-  // 短縮形 (8 文字) を許可
-  const normalized = uid.length === 36
-    ? uid
-    : (/^[0-9a-f]{8}$/i.test(uid) ? `${uid.toLowerCase()}-0000-0000-0000-000000000000` : null);
-  if (!normalized) return { allowed: false, uid: null };
-  return { allowed: isAdminUid(normalized), uid: normalized };
 }

@@ -11,7 +11,6 @@
  * ※ これは表示用フォールバックであり DB には書き込まない。
  */
 
-import { isAdminUid } from './admin-auth';
 import type { ElithSection } from './elith-parser';
 import type { DashboardData, MetricTrendSeries } from './dashboard-queries';
 import type { NoticesData } from './notice-queries';
@@ -66,7 +65,7 @@ import type {
  */
 export function demoFallbackEnabled(uid?: string | null, viewerIsAdmin?: boolean): boolean {
   // ① admin は env に関わらずダミーを見る (発注者指示 2026-08-30)
-  if (viewerIsAdmin || isAdminUid(uid)) return true;
+  if (viewerIsAdmin) return true;
   // ② admin 以外は env のスイッチで一括して切れる
   if (import.meta.env.PUBLIC_DEMO_FALLBACK === 'false') return false;
   // ③ admin ではないがデモを出してよい uid (OEM デモ顧客)
@@ -79,7 +78,7 @@ export function demoFallbackEnabled(uid?: string | null, viewerIsAdmin?: boolean
  * OEM 相手先ブランド向けデモ顧客 (山田太郎)。`supabase/demo_oem_account.sql` が
  * `test_artifacts` / `diagnosis_results` を実際に投入するので通常はフォールバック不要だが、
  * seed 未適用の環境で画面が空になるのを避けるために残す。
- * **admin 権限は与えない** (`admin-auth.ADMIN_UIDS` には入れない)。
+ * **admin 権限は与えない** (管理者リストには入れない)。
  */
 const DEMO_ALLOWED_UIDS: ReadonlySet<string> = new Set([
   'da000001-0000-0000-0000-000000000000',
