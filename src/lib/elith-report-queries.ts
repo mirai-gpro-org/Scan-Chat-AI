@@ -118,6 +118,23 @@ export async function loadReportVM(ctx: ReportContext): Promise<ReportVM> {
     }
     if (!row) return sample(ctx); // 非 admin は sample() 内で emptyVM になる
 
+    /*
+     * **旧形式 (`elith-v1.0` の配列) の行は、報告書を作り直す前の seed / デモの残骸。**
+     *
+     * `supabase/seed.sql` の 2 セクション 200 字の行を `seed_admin_users.sql` が
+     * 各 admin uid へコピーしているため、**登録済みの admin は全員これを最新として持つ**。
+     * 「実データ → サンプル」の順で引くので、**現行のサンプルには永久に落ちず**、
+     * admin が報告書の紙面を確認できない (実測 2026-08-30: ダイジェスト 2 枚しか出ない)。
+     *
+     * → **admin のデモ表示のときだけ**、現行形式のサンプルを優先する。
+     *   - **実顧客には一切影響しない** (デモ表示が無効なので、この分岐に入らない)
+     *   - **現行形式 (dict) の実データが入れば、この分岐は通らない** = 本物が勝つ
+     *   - 旧形式の行を消したり書き換えたりはしない (監査のため残す)
+     */
+    if (Array.isArray(row.report) && demoFallbackEnabled(ctx.diagnosticUserId, ctx.viewerIsAdmin)) {
+      return sample(ctx);
+    }
+
     return buildReportVM({
       ...common(ctx),
       reportText: row.report,

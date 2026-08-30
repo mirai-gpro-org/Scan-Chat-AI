@@ -122,6 +122,15 @@ if (OEM) cases.push(
     fails.push('admin-auth.ts: admin_users を引いていない'
       + ' — 管理者が追加登録されても追随できない');
   }
+  // 旧形式 (elith-v1.0 配列) の seed 行より現行サンプルを優先する分岐が、
+  // **必ず demoFallbackEnabled の内側**にあること (= 実顧客には影響しない)。
+  const eq = readFileSync(resolve(ROOT, 'src/lib/elith-report-queries.ts'), 'utf8');
+  const legacyBranch = /Array\.isArray\(row\.report\)\s*&&\s*demoFallbackEnabled\(/.test(eq);
+  if (!legacyBranch) {
+    fails.push('elith-report-queries.ts: 旧形式 seed 行の回避が無い、または'
+      + ' demoFallbackEnabled の外に出ている — 実顧客の実データを隠す危険');
+  }
+
   // Cookie の自己修復 (旧形式のままだと判定の変更が最大 30 日届かない)
   const vw = readFileSync(resolve(ROOT, 'src/lib/viewer.ts'), 'utf8');
   const ot = readFileSync(resolve(ROOT, 'src/components/GoogleOneTap.astro'), 'utf8');

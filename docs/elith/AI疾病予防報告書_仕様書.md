@@ -449,10 +449,31 @@ received : rows=4 / latest_received_at=2026-01-24
 そのため **登録済みの admin は全員この旧デモ行を最新として持つ**。
 `loadReportVM` は「実データ → サンプル」の順なので、**サンプルには永久に落ちない**。
 
-### 直し方
+### 直し方【2026-08-30・実装済み】
 
-**サンプル優先に変えない**（実データが在るのに無視するのは筋が悪い）。
-**受領 JSON を実データとして取り込む**（§4.5）。世代管理があるので旧デモ行は `superseded` に落ちる。
+当初「サンプル優先には変えない」と書いたが、**それでは admin が手作業で取り込むまで
+紙面を確認できない**（しかも admin 全員が同じ状態）。運用でなくコードで閉じる。
+
+**`loadReportVM` は、旧形式（`elith-v1.0` の配列）の行を admin のデモ表示のときだけ飛ばし、
+現行形式のサンプルを出す。**
+
+```ts
+if (Array.isArray(row.report) && demoFallbackEnabled(ctx.diagnosticUserId, ctx.viewerIsAdmin)) {
+  return sample(ctx);
+}
+```
+
+| | |
+|---|---|
+| 実顧客への影響 | **無い。** デモ表示が無効なのでこの分岐に入らず、自分の実データがそのまま出る |
+| 現行形式の実データ | **本物が勝つ。** dict 形式ならこの分岐を通らない |
+| 旧形式の行 | **消さない・書き換えない**（監査のために残す） |
+| 効果（実測） | ダイジェスト 2 枚 → **7 枚**／主軸 B **1 → 6 枚**／全編 2 → **10 章** |
+
+`verify:demo-gate` が、**この分岐が必ず `demoFallbackEnabled` の内側にある**ことを機械で見る
+（外に出ると実顧客の実データを隠してしまうため）。
+
+受領 JSON を**本物として**入れたいときは従来どおり:
 
 ```
 node scripts/ingest-elith-report.mjs --uid <diagnostic_user_id> --key <ADMIN_API_KEY>
