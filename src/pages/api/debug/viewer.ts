@@ -92,6 +92,42 @@ export const GET: APIRoute = async (ctx) => {
     vm = { error: String((e as Error)?.message ?? e) };
   }
 
+  /*
+   * **配られた HTML そのものを数える。**
+   * 表示モデルが正しいのに画面が空、という状態が残ったため（2026-08-30）。
+   * ここまでで分かるのは「サーバが組み立てた VM」までで、**その HTML が
+   * ブラウザに届いているか**は別の話。→ この口が `/report` を**閲覧者の Cookie で**
+   * 自分で取り直し、紙面のマーカー数を数える。
+   *   - VM 7 枚 / HTML 7 枚 → サーバも配信も正しい ⇒ 見えていないのは端末側 (キャッシュ・別URL)。
+   *   - VM 7 枚 / HTML 0 枚 → レンダラが描き落としている ⇒ コードの問題。
+   * 本文は返さない (数と長さだけ)。
+   */
+  let sheet: Record<string, unknown>;
+  try {
+    const r = await fetch(new URL('/report', url), {
+      headers: {
+        cookie: ctx.request.headers.get('cookie') ?? '',
+        'user-agent': 'welltect-selfcheck',
+      },
+      redirect: 'manual',
+    });
+    const html = r.status === 200 ? await r.text() : '';
+    const count = (re: RegExp) => (html.match(re) ?? []).length;
+    sheet = {
+      status: r.status,
+      cache_control: r.headers.get('cache-control'),
+      bytes: html.length,
+      rp_sheet: count(/rp-sheet/g),
+      rp_axis: count(/class="rp-axis/g),
+      digest_cards: count(/<article class="rp-card/g),
+      chapters: count(/<details/g),
+      sample_badge: /サンプル表示/.test(html),
+      signin_gate: /gsi-button/.test(html),
+    };
+  } catch (e) {
+    sheet = { error: String((e as Error)?.message ?? e) };
+  }
+
   const body = {
     // ① 閲覧者
     viewer: {
@@ -129,7 +165,9 @@ export const GET: APIRoute = async (ctx) => {
     },
     // ⑥ /report が実際に組み立てる表示モデル (本文は返さない)
     report_vm: vm,
-    // ⑦ 読み方
+    // ⑦ 実際に配られた /report の HTML を数えたもの
+    sheet_html: sheet,
+    // ⑧ 読み方
     hint: rows && rows > 0
       ? (chars != null && chars < 2000
           ? `最新行の中身が ${chars} 字しかありません (${sections} セクション)。`
