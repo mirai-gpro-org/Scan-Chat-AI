@@ -417,6 +417,55 @@ DB 手前で `503 supabase not configured`（ローカルに DB が無いため�
 ② 誤ったキー → `401 unauthorized`（fail-closed）③ uid が UUID でない → 送信前に停止。
 
 
+## 4.5.1 「中身が空」の真因は seed の旧デモ行だった【2026-08-30・実測で確定】
+
+> **2 時間を admin ゲートの追跡に費やしたが、ゲートは原因ではなかった。**
+
+本番の自己診断（`GET /api/debug/viewer`）の実測:
+
+```
+viewer   : resolved_by=cookie / is_admin=true / admin_by=cookie / impersonating=false
+demo     : viewer_is_admin_passed=true / demo_fallback_enabled=true
+received : rows=4 / latest_received_at=2026-01-24
+```
+
+**admin は通っていた。デモも出せる状態だった。** 空だった理由は別で、
+**`received.rows=4`＝実データが在るため、サンプル（2026-08-26 の受領 JSON・20,046 字）が
+使われず、`supabase/seed.sql` の旧デモ行が紙面になっていた**。
+
+その行を実際にアダプタへ通した結果（ローカル再現）:
+
+| | |
+|---|---|
+| 行の中身 | `アブストラクト`(120 字) ＋ `医療受診の目安`(80 字) の **2 セクション・計 200 字** |
+| 形式 | `elith-v1.0`（旧・配列） |
+| 出た紙面 | ダイジェスト 2 枚（`a:今回の所見` / `b:医療受診の目安`）／ 全編 2 章 |
+
+**紙面は正しく動いていた。読んでいる行の中身が 200 字しかなかっただけ。**
+
+### なぜ admin の全員がこうなるか
+
+`supabase/seed_admin_users.sql` が **`d0000001` の `diagnosis_results` を各 admin uid へコピー**する。
+そのため **登録済みの admin は全員この旧デモ行を最新として持つ**。
+`loadReportVM` は「実データ → サンプル」の順なので、**サンプルには永久に落ちない**。
+
+### 直し方
+
+**サンプル優先に変えない**（実データが在るのに無視するのは筋が悪い）。
+**受領 JSON を実データとして取り込む**（§4.5）。世代管理があるので旧デモ行は `superseded` に落ちる。
+
+```
+node scripts/ingest-elith-report.mjs --uid <diagnostic_user_id> --key <ADMIN_API_KEY>
+```
+
+### 再発防止
+
+`GET /api/debug/viewer` の `received` に **`schema_version` / `latest_sections` / `latest_chars`** を出す。
+中身が 2,000 字未満なら **「紙面が薄いのは実装ではなく行の中身」** と明示する。
+**行の有無だけを見て「データは在る」と判断しない。**
+
+---
+
 ## 4.6 誰にダミーデータを出すか【確定・発注者指示 2026-08-30】
 
 > 「**admin の管理者リストにあるメンバーだけ**は、現状と同じテストのダミーデータを表示する
