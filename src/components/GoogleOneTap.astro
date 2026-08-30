@@ -24,8 +24,23 @@
  * 環境変数: PUBLIC_GOOGLE_CLIENT_ID
  *   未設定なら何もレンダリングしない (フォールバック: ?u= 直渡し)
  */
+import { resolveViewer } from '../lib/viewer';
+
 const clientId = import.meta.env.PUBLIC_GOOGLE_CLIENT_ID ?? '';
 const enabled = !!clientId;
+
+/**
+ * **Cookie の自己修復**（2026-08-30）。
+ *
+ * Cookie は**サインイン時にしか発行されない**（下の One Tap は
+ * サインインパネルが在るとき＝未サインインのときだけ `prompt()` する）。
+ * 有効期間は 30 日あるので、**判定の内容を変えても既存 Cookie を持っている人には
+ * 最大 30 日届かない**。実測 2026-08-30: email 由来の admin 判定を本番へ入れても
+ * 報告書が空のままだった — **修正が本番に在るのに効かない**という最悪の形。
+ * → 旧形式の Cookie を見つけたら、**その場で `/api/auth/resolve` を呼び直す**。
+ */
+const viewer = enabled ? await resolveViewer(Astro) : null;
+const needsCookieRefresh = !!viewer?.cookieStale;
 ---
 
 {enabled && (
@@ -33,11 +48,43 @@ const enabled = !!clientId;
     {/* Google Identity Services client (async load) */}
     <script is:inline async defer src="https://accounts.google.com/gsi/client"></script>
 
+    {/*
+      旧形式 Cookie の持ち主に、その場で発行し直させるための印。
+      **1 回だけ**試す (sessionStorage で番をする) — 失敗したときに再読込を繰り返さない。
+    */}
+    {needsCookieRefresh && <span id="viewer-cookie-stale" hidden data-stale="1"></span>}
+
     <script>
       import { createClient } from '@supabase/supabase-js';
 
       const supabaseUrl  = import.meta.env.PUBLIC_SUPABASE_URL as string;
       const supabaseAnon = import.meta.env.PUBLIC_SUPABASE_ANON_KEY as string;
+
+      /**
+       * **Cookie の自己修復。** 旧形式 (admin フラグ無し) の Cookie を持っていたら、
+       * 手元の Supabase セッションで `/api/auth/resolve` を呼び直して発行し直す。
+       * サインインし直さなくても判定の変更が届くようにするため (理由は frontmatter)。
+       *
+       * **1 回だけ**試す。失敗しても画面は壊さない (今までどおり表示されるだけ)。
+       */
+      async function refreshViewerCookie(): Promise<void> {
+        if (!document.getElementById('viewer-cookie-stale')) return;
+        const KEY = 'welltect.cookie.refreshed';
+        try { if (sessionStorage.getItem(KEY)) return; sessionStorage.setItem(KEY, '1'); } catch { /* 使えなくても進む */ }
+        try {
+          const sb = createClient(supabaseUrl, supabaseAnon);
+          const { data } = await sb.auth.getSession();
+          const accessToken = data.session?.access_token;
+          if (!accessToken) return;                      // セッションが無いなら何もしない
+          const res = await fetch('/api/auth/resolve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accessToken }),
+          });
+          if (res.ok) location.reload();                 // 新しい Cookie で描き直す
+        } catch { /* 失敗しても従来どおり */ }
+      }
+      void refreshViewerCookie();
       const clientId     = import.meta.env.PUBLIC_GOOGLE_CLIENT_ID as string;
 
       type GsiCredentialResponse = { credential: string };

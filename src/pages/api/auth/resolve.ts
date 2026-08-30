@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 import { getServerSupabase } from '../../../lib/supabase';
 import { isHpEdgeConfigured, resolveCustomerByEmail } from '../../../lib/hp-edge';
 import { VIEWER_COOKIE, signViewer, viewerCookieOptions } from '../../../lib/viewer';
-import { isAdminEmail } from '../../../lib/admin-auth';
+import { isAdminEmailAsync } from '../../../lib/admin-auth';
 
 export const prerender = false;
 
@@ -92,11 +92,13 @@ export const POST: APIRoute = async ({ request, cookies }) => {
    * `email` は `sb.auth.getUser(accessToken)` で**サーバが検証した値**で、
    * クライアントの申告ではない。判定結果は署名付き Cookie に載るので改竄できない。
    *
-   * **これで uid を調べて登録しなくても、`ADMIN_MEMBERS` に email を 1 行足すだけで
-   * admin として扱われる。** (uid 未登録のメンバーが管理者リストに載っているのに
-   * admin にならず、`/report` が空になっていた実測への対処・spec §4.6)
+   * **判定の正は `admin_users` テーブル** — wellfort-site の admin 画面が管理者を
+   * 出し入れしている実体で、同じ Supabase に在る。**そこに管理者が増えたら自動で追随する**
+   * （手で写した `ADMIN_MEMBERS` はフォールバック兼・開発用の逃げ道として残す）。
+   * 実測 2026-08-30: 手写しの uid/email に依存していたため本番で admin にならず、
+   * 報告書が空のままだった (spec §4.6)。
    */
-  const token = await signViewer(diagnosticUserId, isAdminEmail(email));
+  const token = await signViewer(diagnosticUserId, await isAdminEmailAsync(email));
   if (token) cookies.set(VIEWER_COOKIE, token, viewerCookieOptions());
 
   return json({ linked: true, diagnosticUserId }, 200);

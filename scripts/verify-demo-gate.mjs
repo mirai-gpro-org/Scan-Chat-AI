@@ -112,9 +112,22 @@ if (OEM) cases.push(
   }
   // サインイン時に email から admin を決めているか
   const rv = readFileSync(resolve(ROOT, 'src/pages/api/auth/resolve.ts'), 'utf8');
-  if (!/signViewer\([^)]*isAdminEmail\(/.test(rv)) {
+  if (!/signViewer\([^)]*isAdminEmailAsync\(/.test(rv)) {
     fails.push('api/auth/resolve.ts: Cookie の admin フラグを email から決めていない'
-      + ' — uid 未登録の管理者が admin にならなくなる');
+      + ' — 手写しの uid/email に依存すると管理者が admin にならない');
+  }
+  // admin の正は admin_users テーブル (wellfort-site の admin 画面が出し入れする実体)
+  const aa = readFileSync(resolve(ROOT, 'src/lib/admin-auth.ts'), 'utf8');
+  if (!/admin_users\?email=eq\./.test(aa)) {
+    fails.push('admin-auth.ts: admin_users を引いていない'
+      + ' — 管理者が追加登録されても追随できない');
+  }
+  // Cookie の自己修復 (旧形式のままだと判定の変更が最大 30 日届かない)
+  const vw = readFileSync(resolve(ROOT, 'src/lib/viewer.ts'), 'utf8');
+  const ot = readFileSync(resolve(ROOT, 'src/components/GoogleOneTap.astro'), 'utf8');
+  if (!/cookieStale/.test(vw) || !/viewer-cookie-stale/.test(ot)) {
+    fails.push('Cookie の自己修復が無い — 既存 Cookie は 30 日発行し直されないので'
+      + '、判定を変えても既にサインイン済みの人には届かない');
   }
 }
 
