@@ -137,9 +137,27 @@ if (OEM) cases.push(
     fails.push('admin-auth.ts: 自前の Supabase から admin_users を直引きしている'
       + ' — 別プロジェクトなので必ず 404 になり、管理者が誰も admin にならない');
   }
-  if (!/resolveCustomerByEmail/.test(aa)) {
-    fails.push('admin-auth.ts: HP Edge (resolve-customer) 経由で管理者リストを引いていない'
-      + ' — 顧客DB と管理者リストは Wellfort 側にしか無く、この経路が正');
+  /*
+   * **顧客の解決と admin 判定を同時に受け取る口**を使っていること。
+   *
+   * `resolveCustomerByEmail` (顧客だけ) では admin を判定できない。加えて、
+   * 顧客が引けたかに admin を従属させると **顧客レコードの無い管理者が
+   * 永久に admin にならない** (2026-08-30 に本番で実測)。管理者 ≠ EC の顧客。
+   */
+  if (!/resolveCustomerWithAdmin/.test(aa)) {
+    fails.push('admin-auth.ts: HP Edge の resolveCustomerWithAdmin を使っていない'
+      + ' — 顧客DB と管理者リストは Wellfort 側にしか無く、この経路が正。'
+      + ' 顧客だけを引く resolveCustomerByEmail では admin を判定できない');
+  }
+  /*
+   * Edge 応答の **top-level `is_admin`** を見ていること。
+   * `data` の中だけを見ると、顧客が居ない管理者 (`data: null`) を取りこぼす。
+   */
+  const he = readFileSync(resolve(ROOT, 'src/lib/hp-edge.ts'), 'utf8')
+    .split('\n').filter((ln) => !/^\s*(\*|\/\/|\/\*)/.test(ln)).join('\n');
+  if (!/payload\.is_admin/.test(he)) {
+    fails.push('hp-edge.ts: 応答の top-level is_admin を見ていない'
+      + ' — 顧客レコードの無い管理者 (data: null) が admin になれない');
   }
   // 旧形式 (elith-v1.0 配列) の seed 行より現行サンプルを優先する分岐が、
   // **必ず demoFallbackEnabled の内側**にあること (= 実顧客には影響しない)。
