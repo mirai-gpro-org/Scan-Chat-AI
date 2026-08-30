@@ -21,6 +21,10 @@
 import type { APIRoute } from 'astro';
 import { VIEWER_COOKIE, resolveViewer, uidEntryAllowed, verifyViewer } from '../../../lib/viewer';
 import { isHpEdgeConfigured, resolveCustomerWithAdmin } from '../../../lib/hp-edge';
+import { demoFallbackEnabled } from '../../../lib/demo-data';
+import { loadReportVM } from '../../../lib/elith-report-queries';
+import { refreshConfig } from '../../../lib/app-config';
+import { getServerSupabase } from '../../../lib/supabase';
 
 export const prerender = false;
 
@@ -80,9 +84,21 @@ export const GET: APIRoute = async (ctx) => {
     }
   }
 
+  /*
+   * **AI疾病予防報告書が「なぜその紙面になっているか」を 1 回で確定する。**
+   *
+   * 「モックと違う」の原因は 3 つに分かれ、**画面を見ただけでは区別できない**:
+   *   ① デモが出ていない        → 紙面は emptyVM (ダイジェスト 1 枚・全編 0 章)
+   *   ② 旧 seed 行が最新        → 2 セクション 200 字の痩せた紙面 (spec §4.5.1)
+   *   ③ 現行形式の実データが在る → **モックとは違って当然** (モックは 2026-08-26 検体の紙面)
+   * 行の有無だけを見て「データは在る」と判断しない、が 2026-08-30 の教訓。
+   */
+  const report = await inspectReport(viewer.uid, viewer.isAdmin);
+
   return json({
     ok: true,
     build: (env('VERCEL_GIT_COMMIT_SHA') ?? 'local').slice(0, 7),
+    report,
     cookie: {
       present: !!raw,
       valid: !!verified,
@@ -131,6 +147,108 @@ export const GET: APIRoute = async (ctx) => {
       + '管理者リストまで届いているかを直接確認できる。',
   });
 };
+
+/**
+ * 報告書の「材料」と「出来上がった紙面」を並べて返す。**PII は出さない**
+ * (氏名は渡さず、本文も出さず、件数と字数だけ)。
+ */
+async function inspectReport(viewerUid: string | null, isAdmin: boolean): Promise<Record<string, unknown>> {
+  await refreshConfig();
+
+  /*
+   * **`/report` と同じ uid で見る。**
+   * 画面は `loadDashboard()` が解決した `diagnosticUserId` を使う (Cookie の uid そのままとは
+   * 限らない)。ここで Cookie の uid を直に使うと、**画面と違う答えを出す診断**になる。
+   */
+  let uid = viewerUid;
+  try {
+    const { loadDashboard } = await import('../../../lib/dashboard-queries');
+    const r = await loadDashboard(viewerUid, isAdmin);
+    if (r && !('error' in r)) uid = r.diagnosticUserId;
+  } catch { /* 解決できなければ Cookie の uid のまま見る */ }
+
+  const demo = demoFallbackEnabled(uid, isAdmin);
+
+  const out: Record<string, unknown> = {
+    effective_uid: uid,
+    demo_enabled: demo,
+    demo_reason: demo
+      ? '出す (uid がデモ用アカウント、または admin)'
+      : '出さない → 紙面は emptyVM になる。uid をデモ用アカウントに登録すること',
+  };
+
+  const sb = getServerSupabase();
+  if (!sb || !uid) {
+    out.rows = sb ? 0 : '(Supabase 未設定)';
+  } else {
+    try {
+      const { data, error } = await (sb.schema('diagnosis') as any)
+        .from('diagnosis_results')
+        .select('report, received_at, schema_version, status')
+        .eq('diagnostic_user_id', uid)
+        .neq('status', 'superseded')
+        .not('report', 'is', null)
+        .order('received_at', { ascending: false })
+        .limit(1);
+      if (error) throw error;
+      const row = (data ?? [])[0];
+      if (!row) {
+        out.rows = 0;
+        out.note = '実データなし → サンプルの紙面が出る (デモが有効なら)';
+      } else {
+        const rep = row.report;
+        // 旧形式 = セクションの配列 (`elith-v1.0`)。現行形式 = dict。
+        const legacy = Array.isArray(rep);
+        const chars = legacy
+          ? rep.reduce((n: number, s: any) => n + String(s?.body ?? s?.text ?? '').length, 0)
+          : Object.values(rep ?? {}).reduce(
+              (n: number, v: any) => n + String(typeof v === 'string' ? v : v?.text ?? '').length, 0);
+        out.rows = 1;
+        out.latest_received_at = String(row.received_at).slice(0, 10);
+        out.schema_version = row.schema_version ?? null;
+        out.shape = legacy ? '旧形式 (配列・elith-v1.0)' : '現行形式 (dict)';
+        out.sections = legacy ? rep.length : Object.keys(rep ?? {}).length;
+        out.chars = chars;
+        out.verdict = legacy
+          ? (demo
+              ? '旧 seed 行だが、デモが有効なので現行サンプルへ差し替わる (spec §4.5.1)'
+              : '旧 seed 行がそのまま紙面になる → 痩せた紙面。デモを有効にすれば直る')
+          : chars < 2000
+            ? '現行形式だが中身が薄い。紙面が薄いのは実装ではなく行の中身'
+            : '現行形式の実データ。**モックと違って当然** (モックは 2026-08-26 検体の紙面)';
+      }
+    } catch (e) {
+      out.error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  /*
+   * **実際に組み上がる表示モデル**。ここが最終的な答えで、
+   * 「材料はこうで、紙面はこうなった」を並べて見せる。
+   */
+  try {
+    const vm = await loadReportVM({
+      diagnosticUserId: uid,
+      name: '',
+      chronologicalAge: null,
+      ourWellnessAge: null,
+      hasCancerRisk: false,
+      cycleSeq: null,
+      viewerIsAdmin: isAdmin,
+    });
+    out.sheet = {
+      is_sample: vm.isSample,
+      type: vm.reportType,
+      digest_cards: vm.digest.length,
+      chapters: vm.chapters.length,
+      // モックの紙面はダイジェスト 7 枚・全編 10 章 (spec §4.5.1 の実測)。
+      matches_mock_shape: vm.digest.length >= 7 && vm.chapters.length >= 10,
+    };
+  } catch (e) {
+    out.sheet = { error: e instanceof Error ? e.message : String(e) };
+  }
+  return out;
+}
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data, null, 2), {
