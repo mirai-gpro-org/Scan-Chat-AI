@@ -91,13 +91,22 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
     <AppNav u={u} current="/report" unreadNotices={unreadNotices} supportContact={supportContact} />
   )}
 
-  <main class={`report-sheet flex flex-1 flex-col gap-4 px-5 pb-12 ${isPrint ? 'pt-6' : 'pt-5'}`}>
+  {/*
+    ══ 紙面 (白いシート)【発注者裁定 2026-08-30】══
+    **幅はダッシュボードと同じ。紙面の器だけ見本から採る。**
+    `.rp-sheet` に `max-width` を置かないので、器 (BaseLayout `width="app"`) の幅まで
+    広がる — **モックの 44rem 固定は採らない**(発注者指示)。
+    白地・上部 teal ルール・本文左右 8.1%・地に浮く見え方は見本どおり。
+    長文の行長は器でなく本文側で 38em に止める (`.report-prose`)。
+    詳細は `global.css` の `.rp-sheet` と 仕様書 §4.3.5。
+  */}
+  <main class={`report-sheet rp-sheet ${isPrint ? 'rp-plain' : ''}`}>
 
     {/* ══════════ ① 表紙 (見本 p1) ══════════
         見本の表紙は 上端 teal ルール / 淡色パネル / 右上の円モチーフ / タイトル /
         Powered by 行と細罫 / 氏名 / メタ の順。**要素の順序と装飾だけを写す**もので、
         中身 (氏名・作成日・第 N 回) はアプリのデータ (仕様書 §4.3)。 */}
-    <header class="rp-cover -mx-5 px-5 py-7 sm:px-7">
+    <header class="rp-cover">
       <h1 class="text-[1.75rem] font-bold leading-tight tracking-tight text-navy-800 sm:text-[2rem]">
         {AI_PREVENTION_REPORT_LABEL}
       </h1>
@@ -119,6 +128,9 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
         </p>
       )}
     </header>
+
+    {/* 本文。左右マージン 8.1% は `.rp-inner` が持つ (見本の本文左端) */}
+    <div class="rp-inner">
 
     {/* ══════════ ② 2 連の大数字カード (見本 p1) ══════════
         【発注者裁定 D-C2・2026-08-29】見本は表紙に大数字を 2 連で置く。
@@ -391,6 +403,7 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
         )}
       </section>
     )}
+    </div>{/* /.rp-inner */}
   </main>
 </BaseLayout>
 
@@ -399,7 +412,14 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
     印刷 CSS は**上乗せだけ**。`?print=1` は通常の画面 CSS で紙面が成立しているので、
     印刷 CSS が効かない経路 (iOS の 共有 → PDF) でも同じ紙面になる (spec §4.4)。
   */
+  /*
+    紙面の外の地。**このページだけ**に効く (Astro はページ単位でスタイルを束ねる)。
+    白い紙が地に浮いて見えることで「報告書の紙面」として読める (仕様書 §4.3.5)。
+  */
+  body { background: #F2F2F2; }
+
   @media print {
+    body { background: #fff; }
     nav, header.app-nav, .no-print { display: none !important; }
     .report-sheet { padding: 0 !important; }
     .card, .rp-card, .report-sheet table, .report-sheet details { break-inside: avoid; }
