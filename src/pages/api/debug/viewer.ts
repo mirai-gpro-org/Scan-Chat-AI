@@ -167,14 +167,27 @@ async function inspectReport(viewerUid: string | null, isAdmin: boolean): Promis
     if (r && !('error' in r)) uid = r.diagnosticUserId;
   } catch { /* 解決できなければ Cookie の uid のまま見る */ }
 
-  const demo = demoFallbackEnabled(uid, isAdmin);
+  /*
+   * **どちらの経路で出ているかを分けて出す。**
+   *
+   * ② uid（デモ用アカウント）と ③ admin は**別の資格**で、③ は暫定的に残している
+   * 追加条件にすぎない（`docs/operations/デモ用アカウント_仕様書.md` §3）。
+   * まとめて「出る」とだけ答えると、**③ にぶら下がっている人が誰か分からず棚卸しできない**。
+   * ③ を外す判断をするために、ここで区別する。
+   */
+  const byUid = demoFallbackEnabled(uid, false);   // ② だけで成立するか
+  const demo = byUid || demoFallbackEnabled(uid, isAdmin);
 
   const out: Record<string, unknown> = {
     effective_uid: uid,
     demo_enabled: demo,
-    demo_reason: demo
-      ? '出す (uid がデモ用アカウント、または admin)'
-      : '出さない → 紙面は emptyVM になる。uid をデモ用アカウントに登録すること',
+    demo_by: demo ? (byUid ? 'uid (デモ用アカウント)' : 'admin (追加条件・暫定)') : null,
+    demo_reason: byUid
+      ? '出す — uid がデモ用アカウントの一覧にある (本線)'
+      : demo
+        ? '出す — **admin だから**。uid は未登録なので、③ を外すと見えなくなる。'
+          + ' 常用するなら uid をデモ用アカウントに登録すること'
+        : '出さない → 紙面は emptyVM になる。uid をデモ用アカウントに登録すること',
   };
 
   const sb = getServerSupabase();
