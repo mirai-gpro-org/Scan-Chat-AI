@@ -49,18 +49,12 @@ const needsSignIn = authEnabled && !u;
  * デモ用アカウントの一覧 (`demo.account_uids`) をここから引くため、
  * 後ろに置くと初回リクエストで admin の登録が効かない (コード既定に落ちる)。
  */
-/*
- * デモを見せる相手 = **デモ用アカウント** (uid 一覧) が本線。
- * これは「**admin の登録者も見られる**」ぶんの追加条件 (発注者指示 2026-08-30)。
- * **代理表示中 (`?u=`) は渡さない** = 相手の実データを見せる。
- */
-const demoOk = viewer.isAdmin && !viewer.impersonating;
 await refreshConfig();
-const result = needsSignIn ? null : await loadDashboard(u, demoOk);
+const result = needsSignIn ? null : await loadDashboard(u);
 const hasError = result ? 'error' in result : false;
 const data = !result || hasError ? null : (result as Exclude<typeof result, { error: string }>);
 
-const candidates = data ? await getTrendCandidates(data.resultUid, type ?? undefined, demoOk) : [];
+const candidates = data ? await getTrendCandidates(data.resultUid, type ?? undefined) : [];
 
 // 既定の選択: 従来出していた項目のうち実在するもの → 足りなければ候補の先頭から補う。
 const preferred = candidates.filter((n) => (DEFAULT_TREND_ITEMS as readonly string[]).includes(n));
@@ -76,7 +70,7 @@ const series = data
     )
   : [];
 
-const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId, demoOk) : 0;
+const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;
 const supportContact = cfg('ui.support_contact');
 
 const typeName = type ? testTypeLabel(type).name : null;

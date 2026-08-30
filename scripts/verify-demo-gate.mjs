@@ -3,24 +3,21 @@
  * `npm run verify:demo-gate` — **誰にダミーデータが出るか**を固定する回帰チェック。
  *
  * ══════════════════════════════════════════════════════════════════════
- * 【2026-08-30 確定】本線 = **デモ用アカウント (uid)** / 追加 = **admin の登録者**
+ * 【2026-08-30 確定】**デモ用アカウントと管理者アカウントは別物。混ぜない。**
  * ══════════════════════════════════════════════════════════════════════
  *
- * デモの目的は **UI デザインの確認 / 機能確認 / ビジネスパートナーへのお披露目・PR**
- * (発注者指示 2026-08-30)。admin の登録者もデモを見られる (同指示)。
+ * デモの目的は **UI デザイン確認 / 機能確認 / ビジネスパートナーへのお披露目・PR**。
+ * **PR 用のアカウントは社外に渡る**ので、管理者と同じ枠に置くことはできない。
  *
- * 【順序が要件そのもの — 実際に踏んだ失敗】
- *   旧実装は**第 1 条件が `viewerIsAdmin`** で、その値は
+ *   デモの資格 = uid が一覧にあるか (`demo-accounts.ts` `isDemoAccount`)。**それだけ。**
+ *   管理者権限 = Wellfort 側 `admin_users` (`admin-auth.ts`)。**まったく別系統。**
+ *
+ * 【admin を混ぜてはいけない理由 — 実際に踏んだ失敗】
+ *   旧実装は `viewerIsAdmin` を条件に持っていた。その値は
  *   **Cookie の署名 → HP Edge の resolve-customer → Wellfort 側 admin_users**
- *   という 3 段の外部依存で決まっていた。どこか 1 つが落ちても結果は同じ `false` で、
- *   画面は**黙って空になる**。原因の切り分けに何往復も費やした。
- *   → **uid を先に評価する。** admin 判定が壊れても、登録したデモ用アカウントは
- *     確実にデモを見られる = お披露目が外部システムの状態に左右されない。
- *
- * 【なぜこのチェックが要るか】ここは**静かに壊れる**。
- *   - デモ用アカウントで画面が空になる (お披露目の当日に気づく)
- *   - 実顧客に他人名義のダミーが「自分の結果」として出る (`13a8a95` が塞いだ事故)
- *   どちらも画面を見ただけでは気づけないので、規則を表で固定する。
+ *   という 3 段の外部依存で決まり、どこか 1 つが落ちても結果は同じ `false` で、
+ *   **画面は黙って空になる** (本番で `edge.is_admin:false` を実測)。
+ *   さらに**管理者を 1 人増やすたびにダミーの閲覧者が増える**。
  *
  * 判定の実体は `src/lib/demo-data.ts` の `demoFallbackEnabled`。
  * ここでは同じ規則を**独立に**書き下して突き合わせる (実装をそのまま読むと
@@ -36,14 +33,16 @@ const read = (p) => readFileSync(resolve(ROOT, p), 'utf8');
 const code = (p) => read(p).split('\n').filter((ln) => !/^\s*(\*|\/\/|\/\*)/.test(ln)).join('\n');
 
 const src = read('src/lib/demo-data.ts');
+/** 資格の実体はこちら。「誰に見せるか」は demo-accounts.ts が単独で持つ。 */
+const acct = read('src/lib/demo-accounts.ts');
 const fails = [];
 
 /** 実装から組み込みの uid を読む (中身は運用で変わるので、そこは固定しない)。 */
 const BUILTIN = (() => {
-  const block = src.slice(src.indexOf('BUILTIN_DEMO_UIDS: readonly string[]'));
+  const block = acct.slice(acct.indexOf('BUILTIN_DEMO_UIDS: readonly string[]'));
   return [...block.slice(0, block.indexOf('];')).matchAll(/'([0-9a-f-]{36})'/g)].map((m) => m[1]);
 })();
-if (BUILTIN.length === 0) fails.push('demo-data.ts: 組み込みのデモ用 uid が読めない');
+if (BUILTIN.length === 0) fails.push('demo-accounts.ts: 組み込みのデモ用 uid が読めない');
 
 // ══════════════════════════════════════════════════════════════════════
 // 1. 判定の規則 (実装とは独立にここへ書き下す)
@@ -54,73 +53,101 @@ if (BUILTIN.length === 0) fails.push('demo-data.ts: 組み込みのデモ用 uid
  * @param envFalse env PUBLIC_DEMO_FALLBACK === 'false'
  * @param extra    env DEMO_ALLOWED_UIDS ∪ app_config demo.account_uids
  */
-function expected(uid, envFalse, extra = [], viewerIsAdmin = false) {
-  if (envFalse) return false;                                    // ① 全停止スイッチ
-  if (!!uid && [...BUILTIN, ...extra].includes(uid)) return true; // ② デモ用アカウント (本線)
-  return viewerIsAdmin === true;                                 // ③ admin の登録者 (追加)
+function expected(uid, envFalse, extra = []) {
+  if (envFalse) return false;                            // ① 全停止スイッチ
+  return !!uid && [...BUILTIN, ...extra].includes(uid);  // ② デモ用アカウントか。それだけ
 }
 
 const DEMO = BUILTIN[0];
 const PARTNER = 'bbbbbbbb-1111-2222-3333-444444444444';   // お披露目用に admin から登録した uid
 const CUSTOMER = 'aaaaaaaa-1111-2222-3333-444444444444'; // 実顧客
 
-// [ラベル, uid, env=false か, 追加登録, admin か, 期待]
+// [ラベル, uid, env=false か, 追加登録, 期待]
 const cases = [
-  ['デモ用アカウント(組み込み)   / env 未設定', DEMO,     false, [],        false, true],
-  ['デモ用アカウント(組み込み)   / env=false ', DEMO,     true,  [],        false, false],
-  ['パートナー用(admin から登録) / env 未設定', PARTNER,  false, [PARTNER], false, true],
-  ['パートナー用(未登録)         / env 未設定', PARTNER,  false, [],        false, false],
-  ['admin の登録者               / env 未設定', CUSTOMER, false, [],        true,  true],
-  ['admin の登録者               / env=false ', CUSTOMER, true,  [],        true,  false],
-  ['一般顧客                     / env 未設定', CUSTOMER, false, [],        false, false],
-  ['一般顧客                     / env=false ', CUSTOMER, true,  [],        false, false],
-  ['一般顧客(パートナー登録あり) / env 未設定', CUSTOMER, false, [PARTNER], false, false],
-  ['未サインイン                 / env 未設定', null,     false, [],        false, false],
+  ['デモ用アカウント(組み込み)     / env 未設定', DEMO,     false, [],        true],
+  ['デモ用アカウント(組み込み)     / env=false ', DEMO,     true,  [],        false],
+  ['PR/お披露目用(admin から登録)  / env 未設定', PARTNER,  false, [PARTNER], true],
+  ['PR/お披露目用(未登録)          / env 未設定', PARTNER,  false, [],        false],
+  ['一般顧客                       / env 未設定', CUSTOMER, false, [],        false],
+  ['一般顧客                       / env=false ', CUSTOMER, true,  [],        false],
+  ['一般顧客(他所で PR 登録あり)   / env 未設定', CUSTOMER, false, [PARTNER], false],
+  ['未サインイン                   / env 未設定', null,     false, [],        false],
   /*
-   * **admin 判定が壊れても、デモ用アカウントは見られること。** これが再設計の眼目。
-   * 2026-08-30 に本番で edge.is_admin=false を実測しており、admin だけに依存していると
-   * お披露目の当日に画面が空になる。
+   * **admin であることはデモの資格にならない。**
+   * 管理者を増やしてもダミーの閲覧者は増えない = 2 つの資格が分かれている証拠。
+   * admin がダミーを見たいなら、その uid を登録する (それが唯一の道)。
    */
-  ['デモ用アカウント / admin 判定が壊れている', DEMO,     false, [],        false, true],
+  ['admin だが uid 未登録          / env 未設定', CUSTOMER, false, [],        false],
   /*
-   * **代理表示 (`?u=`) でも、表示中の uid がデモ用アカウントならデモが出ること。**
-   * ページは代理表示中に `viewerIsAdmin` を渡さない (相手の実データを見せるため) ので、
-   * ③ は使えない。**② が uid で判定するから成立する。**
-   * 実測 2026-08-30: `?u=` 付きの URL で紙面が emptyVM になり、原因の特定に往復した。
+   * **admin 判定が壊れていてもデモ用アカウントは見られる。**
+   * お披露目が外部システム (Cookie / HP Edge / admin_users) の状態に左右されない。
    */
-  ['代理表示 (?u=) の相手がデモ用アカウント', DEMO,     false, [],        false, true],
+  ['デモ用アカウント / admin 判定が壊れている',  DEMO,     false, [],        true],
+  /*
+   * **代理表示 (`?u=`) は「表示中の uid」で判定される。**
+   * 実測 2026-08-30: `?u=` 付きで紙面が emptyVM になり、原因の特定に往復した。
+   */
+  ['代理表示 (?u=) の相手がデモ用アカウント',    DEMO,     false, [],        true],
+  ['代理表示 (?u=) の相手が一般顧客',            CUSTOMER, false, [],        false],
 ];
 
 // ══════════════════════════════════════════════════════════════════════
-// 2. 実装の条件と、その評価順序
+// 2. デモの資格に admin が混ざっていないこと (**この再設計の要**)
 // ══════════════════════════════════════════════════════════════════════
 {
   const fn = src.slice(src.indexOf('export function demoFallbackEnabled'));
-  // **本体だけを見る** — 引数リストの `viewerIsAdmin` を条件の出現順と取り違えないため。
   const body = fn.slice(fn.indexOf('{') + 1, fn.indexOf('\n}'));
 
-  if (!/PUBLIC_DEMO_FALLBACK/.test(body)) fails.push('demoFallbackEnabled に全停止スイッチが無い');
-  if (!/demoUids\(\)/.test(body)) fails.push('demoFallbackEnabled が uid 一覧を見ていない');
-  if (!/viewerIsAdmin/.test(body)) {
-    fails.push('demoFallbackEnabled が admin を見ていない'
-      + ' — admin の登録者もデモを見られること (発注者指示 2026-08-30)');
+  if (!/isDemoAccount/.test(body)) fails.push('demoFallbackEnabled が isDemoAccount を使っていない');
+  if (!/demoDisabledGlobally/.test(body)) fails.push('demoFallbackEnabled に全停止スイッチが無い');
+
+  // **引数は uid 1 つだけ。** 任意の第 2 引数は渡し忘れても型で落ちず、静かに挙動が変わる。
+  if (!/export function demoFallbackEnabled\(uid\?: string \| null\): boolean/.test(src)) {
+    fails.push('demoFallbackEnabled の引数が uid 1 つではない'
+      + ' — admin を受け取る形に戻すと、デモの資格が権限の仕組みに再び結合する');
   }
 
   /*
-   * **順序が要件そのもの: uid (本線) が admin (追加) より先。**
-   *
-   * admin を先に置くと、admin 判定の 3 段依存 (Cookie → HP Edge → admin_users) が
-   * デモの入口になる。そこが落ちると**デモ用アカウントまで巻き添えで空になる**
-   * (2026-08-30 に本番で edge.is_admin=false を実測)。
-   * uid を先に評価しておけば、admin が壊れてもお披露目は成立する。
+   * **デモの経路のどこにも admin が現れないこと。**
+   * ここが緩むと「管理者を増やすとダミーの閲覧者が増える」形に戻り、
+   * PR 用アカウントを社外に渡す前提と両立しなくなる。
    */
-  const iEnv = body.indexOf('PUBLIC_DEMO_FALLBACK');
-  const iUid = body.indexOf('demoUids()');
-  const iAdmin = body.indexOf('viewerIsAdmin');
-  if (iEnv < 0 || iUid < 0 || iAdmin < 0) fails.push('demoFallbackEnabled の 3 条件が読めない');
-  else if (!(iEnv < iUid && iUid < iAdmin)) {
-    fails.push('順序が ①env → ②uid → ③admin になっていない'
-      + ' — admin を先に置くと、admin 判定が壊れたときにデモ用アカウントまで空になる');
+  for (const f of ['src/lib/demo-accounts.ts', 'src/lib/demo-data.ts',
+                   'src/lib/dashboard-queries.ts', 'src/lib/measurement-queries.ts',
+                   'src/lib/notice-queries.ts', 'src/lib/elith-report-queries.ts',
+                   'src/lib/result-queries.ts']) {
+    if (/viewerIsAdmin|isAdmin/.test(code(f))) {
+      fails.push(`${f}: デモの経路に admin 判定が混ざっている`
+        + ' — デモ用アカウントと管理者アカウントは別物。混ぜない');
+    }
+  }
+  // ページ側も同様 (demoOk のような橋渡しを作らない)
+  for (const f of ['src/pages/dashboard.astro', 'src/pages/report.astro',
+                   'src/pages/trend.astro', 'src/pages/notices.astro', 'src/pages/kit.astro']) {
+    if (/demoOk/.test(read(f))) {
+      fails.push(`${f}: demoOk が復活している — デモの資格を画面から引き回さない (uid で決まる)`);
+    }
+  }
+
+  /*
+   * **資格は `demo-accounts.ts` が単独で持つこと。**
+   * `demo-data.ts` は「何を見せるか」で、「誰に見せるか」を書く場所ではない。
+   */
+  if (!/BUILTIN_DEMO_UIDS/.test(code('src/lib/demo-accounts.ts'))) {
+    fails.push('demo-accounts.ts に uid 一覧が無い');
+  }
+  if (/BUILTIN_DEMO_UIDS|DEMO_ALLOWED_UIDS/.test(code('src/lib/demo-data.ts'))) {
+    fails.push('demo-data.ts が uid 一覧を持っている — 資格は demo-accounts.ts に一本化する');
+  }
+
+  /*
+   * **PR 用アカウントは代理表示できないこと。**
+   * `?u=` は admin だけの機能。デモ用アカウントは admin ではないので他人を覗けない。
+   * 社外に渡すアカウントなので、ここが緩むと実顧客のデータに到達しうる。
+   */
+  if (!/isAdmin && requested && requested !== selfUid/.test(code('src/lib/viewer.ts'))) {
+    fails.push('viewer.ts: `?u=` の代理表示が admin 限定でなくなっている'
+      + ' — 社外に渡すデモ用アカウントが他人のデータを覗けてしまう');
   }
 }
 
@@ -128,19 +155,19 @@ const cases = [
 // 3. 供給元が 3 つとも生きていること (和であって上書きでない)
 // ══════════════════════════════════════════════════════════════════════
 {
-  const fn = src.slice(src.indexOf('function demoUids('));
+  const fn = acct.slice(acct.indexOf('function demoAccountUids('));
   const body = fn.slice(0, fn.indexOf('\n}'));
   for (const [needle, why] of [
     ['BUILTIN_DEMO_UIDS', '組み込み (消えない下限)'],
     ['DEMO_ALLOWED_UIDS', 'env (DB 障害に影響されない)'],
     ["cfg('demo.account_uids')", 'app_config (admin から即時に増減)'],
   ]) {
-    if (!body.includes(needle)) fails.push(`demoUids() が ${why} を見ていない: ${needle}`);
+    if (!body.includes(needle)) fails.push(`demoAccountUids() が ${why} を見ていない: ${needle}`);
   }
-  // 和であること = キャッシュして固定しないこと (admin の変更が 45 秒で届くように)
-  if (/cachedDemoUids|let cached/.test(body)) {
-    fails.push('demoUids() が結果をキャッシュしている'
-      + ' — app_config は TTL 45 秒で入れ替わるので、固定すると admin の変更が反映されない');
+  // 和であること = キャッシュして固定しないこと (admin の登録が 45 秒で届くように)
+  if (/cached|memo/i.test(body)) {
+    fails.push('demoAccountUids() が結果をキャッシュしている'
+      + ' — app_config は TTL 45 秒で入れ替わるので、固定すると admin の登録が反映されない');
   }
 
   // app_config にキーが登録されていること (無いと admin 画面に出ない)
@@ -149,7 +176,7 @@ const cases = [
   }
 
   // **データ取得より前に refreshConfig() を呼んでいること。**
-  // 後ろだと初回リクエストで admin の登録が効かず、コード既定に落ちる。
+  // 後ろだと初回リクエストで admin 画面からの登録が効かず、コード既定に落ちる。
   for (const f of ['src/pages/dashboard.astro', 'src/pages/report.astro',
                    'src/pages/trend.astro', 'src/pages/notices.astro', 'src/pages/kit.astro']) {
     const t = read(f);
@@ -158,7 +185,7 @@ const cases = [
       .map((n) => t.indexOf(n)).filter((i) => i >= 0).concat([Number.MAX_SAFE_INTEGER]));
     if (iCfg < 0) fails.push(`${f}: refreshConfig() を呼んでいない — app_config のデモ登録が効かない`);
     else if (iLoad !== Number.MAX_SAFE_INTEGER && iCfg > iLoad) {
-      fails.push(`${f}: refreshConfig() がデータ取得より後ろ — 初回リクエストで admin の登録が効かない`);
+      fails.push(`${f}: refreshConfig() がデータ取得より後ろ — 初回リクエストで登録が効かない`);
     }
   }
 }
@@ -189,25 +216,6 @@ const cases = [
     fails.push('hp-edge.ts: 応答の top-level is_admin を見ていない'
       + ' — 顧客レコードの無い管理者 (data: null) が admin になれない');
   }
-  /*
-   * **第 2 引数の渡し忘れを機械で見る。**
-   * `viewerIsAdmin` は任意引数なので、渡し忘れても TypeScript は通る。
-   * 渡し忘れると admin の登録者が黙ってデモを見られなくなる (静かに壊れる)。
-   */
-  for (const f of ['src/lib/dashboard-queries.ts', 'src/lib/measurement-queries.ts',
-                   'src/lib/notice-queries.ts', 'src/lib/elith-report-queries.ts']) {
-    const bare = [...code(f).matchAll(/demoFallbackEnabled\(\s*([A-Za-z0-9_.?]+)\s*\)/g)];
-    if (bare.length) {
-      fails.push(`${f}: demoFallbackEnabled に viewerIsAdmin を渡していない箇所が ${bare.length} 件`);
-    }
-  }
-  // ページが入口へ渡しているか (代理表示中は渡さないので `!viewer.impersonating` 込み)
-  for (const f of ['src/pages/dashboard.astro', 'src/pages/report.astro',
-                   'src/pages/trend.astro', 'src/pages/notices.astro', 'src/pages/kit.astro']) {
-    if (!/const demoOk = viewer\.isAdmin && !viewer\.impersonating;/.test(read(f))) {
-      fails.push(`${f}: viewer.isAdmin を入口関数へ渡していない (demoOk が無い)`);
-    }
-  }
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -220,8 +228,8 @@ if (!/Array\.isArray\(row\.report\)\s*&&\s*demoFallbackEnabled\(/.test(read('src
 
 // ══════════════════════════════════════════════════════════════════════
 console.log('\nダミーデータを出すか (◯=出す / ✗=出さない)\n');
-for (const [label, uid, envFalse, extra, isAdmin, want] of cases) {
-  const got = expected(uid, envFalse, extra, isAdmin);
+for (const [label, uid, envFalse, extra, want] of cases) {
+  const got = expected(uid, envFalse, extra);
   const ok = got === want;
   if (!ok) fails.push(`${label}: 期待 ${want} / 規則 ${got}`);
   console.log(`  ${ok ? '✓' : '✗'} ${label}  → ${got ? '◯' : '✗'}`);
@@ -236,5 +244,5 @@ if (fails.length) {
   for (const f of fails) console.log(`  - ${f}`);
   process.exit(1);
 }
-console.log('\n✓ デモ用アカウントと admin の登録者だけがダミーを見る。一般顧客は自分の実データだけ。');
-console.log('  本線は uid の一覧なので、admin 判定が壊れてもデモ用アカウントは見られる。');
+console.log('\n✓ デモ用アカウントだけがダミーを見る。admin であることは資格にならない。');
+console.log('  デモ用アカウントと管理者アカウントは別物 — PR 用は社外に渡るので混ぜない。');

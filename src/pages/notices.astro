@@ -28,12 +28,6 @@ const expandNews      = url.searchParams.get('news') === 'all';
 const authEnabled = !!import.meta.env.PUBLIC_GOOGLE_CLIENT_ID;
 const needsSignIn = authEnabled && !u;
 
-/*
- * デモを見せる相手 = **デモ用アカウント** (uid 一覧) が本線。
- * これは「**admin の登録者も見られる**」ぶんの追加条件 (発注者指示 2026-08-30)。
- * **代理表示中 (`?u=`) は渡さない** = 相手の実データを見せる。
- */
-const demoOk = viewer.isAdmin && !viewer.impersonating;
 await refreshConfig();
 const supportContact = cfg('ui.support_contact');
 
@@ -42,7 +36,7 @@ const effectiveUid = u ?? (needsSignIn ? null : DEFAULT_USER);
 
 const result = !effectiveUid
   ? null
-  : await loadNotices(effectiveUid, { expandImportant, expandGeneral, expandNews }, demoOk);
+  : await loadNotices(effectiveUid, { expandImportant, expandGeneral, expandNews });
 
 const hasError = result ? 'error' in result : false;
 const data = !result || hasError ? null : (result as Exclude<typeof result, { error: string }>);

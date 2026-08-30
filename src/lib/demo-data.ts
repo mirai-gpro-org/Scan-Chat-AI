@@ -11,7 +11,7 @@
  * ※ これは表示用フォールバックであり DB には書き込まない。
  */
 
-import { cfg } from './app-config';
+import { demoDisabledGlobally, isDemoAccount } from './demo-accounts';
 import type { ElithSection } from './elith-parser';
 import type { DashboardData, MetricTrendSeries } from './dashboard-queries';
 import type { NoticesData } from './notice-queries';
@@ -28,125 +28,36 @@ import type {
  * ダミーフォールバックが有効か。
  *
  * ══════════════════════════════════════════════════════════════════════
- * 【2026-08-30 再設計】**デモを見せる相手 = デモ用アカウント。admin ではない。**
+ * 【判定】**表示中の uid がデモ用アカウントか。それだけ。**
  * ══════════════════════════════════════════════════════════════════════
  *
- * 判定は **uid がデモ用アカウントの一覧に在るか、それだけ**。
- * Cookie も HP Edge も `admin_users` も見ない。**同期・毎リクエスト評価。**
+ * 資格の判定そのものは `demo-accounts.ts` が持つ (`isDemoAccount`)。
+ * ここはダミーデータ側の入口で、**資格の規則をここに書かない**。
  *
- * 【デモの目的】UI デザインの確認 / 機能確認 / **ビジネスパートナーへのお披露目・PR**
- * (発注者 2026-08-30)。権限の確認ではないので、権限の仕組みに乗せる必要が無い。
- * **サインインは通常どおり Google 認証を通る**。デモ用アカウントは「素性の分かっている
- * 実在の Google アカウント」であって、認証の抜け道ではない。
+ * **admin かどうかは見ない。** デモ用アカウントと管理者アカウントは別物で、
+ * **PR 用のアカウントは社外に渡る**ので同じ枠に置けない。
+ * admin がダミーを見たいなら、その uid をデモ用アカウントに登録する
+ * (`docs/operations/デモ用アカウント_仕様書.md` §5・admin から即時・再デプロイ不要)。
  *
- * 【なぜ admin から切り離したか — 実際に踏んだ失敗】
- *   直前まで第 1 条件が `viewerIsAdmin` で、その値は
- *   **Cookie の署名 → HP Edge の `resolve-customer` → Wellfort 側 `admin_users`**
- *   という 3 段の外部依存で決まっていた。どこか 1 つが落ちても結果は同じ `false` で、
- *   画面は**黙って空になる**。原因の切り分けに何往復も費やした。
- *   さらに admin と束ねていると、**管理者を 1 人増やすたびにダミーの閲覧者が増える**。
- *   ローンチ後も社外デモでこのモードは残るので、そこは分かれていないと困る。
+ * 【admin を混ぜてはいけない理由 — 実際に踏んだ失敗】
+ *   `viewerIsAdmin` は **Cookie の署名 → HP Edge の `resolve-customer` →
+ *   Wellfort 側 `admin_users`** という 3 段の外部依存で決まる。どこか 1 つが落ちても
+ *   結果は同じ `false` で、**画面は黙って空になる** (2026-08-30 に本番で
+ *   `edge.is_admin: false` を実測。原因の切り分けに何往復も費やした)。
+ *   さらに、混ぜると**管理者を 1 人増やすたびにダミーの閲覧者が増える**。
  *
- * 【判定】
- *   1. env `PUBLIC_DEMO_FALLBACK=false` … 全停止スイッチ (誰にも出さない)。
- *   2. **uid が `demoUids()` (組み込み ∪ env ∪ app_config) に在れば出す。← 本線。**
- *   3. **admin の登録者も出す** (発注者指示 2026-08-30)。
+ * **uid を渡さない呼び出しは false** (＝ダミーを出さない)。fail-safe をこちらへ倒す。
  *
- * **app_config 経由なので admin から即時に増減できる** (再デプロイ不要・TTL 45 秒)。
- * ただし `cfg()` は事前に `refreshConfig()` が要る — **各ページはデータ取得より前に呼ぶこと**。
- * 呼ばれていなくてもコード既定 (組み込み ∪ env) に落ちるので、画面が壊れることはない。
+ * **代理表示 (`?u=`) 中は渡る uid が相手のもの**になるので、相手が
+ * デモ用アカウントでなければ自動的にデモは出ない (相手の実データが見える)。
+ * 呼び出し側で場合分けする必要は無い。
  *
- * ── ③ を「本線にしない」理由 (順序が要件そのもの) ──────────────────
- *
- * `viewerIsAdmin` は **Cookie の署名 → HP Edge の `resolve-customer` → Wellfort 側
- * `admin_users`** という 3 段の外部依存で決まる。どこか 1 つが落ちても結果は同じ
- * `false` で、**画面は黙って空になる** (2026-08-30 に実測。切り分けに何往復も要した)。
- *
- * だから **② が先で ③ が後**。この順序なら:
- *   - admin 判定が壊れても、uid で登録したデモ用アカウントは**確実に**デモを見られる
- *   - admin 判定が直れば、登録者は**何もしなくても**追随する
- *
- * **③ を ② より前に置いたり、② を消して ③ だけにしないこと。**
- * それをやると 2026-08-30 の障害 (お披露目当日に画面が空) がそのまま再発する。
- * `verify:demo-gate` がこの順序を機械で見張っている。
- *
- * → **Google 認証で入った一般顧客は、何があってもダミーを見ない。自分の実データだけ。**
- *
- * **uid を渡さない呼び出しは false**（＝ダミーを出さない）。fail-safe をこちらへ倒す。
- *
- * **admin が `?u=` で他人を代理表示しているときは、渡る uid が相手のもの**になる。
- * 相手はデモ用アカウントではないので自動的にデモは出ない = 相手の実データが見える。
- * 呼び出し側で場合分けする必要は無い (以前は第 2 引数の渡し忘れが穴だった)。
- *
- * @param uid 閲覧中の diagnostic_user_id。
+ * @param uid 表示中の diagnostic_user_id。
  */
-export function demoFallbackEnabled(uid?: string | null, viewerIsAdmin?: boolean): boolean {
-  // ① 全停止スイッチ (誰にも出さない)
-  if (import.meta.env.PUBLIC_DEMO_FALLBACK === 'false') return false;
-  // ② デモ用アカウントか。**本線。** 外部依存ゼロ・毎リクエスト評価。
-  if (demoUids().has((uid ?? '').trim().toLowerCase())) return true;
-  // ③ admin の登録者も見られる (発注者指示)。**外部依存があるので本線にしない。**
-  return viewerIsAdmin === true;
+export function demoFallbackEnabled(uid?: string | null): boolean {
+  if (demoDisabledGlobally()) return false;
+  return isDemoAccount(uid);
 }
-
-/**
- * **デモ用アカウントの `diagnostic_user_id` 一覧。**
- *
- * 3 つの供給元の**和**。どれか 1 つが空でも他が生きる。
- *
- *   1. **組み込み** (`BUILTIN_DEMO_UIDS`) … テスト用と OEM デモ。消えない下限。
- *   2. **env `DEMO_ALLOWED_UIDS`** … 再デプロイが要るが DB 障害に影響されない。
- *   3. **app_config `demo.account_uids`** … **admin から即時に増減できる**(TTL 45 秒・再デプロイ不要)。
- *      パートナーへのお披露目・PR で当日アカウントを足す、という使い方を想定。
- *
- * **和にした理由**: 上書きにすると、admin で 1 件登録した瞬間に組み込みと env が消え、
- * それまで見えていた画面が黙って空になる。**足すことはできても消せない**方が事故が軽い。
- * 全部止めたいときは env `PUBLIC_DEMO_FALLBACK=false` (これだけが唯一の停止手段)。
- *
- * 【アカウントの増やし方】
- *   1. そのアカウントで Google サインインして `/dashboard` の「デバッグ」を開く
- *   2. `diagnostic_user_id` をコピー
- *   3. wellfort-site admin の設定画面「デモ」→「デモ用アカウントの uid」に足す (即時)
- *
- * **キャッシュしない**。`cfg()` は TTL 45 秒で入れ替わるので、ここで固定すると
- * admin の変更が反映されない。文字列の分割だけなので毎回計算してよい。
- */
-function demoUids(): ReadonlySet<string> {
-  return new Set([
-    ...BUILTIN_DEMO_UIDS,
-    ...splitUids(String(import.meta.env.DEMO_ALLOWED_UIDS ?? '')),
-    ...splitUids(cfg('demo.account_uids')),
-  ]);
-}
-
-function splitUids(raw: string): string[] {
-  return raw.split(/[\s,]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
-}
-
-/**
- * 組み込みのデモ用アカウント = **確実に動く下限**。
- *
- * - `d0000001…` … テストフェーズの標準デモ (真鍋)。`supabase/seed.sql` の投入先で、
- *   `dashboard-queries.DEFAULT_USER` でもある。ダミー一式が最も揃っている。
- * - `da000001…` … OEM 相手先ブランド向けデモ (山田太郎)。`supabase/demo_oem_account.sql`。
- * - `14410d5a…` / `186151f8…` … **社内の確認用アカウント** (2026-08-30 登録)。
- *   UI デザイン確認・機能確認・パートナーへのお披露目に使う。
- *   **ここに置いた理由**: この 2 件は 9/1 ローンチ前の確認に必ず要るので、
- *   admin 判定や DB の状態に左右されない下限に置く。
- *
- * **いずれも実顧客ではない。** 一般顧客の uid をここに書かないこと
- * (常設になり、外すのに再デプロイが要る)。
- *
- * **これから増えるぶんはここに書かない。** 追加は app_config `demo.account_uids`
- * (admin から即時・再デプロイ不要) か env `DEMO_ALLOWED_UIDS` を使う。
- * ここが名簿として育つと、アカウントを 1 件足すたびにデプロイが要る形に戻る。
- */
-const BUILTIN_DEMO_UIDS: readonly string[] = [
-  'd0000001-0000-0000-0000-000000000000',
-  'da000001-0000-0000-0000-000000000000',
-  '14410d5a-d515-4fe9-9a8e-bbb1040021ac',
-  '186151f8-b4ec-4fcd-bbf5-2bf8aca09bdc',
-];
 
 const now = () => new Date();
 const daysAgo = (d: number) => new Date(Date.now() - d * 86400_000).toISOString();

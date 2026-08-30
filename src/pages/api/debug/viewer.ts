@@ -22,6 +22,7 @@ import type { APIRoute } from 'astro';
 import { VIEWER_COOKIE, resolveViewer, uidEntryAllowed, verifyViewer } from '../../../lib/viewer';
 import { isHpEdgeConfigured, resolveCustomerWithAdmin } from '../../../lib/hp-edge';
 import { demoFallbackEnabled } from '../../../lib/demo-data';
+import { demoAccountStats } from '../../../lib/demo-accounts';
 import { loadReportVM } from '../../../lib/elith-report-queries';
 import { refreshConfig } from '../../../lib/app-config';
 import { getServerSupabase } from '../../../lib/supabase';
@@ -93,7 +94,7 @@ export const GET: APIRoute = async (ctx) => {
    *   ③ 現行形式の実データが在る → **モックとは違って当然** (モックは 2026-08-26 検体の紙面)
    * 行の有無だけを見て「データは在る」と判断しない、が 2026-08-30 の教訓。
    */
-  const report = await inspectReport(viewer.uid, viewer.isAdmin);
+  const report = await inspectReport(viewer.uid);
 
   return json({
     ok: true,
@@ -152,7 +153,7 @@ export const GET: APIRoute = async (ctx) => {
  * 報告書の「材料」と「出来上がった紙面」を並べて返す。**PII は出さない**
  * (氏名は渡さず、本文も出さず、件数と字数だけ)。
  */
-async function inspectReport(viewerUid: string | null, isAdmin: boolean): Promise<Record<string, unknown>> {
+async function inspectReport(viewerUid: string | null): Promise<Record<string, unknown>> {
   await refreshConfig();
 
   /*
@@ -163,31 +164,25 @@ async function inspectReport(viewerUid: string | null, isAdmin: boolean): Promis
   let uid = viewerUid;
   try {
     const { loadDashboard } = await import('../../../lib/dashboard-queries');
-    const r = await loadDashboard(viewerUid, isAdmin);
+    const r = await loadDashboard(viewerUid);
     if (r && !('error' in r)) uid = r.diagnosticUserId;
   } catch { /* 解決できなければ Cookie の uid のまま見る */ }
 
   /*
-   * **どちらの経路で出ているかを分けて出す。**
-   *
-   * ② uid（デモ用アカウント）と ③ admin は**別の資格**で、③ は暫定的に残している
-   * 追加条件にすぎない（`docs/operations/デモ用アカウント_仕様書.md` §3）。
-   * まとめて「出る」とだけ答えると、**③ にぶら下がっている人が誰か分からず棚卸しできない**。
-   * ③ を外す判断をするために、ここで区別する。
+   * **デモの資格は uid だけで決まる** (`demo-accounts.ts`)。admin は見ない。
+   * 出ない場合の直し方が 1 つしかないので、理由も 1 通りで済む。
    */
-  const byUid = demoFallbackEnabled(uid, false);   // ② だけで成立するか
-  const demo = byUid || demoFallbackEnabled(uid, isAdmin);
+  const demo = demoFallbackEnabled(uid);
 
   const out: Record<string, unknown> = {
     effective_uid: uid,
     demo_enabled: demo,
-    demo_by: demo ? (byUid ? 'uid (デモ用アカウント)' : 'admin (追加条件・暫定)') : null,
-    demo_reason: byUid
-      ? '出す — uid がデモ用アカウントの一覧にある (本線)'
-      : demo
-        ? '出す — **admin だから**。uid は未登録なので、③ を外すと見えなくなる。'
-          + ' 常用するなら uid をデモ用アカウントに登録すること'
-        : '出さない → 紙面は emptyVM になる。uid をデモ用アカウントに登録すること',
+    demo_accounts: demoAccountStats(),
+    demo_reason: demo
+      ? '出す — uid がデモ用アカウントの一覧にある'
+      : '出さない → 紙面は emptyVM になる。'
+        + ' admin かどうかは関係ない。この uid をデモ用アカウントに登録すること'
+        + ' (wellfort-site admin → 設定「デモ」→「デモ用アカウントの uid」)',
   };
 
   const sb = getServerSupabase();
@@ -247,7 +242,6 @@ async function inspectReport(viewerUid: string | null, isAdmin: boolean): Promis
       ourWellnessAge: null,
       hasCancerRisk: false,
       cycleSeq: null,
-      viewerIsAdmin: isAdmin,
     });
     out.sheet = {
       is_sample: vm.isSample,

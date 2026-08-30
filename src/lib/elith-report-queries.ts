@@ -32,13 +32,6 @@ export interface ReportContext {
   /** その回の入力にがんリスク検査があったか。**アプリが判定する** (spec §1.0.3)。 */
   hasCancerRisk: boolean;
   cycleSeq: number | null;
-  /**
-   * **閲覧している本人**が admin か (`resolveViewer().isAdmin`)。
-   * デモ (受領サンプル) の**追加**条件。**本線は uid のデモ用アカウント一覧**で、
-   * これは「admin の登録者も見られる」ぶん (発注者指示 2026-08-30)。
-   * **代理表示中 (`?u=`) は渡さない** = 相手の実データを見せる。
-   */
-  viewerIsAdmin?: boolean;
 }
 
 type CheckupValues = Record<string, { date?: string; value?: unknown }[]>;
@@ -63,10 +56,10 @@ function common(ctx: ReportContext): Omit<BuildInput, 'reportText' | 'checkup' |
  *
  * **デモ用アカウント限定。** 実顧客に他人名義のサンプルを「自分の報告書」として
  * 見せないため、それ以外には `emptyVM` を返す (2 本柱の帯だけが立ち、材料の無い章は出ない)。
- * 判定は `demo-data.ts` の `demoFallbackEnabled` に集約してある (uid 1 本・外部依存ゼロ)。
+ * 資格の判定は `demo-accounts.ts` の `isDemoAccount` が持つ (uid 1 本・admin と無関係)。
  */
 function sample(ctx: ReportContext): ReportVM {
-  if (!demoFallbackEnabled(ctx.diagnosticUserId, ctx.viewerIsAdmin)) return emptyVM(ctx);
+  if (!demoFallbackEnabled(ctx.diagnosticUserId)) return emptyVM(ctx);
   return buildReportVM({
     ...common(ctx),
     /*
@@ -135,7 +128,7 @@ export async function loadReportVM(ctx: ReportContext): Promise<ReportVM> {
     } catch {
       row = await fetchRow(false);
     }
-    if (!row) return sample(ctx); // 非 admin は sample() 内で emptyVM になる
+    if (!row) return sample(ctx); // デモ用アカウント以外は sample() 内で emptyVM になる
 
     /*
      * **旧形式 (`elith-v1.0` の配列) の行は、報告書を作り直す前の seed / デモの残骸。**
@@ -145,12 +138,12 @@ export async function loadReportVM(ctx: ReportContext): Promise<ReportVM> {
      * 「実データ → サンプル」の順で引くので、**現行のサンプルには永久に落ちず**、
      * admin が報告書の紙面を確認できない (実測 2026-08-30: ダイジェスト 2 枚しか出ない)。
      *
-     * → **admin のデモ表示のときだけ**、現行形式のサンプルを優先する。
+     * → **デモ表示のときだけ**、現行形式のサンプルを優先する。
      *   - **実顧客には一切影響しない** (デモ表示が無効なので、この分岐に入らない)
      *   - **現行形式 (dict) の実データが入れば、この分岐は通らない** = 本物が勝つ
      *   - 旧形式の行を消したり書き換えたりはしない (監査のため残す)
      */
-    if (Array.isArray(row.report) && demoFallbackEnabled(ctx.diagnosticUserId, ctx.viewerIsAdmin)) {
+    if (Array.isArray(row.report) && demoFallbackEnabled(ctx.diagnosticUserId)) {
       return sample(ctx);
     }
 

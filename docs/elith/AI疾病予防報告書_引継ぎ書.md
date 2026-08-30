@@ -16,7 +16,7 @@
 | 2 | **`docs/elith/AI疾病予防報告書_仕様書.md`** | **この機能の唯一の正本。**目的 / 正の所在 / 素材 / やらないこと / 手順と検証 / **決裁台帳 §6** |
 | 3 | `docs/elith/mock/ai_prevention_report_type2.html` | **紙面の正。**飾りではなく契約の入力 |
 | 4 | `docs/elith/フォーマット見本_AI疾病予防レポート.pdf` | デザインと様式の正（**中身は借りない**） |
-| 5 | `docs/operations/デモ用アカウント_仕様書.md` | 誰にダミーが出るか（**アプリ全体の話**。報告書だけの仕様ではない） |
+| 5 | `docs/operations/デモ用アカウント_仕様書.md` | 誰にダミーが出るか（**アプリ全体の話**。報告書だけの仕様ではない）。**デモの資格は uid だけで決まり、admin とは無関係** |
 
 `docs/旧版・ボツ/` は**読まない**。現行と食い違う旧版の置き場で、決裁台帳の引用元としてのみ生きている。
 
@@ -87,7 +87,7 @@ Elith から受領した JSON を**可読化**して本人に見せる報告書�
 | `npm run verify:report-model` | 表示モデルの回帰 **77 件**。逐語性（受領 JSON の部分文字列）・削減率 80% 未満で落ちる |
 | `npm run verify:sheet-contract` | **モックから抽出した紙面契約 ↔ 表示モデル**（サーバ不要） |
 | `npm run verify:screen` | **契約 ↔ 実際の画面** ＋ 幅・行長・紙面の実測（要 `npm run dev`） |
-| `npm run verify:demo-gate` | 誰にダミーが出るか **12 ケース**＋評価順序 |
+| `npm run verify:demo-gate` | 誰にダミーが出るか **12 ケース**＋デモの経路に admin が混ざっていないこと |
 | `npm run verify:report` | 上記のうちサーバ不要な 3 つをまとめて |
 | `npx astro check` | 0 errors であること |
 
@@ -105,7 +105,7 @@ Elith から受領した JSON を**可読化**して本人に見せる報告書�
 - 見本 PDF をトレースした紙面（表紙 / 章扉 / teal ヘッダの表 / `■` 見出し）
 - 印刷ビュー `?print=1`・端末保存の導線
 - 最小 Service Worker（**報告書はキャッシュしない**。オフライン案内 1 枚だけ）
-- デモ表示（**デモ用アカウント + admin の登録者**。仕様書 §4.6）
+- デモ表示（**デモ用アカウントだけ**。admin は資格にならない。`docs/operations/デモ用アカウント_仕様書.md`）
 
 ### 残っている
 
@@ -115,7 +115,7 @@ Elith から受領した JSON を**可読化**して本人に見せる報告書�
 | 2 | **主軸 A の本文** | いまは当社の暫定文 `PILOT_CANCER_FINDING_TEXT` 1 箇所。Elith の回答後に置き換える（仕様書 §6 の E-1） |
 | 3 | **サーバ側 PDF 生成** | **決裁台帳 S-3 = 未裁定**。CLAUDE.md 内でも「必要」と「しない」が併存。**実装で答えを出さない** |
 | 4 | **iOS / Android 実機確認** | 未実施（WebKit は手元で再現不可） |
-| 5 | `edge.is_admin: false` | 本番で admin 判定が成立していない。**デモの本線を uid に移したのでブロッカーではない**。`/api/debug/viewer?k=…&email=…` の `admin_lookup` が切り分ける |
+| 5 | `edge.is_admin: false` | 本番で admin 判定が成立していない。**デモは uid だけで決まるので影響しない**=ブロッカーではない。`/api/debug/viewer?k=…&email=…` の `admin_lookup` が切り分ける |
 | 6 | `/result/[id]` の 3 モードと「要注意」 | 決裁台帳 D-19。**こちらの判断で消さない** |
 
 ---
@@ -130,7 +130,7 @@ GET https://scan-chat-ai.vercel.app/api/debug/viewer?k=<PROBE_UPLOAD_TOKEN>
 
 | 出力 | 意味 |
 |---|---|
-| `demo_enabled: false` | デモが出ていない → 紙面は `emptyVM`。uid をデモ用アカウントに登録する |
+| `demo_enabled: false` | デモが出ていない → 紙面は `emptyVM`。**admin かどうかは無関係**。この uid をデモ用アカウントに登録する |
 | `shape: 旧形式` かつ `demo_enabled: true` | 現行サンプルへ差し替わる（正常） |
 | `chars < 2000` | **紙面が薄いのは実装ではなく行の中身** |
 | `matches_mock_shape: true` | サーバの紙面はモックと同形。違って見えるならブラウザ側かURL |
