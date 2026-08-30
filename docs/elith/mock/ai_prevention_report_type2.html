@@ -26,8 +26,26 @@
     --jp:"BIZ UDGothic","Hiragino Sans","Noto Sans JP",sans-serif;
     --sans:"IBM Plex Sans",var(--jp);
     --mono:"IBM Plex Mono","BIZ UDGothic",ui-monospace,monospace;
+
+    /*
+      ── 見本トークンに無い、モック固有の色 ──────────────────────
+      2026-08-30 に見本のトークンで作り直したとき**定義ごと落ちていた**ぶんの復元。
+      値はオーサライズ済の公開版 (Artifact d633fc3f / 6eac069b) から取った実測値で、
+      こちらで作った色ではない。紙面契約は本文しか見ないので、この欠落は検査に
+      掛からなかった (仕様書 §1.3.10 の「限界」に当たる)。
+    */
+    --alt:#F4F2EC;         /* 解説ブロックの地 (紙面ではない) */
+    --bronze:#A98558;      /* 解説ブロックの見出し (紙面ではない) */
+    --navy:#1D4356;        /* 検査サイクルの済み・カードの左罫 */
+    --ok:#2E7D5B;          /* 判定「基準範囲内」 */
+    --warn:#96661F;        /* 判定「基準範囲を上回っています」等。**赤は使わない** (§4-5) */
   }
   *{box-sizing:border-box}
+
+  /* 判定の文字色。**赤は救急サインだけ** (§4-5) なので警告側も琥珀に留める。 */
+  .j-o{color:var(--ok)}
+  .j-w{color:var(--warn);font-weight:600}
+  .j-x{color:var(--faint)}
   body{margin:0;background:#F2F2F2;color:var(--ink);font-family:var(--jp);
        font-size:16px;line-height:1.8;-webkit-font-smoothing:antialiased}
 
@@ -49,7 +67,8 @@
   .cover .brand::after{content:"";display:block;width:18rem;max-width:100%;
                        height:1px;background:var(--teal);margin-top:.5rem;opacity:.5}
   .cover .name{margin-top:1.5rem;font-size:1.25rem;font-weight:700}
-  .cover .meta{margin-top:.4rem;font-size:.82rem;color:var(--soft)}
+  .cover .meta{margin-top:.4rem;font-size:.82rem;color:var(--soft);
+               display:flex;flex-wrap:wrap;gap:.15rem 1rem}  /* 実装 (report.astro) と同じ間隔。 無いと「2026-08-07紙面 v1.0コースプラン」と続けて出る */
 
   /* ② 2 連の大数字カード (見本 p1) — PDF 版のみ (裁定 D-C2) */
   .nums{display:grid;grid-template-columns:1fr 1fr;gap:0;margin:1.2rem 0 .5rem;
@@ -191,7 +210,7 @@
   タイプ 1（コースプラン・がんリスク検査あり）は、Elith から該当検体の JSON 2 点を受領後に v0.2 で対応します。<br>
   値は<b>合成検体</b>に基づきます。<b>紙面の文はすべて Elith 受領データからの逐語</b>で、要約・言い換え・当社の散文はありません
   （誤字「基準範囲を<b>上上</b>回っており」も原文のまま出しています）。<br>
-  <b>ウェルネス年齢は画面版には出しません</b>（ダッシュボード上部に表示済みのため）。<b>PDF 版では冒頭に入れます。</b>
+  <b>ウェルネス年齢は画面版には出しません</b>（ダッシュボード上部に表示済みのため）。<b>PDF 版（<code>?print=1</code>）では冒頭に入れます</b> — 見本 p1 の 2 連大数字と、その下にダッシュボードから移植した数直線（仕様書 §4.3.6 / 裁定 D-C4）。
 </div>
 
 <div class="sheet">

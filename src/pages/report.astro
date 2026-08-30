@@ -98,6 +98,34 @@ const q = (extra: Record<string, string>) => {
   return s ? `/report?${s}` : '/report';
 };
 
+/*
+ * 冒頭の数直線 (`?print=1` のみ)。**ダッシュボードの `HealthAgeCard.astro:47-62,101-136` から
+ * レイアウトを移植したもの** (発注者指示 2026-08-30「見本の横並びは尊重しつつ、その下に
+ * ダッシュボードのバーグラフ表示のレイアウトを移植」)。
+ *
+ * 【出すのは 2 値と目盛りだけ】判定のゾーン塗り分けはしない・差の解釈文も添えない
+ *   (ミッション④ / 紙面の散文は受領 JSON の逐語だけ・spec §4.1)。
+ * 【目盛りは 30〜80 歳固定】値がその外に出る検体でも切れないよう 10 歳単位で**外側にだけ**
+ *   広げる (狭めない = 回によって物差しが伸縮しない)。
+ * 【値は紙面と同じ回のもの】ウェルネス年齢は **Elith 受領値** (`vm.cover.wellnessAge`)、
+ *   実年齢は当社 `health_age_scores`。ダッシュボードが出す当社 CABA 値を持ち込まない
+ *   (「ウェルネス年齢は Elith 出力の値のみ表示・併記しない」)。
+ */
+const GAUGE_STEP = 10;
+const gWell = vm.cover.wellnessAge;
+const gAge = vm.cover.chronologicalAge;
+/** 2 値が揃った回だけ描く。片方でも欠けたら数直線を出さない (位置を作らない = 捏造ゼロ)。 */
+const showGauge = isPrint && gWell != null && gAge != null;
+const gLo = Math.min(30, Math.floor(Math.min(gWell ?? 30, gAge ?? 30) / GAUGE_STEP) * GAUGE_STEP);
+const gHi = Math.max(80, Math.ceil(Math.max(gWell ?? 80, gAge ?? 80) / GAUGE_STEP) * GAUGE_STEP);
+const gTicks: number[] = [];
+for (let v = gLo; v <= gHi; v += GAUGE_STEP) gTicks.push(v);
+const gPos = (v: number) => ((v - gLo) / (gHi - gLo)) * 100;
+const gWellPos = gWell != null ? gPos(gWell) : 0;
+const gAgePos = gAge != null ? gPos(gAge) : 0;
+const gBandLeft = Math.min(gWellPos, gAgePos);
+const gBandWidth = Math.abs(gAgePos - gWellPos);
+
 const digestByAxis = (axis: 'a' | 'b') => vm.digest.filter((c) => c.axis === axis);
 const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis === axis);
 ---
@@ -172,6 +200,52 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
             {vm.cover.chronologicalAge ?? '—'}
           </b>
           <span class="mt-2 block text-sm text-slate-800">実年齢</span>
+        </div>
+      </div>
+    )}
+
+    {/* ══════════ ②の下: 実年齢との比較を数直線で ══════════
+        発注者指示 2026-08-30「見本の横並びは尊重しつつ、その下にダッシュボードの
+        バーグラフ表示のレイアウトを移植」。**見本 p1 の 2 連大数字はそのまま**で、
+        その下にダッシュボード (`HealthAgeCard.astro`) の数直線を移植した。
+        `?print=1` のみ (裁定 D-C2 = ウェルネス年齢は PDF 版にだけ出す)。 */}
+    {showGauge && (
+      <div
+        class="rp-gauge px-2"
+        role="img"
+        aria-label={`${WELLNESS_AGE_LABEL} ${gWell} 歳、実年齢 ${gAge} 歳。目盛りは ${gLo} 歳から ${gHi} 歳。`}
+      >
+        <div class="relative h-7">
+          <span
+            class="tnum absolute bottom-0 -translate-x-1/2 whitespace-nowrap text-sm font-bold text-brand-700"
+            style={`left:${gWellPos.toFixed(2)}%`}
+          >{`${WELLNESS_AGE_LABEL} ${gWell}`}</span>
+        </div>
+        <div class="rp-gauge-track relative h-4 rounded-full">
+          {gTicks.slice(1, -1).map((v) => (
+            <span class="rp-gauge-tick absolute inset-y-0 w-px" style={`left:${gPos(v).toFixed(2)}%`}></span>
+          ))}
+          <span
+            class="rp-gauge-band absolute inset-y-0"
+            style={`left:${gBandLeft.toFixed(2)}%;width:${gBandWidth.toFixed(2)}%`}
+          ></span>
+          <span
+            class="rp-gauge-dot rp-gauge-dot-well absolute top-1/2 -ml-2 -mt-2 h-4 w-4 rounded-full"
+            style={`left:${gWellPos.toFixed(2)}%`}
+          ></span>
+          <span
+            class="rp-gauge-dot rp-gauge-dot-age absolute top-1/2 -ml-2 -mt-2 h-4 w-4 rounded-full"
+            style={`left:${gAgePos.toFixed(2)}%`}
+          ></span>
+        </div>
+        <div class="relative mt-1.5 h-11">
+          {gTicks.map((v) => (
+            <span class="tnum absolute -translate-x-1/2 text-sm text-slate-600" style={`left:${gPos(v).toFixed(2)}%`}>{v}</span>
+          ))}
+          <span
+            class="tnum absolute top-5 -translate-x-1/2 whitespace-nowrap text-sm font-bold text-slate-700"
+            style={`left:${gAgePos.toFixed(2)}%`}
+          >実年齢 {gAge}</span>
         </div>
       </div>
     )}
