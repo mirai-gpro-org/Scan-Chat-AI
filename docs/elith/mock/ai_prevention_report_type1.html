@@ -1,0 +1,337 @@
+<title>コースプラン版 紙面案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+  :root{
+    --page:#EFECE5;--ground:#FBFAF7;--surface:#FFFFFF;--alt:#F4F2EC;
+    --ink:#102B3A;--soft:#495B65;--faint:#6E7D85;--rule:#DED9CF;
+    --brand:#287F86;--brand-bg:#E4EFEE;--brand-dk:#1E6067;
+    --navy:#1D4356;--navy-bg:#E7ECEE;
+    --bronze:#A98558;
+    --warn:#96661F;--warn-bg:#F8F0E0;--warn-line:#DCBC83;
+    --alert:#A8443C;--alert-bg:#F9EAE8;--alert-line:#D89A93;
+    --ok:#2E7D5B;--ok-bg:#E6F1EB;
+    --shadow:0 1px 2px rgba(16,43,58,.05),0 10px 30px rgba(16,43,58,.06);
+    --jp:"BIZ UDGothic","Hiragino Sans","Noto Sans JP",sans-serif;
+    --sans:"IBM Plex Sans",var(--jp);
+    --mono:"IBM Plex Mono","BIZ UDGothic",ui-monospace,monospace;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --page:#091419;--ground:#0E1F29;--surface:#142A36;--alt:#1B333F;
+    --ink:#EDEAE3;--soft:#B3C0C6;--faint:#8A999F;--rule:#2C4451;
+    --brand:#63B5B0;--brand-bg:#1C3A3C;--brand-dk:#8ACFC9;
+    --navy:#9FBCC9;--navy-bg:#17303C;
+    --bronze:#C0A075;
+    --warn:#D9A85A;--warn-bg:#32270F;--warn-line:#6B5626;
+    --alert:#E0857C;--alert-bg:#37201E;--alert-line:#7A413B;
+    --ok:#6FC095;--ok-bg:#17332A;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.25);
+  }}
+  :root[data-theme="dark"]{
+    --page:#091419;--ground:#0E1F29;--surface:#142A36;--alt:#1B333F;
+    --ink:#EDEAE3;--soft:#B3C0C6;--faint:#8A999F;--rule:#2C4451;
+    --brand:#63B5B0;--brand-bg:#1C3A3C;--brand-dk:#8ACFC9;
+    --navy:#9FBCC9;--navy-bg:#17303C;
+    --bronze:#C0A075;
+    --warn:#D9A85A;--warn-bg:#32270F;--warn-line:#6B5626;
+    --alert:#E0857C;--alert-bg:#37201E;--alert-line:#7A413B;
+    --ok:#6FC095;--ok-bg:#17332A;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.25);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--page);color:var(--ink);font-family:var(--jp);
+       font-size:16px;line-height:1.8;-webkit-font-smoothing:antialiased}
+  .sheet{max-width:44rem;margin:2.5rem auto;background:var(--ground);
+         border:1px solid var(--rule);border-radius:8px;box-shadow:var(--shadow);overflow:hidden}
+  .inner{padding:2rem 1.6rem 3rem;display:flex;flex-direction:column;gap:1.4rem}
+  @media(max-width:520px){.inner{padding:1.5rem 1.05rem 2.5rem}body{font-size:15px}}
+
+  /* 表紙 */
+  .cover{background:var(--navy-bg);border-bottom:1px solid var(--rule);padding:1.8rem 1.6rem 1.5rem}
+  .cover .brand{font-family:var(--sans);font-size:.7rem;font-weight:600;letter-spacing:.16em;
+                text-transform:uppercase;color:var(--brand)}
+  .cover h1{margin:.5rem 0 0;font-size:1.55rem;font-weight:700;line-height:1.35;letter-spacing:-.01em}
+  .cover .meta{margin-top:.7rem;font-family:var(--sans);font-size:.76rem;color:var(--faint);
+               display:flex;gap:1rem;flex-wrap:wrap}
+
+  /* 主軸見出し */
+  .axis{margin-top:.6rem;padding:1rem 1.1rem;border-radius:6px;display:flex;flex-direction:column;gap:.25rem}
+  .axis.a{background:var(--navy-bg);border-left:4px solid var(--navy)}
+  .axis.b{background:var(--brand-bg);border-left:4px solid var(--brand)}
+  .axis .lab{font-family:var(--sans);font-size:.68rem;font-weight:600;letter-spacing:.12em;color:var(--faint)}
+  .axis h2{margin:0;font-size:1.2rem;font-weight:700;line-height:1.4}
+
+  h3{margin:.5rem 0 0;font-size:1.02rem;font-weight:700;line-height:1.5;
+     display:flex;align-items:center;gap:.45rem;flex-wrap:wrap}
+  h4{margin:.3rem 0 0;font-size:.9rem;font-weight:700;line-height:1.5;color:var(--brand-dk)}
+  p{margin:0}
+  .card{background:var(--surface);border:1px solid var(--rule);border-radius:7px;
+        padding:1rem 1.1rem;display:flex;flex-direction:column;gap:.55rem}
+  .card>p{font-size:.92rem;line-height:1.8}
+  .filled{border-left:4px solid var(--navy)}
+
+  .tag{font-family:var(--sans);font-size:.66rem;font-weight:600;padding:.14rem .5rem;
+       border-radius:2px;white-space:nowrap;letter-spacing:.03em}
+  .t-ok{background:var(--ok);color:var(--ok-bg)}
+
+  table{border-collapse:collapse;width:100%;font-size:.86rem}
+  .scroll{overflow-x:auto}
+  th{font-family:var(--sans);font-size:.68rem;font-weight:600;color:var(--faint);
+     text-align:left;padding:.3rem .35rem;border-bottom:1px solid var(--rule);white-space:nowrap}
+  td{padding:.38rem .35rem;border-bottom:1px solid var(--rule);vertical-align:baseline;line-height:1.6}
+  tr:last-child td{border-bottom:none}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .jdg{font-family:var(--sans);font-size:.76rem;line-height:1.6;white-space:nowrap}
+  .j-w{color:var(--warn);font-weight:600}
+  .j-o{color:var(--ok)}
+  .j-x{color:var(--faint)}
+  .ref{color:var(--faint);font-size:.78rem;white-space:nowrap}
+
+  .lsblk{display:flex;flex-direction:column;gap:.85rem}
+  .lsit{display:flex;flex-direction:column;gap:.32rem;padding-bottom:.85rem;
+        border-bottom:1px dashed var(--rule)}
+  .lsit:last-child{border-bottom:none;padding-bottom:0}
+  .lsrow{display:grid;grid-template-columns:5.4rem 1fr;gap:.55rem;font-size:.88rem;line-height:1.75}
+  .lsrow .k{font-family:var(--sans);font-size:.72rem;font-weight:600;color:var(--faint);padding-top:.3rem}
+  @media(max-width:520px){.lsrow{grid-template-columns:1fr;gap:.1rem}.lsrow .k{padding-top:0}}
+
+  ol.steps{margin:0;padding-left:1.2rem;display:flex;flex-direction:column;gap:.3rem;font-size:.9rem}
+  ol.steps li::marker{color:var(--brand);font-weight:600}
+  ul.list{margin:0;padding-left:1.15rem;display:flex;flex-direction:column;gap:.35rem;font-size:.9rem;line-height:1.7}
+  ul.list li::marker{color:var(--bronze)}
+  .muted{color:var(--faint);font-size:.84rem;line-height:1.7}
+
+  .cycle{display:flex;gap:.35rem;margin:.2rem 0}
+  .cycle i{flex:1;height:.45rem;border-radius:2px;background:var(--rule);font-style:normal}
+  .cycle i.done{background:var(--navy)}
+  .cycle i.now{background:var(--brand)}
+  .cyclab{display:flex;justify-content:space-between;font-family:var(--sans);font-size:.68rem;color:var(--faint)}
+
+  .weeks{display:flex;flex-direction:column;gap:0}
+  .wk{display:grid;grid-template-columns:3.3rem 1fr;gap:.8rem;padding:.55rem 0;
+      border-bottom:1px solid var(--rule);font-size:.88rem;line-height:1.7}
+  .wk:last-child{border-bottom:none}
+  .wk b{font-family:var(--sans);font-size:.76rem;color:var(--brand-dk);padding-top:.15rem}
+
+  .src{font-family:var(--mono);font-size:.68rem;color:var(--faint);margin-top:.15rem}
+  .banner{max-width:44rem;margin:0 auto 1rem;padding:.7rem 1rem;background:var(--warn-bg);
+          border:1px solid var(--warn-line);border-radius:6px;font-size:.84rem;color:var(--warn)}
+  .banner b{color:var(--warn)}
+
+  /* 注釈（モック上の解説。実紙面には出ない） */
+  .anno{background:var(--alt);border:1px dashed var(--rule);border-radius:6px;
+        padding:.7rem .9rem;font-size:.83rem;line-height:1.75;color:var(--soft)}
+  .anno .h{font-family:var(--sans);font-size:.66rem;font-weight:600;letter-spacing:.1em;
+           color:var(--bronze);display:block;margin-bottom:.2rem}
+  .anno b{color:var(--ink)}
+  q{quotes:"「" "」";font-style:normal}
+</style>
+
+<div class="banner">
+  <b>コースプラン版（タイプ 1・がんリスク検査あり）の紙面案。画面版。</b>
+  素材は <b>2026_08_06 Stage2（見出し統一・食事改善版）PDF のテキスト</b>から起こしました。<br>
+  <b>この検体の JSON は未入手です。</b>そのため紙面設計の案であって、実装は JSON 受領後（v0.2）に行います。<br>
+  <b>紙面の文はすべて Stage2 からの逐語</b>で、要約・言い換え・当社の散文はありません。<br>
+  <b>ウェルネス年齢は画面版には出しません</b>（ダッシュボード上部に表示済みのため）。<b>PDF 版では冒頭に入れます。</b><br>
+  <b>破線のブロックはモック上の解説</b>で、実紙面には出ません。
+</div>
+
+<div class="sheet">
+
+  <div class="cover">
+    <div class="brand">Welltect</div>
+    <h1>AI疾病予防報告書</h1>
+    <div style="margin-top:.5rem;font-size:1.05rem;font-weight:700">（ご本人氏名）様</div>
+    <div class="meta"><span>作成日 2026-08-07</span><span>紙面 v1.0</span><span>コースプラン</span></div>
+    <div class="cyclab"><span>第 1 回 人間ドック</span><span>第 2 回</span><span>第 3 回</span><span>第 4 回</span></div>
+    <div class="cycle"><i class="now"></i><i></i><i></i><i></i></div>
+  </div>
+
+  <div class="inner">
+
+    <div data-note class="anno">
+      <span class="h">表紙について</span>
+      <b>氏名は受領 JSON に含まれません。</b>アプリが <code>customer</code> スキーマから出します。
+      <b>検査サイクル（第 N 回／全 4 回）も Elith 出力ではなく</b>、サブスク・進捗管理テーブル
+      （<code>customer.subscriptions</code> の <code>current_cycle_seq</code> ほか）が持つ値です。
+      ウェルネス年齢は<b>画面版の報告書には出しません</b>（ダッシュボード上部に表示済み）。<b>PDF 版のみ冒頭に入れます。</b>
+    </div>
+
+    <!-- ══════════ A ══════════ -->
+    <div class="axis a">
+      <span class="lab">主軸 A</span>
+      <h2>初期がんの早期発見</h2>
+    </div>
+
+    <div data-card="cancer_finding" data-axis="a" class="card filled">
+      <h3><span class="tag t-ok">低リスク</span>今回の所見</h3>
+      <p>今回の検査結果では、腫瘍マーカーの PSA が健康な判定であり、がんリスク評価においても低リスクの範囲を示しているという良好な点があります。</p>
+      <p>また、がんリスク評価で低リスクであっても、これががんがないことを断定するものではない点にご留意ください。</p>
+      <p>低リスクという判定の意味を正しく理解し、過信せず定期的な確認を継続することが求められます。</p>
+      <div class="src">総評 §1・§3（同旨がアブストラクトにも記載）</div>
+    </div>
+
+    <div data-note class="anno">
+      <span class="h">タイプ 2 との最大の違い</span>
+      <b>この章が Elith の文章だけで埋まります。</b>単品購入版では「がん」「腫瘍」「マーカー」が全文で 0 回のため、
+      当社の定型文に頼らざるを得ませんでした。<br>
+      <b>但し書きも Elith 自身が書いています</b>（<q>これががんがないことを断定するものではない</q>）。
+      当社が但し書きを足すと Elith より強い表現になってしまうため、<b>足しません</b>。<br>
+      <b>課題：この 3 文はアブストラクト・総評 §1・総評 §3 の 3 か所に、他の話と混ざって置かれています。</b>
+      抜き出しは文単位のスライスになり、Elith が言い回しを変えると黙って拾えなくなります。
+      → 依頼事項 ①（独立した項目としての出力）はタイプ 1 でも必要です。
+    </div>
+
+    <!-- ══════════ B ══════════ -->
+    <div class="axis b">
+      <span class="lab">主軸 B</span>
+      <h2>AI 診断による疾病予防アドバイス</h2>
+    </div>
+
+    <div data-note class="anno">
+      <span class="h">出ない章の実例</span>
+      単品購入版にあった赤い<b>「すぐ受診」カード</b>は、<b>この回では出ません</b>。
+      Stage2 には救急受診を促す記載（胸痛・呼吸困難・麻痺など）が<b>ありません</b>。<br>
+      材料が無い章は、空カードを置かずに<b>章ごと出さない</b> — これが第一級の要件です（仕様書 §0.3）。
+    </div>
+
+    <div data-card="medical_visit" data-axis="b" class="card">
+      <h3>医療受診の目安</h3>
+      <h4>最優先の所見とその理由</h4>
+      <p>今回の健康診断の結果において、最優先で対応が必要な所見は「腹部超音波」の判定が「要検査」となっている点です。</p>
+      <p>腹部超音波検査は、超音波を用いてお腹の中にある肝臓、胆嚢、膵臓、脾臓などの臓器の状態を確認する検査です。</p>
+      <ol class="steps">
+        <li><b>まず確認すること</b><br>まずは、お手元にある健康診断の原票（結果報告書）を詳しくご確認ください。</li>
+        <li><b>相談先とタイミング</b><br>相談先については、まずは健診結果の原票に記載されている指示に従ってください。</li>
+        <li><b>相談時の準備と確認後の進め方</b><br>医療機関へ相談される際は、今回の健康診断の結果が記載された原票を必ず持参してください。</li>
+      </ol>
+      <div class="src">医療受診の目安 §1〜§4</div>
+    </div>
+
+    <div data-note class="anno">
+      <span class="h">確認したい点：「最優先」が 3 か所で食い違います</span>
+      <b>アブストラクト＝血圧</b>（<q>優先的に向き合うべき事項</q>）／
+      <b>総評 §3＝ALT（肝機能）</b>（<q>最優先で取り組むべき課題</q>）／
+      <b>医療受診 §1＝腹部超音波</b>（<q>最優先で対応が必要な所見</q>）。<br>
+      紙面の先頭に 1 件だけ出す設計なので、<b>アプリ側では 1 つに決められません。</b>
+      上記は「医療受診の目安」を採った案です。→ 依頼事項に追加します。
+    </div>
+
+    <div data-card="measurements" data-axis="b" class="card">
+      <h3>検査値フィードバック</h3>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>項目</th><th>今回</th><th>判定</th><th>基準値</th></tr></thead>
+        <tbody>
+          <tr><td>体重</td><td class="num">95.8 kg</td><td class="jdg j-w">注意・経過観察</td><td class="ref">—</td></tr>
+          <tr><td>腹囲</td><td class="num">99.0 cm</td><td class="jdg j-w">注意・経過観察</td><td class="ref">—</td></tr>
+          <tr><td>血圧</td><td class="num">136 / 84</td><td class="jdg j-w">注意・経過観察</td><td class="ref">—</td></tr>
+          <tr><td>総ビリルビン</td><td class="num">0.7</td><td class="jdg j-o">基準範囲内</td><td class="ref">0.3〜1.2 mg/dL</td></tr>
+          <tr><td>網赤血球数</td><td class="num">18 ‰</td><td class="jdg j-o">基準範囲内</td><td class="ref">2〜27 ‰</td></tr>
+          <tr><td>尿蛋白</td><td class="num">(-)</td><td class="jdg j-o">陰性</td><td class="ref">—</td></tr>
+          <tr><td>右視力</td><td class="num">1.50</td><td class="jdg j-x">—</td><td class="ref">—</td></tr>
+          <tr><td>眼底検査</td><td class="num">結果詳細なし</td><td class="jdg j-x">緊急 ※</td><td class="ref">—</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="muted">※ この「緊急」は健診上の分類ラベルであり、直ちに救急受診が必要な状態を指すものではありません。
+        眼底検査の詳細な結果について、原票にて改めて確認してください。</p>
+      <div class="src">検査値フィードバック（値・判定・基準値はすべて本文からの逐語）</div>
+    </div>
+
+    <div data-note class="anno">
+      <span class="h">この表から分かった 2 点</span>
+      ① <b>「緊急」を機械で拾って赤くしてはいけません。</b>Elith 自身が打ち消し文を書いています。
+      判定ラベルは<b>必ず Elith の説明文とセットで出し、赤は救急サインだけに使う</b>という方針の裏付けになりました。<br>
+      ② <b>基準値が付いているのは 8 項目中 2 項目だけ</b>です。また、要検査の <b>ALT には数値の記載がありません</b>
+      （検査値フィードバックは 7 グループの代表 1 項目ずつで、全項目ではないため）。
+      → <b>この検体の <code>health_checkup.json</code> をいただく必要があります。</b>
+    </div>
+
+    <div data-card="lifestyle" data-axis="b" class="card">
+      <h3>ライフスタイル総合</h3>
+      <div class="lsblk">
+        <div class="lsit">
+          <h4>飲酒習慣</h4>
+          <div class="lsrow"><span class="k">現状評価</span><span>現在の飲酒習慣について、週に4〜5日の頻度で、1回あたり2〜3合のお酒を飲まれていることが確認されています。</span></div>
+          <div class="lsrow"><span class="k">行動提案</span><span>まずは、1日の飲酒量をあらかじめ決めてから飲み始めることや、飲酒の合間に水や炭酸水を挟むことから始めてみてください。</span></div>
+        </div>
+        <div class="lsit">
+          <h4>喫煙習慣</h4>
+          <div class="lsrow"><span class="k">現状評価</span><span>喫煙習慣について伺ったところ、これまで一度も吸ったことがないとのことです。</span></div>
+          <div class="lsrow"><span class="k">行動提案</span><span>現在は喫煙習慣がないため、特に新しく開始すべき対策はありません。</span></div>
+        </div>
+        <div class="lsit">
+          <h4>仕事中の過ごし方</h4>
+          <div class="lsrow"><span class="k">現状評価</span><span>お仕事中の過ごし方について、1日のうち座りっぱなしの時間が6〜9時間に及んでいることが確認されています。</span></div>
+          <div class="lsrow"><span class="k">行動提案</span><span>最初の一歩として、座位行動の合間に、少しでも身体を動かす習慣を取り入れてみてください。</span></div>
+        </div>
+        <div class="lsit">
+          <h4>通勤・移動の活かし方</h4>
+          <div class="lsrow"><span class="k">現状評価</span><span>通勤方法や移動手段に関する情報は提供されておりません。</span></div>
+          <div class="lsrow"><span class="k">行動提案</span><span>もし移動中に座っている時間が長いと感じられる場合は、駅の階段を利用したり、目的地の一つ手前の停留所で降りて歩くなど、日常の導線の中で歩数を増やす選択肢を検討してみてください。</span></div>
+        </div>
+        <div class="lsit">
+          <h4>余暇の充実と社会的なつながり</h4>
+          <div class="lsrow"><span class="k">現状評価</span><span>余暇の過ごし方や社会的なつながりに関する情報は提供されておりません。</span></div>
+          <div class="lsrow"><span class="k">行動提案</span><span>まずは、ご自身が心地よいと感じるリフレッシュ方法を再確認し、意識的に余暇の時間に組み込むことから始めてみてください。</span></div>
+        </div>
+        <div class="lsit">
+          <h4>健康管理習慣</h4>
+          <div class="lsrow"><span class="k">現状評価</span><span>体重の変化について、20歳の頃と比べて10kg以上の増加があり、この1年間でも3kg以上の増加があったことが確認されています。</span></div>
+          <div class="lsrow"><span class="k">行動提案</span><span>最初の一歩として、まずは現在の体重の推移を定期的に記録し、ご自身の身体の変化を客観的に把握することから始めてください。</span></div>
+        </div>
+      </div>
+      <div class="src">ライフスタイル総合 §1〜§6（各節の【現状評価】【行動提案】冒頭文）</div>
+    </div>
+
+    <div data-note class="anno">
+      <span class="h">維持と改善を自動で分類しません</span>
+      喫煙は<q>特に新しく開始すべき対策はありません</q>、飲酒は具体的な改善行動 — と内容は明確に分かれますが、
+      <b>語尾からの自動判別は脆い</b>ため行いません（<q>続けながら</q> のような文型を取りこぼします）。
+      <b>【現状評価】→【行動提案】のペアをそのまま並べます。</b>
+    </div>
+
+    <div data-card="diet_plan" data-axis="b" class="card">
+      <h3>1か月の食事改善プラン</h3>
+      <p>このプランは、1か月かけて段階的に食事習慣を整えていくための実行例です。提示したすべてを完璧に行う必要はありませんので、ご自身にとって実行可能な行動を選んで取り入れてください。</p>
+      <div class="weeks">
+        <div class="wk"><b>第1週</b><span>朝食を抜くことが多いという習慣を起点に、まずは朝に何かを食べるという「始めやすい一歩」を試します。</span></div>
+        <div class="wk"><b>第2週</b><span>朝食に慣れてきたら、食事全体の組み合わせを整える段階へ進みます。</span></div>
+        <div class="wk"><b>第3週</b><span>組み合わせに慣れたら、食材の種類を広げて、特定の食品への偏りを減らします。</span></div>
+        <div class="wk"><b>第4週</b><span>この1か月で試した方法の中で、ご自身にとって継続しやすかったものを振り返り、翌月も続ける習慣を選びます。</span></div>
+      </div>
+      <div class="src">食事アドバイス §4</div>
+    </div>
+
+    <div data-card="nutrients" data-axis="b" class="card">
+      <h3>必要とする栄養素/サプリ情報</h3>
+      <p>個人所見に基づき優先的に補給すべき栄養素は選定しません。提供されたデータには、EPA/AA 比の判定が注意・経過観察であることや、カフェインの摂取習慣に関する情報が含まれていますが、これらのみで特定の栄養素の不足を断定し、優先順位を決定する根拠としては不十分であるためです。</p>
+      <div class="src">必要とする栄養素/サプリ情報 §1</div>
+    </div>
+
+    <div data-note class="anno">
+      <span class="h">「選定しない」も出力です</span>
+      材料が無いのではなく、<b>Elith が「選定しない」と明記しています。</b>
+      これは<b>そのまま表示します</b>（章を落とす条件は「Elith が何も書いていない」場合だけです）。
+    </div>
+
+    <div data-note class="card">
+      <h3>詳しく読む</h3>
+      <ul class="list">
+        <li>アブストラクト／総評／検査値フィードバック／食事アドバイス／運動アドバイス／睡眠・ストレス管理／ライフスタイル総合／医療受診の目安／必要とする栄養素/サプリ情報／リファレンス</li>
+      </ul>
+    </div>
+
+    <div data-note class="anno">
+      <span class="h">章立てを設定に出す理由がここにも</span>
+      単品購入版は<b>見出し 39 か所</b>、このコースプラン版は<b>74 か所</b>。
+      同じレンダラで倍近い分量を扱います。<b>章の順序・表示可否・開閉はコードに埋めず設定に出します</b>（仕様書 §1.3）。
+    </div>
+
+  </div>
+</div>
+
+</body></html>
