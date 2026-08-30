@@ -365,7 +365,7 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
   - **受取仕様は未確定** (`docs/lab/lab_data_pipeline_master_spec.md:98`)。命名規則・出力トリガ・
     世代管理・ひも付け・受領確認が決まったら自動受信へ差し替える。
   - **【仕様変更 2026-08-28・発注者指示】報告書は「Elith の PDF を見せる」から
-    「受領 JSON からアプリが生成する」へ変わる。正本 `docs/elith/ai_prevention_report_generation_spec.md`。**
+    「受領 JSON からアプリが生成する」へ変わる。正本 `docs/elith/AI疾病予防報告書_仕様書.md` ※ § 番号は旧版 `docs/旧版・ボツ/ai_prevention_report_generation_spec.md`。**
     目的は**フォーマット変換ではなく可読化** (Elith の出力は文章の羅列で一般ユーザーが読み通せない)。
     見本 PDF は**様式のお手本**であって埋める項目の一覧ではない。
     - **【前提】サービスの 2 本柱 = A 初期がんの早期発見 / B AI 診断による疾病予防アドバイス**
@@ -488,7 +488,7 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
       (要約/順位づけ/言い換え) は全て禁止事項と重なる。スキャン側の実績 (多数決撤回・
       inventoryReread の幻覚5件・VQA の捏造4件→「新規pushしない」) がそのまま効く。
       将来入れるなら **選択のみ/verbatim機械検証/取り込み時1回でDB保存/監査/既定off** が条件 (spec §5.5)。
-    - **【実装済み 2026-08-29・パイロット版 v0.1】正本 `docs/elith/ai_prevention_report_generation_spec.md` §9.3。**
+    - **【実装済み 2026-08-29・パイロット版 v0.1】正本 `docs/elith/AI疾病予防報告書_仕様書.md` ※ § 番号は旧版 `docs/旧版・ボツ/ai_prevention_report_generation_spec.md` §9.3。**
       対象は**タイプ2 (単品購入相当) のみ** (§0.0)。タイプ1 はがんリスク検査ありの JSON 2 点を
       Elith から受領してから v0.2。
       - **構成 = 3 層** (spec §1.3.3)。`report-model.ts` (型・画面はこれしか知らない) /
@@ -570,9 +570,9 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
     - **【1 回目はリバート済み 2026-08-29】上記の前に入れた実装 (P0〜P4) は全て取り消した。**
       理由は可読化 (spec §1.1) を満たしていないこと (画面本文 20,297 字 / 受領本文 20,490 字 =
       **削減率 1%**) と、設計ポリシー (spec §1.0 = サービスの 2 本柱) に従っていないこと。
-      **本機能は未実装。** 着手する人は `docs/elith/ai_prevention_report_HANDOVER.md` を先に読む。
-      仕様の正本は `docs/elith/ai_prevention_report_generation_spec.md`。
-      リバート内容の記録は `docs/elith/ai_prevention_report_REVERT_LIST.md`。
+      **本機能は未実装。** 着手する人は `docs/旧版・ボツ/ai_prevention_report_HANDOVER.md` を先に読む。
+      仕様の正本は `docs/旧版・ボツ/ai_prevention_report_generation_spec.md`。
+      リバート内容の記録は `docs/旧版・ボツ/ai_prevention_report_REVERT_LIST.md`。
       - **リバートで戻したもの**: `report.astro` (旧 3 モード a/b/c) / `elith-report-highlights.ts` /
         `elith-report-queries.ts` / `elith-report-sample.ts` / `report-view.ts` /
         `api/admin/elith-report/upload.ts` (PDF 必須へ戻る) / `app-config.ts` / `package.json`。
@@ -970,10 +970,12 @@ Supabase database linter の指摘を棚卸しした結果。**テストフェ�
 | `docs/elith/elith_s3_data_handoff_spec.md` | **Elith S3 受け渡し仕様** (パス/命名/format_id/JSON) |
 | `docs/elith/elith_batch_centralization_design.md` | Elith バッチ**一元化設計**(キーは Vercel・役割分担・admin バッチ) |
 | `docs/elith/elith_assembly_wrapping_spec.md` | **納品セット アセンブリのラップ仕様(Elith向け説明)**。フォルダ/命名/ウェルネス年齢の時系列化(検査日毎・旧1件を撤回)・疑似データも同様に時系列生成・**LAiF AI疾病発症予測(Other/ai_prediction)のファイル仕様=Elith承諾により確定(§5・2026-08)。合成は data.items[] の発症率%/相対リスク比のみジッタ・昨年比は前年の相対リスク比を引継ぎ(実装済)**・manifest不一致の確認事項 |
-| `docs/elith/ai_prevention_report_HANDOVER.md` | **引き継ぎ書。新しく着手する人は最初にこれを読む**。ミッションの3層/**設計ポリシー=サービスの2本柱**/越えてはならない線/参照すべきドキュメントの順序/素材/回答待ち。**1 回目の実装はリバート済み・2 回目 (パイロット版 v0.1) が実装済み** (spec §9.2/§9.3) |
-| `docs/elith/ai_prevention_report_REVERT_LIST.md` | **リバート対象コミットの一覧**。Scan-Chat-AI 11 件 (うち 10 件は本番反映済み) / wellfort-site 2 件 / 併せて外すもの (CLAUDE.md の【実装】記述・`checkup_values` マイグレーション) |
+| **`docs/elith/AI疾病予防報告書_仕様書.md`** | **【この機能の唯一の入口。最初にこれを読む】** 紙面の正はモック 2 タイプで、仕様書は紙面を散文で書かない (2 回の作り直しの直接の対策)。目的 / 正の所在 / 素材 (sha256 つき) / デザイン見本 §4.3 / 変更手順 / 検証 / **決裁台帳 §6** |
+| `docs/旧版・ボツ/` | **食い違う旧版の置き場。参照しない。** 実装の根拠にしない。決裁台帳の引用元としてのみ生きている |
+| `docs/旧版・ボツ/ai_prevention_report_HANDOVER.md` | **【旧版】引き継ぎ書**。ミッションの3層/**設計ポリシー=サービスの2本柱**/越えてはならない線/参照すべきドキュメントの順序/素材/回答待ち。**1 回目の実装はリバート済み・2 回目 (パイロット版 v0.1) が実装済み** (spec §9.2/§9.3) |
+| `docs/旧版・ボツ/ai_prevention_report_REVERT_LIST.md` | **リバート対象コミットの一覧**。Scan-Chat-AI 11 件 (うち 10 件は本番反映済み) / wellfort-site 2 件 / 併せて外すもの (CLAUDE.md の【実装】記述・`checkup_values` マイグレーション) |
 | `docs/elith/mock/ai_prevention_report_type2.html` | **紙面モック (タイプ2)。飾りではなく契約の入力**。`npm run verify:sheet-contract` がここから紙面契約を抽出し実装と突き合わせる (spec §1.3.10)。冒頭コメントに annotation の意味とモック補正の記録 |
-| `docs/elith/ai_prevention_report_generation_spec.md` | **AI疾病予防報告書 生成機能の仕様 (パイプライン⑥・2026-08-28)**。受領 JSON 3 点 → アプリが可読な報告書を生成。入力仕様/出力は HTML+印刷CSS(PDF生成しない)/章立て/決定論の変換規則/**作れないもの①〜④と捏造ゼロの境界**/受領データの既知不具合/実装計画/Elith 確認事項 |
+| `docs/旧版・ボツ/ai_prevention_report_generation_spec.md` | **AI疾病予防報告書 生成機能の仕様 (パイプライン⑥・2026-08-28)**。受領 JSON 3 点 → アプリが可読な報告書を生成。入力仕様/出力は HTML+印刷CSS(PDF生成しない)/章立て/決定論の変換規則/**作れないもの①〜④と捏造ゼロの境界**/受領データの既知不具合/実装計画/Elith 確認事項 |
 | `docs/elith/batch_scan_to_elith_usage.md` | サンプル一括スキャン→S3 バッチ手順 (`scripts/batch-scan-to-elith.mjs`) |
 | `docs/lab/lab_data_pipeline_master_spec.md` | **検査データ・パイプライン 総合仕様書(E2E正本・上位文書)**。EC購入→キット/タイミング→発送指示/進捗→AI問診/検体返送→各社受渡→受領チェック(週次)→Elithラップ/S3書出→AI診断PDF受取/表示 を6ステップで連結。詳細は(a)(b)(c)へ委譲(二重管理しない) |
 | `docs/lab/lab_data_reception_overview.md` | **4検査のデータ受取 詳細**(血液=リージャー/RPA・がん=プリベント/専用ポータル+S3を提案中・AI疾病予測=LAiF/S3 URL・遺伝子=Genoplan/RPA。方式/経路/現状/課題/次アクション)。E2E全体像は上記 master_spec が上位 |

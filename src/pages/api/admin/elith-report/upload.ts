@@ -1,7 +1,7 @@
 /**
  * admin: Elith の AI疾病予防報告書 取込 API — パイプライン⑥。
  *
- * 正本: docs/elith/ai_prevention_report_generation_spec.md §8
+ * 正本: docs/elith/AI疾病予防報告書_仕様書.md  ※ § 番号は旧版 docs/旧版・ボツ/ai_prevention_report_generation_spec.md §8
  *
  * 【受領は 1 件 = 3 ファイル】(spec §2)
  *   | 受領物                | フォーム項目     | 格納先                        |

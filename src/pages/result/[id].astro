@@ -35,7 +35,7 @@ const linkFor = (m: string) => {
 
 /** 本文 Markdown → HTML。和文組版は src/lib/report-view.ts に集約 (/report と共通)。
     `[pN]` の PDF ページジャンプは廃止した — 新形式に `[pN]` は 0 件で成立しないため
-    (docs/elith/ai_prevention_report_generation_spec.md §5.1)。 */
+    (docs/旧版・ボツ/ai_prevention_report_generation_spec.md §5.1)。 */
 function md(text: string): string {
   return renderReportMarkdown(text);
 }

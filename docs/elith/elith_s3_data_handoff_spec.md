@@ -6,7 +6,7 @@
 | バージョン | 0.1 (Draft) |
 | 作成日 | 2026-06-25 |
 | 対象範囲 | Wellfort → Elith への入力データ受け渡し (AIスキャン結果 / AI問診結果 / 検査機関の検査結果) を AWS S3 上に格納する仕様 |
-| 関連文書 | `docs/scan/scan_s3_export.md` / `docs/architecture/diagnostic_session_data_spec.md` §3.5 / `interview-export.ts` / `docs/lab/lab_integration_workflow.md` / `docs/elith/elith_report_integration.md` / `docs/architecture/data_integration_requirements.md` §1.3 |
+| 関連文書 | `docs/scan/scan_s3_export.md` / `docs/architecture/diagnostic_session_data_spec.md` §3.5 / `interview-export.ts` / `docs/lab/lab_integration_workflow.md` / `docs/旧版・ボツ/elith_report_integration.md` / `docs/architecture/data_integration_requirements.md` §1.3 |
 
 ---
 
@@ -20,7 +20,7 @@ Elith の AI 診断システムへ受け渡すためのデータ仕様を定義�
 3. **検査機関から Wellfort 経由で取得した検査結果** (血液 / 遺伝子 / がんリスク等)
 
 これらを Elith が受け取り、AI診断 (`AI診断` = Elith レポート) を生成する。Elith からの**出力 (診断結果) の受信**は本書の対象外
-(`docs/elith/elith_report_integration.md` を参照)。
+(`docs/旧版・ボツ/elith_report_integration.md` を参照)。
 
 ```
 [Wellfort 側]                                  [S3]                       [Elith 側]
@@ -29,7 +29,7 @@ Elith の AI 診断システムへ受け渡すためのデータ仕様を定義�
   検査機関結果 (wellfort_lab) ──┘                   {client_id}/date/...        (入力として読み取り)
                                                                                   │
                                           診断結果(別系統)  ◀───────────────────────┘
-                                          (docs/elith/elith_report_integration.md)
+                                          (docs/旧版・ボツ/elith_report_integration.md)
 ```
 
 > 本書は **データ仕様 (パス・命名・JSON フォーマット)** を確定させるためのものであり、

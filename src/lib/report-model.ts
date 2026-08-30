@@ -1,7 +1,7 @@
 /**
  * AI疾病予防報告書の **表示モデル (ViewModel)**。
  *
- * 正本: docs/elith/ai_prevention_report_generation_spec.md
+ * 正本: docs/elith/AI疾病予防報告書_仕様書.md  ※ § 番号は旧版 docs/旧版・ボツ/ai_prevention_report_generation_spec.md
  *
  * 【この層の役割】受領 JSON の形式と、画面の描き方を切り離す (spec §1.3.3)。
  *   `受領JSON → アダプタ(report-adapter.ts) → 表示モデル(この型) → レンダラ(report.astro)`

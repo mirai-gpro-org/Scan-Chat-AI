@@ -328,7 +328,7 @@ Wellfort 側で受領した PDF をどの `diagnostic_user_id` に紐付ける�
 | `docs/lab/lab_integration_workflow.md` | **検査機関連携・ユーザー割当ワークフロー** (Workflow 1/2/3) |
 | `docs/architecture/test_data_storage_and_db_design.md` | **検査データファイル・DB 基本設計** (ストレージ階層、検査会社マスタ、検査 ID 紐付けテーブル等) |
 | `docs/lab/kit_progress_management.md` | **検査キット進捗管理** (キット内容・配送予定・受取/返送自己申告・通知ロジック・subscriptions/notifications テーブル) |
-| `docs/elith/elith_report_integration.md` | **Elith 診断結果 統合仕様** (JSON 構造解析・3 モード割当・二次抽出ロジック・ダッシュボード変換) |
+| `docs/旧版・ボツ/elith_report_integration.md` | **Elith 診断結果 統合仕様** (JSON 構造解析・3 モード割当・二次抽出ロジック・ダッシュボード変換) |
 | `docs/scan/scan_feature_requirements.md` | スキャン機能の詳細要件 |
 | `docs/proposals/scan_chat_medical_ai_proposal.pdf` | スキャン・問診の UI/UX 提案書 (機能 1〜4 のワイヤーフレーム) |
 | `docs/proposals/ai_app_ui_ux_proposal.pdf` | **ダッシュボード UI/UX 提案書** (4 アプローチのモック + AI 時代の設計手法 + UI 破綻サンプル) |

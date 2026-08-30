@@ -1,7 +1,7 @@
 /**
  * レポート本文の**和文組版**。内容には一切触れない (要約・言い換え・並べ替えをしない = ミッション④)。
  *
- * 正本: docs/elith/ai_prevention_report_generation_spec.md §4.3
+ * 正本: docs/elith/AI疾病予防報告書_仕様書.md  ※ § 番号は旧版 docs/旧版・ボツ/ai_prevention_report_generation_spec.md §4.3
  *
  * 【3 モードと `[pN]` は廃止】旧実装は a) サマリー / b) 要注意抜粋 / c) 全編 の 3 モードを
  *   切り替え、本文中の `[pN]` から原本 PDF の該当ページへ飛ばしていた。

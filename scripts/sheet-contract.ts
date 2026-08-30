@@ -1,7 +1,7 @@
 /**
  * 紙面契約 (Sheet Contract) — **モックと実装を機械で突き合わせるための共通の形**。
  *
- * 正本: docs/elith/ai_prevention_report_generation_spec.md §1.3.10
+ * 正本: docs/elith/AI疾病予防報告書_仕様書.md  ※ § 番号は旧版 docs/旧版・ボツ/ai_prevention_report_generation_spec.md §1.3.10
  *
  * 【なぜ要るか】モックを作っても、それが実装に反映されたかを誰も検査していなかった。
  *   結果、パイロット版 v0.1 は**モックと違う紙面**で本番に出た (順序・判定文・選ぶ文が違う)。

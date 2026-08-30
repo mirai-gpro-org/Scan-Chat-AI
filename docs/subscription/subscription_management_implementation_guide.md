@@ -219,7 +219,7 @@ P1 データモデル ──▶ P2 キット発送/進捗(要件1) ──▶ P3 
 
 ## P6. 結合テスト・受け入れ
 
-- [ ] **エンドツーエンド**: 契約 → 発送 → 受取/返送 → 結果UP → 問診 → 出揃い判定 → S3一括 → (Elith診断結果受信は `docs/elith/elith_report_integration.md`)
+- [ ] **エンドツーエンド**: 契約 → 発送 → 受取/返送 → 結果UP → 問診 → 出揃い判定 → S3一括 → (Elith診断結果受信は `docs/旧版・ボツ/elith_report_integration.md`)
 - [ ] 各プラン (経営幹部/スタンダード/管理職/個別) で回数・タイミング・パターンが付録Bと一致
 - [ ] PII 越境がないこと (S3/CSV/ログに氏名等が出ない)
 - [ ] リグレッション (既存 admin/orders/customers/products、scan/interview export)

@@ -413,7 +413,7 @@ diagnosis.app_users ─┬─ diagnosis.test_artifacts ── test_artifact_file
 [AIスキャン] 人間ドック等を読込 → HealthCheckupData/BloodTestData.json
                               │
 [要件4] 必要データが揃った判定 → /user/{client_id}/date/{YYYY_MM_DD}/ へ一括書き出し(全JSON)
-                              → Elith AI診断 → (別系統)診断結果受信 docs/elith/elith_report_integration.md
+                              → Elith AI診断 → (別系統)診断結果受信 docs/旧版・ボツ/elith_report_integration.md
 ```
 
 ---

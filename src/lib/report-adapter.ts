@@ -1,7 +1,7 @@
 /**
  * AI疾病予防報告書 — **受領 JSON → 表示モデル** の変換規則。
  *
- * 正本: docs/elith/ai_prevention_report_generation_spec.md §5
+ * 正本: docs/elith/AI疾病予防報告書_仕様書.md  ※ § 番号は旧版 docs/旧版・ボツ/ai_prevention_report_generation_spec.md §5
  *
  * 【このモジュールが唯一の変換本体】抽出・整形の規則をここに集約し、`.astro` に
  *   正規表現を散らさない (spec §1.3.4)。本リポジトリには同じ規律の前例がある —

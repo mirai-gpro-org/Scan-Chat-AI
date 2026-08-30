@@ -1,7 +1,7 @@
 /**
  * AI疾病予防報告書 — 表示モデルの回帰チェック。
  *
- * 正本: docs/elith/ai_prevention_report_generation_spec.md §1.3.7
+ * 正本: docs/elith/AI疾病予防報告書_仕様書.md  ※ § 番号は旧版 docs/旧版・ボツ/ai_prevention_report_generation_spec.md §1.3.7
  *
  * 【担保したいこと】**文言を書き換えていないこと。**
  *   可読化は「選択」で行い「圧縮」で行わない (spec §1.0.0) ので、紙面に出る文はすべて
