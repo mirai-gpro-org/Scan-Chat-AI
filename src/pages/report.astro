@@ -48,6 +48,19 @@ const u = viewer.uid;
 const isPrint = url.searchParams.get('print') === '1';
 /** 端末に保存する手順を出すモード。**印刷ビューには置かない** (手順が PDF に載るため・spec §4.4)。 */
 const showSave = url.searchParams.get('save') === '1';
+/**
+ * **この画面が実際に何を組み立てたかを、この画面自身に書かせるモード (`?diag=1`)。**
+ *
+ * 【なぜ要るか】`/api/debug/viewer` は表示モデルまでは測れるが、**画面が使う引数は
+ * そこと違う経路 (`loadDashboard` 経由の `diagnosticUserId`) で決まる**。
+ * 口が「7 枚」と言っても、画面がそう組んだ証明にはならない。
+ * 自己 fetch も本番で `fetch failed` になり届かなかった (2026-08-30)。
+ * → **画面が自分で書き出す。** 閲覧者のブラウザ・回線・キャッシュを通った
+ *   まさにその HTML に数字が乗るので、経路のどこで落ちても判別できる。
+ *
+ * 個人データは出さない (uid は既に /dashboard のデバッグ欄に出ている値)。
+ */
+const showDiag = url.searchParams.get('diag') === '1';
 
 const authEnabled = !!import.meta.env.PUBLIC_GOOGLE_CLIENT_ID;
 const needsSignIn = authEnabled && !u;
@@ -77,6 +90,25 @@ const vm = await loadReportVM({
   cycleSeq: data?.subscription?.current_cycle_seq ?? null,
   viewerIsAdmin: demoOk,
 });
+
+const diag = showDiag ? {
+  viewer_uid: viewer.uid,
+  self_uid: viewer.selfUid,
+  is_admin: viewer.isAdmin,
+  impersonating: viewer.impersonating,
+  demoOk,
+  needs_sign_in: needsSignIn,
+  dashboard: result == null ? 'null' : ('error' in result ? `error: ${result.error}` : 'ok'),
+  // **画面が loadReportVM に渡した uid。** 診断口が使う viewer.uid と違い得る。
+  uid_passed_to_vm: data?.diagnosticUserId ?? null,
+  vm_digest: vm.digest.length,
+  vm_digest_b: vm.digest.filter((c) => c.axis === 'b').length,
+  vm_chapters: vm.chapters.length,
+  vm_axes: vm.axes.length,
+  vm_is_sample: vm.isSample,
+  vm_issued_on: vm.cover.issuedOn,
+  vm_titles: vm.digest.map((c) => `${c.axis}:${c.title || '(無題)'}`),
+} : null;
 
 const q = (extra: Record<string, string>) => {
   const p = new URLSearchParams();
@@ -110,6 +142,14 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
     長文の行長は器でなく本文側で 38em に止める (`.report-prose`)。
     詳細は `global.css` の `.rp-sheet` と 仕様書 §4.3.5。
   */}
+  {/*
+    `?diag=1` のときだけ出す自己申告。**紙面の外**に置くので、
+    紙面 (`.rp-sheet`) が丸ごと落ちていてもこのブロックは出る = 切り分けになる。
+  */}
+  {diag && (
+    <pre style="white-space:pre-wrap;word-break:break-all;background:#111;color:#0f0;padding:12px;border-radius:8px;font-size:12px;line-height:1.6;margin-bottom:16px;overflow-x:auto;">{JSON.stringify(diag, null, 2)}</pre>
+  )}
+
   <main class={`report-sheet rp-sheet ${isPrint ? 'rp-plain' : ''}`}>
 
     {/* ══════════ ① 表紙 (見本 p1) ══════════

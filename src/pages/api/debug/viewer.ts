@@ -125,7 +125,14 @@ export const GET: APIRoute = async (ctx) => {
       signin_gate: /gsi-button/.test(html),
     };
   } catch (e) {
-    sheet = { error: String((e as Error)?.message ?? e) };
+    // 本番で `fetch failed` になった (2026-08-30)。関数が自分の公開 URL へ出られない模様。
+    // どこへ出ようとして何で失敗したかを残す。**紙面の実測は `/report?diag=1` を使う。**
+    sheet = {
+      error: String((e as Error)?.message ?? e),
+      cause: String((e as any)?.cause?.message ?? (e as any)?.cause ?? ''),
+      tried: new URL('/report', url).toString(),
+      note: '関数から自分自身へ出られない環境です。紙面の実測は /report?diag=1 を開いてください。',
+    };
   }
 
   const body = {
