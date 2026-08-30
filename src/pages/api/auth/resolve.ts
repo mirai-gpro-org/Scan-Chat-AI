@@ -3,6 +3,7 @@ import { getServerSupabase } from '../../../lib/supabase';
 import { isHpEdgeConfigured, resolveCustomerWithAdmin } from '../../../lib/hp-edge';
 import { VIEWER_COOKIE, signViewer, viewerCookieOptions } from '../../../lib/viewer';
 import { isAdminEmailAsync } from '../../../lib/admin-auth';
+import { linkDemoEmail } from '../../../lib/demo-accounts';
 
 export const prerender = false;
 
@@ -133,6 +134,18 @@ export const POST: APIRoute = async ({ request, cookies }) => {
    * 実測 2026-08-30: 手写しの uid/email に依存していたため本番で admin にならず、
    * 報告書が空のままだった (spec §4.6)。
    */
+  /*
+   * **デモ用アカウントの引き当て (2026-08-30)。**
+   *
+   * admin が登録するのは**相手の Google アカウント**で、uid ではない
+   * (記者やパートナーに UUID を聞くことはできない)。ここは
+   * **サーバ検証済みの email と解決済みの uid が両方そろう唯一の場所**なので、
+   * ここで突き合わせて uid 側の一覧へ写す。以後は毎リクエスト uid だけで判定できる。
+   *
+   * **失敗してもサインインは止めない** (`linkDemoEmail` は例外を投げない)。
+   */
+  await linkDemoEmail(email, diagnosticUserId);
+
   const token = await signViewer(diagnosticUserId, isAdmin || await isAdminEmailAsync(email));
   if (token) cookies.set(VIEWER_COOKIE, token, viewerCookieOptions());
 

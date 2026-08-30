@@ -42,6 +42,11 @@ export const CONFIG_SPECS: ConfigSpec[] = [
   // (2026-08-30 発注者指示)。管理者を 1 人増やすたびにダミーの閲覧者が増える形を避ける。
   // ここに載っていない uid は、env にも組み込みにも無ければ**自分の実データだけ**を見る。
   // 判定の実体は `demo-data.ts` の `demoFallbackEnabled` (uid 1 本・同期・外部依存ゼロ)。
+  { key: 'demo.account_emails', type: 'string', group: 'デモ', label: 'デモ用アカウント (Google アカウントで登録)', default: '',
+    description: '**人が使う入口はこちら。** 相手の Google アカウントを聞いて admin 画面から登録すると、'
+      + 'その人がサインインした瞬間にデモが出る (uid は自動で埋まる)。'
+      + ' **メールアドレスの現物は保存しない** — 1 行 = sha256 + 表示用マスク + メモ。'
+      + ' 直接編集せず /admin/demo-accounts から操作すること。' },
   { key: 'demo.account_uids', type: 'string', group: 'デモ', label: 'デモ用アカウントの uid', default: '',
     description: 'ダミーデータを表示する diagnostic_user_id をカンマ / 空白 / 改行 区切りで。'
       + ' **組み込みの 2 件 (テスト用 d0000001… / OEM 用 da000001…) と env DEMO_ALLOWED_UIDS に足される** '
