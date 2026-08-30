@@ -20,7 +20,7 @@
 
 import type { APIRoute } from 'astro';
 import { VIEWER_COOKIE, resolveViewer, uidEntryAllowed, verifyViewer } from '../../../lib/viewer';
-import { isHpEdgeConfigured, resolveCustomerByEmail } from '../../../lib/hp-edge';
+import { isHpEdgeConfigured, resolveCustomerWithAdmin } from '../../../lib/hp-edge';
 
 export const prerender = false;
 
@@ -58,16 +58,15 @@ export const GET: APIRoute = async (ctx) => {
       edge = { called: false, reason: 'HP_EDGE_BASE_URL 未設定' };
     } else {
       try {
-        const r = await resolveCustomerByEmail(email);
-        edge = r
-          ? {
-              called: true,
-              resolved: true,
-              // 顧客が引けたか / 管理者リストに載っているか。氏名や uid は出さない。
-              has_diagnostic_user_id: !!r.diagnostic_user_id,
-              is_admin_field: 'is_admin' in r ? r.is_admin : '(応答に無い = 旧版の Edge Function)',
-            }
-          : { called: true, resolved: false, note: '該当なし / 退会 (data: null)' };
+        const r = await resolveCustomerWithAdmin(email);
+        edge = {
+          called: true,
+          // 顧客が引けたか。**admin 判定とは独立** (管理者 ≠ EC の顧客)。
+          customer_resolved: !!r.customer,
+          customer_note: r.customer ? null : 'Wellfort 側 customer_profiles に該当なし / 退会',
+          // 管理者リスト (admin_users) の答え。氏名や uid は出さない。
+          is_admin: r.isAdmin,
+        };
       } catch (e) {
         edge = { called: true, error: e instanceof Error ? e.message : String(e) };
       }

@@ -1,6 +1,6 @@
 import type { APIRoute } from 'astro';
 import { getServerSupabase } from '../../../lib/supabase';
-import { isHpEdgeConfigured, resolveCustomerByEmail } from '../../../lib/hp-edge';
+import { isHpEdgeConfigured, resolveCustomerWithAdmin } from '../../../lib/hp-edge';
 import { VIEWER_COOKIE, signViewer, viewerCookieOptions } from '../../../lib/viewer';
 import { isAdminEmailAsync } from '../../../lib/admin-auth';
 
@@ -67,20 +67,28 @@ export const POST: APIRoute = async ({ request, cookies }) => {
      * → 失敗したらログに残してローカル解決へ落ちる。**admin は付けない**
      *   (管理者リストを確認できていないので昇格させない = fail-closed)。
      */
-    let resolved: Awaited<ReturnType<typeof resolveCustomerByEmail>> = null;
-    let edgeFailed = false;
+    let outcome: Awaited<ReturnType<typeof resolveCustomerWithAdmin>> | null = null;
     try {
-      resolved = await resolveCustomerByEmail(email);
+      outcome = await resolveCustomerWithAdmin(email);
     } catch (e) {
-      edgeFailed = true;
       console.error('[auth/resolve] resolve-customer 失敗。ローカル解決へ切替:', e instanceof Error ? e.message : e);
     }
-    if (resolved) {
-      diagnosticUserId = resolved.diagnostic_user_id;
-      bareName = resolved.display_name;
-      // **同じ応答に載っている。** admin 判定のために 2 回呼ばない。
-      isAdmin = resolved.is_admin === true;
-    } else if (edgeFailed) {
+    /*
+     * **admin 判定は顧客の有無と独立** (管理者 ≠ EC の顧客)。
+     * Edge が答えられたときだけ採用する (失敗時は false のまま = fail-closed)。
+     */
+    isAdmin = outcome?.isAdmin === true;
+
+    if (outcome?.customer) {
+      diagnosticUserId = outcome.customer.diagnostic_user_id;
+      bareName = outcome.customer.display_name;
+    } else {
+      /*
+       * **Wellfort 側に顧客レコードが無くてもサインインを止めない (2026-08-30)。**
+       * 管理者やテスト用のアカウントは EC の顧客として登録されていないことがあり、
+       * ここで打ち切ると `linked:false` になって**サインインできなくなる**。
+       * ローカルの `customer_profiles` で解決を試み、それも無ければ従来どおり未連携。
+       */
       const failed = await resolveLocally();
       if (failed) return failed.error;
     }

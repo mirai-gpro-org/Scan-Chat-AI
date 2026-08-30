@@ -43,7 +43,7 @@
  * ⚠️ サーバ側でしか呼ばないこと。
  */
 
-import { isHpEdgeConfigured, resolveCustomerByEmail } from './hp-edge';
+import { isHpEdgeConfigured, resolveCustomerWithAdmin } from './hp-edge';
 
 /**
  * この email が**管理者リストに載っている現役の管理者**か。
@@ -63,8 +63,9 @@ export async function isAdminEmailAsync(email: string | null | undefined): Promi
     return false;
   }
   try {
-    const resolved = await resolveCustomerByEmail(e);
-    return resolved?.is_admin === true;
+    // **顧客が居なくても admin の可否は返る** (管理者 ≠ 顧客)。
+    const { isAdmin } = await resolveCustomerWithAdmin(e);
+    return isAdmin;
   } catch (err) {
     console.error('[admin-auth] 管理者リストの照会に失敗:', err instanceof Error ? err.message : err);
     return false;

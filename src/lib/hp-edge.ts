@@ -36,6 +36,54 @@ export interface ResolvedCustomer {
  * email から本人 (diagnostic_user_id) を解決する。
  * 未連携 / 退会 / 未構成 の場合は null。
  */
+export interface ResolveOutcome {
+  /** 顧客が引けたか。**管理者が顧客とは限らない**ので null もあり得る。 */
+  customer: ResolvedCustomer | null;
+  /**
+   * 管理者リスト (`admin_users`) に載っている現役の管理者か。
+   * **顧客が居なくても答えが返る** (応答の top-level・2026-08-30)。
+   * 古い Edge Function は返さないので、その場合は false。
+   */
+  isAdmin: boolean;
+}
+
+/**
+ * email から **顧客の解決と admin 判定を同時に**受け取る。
+ *
+ * 【なぜ分けないか】どちらも Wellfort 側 DB にしか無く、経路は同じ 1 本
+ * (`resolve-customer`)。2 回呼ぶ理由が無い。
+ *
+ * 【なぜ customer と isAdmin を分けるか】**管理者が EC の顧客とは限らない。**
+ * 顧客が引けなかった (`data: null`) からといって admin でないとは限らないので、
+ * `is_admin` は応答の top-level で受け取る (2026-08-30 に実測でこれを踏んだ)。
+ */
+export async function resolveCustomerWithAdmin(email: string): Promise<ResolveOutcome> {
+  const base = EDGE_BASE();
+  if (!base) return { customer: null, isAdmin: false };
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return { customer: null, isAdmin: false };
+
+  const res = await fetch(`${base}/functions/v1/resolve-customer`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(SECRET() ? { 'x-resolve-secret': SECRET()! } : {}),
+    },
+    body: JSON.stringify({ email: normalized }),
+  });
+  if (!res.ok) throw new Error(`resolve-customer HTTP ${res.status}`);
+  const payload = (await res.json().catch(() => null)) as
+    | { success: boolean; data: ResolvedCustomer | null; is_admin?: boolean; error?: string }
+    | null;
+  if (!payload?.success) throw new Error(payload?.error ?? 'resolve-customer failed');
+  return {
+    customer: payload.data ?? null,
+    // top-level を正とし、無ければ data 内 (旧形式) を見る。
+    isAdmin: payload.is_admin === true || payload.data?.is_admin === true,
+  };
+}
+
+/** 顧客だけが要るとき用の薄いラッパ。 */
 export async function resolveCustomerByEmail(email: string): Promise<ResolvedCustomer | null> {
   const base = EDGE_BASE();
   if (!base) return null;
