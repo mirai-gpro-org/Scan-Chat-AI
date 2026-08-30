@@ -57,10 +57,16 @@ import type {
  * 空表示になる方が安全なため fail-safe をこちら側に倒す。
  *
  * @param uid 閲覧中の diagnostic_user_id。省略・null は非 admin 扱い。
+ * @param viewerIsAdmin **閲覧している本人**が admin か (`resolveViewer().isAdmin`)。
+ *   uid リストに載っていない admin (email だけで登録されたメンバー) を拾うために要る。
+ *   省略時は uid リストだけで判定する = 従来どおり。
+ *   **`uid` は「表示中のユーザー」で、これは「見ている人」。** admin が `?u=` で他人を
+ *   代理表示しているときは別人になり、その場合は**相手の実データを見たいはず**なので
+ *   デモを出さないのが正しい → 呼び出し側は代理表示中に true を渡さないこと。
  */
-export function demoFallbackEnabled(uid?: string | null): boolean {
+export function demoFallbackEnabled(uid?: string | null, viewerIsAdmin?: boolean): boolean {
   // ① admin は env に関わらずダミーを見る (発注者指示 2026-08-30)
-  if (isAdminUid(uid)) return true;
+  if (viewerIsAdmin || isAdminUid(uid)) return true;
   // ② admin 以外は env のスイッチで一括して切れる
   if (import.meta.env.PUBLIC_DEMO_FALLBACK === 'false') return false;
   // ③ admin ではないがデモを出してよい uid (OEM デモ顧客)

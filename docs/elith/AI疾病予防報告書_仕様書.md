@@ -482,8 +482,50 @@ admin 限定の枝が本番で死ぬ。→ **admin を先に見る**。
   黙って非 admin のまま放置されない
 - `ADMIN_EMAILS` / `ADMIN_UIDS` は `ADMIN_MEMBERS` からの**導出**になり、ズレが構造的に起きない
 
+### admin 判定は email からも成立する【2026-08-30・追加】
+
+> **本番の `/report` が空のままだった。** 修正は入っていた（PR #189）が、
+> **admin 判定の実体が uid だけ**だったため、**管理者リストに email で載っているメンバーが
+> admin にならなかった**。つまり「リストにあるメンバーだけはデモを見る」という要件に対して、
+> **リストの半分（email）を実装が読めていなかった。**
+
+**サインイン時に、サーバで検証済みの email から admin を判定し、署名付き Cookie に載せる。**
+
+| | |
+|---|---|
+| 判定の場所 | `api/auth/resolve.ts` — `signViewer(uid, isAdminEmail(email))` |
+| email の出どころ | `sb.auth.getUser(accessToken)` で**サーバが検証した値**。クライアントの申告ではない |
+| 改竄耐性 | admin フラグを payload に含めて HMAC を取る。`0`→`1` に書き換えると**署名が合わず弾かれる** |
+| 旧 Cookie | `uid.exp.sig` の 3 分割も**受ける**（`admin:false` で復元し、uid リストで補う）。発行済み Cookie を一斉に無効化しない |
+| 成立条件 | `viewer.isAdmin = Cookie の admin` **または** `uid が ADMIN_MEMBERS.uid に在る` |
+
+**これで `ADMIN_MEMBERS` に email を 1 行足すだけで admin として扱える**（uid を調べる必要がない）。
+uid も埋めておくと `?u=` 入場など Cookie 以外の経路でも admin になる。
+
+**閲覧者フラグは画面から判定関数まで引き回す。** `demoFallbackEnabled(uid, viewerIsAdmin)` の
+第 2 引数は**任意**なので渡し忘れても型では落ちない → `verify:demo-gate` が
+**渡し忘れを機械で検出する**（入口 4 モジュール ＋ ページ 5 枚 ＋ `resolve.ts`）。
+**代理表示中（`?u=` で他人を見ている）は渡さない** — 相手の実データを見せるため。
+
+**実測（2026-08-30・本番と同じ `PUBLIC_DEMO_FALLBACK=false` ＋ 認証有効）**
+
+| 閲覧者 | カード見出し | Elith 本文の語 |
+|---|---|---|
+| **admin（email 登録のみ・uid 未登録）** | **42** | 出る |
+| 一般顧客（admin でない） | 1 | **0** |
+| 一般顧客が admin フラグを改竄 | 1 | **0** |
+| 未サインイン | 1 | **0** |
+
+署名まわりは単体でも検証済み — 改竄（フラグ / uid / 期限）3 種とも棄却、期限切れ棄却、旧 3 分割互換。
+
+> **注意（dev 限定）**: `PUBLIC_GOOGLE_CLIENT_ID` が未設定だと `authEnabled=false` になり、
+> 未サインインでも `loadDashboard(null)` → `DEFAULT_USER`（`d0000001` = **admin uid**）に落ちて
+> デモが出る。**本番は認証有効なのでこの経路に入らない**が、ローカル検証では紛らわしいので
+> `PUBLIC_GOOGLE_CLIENT_ID` を入れて確認すること。
+
 **現状 8 名中 1 名が uid 未登録**（`開発用バックアップ` = `hamada@eentry.co.jp`）。
-この状態では admin 扱いにならない。uid を埋めれば解消する。
+**email が登録されているので、サインインし直せば admin として扱われる。**
+uid を埋めれば Cookie 以外の経路でも admin になる。
 
 ### 一般顧客の経路との分離（実測 2026-08-30）
 

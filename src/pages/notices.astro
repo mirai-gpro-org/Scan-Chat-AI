@@ -12,6 +12,8 @@ export const prerender = false;
 const url = new URL(Astro.request.url);
 // 入場は Cookie で本人を判定する (`src/lib/viewer.ts`)。`?u=` は admin の代理表示のみ。
 const viewer = await resolveViewer(Astro);
+/** デモ表示は**閲覧している本人が admin か**で決まる。代理表示中は渡さない (spec §4.6)。 */
+const demoOk = viewer.isAdmin && !viewer.impersonating;
 const u = viewer.uid;
 
 // 各セクションの展開状態 (?important=all / ?general=all / ?news=all)
@@ -31,7 +33,7 @@ const effectiveUid = u ?? (needsSignIn ? null : DEFAULT_USER);
 
 const result = !effectiveUid
   ? null
-  : await loadNotices(effectiveUid, { expandImportant, expandGeneral, expandNews });
+  : await loadNotices(effectiveUid, { expandImportant, expandGeneral, expandNews }, demoOk);
 
 const hasError = result ? 'error' in result : false;
 const data = !result || hasError ? null : (result as Exclude<typeof result, { error: string }>);

@@ -32,6 +32,12 @@ export interface ReportContext {
   /** その回の入力にがんリスク検査があったか。**アプリが判定する** (spec §1.0.3)。 */
   hasCancerRisk: boolean;
   cycleSeq: number | null;
+  /**
+   * **閲覧している本人**が admin か (`resolveViewer().isAdmin`)。
+   * デモ (受領サンプル) を出してよいかの判定に使う。**代理表示中は false**。
+   * 省略時は uid リストだけで判定する = 従来どおり (spec §4.6)。
+   */
+  viewerIsAdmin?: boolean;
 }
 
 type CheckupValues = Record<string, { date?: string; value?: unknown }[]>;
@@ -57,10 +63,12 @@ function common(ctx: ReportContext): Omit<BuildInput, 'reportText' | 'checkup' |
  * **admin 限定 (2026-08-30・発注者指示)。** 実顧客に他人名義のサンプルを
  * 「自分の報告書」として見せないため、非 admin には `emptyVM` を返す
  * (2 本柱の帯だけが立ち、材料の無い章は出ない)。
- * 判定は `demoFallbackEnabled(uid)` に集約してある (`demo-data.ts`)。
+ * 判定は `demo-data.ts` の `demoFallbackEnabled` に集約してある。
+ * **閲覧者が admin か** は `ctx.viewerIsAdmin` で受ける (uid リストに無い
+ * email 登録だけの管理者を拾うため・spec §4.6)。
  */
 function sample(ctx: ReportContext): ReportVM {
-  if (!demoFallbackEnabled(ctx.diagnosticUserId)) return emptyVM(ctx);
+  if (!demoFallbackEnabled(ctx.diagnosticUserId, ctx.viewerIsAdmin)) return emptyVM(ctx);
   return buildReportVM({
     ...common(ctx),
     reportText: ELITH_REPORT_SAMPLE_TEXT,

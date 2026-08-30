@@ -1051,6 +1051,30 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
       分からなければ `uid: null` で登録してよい — **`verify:demo-gate` が
       「uid 未登録のため admin として扱われません」と名指しする**ので黙って放置されない。
     - **現状 8 名中 1 名が uid 未登録** (`開発用バックアップ`=`hamada@eentry.co.jp`)。
+  - **【admin 判定は email からも成立する 2026-08-30・追加】spec §4.6。**
+    PR #189 で順序を直しても**本番の `/report` は空のままだった**。原因は
+    **admin 判定の実体が uid だけ**で、**管理者リストに email で載っているメンバーが
+    admin にならなかった**こと = 要件「リストにあるメンバーだけはデモを見る」に対し
+    **リストの半分 (email) を実装が読めていなかった**。
+    - **サインイン時にサーバ検証済みの email から admin を判定し、署名付き Cookie に載せる**
+      (`api/auth/resolve.ts` の `signViewer(uid, isAdminEmail(email))`)。email は
+      `sb.auth.getUser(accessToken)` で**サーバが検証した値**でクライアントの申告ではない。
+    - **改竄できない**: admin フラグを payload に含めて HMAC を取る (`0`→`1` は署名不一致で棄却)。
+      **旧 3 分割 Cookie も受ける** (`admin:false` で復元し uid リストで補う) ので
+      発行済み Cookie を一斉に無効化しない。
+    - `viewer.isAdmin = Cookie の admin` **または** `uid が ADMIN_MEMBERS.uid に在る`。
+      → **`ADMIN_MEMBERS` に email を 1 行足すだけで admin になる** (uid を調べなくてよい)。
+    - **閲覧者フラグは画面から判定関数まで引き回す**。`demoFallbackEnabled(uid, viewerIsAdmin)` の
+      第 2 引数は**任意なので渡し忘れても型では落ちない** → `verify:demo-gate` が
+      **渡し忘れを機械で検出**する (入口 4 モジュール + ページ 5 枚 + `resolve.ts`)。
+      **代理表示中 (`?u=`) は渡さない** = 相手の実データを見せる。
+    - **実測 (本番と同じ `PUBLIC_DEMO_FALLBACK=false` ＋認証有効)**: admin(email 登録のみ・
+      uid 未登録)=見出し 42・Elith 本文あり / 一般顧客=1・**0** / **改竄=1・0** / 未サインイン=1・0。
+      署名は単体でも検証済 (改竄 3 種棄却・期限切れ棄却・旧 3 分割互換)。
+    - **【dev 限定の落とし穴】`PUBLIC_GOOGLE_CLIENT_ID` 未設定だと `authEnabled=false` になり、
+      未サインインでも `loadDashboard(null)`→`DEFAULT_USER`(`d0000001`=**admin uid**) に落ちて
+      デモが出る**。本番は認証有効なのでこの経路に入らないが、ローカル検証では
+      `PUBLIC_GOOGLE_CLIENT_ID` を入れて確認すること (一度これで誤判定しかけた)。
   - **【分離の実測 2026-08-30】本番と同じ `PUBLIC_DEMO_FALLBACK=false` で `/report` を描いて比較**:
     admin = カード見出し 42 / 表 2 / 全編 10 章 / Elith 本文の語 (ヘマトクリット16・基準範囲20・尿素窒素8)。
     一般顧客 = **1 / 0 / 0 / 0・0・0** (主軸 A の当社定型文のみ)。
