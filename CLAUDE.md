@@ -1047,90 +1047,39 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
   - 判定レベルを値と基準値から算出しない。助言文・受診勧告文を生成しない。
   - 表示してよいのは 検査票の値・単位・基準値 と、**検査機関が付けた** `flag` / `assessment`。
     `flag` が null は「印が無い」であって「基準値内」ではない → **判定を表示しない**。
-- **【誰にダミーを出すか 2026-08-30 確定・発注者指示】正本 spec §4.6。**
-  **admin の管理者リストのメンバーだけ**が現状と同じテストのダミーを見る。
-  **Google 認証で入った一般顧客 (admin でない) は env に関わらずダミーを一切見ず、自分の実データだけ。**
-  - 実装 = `demo-data.ts` `demoFallbackEnabled` の**順序が要件そのもの**:
-    **①admin なら true (env で塞がない) → ②`PUBLIC_DEMO_FALLBACK==='false'` なら false
-    (admin 以外を一括で切る) → ③`DEMO_ALLOWED_UIDS`**。
-    **旧実装は ①②が AND (②が先) で、本番 env を false にすると admin まで塞がれ
-    `/report` が `emptyVM` になっていた** (実測 2026-08-30)。それでは `13a8a95` の
-    「デモ表示を**admin 限定**にする」の admin 限定の枝が本番で死ぬ。
-  - **既に入っていたもの (総合テストのセッション `13a8a95`・実測)**: 全ユーザー向けページ 9/10 が
-    `resolveViewer` を通る (残る `index.astro` はリダイレクトのみ) / **`?u=` は admin の代理表示のみ**
-    (admin 画面のゲートも Cookie の本人。`?u=` に admin uid を書いても通らない) /
-    デモ経路は全て `demoFallbackEnabled(uid)` の内側 / 未サインインでは `loadDashboard` を
-    呼ばないので `DEFAULT_USER` フォールバックは本番経路に出ない。
-  - **検証 `npm run verify:demo-gate`** (`verify:report` に同梱)。表を実装と独立に書き下して
-    突き合わせ、**①→②→③ の順序**も見る。**順序を旧に戻すと落ちることを確認済み**。
-    ここは**静かに壊れる** — admin が全画面空になるか、実顧客に他人名義のダミーが出るかの
-    どちらかが起き、**どちらも画面を見ただけでは気づけない**。
-  - **【管理者の登録は `ADMIN_MEMBERS` 1 箇所 2026-08-30】** ローンチ後も開発・社外デモで
-    このモードは残り**管理者は追加登録されていく** (発注者指示)。→ `admin-auth.ts` の
-    **`ADMIN_MEMBERS`(`{label,email,uid}`) 1 本**にまとめ、`ADMIN_EMAILS`/`ADMIN_UIDS` は
-    そこからの**導出**にした。**追加は 1 行**。
-    - **統合前は手書き 2 本がズレていた上、admin 判定は uid 側しか見ておらず
-      `isAdminEmail`/`gateByUid` は参照ゼロの死んだコードだった** (実測)。
-      つまり **email 側に足しただけでは admin にならない**のに登録したつもりになる罠。
-    - **uid が判定の実体**。uid は当人の `/dashboard`「デバッグ」に出ている。
-      分からなければ `uid: null` で登録してよい — **`verify:demo-gate` が
-      「uid 未登録のため admin として扱われません」と名指しする**ので黙って放置されない。
-    - **現状 8 名中 1 名が uid 未登録** (`開発用バックアップ`=`hamada@eentry.co.jp`)。
-  - **【admin 判定は email からも成立する 2026-08-30・追加】spec §4.6。**
-    PR #189 で順序を直しても**本番の `/report` は空のままだった**。
-    **確かめられた事実は「本番のその uid がハードコード 7 件に無い」まで**
-    (氏名が出ていた=`data` は解決済み ⇒ `diagnosticUserId` は実在)。
-    **どのアカウントかは分かっていない** — 一度 `hamada@eentry.co.jp` と断定して
-    各文書に書いたが**出典ゼロの推測**だった (Claude のセッションの連絡先メールを
-    アプリのサインイン先と同一視した)。**撤回済み・spec §7 の失敗 #6 に記録**。
-    admin になれない経路は **①uid 未登録 / ②ハードコードの uid が本番の実値と食い違い**
-    の 2 つで、**どちらでも同じ症状**。下の対処は両方に効く。
-    **どちらだったかは `/dashboard` のデバッグ欄が答える** (admin 判定と根拠を表示)。
-    - **サインイン時にサーバ検証済みの email から admin を判定し、署名付き Cookie に載せる**
-      (`api/auth/resolve.ts` の `signViewer(uid, isAdminEmail(email))`)。email は
-      `sb.auth.getUser(accessToken)` で**サーバが検証した値**でクライアントの申告ではない。
-    - **改竄できない**: admin フラグを payload に含めて HMAC を取る (`0`→`1` は署名不一致で棄却)。
-      **旧 3 分割 Cookie も受ける** (`admin:false` で復元し uid リストで補う) ので
-      発行済み Cookie を一斉に無効化しない。
-    - `viewer.isAdmin = Cookie の admin` **または** `uid が ADMIN_MEMBERS.uid に在る`。
-      → **`ADMIN_MEMBERS` に email を 1 行足すだけで admin になる** (uid を調べなくてよい)。
-    - **閲覧者フラグは画面から判定関数まで引き回す**。`demoFallbackEnabled(uid, viewerIsAdmin)` の
-      第 2 引数は**任意なので渡し忘れても型では落ちない** → `verify:demo-gate` が
-      **渡し忘れを機械で検出**する (入口 4 モジュール + ページ 5 枚 + `resolve.ts`)。
-      **代理表示中 (`?u=`) は渡さない** = 相手の実データを見せる。
-    - **実測 (本番と同じ `PUBLIC_DEMO_FALLBACK=false` ＋認証有効)**: admin(email 登録のみ・
-      uid 未登録)=見出し 42・Elith 本文あり / 一般顧客=1・**0** / **改竄=1・0** / 未サインイン=1・0。
-      署名は単体でも検証済 (改竄 3 種棄却・期限切れ棄却・旧 3 分割互換)。
-    - **【admin の正は `admin_users` テーブル 2026-08-30 確定】** 手写しの `ADMIN_MEMBERS` を
-      判定の正にするのをやめた。**同じ Supabase の `public.admin_users`**(`email`/`is_active`) を
-      引く (`admin-auth.ts` `isAdminEmailAsync`)。出典 =
-      `wellfort-site/src/pages/api/admin/config.ts:35`。**管理者の追加登録は wellfort-site の
-      admin 画面で行われる**ので、そこが増えれば Scan-Chat-AI は何も直さずに追随する。
-      引けないとき (未設定・通信断) は `ADMIN_MEMBERS` の email へフォールバック
-      = **引けないことで admin を失わせない**。
-      **誤り撤回**: 「admin_users はこのリポジトリから引けない」と書いたが、
-      **wellfort-site はセッションで参照でき、テーブルは同じ Supabase に在る**。
-    - **【Cookie は自己修復する 2026-08-30】これが「直したのに直らない」の正体。**
-      **Cookie はサインイン時にしか発行されない** (`GoogleOneTap` は未サインインのときだけ
-      `prompt()` する = 既にサインイン済みなら `/api/auth/resolve` が走らない)。有効期間 30 日。
-      → **判定を変えても既存 Cookie の持ち主には最大 30 日届かない**。実測 2026-08-30:
-      email 由来の判定を本番へ入れた (PR #190) のに報告書は空のままだった。
-      → `verifyViewer` が旧形式 (3 分割) を `legacy` と印を付け、`GoogleOneTap` が手元の
-      Supabase セッションで `/api/auth/resolve` を呼び直して発行し直す
-      (`sessionStorage` で 1 回だけ・失敗しても画面は壊さない)。**サインインし直さなくても届く。**
-    - **【dev 限定の落とし穴】`PUBLIC_GOOGLE_CLIENT_ID` 未設定だと `authEnabled=false` になり、
-      未サインインでも `loadDashboard(null)`→`DEFAULT_USER`(`d0000001`=**admin uid**) に落ちて
-      デモが出る**。本番は認証有効なのでこの経路に入らないが、ローカル検証では
-      `PUBLIC_GOOGLE_CLIENT_ID` を入れて確認すること (一度これで誤判定しかけた)。
-  - **【分離の実測 2026-08-30】本番と同じ `PUBLIC_DEMO_FALLBACK=false` で `/report` を描いて比較**:
-    admin = カード見出し 42 / 表 2 / 全編 10 章 / Elith 本文の語 (ヘマトクリット16・基準範囲20・尿素窒素8)。
-    一般顧客 = **1 / 0 / 0 / 0・0・0** (主軸 A の当社定型文のみ)。
-    **一般顧客の画面にデモ由来の語が 1 つも出ない。** admin のデモは読み取りだけで
-    一般顧客のデータに書き込まない (デモは `demo-data.ts` の定数と受領 JSON で DB を経由しない)。
-- **テストフェーズの前提 (旧・上記で更新)**: admin なら誰でもアクセスでき全員が同じデータ・同じ表示になる。
-  `?u=` 入場 (`dashboard.astro`) / `DEFAULT_USER` フォールバック (`dashboard-queries.ts`) /
-  デモ層 (`demo-data.ts`・env `PUBLIC_DEMO_FALLBACK`) / デバッグフッタ。**クライアントの UI 確認に必要なので触らない。**
-  本番相当への切替は**総合テスト段階**で行う。
+- **【誰にダミーを出すか 2026-08-30 確定・発注者指示】正本 `docs/elith/AI疾病予防報告書_仕様書.md` §4.6。**
+  デモの目的は **UI デザイン確認 / 機能確認 / ビジネスパートナーへのお披露目・PR**。
+  **権限の確認ではないので、権限の仕組み (admin) に乗せない。**
+  - **判定 = `demo-data.ts` `demoFallbackEnabled`。順序が要件そのもの**:
+    **①env `PUBLIC_DEMO_FALLBACK=false` で全停止 → ②uid がデモ用アカウント一覧にあれば出す (本線)
+    → ③admin の登録者も出す (追加)**。
+  - **③ を ② より前に置かない。** `viewerIsAdmin` は **Cookie の署名 → HP Edge `resolve-customer`
+    → Wellfort 側 `admin_users`** の 3 段依存で、どこが落ちても同じ `false` になり**画面は黙って空になる**
+    (2026-08-30 に本番で `edge.is_admin:false` を実測)。② を先に評価すれば admin が壊れてもデモは成立する。
+  - **代理表示 (`?u=`) でも ② は効く**。ページは代理表示中に `viewerIsAdmin` を渡さない (相手の実データを
+    見せるため) が、② は「表示中の uid」を見る。実測: `?u=` 付きで `rp-h3`=3(emptyVM) → 相手を登録して **45**。
+  - **一覧は 3 供給元の「和」**: `BUILTIN_DEMO_UIDS`(コード・**消えない下限**) ∪ env `DEMO_ALLOWED_UIDS`
+    ∪ **app_config `demo.account_uids`(admin から即時・再デプロイ不要・TTL 45 秒)**。
+    上書きにすると 1 件登録した瞬間に他が消えて画面が黙って空になるので**足せるが消せない**形にした。
+    **組み込みを名簿として育てない** (1 件ごとにデプロイが要る形に戻る)。増やすのは app_config か env。
+  - **`cfg()` を使うので、各ページは `refreshConfig()` をデータ取得より前に呼ぶ**
+    (後ろだと初回リクエストで admin の登録が効かない)。
+  - **検証 `npm run verify:demo-gate`** (12 ケース・`verify:report` に同梱)。規則を実装と独立に書き下し、
+    **評価順序**も見る。「admin 判定が壊れてもデモ用アカウントは見られる」「代理表示の相手がデモ用アカウント
+    なら出る」を明示的に固定。**admin を ② より前に戻すと落ちる**ことを確認済み。
+    ここは**静かに壊れる** — デモ用アカウントで画面が空になるか、実顧客に他人名義のダミーが出るかの
+    どちらかで、**どちらも画面を見ただけでは気づけない**。
+  - **admin 判定そのものはデモとは別件** (用途=管理画面 2 枚)。正は **Wellfort 側 `admin_users`** で、
+    経路は **HP Edge `resolve-customer` の応答 top-level `is_admin`** (顧客レコードの無い管理者を
+    取りこぼさないため)。**このリポジトリに管理者名簿を持たない** (ベタ書きは撤去済み・復活したら
+    `verify:demo-gate` が落とす)。**未解決**: 本番で `edge.is_admin:false`。原因は「リストに無い」か
+    「照会が失敗」かまだ**特定できていない** → `/api/debug/viewer?k=…&email=…` の `admin_lookup`
+    (`readable`/`active_count`/`matched`) が切り分ける。**ローンチのブロッカーではない**。
+  - **切り分けの口** = `GET /api/debug/viewer?k=<PROBE_UPLOAD_TOKEN>`。`report` ブロックが
+    「なぜその紙面か」(デモ可否 / 行の形・字数 / 出来上がった紙面の枚数 / モックと同形か) を 1 回で答える。
+    **`?u=` が付いていないか必ず確認する** (2026-08-30 にこれで 2 時間溶かした)。
+  - **経緯 (ボツ)**: 「デモ＝admin 限定」だった頃の設計・撤回した仮説・実装バグは
+    `docs/旧版・ボツ/2026-08-30_admin判定とデモゲートの試行錯誤.md`。**根拠にしない。**
 
 ### PII / データ分離
 - `customer` スキーマ(PII) と `diagnosis` スキーマ(非PII) を **`diagnostic_user_id` のみで橋渡し**。
@@ -1169,6 +1118,7 @@ Supabase database linter の指摘を棚卸しした結果。**テストフェ�
 | `docs/elith/elith_s3_data_handoff_spec.md` | **Elith S3 受け渡し仕様** (パス/命名/format_id/JSON) |
 | `docs/elith/elith_batch_centralization_design.md` | Elith バッチ**一元化設計**(キーは Vercel・役割分担・admin バッチ) |
 | `docs/elith/elith_assembly_wrapping_spec.md` | **納品セット アセンブリのラップ仕様(Elith向け説明)**。フォルダ/命名/ウェルネス年齢の時系列化(検査日毎・旧1件を撤回)・疑似データも同様に時系列生成・**LAiF AI疾病発症予測(Other/ai_prediction)のファイル仕様=Elith承諾により確定(§5・2026-08)。合成は data.items[] の発症率%/相対リスク比のみジッタ・昨年比は前年の相対リスク比を引継ぎ(実装済)**・manifest不一致の確認事項 |
+| **`docs/elith/AI疾病予防報告書_引継ぎ書.md`** | **【この機能に着手する人が最初に読む】** 新規セッション用の入口。読む順番 / 越えてはならない線 / コードの地図 / 検証コマンド / いま動いているものと残っているもの / 詰まったときの切り分け。**仕様は書かない** (仕様の正は下の仕様書) |
 | **`docs/elith/AI疾病予防報告書_仕様書.md`** | **【この機能の唯一の入口。最初にこれを読む】** 紙面の正はモック 2 タイプで、仕様書は紙面を散文で書かない (2 回の作り直しの直接の対策)。目的 / 正の所在 / 素材 (sha256 つき) / デザイン見本 §4.3 / 変更手順 / 検証 / **決裁台帳 §6** |
 | `docs/旧版・ボツ/` | **食い違う旧版の置き場。参照しない。** 実装の根拠にしない。決裁台帳の引用元としてのみ生きている |
 | `docs/旧版・ボツ/ai_prevention_report_HANDOVER.md` | **【旧版】引き継ぎ書**。ミッションの3層/**設計ポリシー=サービスの2本柱**/越えてはならない線/参照すべきドキュメントの順序/素材/回答待ち。**1 回目の実装はリバート済み・2 回目 (パイロット版 v0.1) が実装済み** (spec §9.2/§9.3) |

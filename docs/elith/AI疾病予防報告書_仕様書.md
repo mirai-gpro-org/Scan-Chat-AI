@@ -573,197 +573,86 @@ html_kb: 73   cards: 16   visible: 16   details: 10   sheet_h: 5183px
 
 ## 4.6 誰にダミーデータを出すか【確定・発注者指示 2026-08-30】
 
-> 「**admin の管理者リストにあるメンバーだけ**は、現状と同じテストのダミーデータを表示する
-> モードにして、他のユーザー（Google 認証でログインして顧客DBに登録があって、admin の
-> 管理者でないもの）は、**正規に自分のデータしかアクセスできないように本番設定に**して」
+デモの目的は **UI デザインの確認 / 機能確認 / ビジネスパートナーへのお披露目・PR**。
+**権限の確認ではない。**
 
 | 閲覧者 | ダミー | 実データ |
 |---|---|---|
-| **admin（管理者リストのメンバー）** | **出す**（env に関わらず） | 出す |
-| Google 認証済みの一般顧客（admin でない） | **出さない** | **本人のぶんだけ** |
+| **デモ用アカウント**（uid が一覧にある） | **出す** | — |
+| **admin の登録者** | **出す** | 出す |
+| Google 認証済みの一般顧客 | **出さない** | **本人のぶんだけ** |
 | 未サインイン | 出さない | 出さない |
-| OEM デモ顧客（`DEMO_ALLOWED_UIDS`） | env が `false` でなければ出す | — |
 
-### 実装（`demo-data.ts` `demoFallbackEnabled`）
+**サインインは全員が通常どおり Google 認証を通る。** デモ用アカウントは
+「素性の分かっている実在の Google アカウント」であって、認証の抜け道ではない。
 
-**順序が要件そのもの。**
+### 判定（`demo-data.ts` `demoFallbackEnabled`）— **順序が要件そのもの**
 
 ```
-① admin なら true            ← env で塞がない
-② env PUBLIC_DEMO_FALLBACK === 'false' なら false   ← admin 以外を一括で切る
-③ DEMO_ALLOWED_UIDS
+① env PUBLIC_DEMO_FALLBACK === 'false' なら false   ← 唯一の全停止スイッチ
+② uid が demoUids() にあれば true                    ← 本線
+③ viewerIsAdmin なら true                            ← 追加
 ```
 
-**旧実装は ① と ② が AND（②が先）だった。** そのため本番で `PUBLIC_DEMO_FALLBACK=false` を
-入れると **admin まで塞がれ**、`/report` が `emptyVM`（主軸の帯と主軸 A の 1 枚だけ）になっていた
-（実測 2026-08-30・§4.5）。これでは `13a8a95` が宣言した「デモ表示を**admin 限定**にする」の
-admin 限定の枝が本番で死ぬ。→ **admin を先に見る**。
+**③ を ② より前に置かないこと。** `viewerIsAdmin` は
+**Cookie の署名 → HP Edge の `resolve-customer` → Wellfort 側 `admin_users`** という
+3 段の外部依存で決まる。どこか 1 つが落ちても結果は同じ `false` で、**画面は黙って空になる**。
+2026-08-30 に本番で `edge.is_admin: false` を実測しており、admin を入口にすると
+**お披露目の当日に画面が空になる**。② を先に評価すれば、admin が壊れていてもデモは成立する。
 
-### すでに入っていたもの（総合テストのセッション・`13a8a95`／実測 2026-08-30）
+**代理表示（`?u=`）でも ② は効く。** ページは代理表示中に `viewerIsAdmin` を渡さない
+（相手の実データを見せるため）が、② は「表示中の uid」を見るので、相手が登録済みなら出る。
+実測 2026-08-30: `?u=` 付きで `rp-h3`=3（`emptyVM`）→ 相手を登録して **45**（`?u=` なしと同一）。
 
-- **全ユーザー向けページ 9/10 が `resolveViewer` を通る**（残る 1 つ `index.astro` は
-  リダイレクトのみでデータを出さない）
-- **`?u=` は admin の代理表示のときだけ効く。** admin 画面のゲートも Cookie の本人（`viewer.isAdmin`）で、
-  `?u=` に admin の uid を書いても通らない
-- **デモ経路は全て `demoFallbackEnabled(uid)` の内側**（dashboard / notices / result / measurement / report）
-- **未サインインでは `loadDashboard` を呼ばない**（`needsSignIn = authEnabled && !u`）ので、
-  `DEFAULT_USER` フォールバックは本番の経路に出てこない
+### デモ用アカウントの一覧 = 3 つの供給元の**和**
 
-### 検証
-
-`npm run verify:demo-gate`（`npm run verify:report` に同梱）。上の表を**実装とは独立に**書き下して
-突き合わせ、**①→②→③ の順序**も見る。**順序を旧に戻すと落ちることを確認済み**。
-
-> ここは**静かに壊れる**。判定が 1 つ変わるだけで、admin が全画面ほぼ空になるか、
-> 逆に実顧客へ他人名義のダミーが「自分の結果」として出るかのどちらかが起き、
-> **どちらも画面を見ただけでは気づけない。**
-
-### 管理者メンバーの登録は 1 箇所【2026-08-30】
-
-ローンチ後も開発と社外デモのためにこのモードは残り、**管理者は追加登録されていく**
-（発注者 2026-08-30）。そこで登録を `admin-auth.ts` の **`ADMIN_MEMBERS` 1 本**にまとめた。
-
-**統合前の状態（実測）**: `ADMIN_EMAILS`(7) と `ADMIN_UIDS`(7) の**手書き 2 本**が並び、
-対応が取れていなかった。しかも **アプリの admin 判定は uid 側しか見ておらず、
-`isAdminEmail` は参照ゼロの死んだコード**だった（`gateByUid` も同様）。
-→ **email 側に足しただけでは admin にならない**のに、足した人は登録したつもりになる。
-管理者が増えていく前提では、この罠は必ず踏む。
-
-- **追加は `ADMIN_MEMBERS` に 1 行**。`{ label, email, uid }`
-- **uid が判定の実体**。uid は当人の `/dashboard` →「デバッグ（テストフェーズ確認用）」に出ている
-- **uid がまだ分からなければ `uid: null` で登録してよい** —
-  `npm run verify:demo-gate` が **「uid 未登録のため admin として扱われません」と名指しする**ので、
-  黙って非 admin のまま放置されない
-- `ADMIN_EMAILS` / `ADMIN_UIDS` は `ADMIN_MEMBERS` からの**導出**になり、ズレが構造的に起きない
-
-### admin 判定は email からも成立する【2026-08-30・追加】
-
-> **本番の `/report` が空のままだった。** 修正は入っていた（PR #189）が、
-> **admin 判定の実体が `ADMIN_MEMBERS` の uid だけ**だったため、
-> **登録簿に載っていても admin にならない経路が 2 つ**あった。
-
-**確かめられた事実はここまで**（`/report` が `emptyVM` になり、氏名は出ていた
-＝ `data` は解決済み ⇒ `diagnosticUserId` は実在）:
-
-> **本番のその uid が、ハードコードした 7 件の uid に含まれていない。**
-
-**どのアカウントで入っていたかは分かっていない。**（誤り 2026-08-30: これを
-`hamada@eentry.co.jp` だと断定して記録したが、**出典が無い推測**だった。
-Claude のセッションに出ている連絡先メールを、アプリにサインインしている
-Google アカウントと同一視したもので、**根拠ゼロ**。§7 の失敗に追加。）
-
-admin になれない経路は 2 つあり、**どちらでも同じ症状になる**:
-
-| # | 経路 | 内容 |
+| | 反映 | 用途 |
 |---|---|---|
-| ① | **uid 未登録** | 登録簿に email では載っているが uid が `null` |
-| ② | **uid が古い** | ハードコードの uid が**本番の実値と食い違っている**。uid は手で書き写したもので、顧客DBの採番と一致している保証が無い |
+| `BUILTIN_DEMO_UIDS`（コード） | 要デプロイ | **消えない下限**。ローンチ前の確認に必ず要るぶんだけ |
+| env `DEMO_ALLOWED_UIDS` | 要デプロイ | DB 障害に影響されない |
+| app_config `demo.account_uids` | **即時**（TTL 45 秒） | **admin から増減**。お披露目で当日足す |
 
-**下の対処は ①② の両方に効く**（email が登録されていれば uid を一切見ない）。
-**どちらだったかは `/dashboard` のデバッグ欄が答える**（下記）。
+**上書きでなく和。** 上書きにすると admin で 1 件登録した瞬間に組み込みと env が消え、
+それまで見えていた画面が黙って空になる。**足せるが消せない**方が事故が軽い。
+全部止めるのは env `PUBLIC_DEMO_FALLBACK=false` だけ。
 
-**サインイン時に、サーバで検証済みの email から admin を判定し、署名付き Cookie に載せる。**
+**組み込みを名簿として育てないこと。** 増えるぶんは app_config か env を使う。
+コードに書き足す運用にすると、アカウント 1 件ごとにデプロイが要る形に戻る。
 
-| | |
-|---|---|
-| 判定の場所 | `api/auth/resolve.ts` — `signViewer(uid, isAdminEmail(email))` |
-| email の出どころ | `sb.auth.getUser(accessToken)` で**サーバが検証した値**。クライアントの申告ではない |
-| 改竄耐性 | admin フラグを payload に含めて HMAC を取る。`0`→`1` に書き換えると**署名が合わず弾かれる** |
-| 旧 Cookie | `uid.exp.sig` の 3 分割も**受ける**（`admin:false` で復元し、uid リストで補う）。発行済み Cookie を一斉に無効化しない |
-| 成立条件 | `viewer.isAdmin = Cookie の admin` **または** `uid が ADMIN_MEMBERS.uid に在る` |
+### アカウントの増やし方
 
-**これで `ADMIN_MEMBERS` に email を 1 行足すだけで admin として扱える**（uid を調べる必要がない）。
-uid も埋めておくと `?u=` 入場など Cookie 以外の経路でも admin になる。
+1. そのアカウントで Google サインインし、`/dashboard` の「デバッグ」で `diagnostic_user_id` をコピー
+2. wellfort-site admin の Elith バッチ画面 → 設定モーダル →「デモ」→「デモ用アカウントの uid」に貼る
 
-**閲覧者フラグは画面から判定関数まで引き回す。** `demoFallbackEnabled(uid, viewerIsAdmin)` の
-第 2 引数は**任意**なので渡し忘れても型では落ちない → `verify:demo-gate` が
-**渡し忘れを機械で検出する**（入口 4 モジュール ＋ ページ 5 枚 ＋ `resolve.ts`）。
-**代理表示中（`?u=` で他人を見ている）は渡さない** — 相手の実データを見せるため。
+設定モーダルは `CONFIG_SPECS` から自動でグループ表示される（`elith-batch.astro:2071`）ので、
+キーを 1 行足せば admin 画面に自動で出る。
 
-**実測（2026-08-30・本番と同じ `PUBLIC_DEMO_FALLBACK=false` ＋ 認証有効）**
+### 検証 `npm run verify:demo-gate`
 
-| 閲覧者 | カード見出し | Elith 本文の語 |
-|---|---|---|
-| **admin（email 登録のみ・uid 未登録）** | **42** | 出る |
-| 一般顧客（admin でない） | 1 | **0** |
-| 一般顧客が admin フラグを改竄 | 1 | **0** |
-| 未サインイン | 1 | **0** |
+規則を実装と独立に書き下して突き合わせる（12 ケース）。**評価順序も見る。**
+「admin 判定が壊れてもデモ用アカウントは見られる」「代理表示の相手がデモ用アカウントなら出る」を
+明示的に固定してある。**admin を ② より前に戻すと落ちる**ことを確認済み。
 
-署名まわりは単体でも検証済み — 改竄（フラグ / uid / 期限）3 種とも棄却、期限切れ棄却、旧 3 分割互換。
+ここは**静かに壊れる** — デモ用アカウントで画面が空になるか、実顧客に他人名義のダミーが出るかの
+どちらかが起き、**どちらも画面を見ただけでは気づけない**。
 
-> **注意（dev 限定）**: `PUBLIC_GOOGLE_CLIENT_ID` が未設定だと `authEnabled=false` になり、
-> 未サインインでも `loadDashboard(null)` → `DEFAULT_USER`（`d0000001` = **admin uid**）に落ちて
-> デモが出る。**本番は認証有効なのでこの経路に入らない**が、ローカル検証では紛らわしいので
-> `PUBLIC_GOOGLE_CLIENT_ID` を入れて確認すること。
+### admin 判定そのもの（デモとは別件）
 
-### admin の正は `admin_users` テーブル【2026-08-30・確定】
+`admin_users` は **Wellfort 側 Supabase にしか無い**（個人情報は Wellfort 側でしか持たない取り決め）。
+Scan-Chat-AI からは **HP Edge の `resolve-customer`** が唯一の経路で、応答の
+**top-level `is_admin`** を見る（顧客レコードの無い管理者を取りこぼさないため）。
+**このリポジトリに管理者名簿を持たない。** 用途は管理画面 2 枚のみで、
+**デモはここに依存しない**（それが上の順序の意味）。
 
-**手で書き写した `ADMIN_MEMBERS` に依存するのをやめた。**
+**未解決**: 本番で `edge.is_admin: false`。原因は「リストに載っていない」か「照会が失敗」の
+どちらかで、**まだ特定できていない**。`GET /api/debug/viewer?k=…&email=…` の `admin_lookup`
+（`readable` / `active_count` / `matched`）が切り分ける。デモの本線を uid に移したので
+**ローンチのブロッカーではない**。
 
-| | |
-|---|---|
-| 実体 | **同じ Supabase の `public.admin_users`**。`email` / `is_active` |
-| 出典 | `wellfort-site/src/pages/api/admin/config.ts:35` `/rest/v1/admin_users?email=eq.<email>&is_active=eq.true` |
-| 誰が出し入れするか | **wellfort-site の admin 画面**（`admin/users.astro`）。管理者の追加登録はここで行われる |
-| Scan-Chat-AI から引けるか | **引ける。** 同じ `PUBLIC_SUPABASE_URL` を使っている |
-| 実装 | `admin-auth.ts` `isAdminEmailAsync(email)` → `api/auth/resolve.ts` が Cookie に載せる |
-| フォールバック | 引けないとき（未設定・通信断）は `ADMIN_MEMBERS` の email。**引けないことで admin を失わせない** |
-
-> **誤り（2026-08-30・撤回）**: 「`admin_users` は wellfort-site 側の話でこのリポジトリからは引けない」と書いたが、
-> **wellfort-site はこのセッションで参照でき、テーブルは同じ Supabase に在る**。
-> リポジトリを見ずに言った推測だった。§7 の失敗 #7。
-
-**これで「管理者は追加登録されていく」に自動で追随する** — wellfort-site の admin 画面で足せば、
-Scan-Chat-AI 側は何も直さなくてよい。
-
-### Cookie は自己修復する【2026-08-30・これが「直したのに直らない」の正体】
-
-**Cookie はサインイン時にしか発行されない。** `GoogleOneTap` はサインインパネルが在るとき
-＝**未サインインのときだけ** `prompt()` するので、既にサインイン済みなら
-`/api/auth/resolve` は走らない。**有効期間は 30 日**。
-
-> つまり **判定の内容を変えても、既存の Cookie を持っている人には最大 30 日届かない。**
-> 実測 2026-08-30: email 由来の admin 判定を本番へ入れた（PR #190）のに報告書は空のままだった。
-> **修正が本番に在るのに効かない**という最悪の形。
-
-→ `verifyViewer` が**旧形式（3 分割）の Cookie を `legacy` として印を付け**、
-`GoogleOneTap` が手元の Supabase セッションで **`/api/auth/resolve` を呼び直して発行し直す**
-（`sessionStorage` で 1 回だけ・失敗しても画面は壊さない）。**サインインし直さなくても届く。**
-
-### 「admin にならない」の切り分けは画面でする
-
-**推測しない。`/dashboard` の「デバッグ（テストフェーズ確認用）」に出る。**
-
-| 表示 | 意味 |
-|---|---|
-| `admin 判定: ✓ admin（根拠: サインイン時の email）` | email で成立。uid は見ていない |
-| `admin 判定: ✓ admin（根拠: uid が登録済み）` | uid で成立 |
-| `admin 判定: ✗ admin ではない（この uid も、サインインした email も ADMIN_MEMBERS に無い）` | **登録簿にそのアカウントが無い。** email を 1 行足せば解決 |
-| `デモ表示: 出す / 出さない` | 上の判定の結果 |
-
-判定は静かに外れるので、**根拠を画面に出せないと「なぜダミーが出ないか」が誰にも分からない**
-（実測 2026-08-30: 本番で報告書が空になり、原因の特定に何往復もした。しかも
-そのあいだ**推測でアカウントを名指しして誤った**）。
-
-**現状 8 名中 1 名が uid 未登録**（`開発用バックアップ` = `hamada@eentry.co.jp`）。
-**email が登録されているので、サインインし直せば admin として扱われる。**
-uid を埋めれば Cookie 以外の経路でも admin になる。
-
-### 一般顧客の経路との分離（実測 2026-08-30）
-
-**本番と同じ設定（`PUBLIC_DEMO_FALLBACK=false`）で `/report` を実際に描いて比較した。**
-
-| | admin | 一般顧客（Google 認証・admin でない） |
-|---|---|---|
-| カード見出し `class="rp-h3` | 42 | **1**（主軸 A の当社定型文のみ） |
-| 検査値テーブル `<table` | 2 | **0** |
-| 全編の章 `<details` | 10 | **0** |
-| Elith 本文の語（ヘマトクリット / 基準範囲 / 尿素窒素） | 16 / 20 / 8 | **0 / 0 / 0** |
-| `/dashboard` のウェルネス年齢 | 出る | 出ない |
-
-**一般顧客の画面に、デモ（Elith 受領 JSON）由来の語が 1 つも出ない。**
-admin のデモモードは読み取りだけで、一般顧客のデータには一切書き込まない
-（デモは `demo-data.ts` のコード内定数と受領 JSON で、DB を経由しない）。
+> **経緯**: ここに至るまでの試行錯誤（ベタ書き名簿の撤去・Cookie の自己修復・
+> admin 照会の位置・「デモ＝admin 限定」だった頃の設計）は
+> `docs/旧版・ボツ/2026-08-30_admin判定とデモゲートの試行錯誤.md` に移した。
+> **現行の判断はこの §4.6 が正。** ボツ側を根拠にしないこと。
 
 
 ---
