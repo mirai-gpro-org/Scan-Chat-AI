@@ -41,29 +41,52 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   /** 管理者リスト (Wellfort 側 `admin_users`) に載っているか。解決と同じ応答で受け取る。 */
   let isAdmin = false;
 
-  if (isHpEdgeConfigured()) {
-    const resolved = await resolveCustomerByEmail(email).catch((e: unknown) => {
-      throw new Error(`resolve-customer: ${e instanceof Error ? e.message : String(e)}`);
-    });
-    if (resolved) {
-      diagnosticUserId = resolved.diagnostic_user_id;
-      bareName = resolved.display_name;
-      // **同じ応答に載っている。** admin 判定のために 2 回呼ばない。
-      isAdmin = resolved.is_admin === true;
-    }
-  } else {
-    // dev フォールバック: モック customer_profiles を email で解決
+  /** ローカルの `customer_profiles` で解決する (HP Edge 未構成 / 呼び出し失敗時の受け皿)。 */
+  const resolveLocally = async (): Promise<{ error: Response } | null> => {
     const { data: profile, error: profErr } = await sb
       .schema('customer')
       .from('customer_profiles')
       .select('diagnostic_user_id, family_name')
       .ilike('email', email)
       .maybeSingle();
-    if (profErr) return json({ error: `profile lookup: ${profErr.message}` }, 500);
+    if (profErr) return { error: json({ error: `profile lookup: ${profErr.message}` }, 500) };
     if (profile?.diagnostic_user_id) {
       diagnosticUserId = profile.diagnostic_user_id;
       bareName = profile.family_name;
     }
+    return null;
+  };
+
+  if (isHpEdgeConfigured()) {
+    /*
+     * **HP Edge の失敗でサインインを壊さない (2026-08-30)。**
+     *
+     * ここは以前 throw していたので、Edge が 401/500 を返すと
+     * **この API ごと 500 になり誰もサインインできなくなる**。
+     * `HP_EDGE_BASE_URL` を入れた瞬間に全滅する形で、切替のリスクが高すぎる。
+     * → 失敗したらログに残してローカル解決へ落ちる。**admin は付けない**
+     *   (管理者リストを確認できていないので昇格させない = fail-closed)。
+     */
+    let resolved: Awaited<ReturnType<typeof resolveCustomerByEmail>> = null;
+    let edgeFailed = false;
+    try {
+      resolved = await resolveCustomerByEmail(email);
+    } catch (e) {
+      edgeFailed = true;
+      console.error('[auth/resolve] resolve-customer 失敗。ローカル解決へ切替:', e instanceof Error ? e.message : e);
+    }
+    if (resolved) {
+      diagnosticUserId = resolved.diagnostic_user_id;
+      bareName = resolved.display_name;
+      // **同じ応答に載っている。** admin 判定のために 2 回呼ばない。
+      isAdmin = resolved.is_admin === true;
+    } else if (edgeFailed) {
+      const failed = await resolveLocally();
+      if (failed) return failed.error;
+    }
+  } else {
+    const failed = await resolveLocally();
+    if (failed) return failed.error;
   }
 
   // 未連携 (適格性なし)
