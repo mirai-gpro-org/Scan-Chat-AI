@@ -32,19 +32,33 @@ export const GET: APIRoute = async (ctx) => {
   // 受領データが在るか (在れば admin かどうかに関係なく紙面が出るはず)
   let rows: number | null = null;
   let latest: string | null = null;
+  let schemaVersion: string | null = null;
+  let sections: number | null = null;
+  let chars: number | null = null;
   let dbError: string | null = null;
   const sb = getServerSupabase();
   if (sb && viewer.uid) {
     try {
       const { data, error } = await (sb.schema('diagnosis') as any)
         .from('diagnosis_results')
-        .select('received_at, status')
+        .select('received_at, status, schema_version, report')
         .eq('diagnostic_user_id', viewer.uid)
         .neq('status', 'superseded')
         .not('report', 'is', null)
         .order('received_at', { ascending: false });
       if (error) dbError = error.message;
-      else { rows = (data ?? []).length; latest = (data ?? [])[0]?.received_at ?? null; }
+      else {
+        const list = data ?? [];
+        rows = list.length;
+        const top = list[0];
+        latest = top?.received_at ?? null;
+        schemaVersion = top?.schema_version ?? null;
+        // **中身の量**まで見る。行が在っても中身が薄ければ紙面は薄い (実測 2026-08-30:
+        // seed の旧デモ行 2 セクション 200 字が最新で、受領 JSON 20,046 字が使われていなかった)。
+        const rep = top?.report;
+        if (Array.isArray(rep)) { sections = rep.length; chars = JSON.stringify(rep).length; }
+        else if (rep && typeof rep === 'object') { sections = Object.keys(rep).length; chars = JSON.stringify(rep).length; }
+      }
     } catch (e) { dbError = String((e as Error)?.message ?? e); }
   }
 
@@ -79,10 +93,18 @@ export const GET: APIRoute = async (ctx) => {
       demo_fallback_enabled: demoFallbackEnabled(viewer.uid, demoOk),
     },
     // ⑤ 受領データ (在れば admin と無関係に紙面が出る)
-    received: { rows, latest_received_at: latest, db_error: dbError },
+    received: {
+      rows, latest_received_at: latest, schema_version: schemaVersion,
+      latest_sections: sections, latest_chars: chars, db_error: dbError,
+    },
     // ⑥ 読み方
     hint: rows && rows > 0
-      ? '受領データが在ります。これで紙面が空なら原因はアダプタ側です。'
+      ? (chars != null && chars < 2000
+          ? `最新行の中身が ${chars} 字しかありません (${sections} セクション)。`
+            + '**紙面が薄いのは実装ではなく行の中身**です。'
+            + 'seed の旧デモ行が最新になっていないか確認し、受領 JSON を'
+            + ' scripts/ingest-elith-report.mjs で取り込んでください。'
+          : '受領データが在ります。これで紙面が空なら原因はアダプタ側です。')
       : (demoFallbackEnabled(viewer.uid, demoOk)
           ? 'デモは出せる状態です。これで紙面が空なら原因はアダプタ側です。'
           : '受領データが無く、デモも出せない状態＝仕様どおり空になります。上の viewer / cookie / env のどれが原因かを見てください。'),
