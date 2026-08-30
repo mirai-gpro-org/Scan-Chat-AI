@@ -76,8 +76,49 @@ function demoAccountUids(): ReadonlySet<string> {
   ]);
 }
 
+/**
+ * 一覧の文字列を uid の配列にする。
+ *
+ * **`#` から行末までは注釈**として捨てる。admin の管理画面で
+ * 「この uid が誰用か」を書けるようにするため (PR・お披露目で増えるので、
+ * uid の羅列だけだと後から誰も分からなくなる)。
+ *
+ *   bbbbbbbb-...  # パートナーA お披露目 2026-09
+ *   cccccccc-...  # 展示会デモ
+ *
+ * 注釈が無ければ従来どおりカンマ / 空白 / 改行 区切りで並べてよい。
+ */
 function splitUids(raw: string): string[] {
-  return raw.split(/[\s,]+/).map(norm).filter(Boolean);
+  return parseEntries(raw).map((e) => e.uid);
+}
+
+/** 一覧の 1 行 = uid ＋ 注釈。admin の管理画面が使う。 */
+export interface DemoAccountEntry {
+  uid: string;
+  /** `#` 以降。無ければ空。**PII は書かないこと** (誰用かが分かる短い語で足りる)。 */
+  label: string;
+}
+
+/** 注釈つきで解析する。**uid の形をしていない語は捨てる** (打ち間違いで壊さない)。 */
+export function parseEntries(raw: string): DemoAccountEntry[] {
+  const out: DemoAccountEntry[] = [];
+  for (const line of String(raw ?? '').split(/\r?\n/)) {
+    const hash = line.indexOf('#');
+    const label = hash >= 0 ? line.slice(hash + 1).trim() : '';
+    const body = hash >= 0 ? line.slice(0, hash) : line;
+    for (const tok of body.split(/[\s,]+/)) {
+      const uid = tok.trim().toLowerCase();
+      if (UUID_RE.test(uid)) out.push({ uid, label });
+    }
+  }
+  return out;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** uid として妥当か (admin 画面の入力チェックと共有する)。 */
+export function isUuid(v: string): boolean {
+  return UUID_RE.test(v.trim().toLowerCase());
 }
 
 /**
@@ -101,24 +142,52 @@ const BUILTIN_DEMO_UIDS: readonly string[] = [
   '186151f8-b4ec-4fcd-bbf5-2bf8aca09bdc',
 ];
 
+/** 管理画面に「何用か」を出すための説明。**PII は書かない**。 */
+const BUILTIN_LABELS: Readonly<Record<string, string>> = {
+  'd0000001-0000-0000-0000-000000000000': 'テストフェーズの標準デモ (seed.sql の投入先)',
+  'da000001-0000-0000-0000-000000000000': 'OEM 相手先ブランド向けデモ',
+  '14410d5a-d515-4fe9-9a8e-bbb1040021ac': '社内の確認用 (2026-08-30 登録)',
+  '186151f8-b4ec-4fcd-bbf5-2bf8aca09bdc': '社内の確認用 (2026-08-30 登録)',
+};
+
 /**
- * 監査・診断用。**uid そのものは返さない**（件数と供給元の内訳だけ）。
- * 「誰が登録されているか」は admin の設定画面で見る。
+ * **admin の管理画面が見る一覧。** どの供給元から来たかを付けて返す。
+ *
+ * uid は `diagnostic_user_id` で **PII を含まない**ので admin には見せてよい
+ * (むしろ見えないと「誰が登録されているか分からない」= 棚卸しできない)。
+ * 氏名やメールは**ここでは扱わない**。
  */
-export function demoAccountStats(): {
-  total: number;
-  builtin: number;
-  fromEnv: number;
-  fromConfig: number;
+export interface DemoAccountRow extends DemoAccountEntry {
+  /** どこから来たか。`config` だけが admin から編集できる。 */
+  source: 'builtin' | 'env' | 'config';
+}
+
+export function listDemoAccounts(): {
+  rows: DemoAccountRow[];
   disabledGlobally: boolean;
+  /** admin が編集する生テキスト (app_config の値そのまま)。 */
+  configRaw: string;
 } {
-  const fromEnv = splitUids(String(import.meta.env.DEMO_ALLOWED_UIDS ?? ''));
-  const fromConfig = splitUids(cfg('demo.account_uids'));
+  const configRaw = cfg('demo.account_uids');
+  const rows: DemoAccountRow[] = [
+    ...BUILTIN_DEMO_UIDS.map((uid) => ({ uid, label: BUILTIN_LABELS[uid] ?? '', source: 'builtin' as const })),
+    ...parseEntries(String(import.meta.env.DEMO_ALLOWED_UIDS ?? '')).map((e) => ({ ...e, source: 'env' as const })),
+    ...parseEntries(configRaw).map((e) => ({ ...e, source: 'config' as const })),
+  ];
+  return { rows, disabledGlobally: demoDisabledGlobally(), configRaw };
+}
+
+/** 監査・診断用の件数だけ (`/api/debug/viewer` が使う)。 */
+export function demoAccountStats(): {
+  total: number; builtin: number; fromEnv: number; fromConfig: number; disabledGlobally: boolean;
+} {
+  const { rows, disabledGlobally } = listDemoAccounts();
+  const by = (s: DemoAccountRow['source']) => rows.filter((r) => r.source === s).length;
   return {
     total: demoAccountUids().size,
-    builtin: BUILTIN_DEMO_UIDS.length,
-    fromEnv: fromEnv.length,
-    fromConfig: fromConfig.length,
-    disabledGlobally: demoDisabledGlobally(),
+    builtin: by('builtin'),
+    fromEnv: by('env'),
+    fromConfig: by('config'),
+    disabledGlobally,
   };
 }

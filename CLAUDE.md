@@ -1062,6 +1062,10 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
   - **一覧は 3 供給元の「和」**: `BUILTIN_DEMO_UIDS`(コード・消えない下限・現 4 件) ∪ env `DEMO_ALLOWED_UIDS`
     ∪ **app_config `demo.account_uids`(admin から即時・再デプロイ不要)**。**組み込みを名簿として育てない**。
     各ページは `refreshConfig()` を**データ取得より前**に呼ぶ。
+  - **増減は admin の専用メニュー** = wellfort-site `/admin/demo-accounts` (サイドバー「設定」)。
+    **管理者管理 (`/admin/users`) とは別メニュー** (同じ枠に置くと「デモを見せる」と
+    「管理権限を渡す」が区別できなくなる)。UI=wellfort-site / 処理=Scan-Chat-AI
+    `/api/admin/demo-accounts` (Bearer `ADMIN_API_KEY`)。組み込み/env は画面から外せない。
   - **代理表示 (`?u=`) は「表示中の uid」で判定**。相手が登録済みなら出る / 一般顧客なら相手の実データ。
     `?u=` は admin 限定 (`viewer.ts:229`) なので**社外に渡すデモ用アカウントは他人を覗けない**。
     実測: 本人(登録済) `rp-h3`=45 / `?u=`登録済 45 / `?u=`未登録 **3**(emptyVM)。
