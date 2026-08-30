@@ -27,10 +27,21 @@ const pick = (text, name) => {
   const body = block.slice(block.indexOf('['), block.indexOf(']'));
   return [...body.matchAll(/'([0-9a-f-]{36})'/g)].map((m) => m[1]);
 };
-const ADMIN_UIDS = pick(adminSrc, 'ADMIN_UIDS');
+
+/** 管理者メンバー登録 (`ADMIN_MEMBERS`) を読む。**admin を足す唯一の場所。** */
+const membersBlock = adminSrc.slice(
+  adminSrc.indexOf('export const ADMIN_MEMBERS'),
+  adminSrc.indexOf('/** 管理者のメール'),
+);
+const ADMIN_MEMBERS = [...membersBlock.matchAll(
+  /\{\s*label:\s*'([^']*)',\s*email:\s*(?:'([^']*)'|null),\s*uid:\s*(?:'([^']*)'|null)\s*\}/g,
+)].map((m) => ({ label: m[1], email: m[2] ?? null, uid: m[3] ?? null }));
+
+const ADMIN_UIDS = ADMIN_MEMBERS.map((m) => m.uid).filter(Boolean);
 const DEMO_ALLOWED = pick(src, 'DEMO_ALLOWED_UIDS');
 
-if (ADMIN_UIDS.length === 0) { console.error('✗ ADMIN_UIDS を読めなかった'); process.exit(1); }
+if (ADMIN_MEMBERS.length === 0) { console.error('✗ ADMIN_MEMBERS を読めなかった'); process.exit(1); }
+if (ADMIN_UIDS.length === 0) { console.error('✗ uid を持つ管理者が 1 人もいない'); process.exit(1); }
 
 /** 期待する規則 (発注者指示 2026-08-30)。実装とは独立にここへ書く。 */
 function expected(uid, envFalse) {
@@ -70,7 +81,23 @@ if (OEM) cases.push(
   ['OEMデモ顧客           / env=false ', OEM, true, false],
 );
 
-console.log('ダミーデータを出すか (◯=出す / ✗=出さない)\n');
+// ── 管理者メンバー登録の棚卸し ────────────────────────────────
+// **uid が admin 判定の実体**なので、uid の無いメンバーは admin にならない。
+// 黙って非 admin のまま放置されないよう、毎回名指しで出す (落としはしない —
+// uid がまだ分からない期間は正当にあり得るため)。
+console.log(`管理者メンバー ${ADMIN_MEMBERS.length} 名 (admin を足すのは ADMIN_MEMBERS だけ)\n`);
+const noUid = ADMIN_MEMBERS.filter((m) => !m.uid);
+for (const m of ADMIN_MEMBERS) {
+  const mark = m.uid ? '✓' : '!';
+  const note = m.uid ? '' : '  ← uid 未登録のため **admin として扱われません**';
+  console.log(`  ${mark} ${m.label.padEnd(18)} ${(m.email ?? '(email 不明)').padEnd(26)}${note}`);
+}
+if (noUid.length) {
+  console.log(`\n  ⚠ uid 未登録 ${noUid.length} 名: ${noUid.map((m) => m.label).join(' / ')}`);
+  console.log('    uid は当人の /dashboard →「デバッグ (テストフェーズ確認用)」に出ています。');
+}
+
+console.log('\nダミーデータを出すか (◯=出す / ✗=出さない)\n');
 for (const [label, uid, envFalse, want] of cases) {
   const got = expected(uid, envFalse);
   const ok = got === want;
