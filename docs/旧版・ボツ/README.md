@@ -22,6 +22,11 @@
 
 | ファイル | 現行と食い違う点 |
 |---|---|
+| `demecal_inquiry_email_template.md` | 自動DL可否を先方へ**照会する**ための雛形。**可否は確定済み**（自動アクセス承認・2026-08-31 に証明書つき HTTP 200 実測・方式は PowerShell）＝役目終了 |
+| `humandock_bloodpriority_oneoff_delivery.md` | **1 検体だけの暫定手順**（本文が自ら「この1検体のみの暫定運用」と明記）。恒久実装は `docs/scan/scan_canonicalization_standard_format_design.md`。**新しい検体に流用しない** |
+| `wellness_age_oneoff_explanation_20260826.md` | 上記 1 検体の説明資料（提出済み）。ウェルネス年齢の仕様は `docs/scan/health_age_*_spec.md` が正 |
+| `laif_portal_share_email_template.md` | LAiF 向けメール文面の**案**。送付済み。後継＝`docs/lab/partner_demo_confirmation_request_laif.md` |
+| `partner_demo_confirm_request.md` | LAiF／プリベント**共通の雛形**。各社向けに分割・具体化されて役目終了（`partner_demo_confirmation_request_{laif,prevent}.md`） |
 | `demecal_pad_flow_skeleton.md` / `demecal_pad_operation_guide.md` / `demecal_pad_setup_guide.md` | **PAD（Power Automate Desktop）でブラウザを自動操作する前提**。血液CSVの自動取得は **PowerShell 方式**に確定したので不採用（2026-08-31・専用PC 実測で証明書つき接続 HTTP 200／ログイン画面は素の HTML フォーム）。正本 = `docs/lab/demecal_unattended_spec.md` |
 | `demecal_server_playwright_design.md` | **証明書をサーバへ移設して Playwright(mTLS) で自動DL**する案。**移設が不要になった**ため不採用（専用PC 上の PowerShell で完結する）。同上 |
 | `elith_report_integration.md` | **3 モード表示 (a/b/c)** と `diagnosis_result_items` テーブル、**Gemini 2.5 Flash による二次抽出**を定義。現行は 3 モードを廃止し、LLM を使わない（仕様書 §6 の D-6 / D-19 / D-19b の引用元） |

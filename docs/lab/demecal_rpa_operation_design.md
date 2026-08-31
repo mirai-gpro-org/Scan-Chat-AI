@@ -4,8 +4,9 @@
 |---|---|
 | 位置づけ | `docs/lab/demecal_auto_download_overview_spec.md`（方式選定）を受けた**実装/運用設計** |
 | 前提(確定) | §6 自動アクセス**承認済**／専用PC(Pマーク)／デメカル証明書は**PCのOS/ブラウザ証明書ストア導入済**／担当者は**admin を Google 認証**でログイン |
-| 本命方式 | **案2: Power Automate Desktop**（実ブラウザがOSストア証明書をそのまま使う）。Playwright(案1) は `.p12` を扱える場合のみ |
-| 実装状況 | サーバ側(変換/S3/状態管理/取り込み専用キー) と admin取り込みUI は**実装済**。残るはPC側RPA(DL部)の構築 |
+| ⚠️ **有効な範囲** | **§1〜§3・§5・§6 のみ有効。§4（unattended）は失効**（正本 = [`demecal_unattended_spec.md`](./demecal_unattended_spec.md)） |
+| 本命方式 | ~~案2: Power Automate Desktop~~ → **【方式確定 2026-08-31】PowerShell（PAD は不採用）**。専用PC 実測で 証明書つき接続 HTTP 200・ログイン画面は素の HTML フォーム（`demecal_powershell_probe_guide.md`） |
+| 実装状況 | サーバ側(変換/S3/状態管理) と admin取り込みUI は**実装済**。残るは **PC側 PowerShell スクリプト(DL部)** と **`LAB_INTAKE_API_KEY`（未実装）** |
 
 ---
 

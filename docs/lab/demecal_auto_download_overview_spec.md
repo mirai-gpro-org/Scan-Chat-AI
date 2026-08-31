@@ -24,11 +24,12 @@
 - §6 の**自動アクセスは承認済**。
 - 実行環境は **専用デスクトップPC (Pマーク対応・個人用でない)**。デメカル証明書は**このPCのOS/ブラウザ証明書ストアに導入済**。
 - 担当者は **admin を Google 認証** (Supabase Google OAuth) でログインして操作。
-- 本命方式は **案2: Power Automate Desktop**（実ブラウザがOSストア証明書を使う）。Playwright(案A) は `.p12` を扱える場合の代替。
+- ~~本命方式は 案2: Power Automate Desktop~~ → **【方式確定 2026-08-31】専用PC 上の PowerShell（RPA/PAD は使わない）**。§1 の注記と `demecal_unattended_spec.md` が正。
 - **鍵は Vercel に一元管理・PCに置かない**を維持: PCは「DLのみ」、変換/S3/状態は Vercel(既存API)。
-- **attended(担当者クリック)を先行**、無人(週次)は後段。認可は attended=Google短命トークン / unattended=取り込み専用キー `x-intake-key`(`LAB_INTAKE_API_KEY`)。
+- ~~**attended(担当者クリック)を先行**、無人(週次)は後段~~ → **【発注者判断 2026-08-31】最初から無人で定期実行する（段階導入は採らない）**。attended は障害時のフォールバックとして残す（`demecal_attended_manual_guide.md`）。認可は attended=Google短命トークン / unattended=取り込み専用キー `x-intake-key`(`LAB_INTAKE_API_KEY`・**未実装**)。
 - 実装済: サーバ側(`elith-blood-csv` に `max_test_date`、状態API `demecal-state`、intake-key)・admin取り込みUI。
-- **詳細な運用/実装設計は `docs/lab/demecal_rpa_operation_design.md` を参照**。
+- **詳細な運用/実装設計**: 無人運用は **`docs/lab/demecal_unattended_spec.md`（正本）**／
+  役割分担・API・attended は `docs/lab/demecal_rpa_operation_design.md` **§1〜§3・§5・§6 のみ**（同 §4 は失効）。
 
 ---
 

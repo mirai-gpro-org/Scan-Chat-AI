@@ -5,7 +5,7 @@
 | 目的 | **サブスク検査プランの購入から、キット発送・進捗管理・AI問診／検体返送・各社への問診データ受渡・検査結果受領・Elithへのラップ書き出し・AI診断結果の表示まで**、E2E の一連の流れを1本に束ねる**総合仕様書（正本・上位文書）**。個別の詳細は下記3ドキュメントに委譲し、本書はそれらを **6ステップの流れ**で連結・統合する。 |
 | 位置づけ | **本書＝E2E 全体像の正本**。各論の正本は下記(a)(b)(c)＋Elith/サブスク各 spec。**二重管理しない**（詳細は各 spec を参照し、本書は流れと責務分界・連結点のみ規定）。 |
 | 統合対象（3本） | (a) `docs/lab/lab_data_reception_overview.md`（各社**受取方式**）／(b) `docs/lab/questionnaire_to_lab_csv_spec.md`（**AI問診→各社CSV** 写像）／(c) `docs/subscription/kit_lifecycle_and_handoff_management_spec.md`（**キット出荷・進捗・受渡** 統合管理・データモデル） |
-| 版 | 2026-08-12（Draft・初版） |
+| 版 | 2026-08-31（血液=PowerShell 方式へ更新・遺伝子の再検討を追記）／初版 2026-08-12 |
 | 関連 | `docs/subscription/subscription_management_feature_requirements.md`（サブスク契約管理）／`docs/billing/gmo_subscription_billing_spec.md`（決済・契約状態）／`docs/elith/elith_batch_centralization_design.md`・`docs/elith/elith_assembly_wrapping_spec.md`・`docs/elith/elith_s3_data_handoff_spec.md`（Elith 受渡）／`docs/lab/lab_integration_workflow.md`・`docs/architecture/data_integration_requirements.md`（割当・PII） |
 
 ---
@@ -75,7 +75,7 @@
 ### ④-3 各社への受渡方式（所定方式＝会社別）
 | # | 検査 | 検査会社 | 受渡・受取方式 | Elith format_id | ステータス |
 |---|---|---|---|---|---|
-| 1 | 血液 | リージャー（デメカルDSS） | **PowerShell**（専用PC・mTLS・無人定期実行）で CSV DL → 決定論パース。**RPA/PAD 不要**（2026-08-31 確定・正本 `demecal_unattended_spec.md`） | `BloodTestData` | サーバ側実装済／**PC側は未実装**（残=ログイン後のCSV一覧URL） |
+| 1 | 血液 | リージャー（デメカルDSS） | **PowerShell**（専用PC・mTLS・無人定期実行）で CSV DL → 決定論パース。**RPA/PAD 不要**（2026-08-31 確定・正本 `demecal_unattended_spec.md`） | `BloodTestData` | サーバ側実装済／**PC側は未実装**。bat は **2 本立て**＝①偵察・初回テスト `scripts/demecal-recon.ps1`（実装済・ログイン後のDL画面 form をその場で自己発見）→ ②本番の自動実行（①の結果を見てから作る）。**`LAB_INTAKE_API_KEY` が未実装**（無人化の前提） |
 | 2 | がんリスク（尿） | プリベント（ALA-PDS） | **専用ポータル＋AWS S3＋パスキー方式を提案中**（LAiF流用）／現状はメール＋フォルダ共有の手動 | `CancerRiskAssessmentData` | **提案中（プレゼン段階）** |
 | 3 | AI疾病発症予測 | LAiF | **AWS S3 専用バケット**（ポータル・パスキー・上りCSV/下りPDF） | `Other`(ai_prediction) | 受取方式確定・スキャン実装済 |
 | 4 | 遺伝子 | Genoplan | **デスクトップRPA**（PDF取得）**※要再検討＝PowerShell 化の可能性あり**（血液の PAD 流用前提が消えたため。判定は `lab_data_reception_overview.md §4`） | `GeneticTestResultData` | RPA方針・スキャン実装済 |

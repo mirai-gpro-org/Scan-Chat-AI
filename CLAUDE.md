@@ -1310,7 +1310,6 @@ Supabase database linter の指摘を棚卸しした結果。**テストフェ�
 | `docs/lab/questionnaire_to_lab_csv_spec.md` | **AI問診回答→各社CSV 変換仕様(実装用)**。共通設問No→各社必要行のマスターマッピング表+各社項目リスト+生成ルール(フリー/選択/範囲/複数)+PII確認事項。元=Wellfort問診項目マトリクスExcel |
 | `docs/lab/demecal_auto_download_overview_spec.md` | 血液検査データ自動DL (デメカル/mTLS) 概要 |
 | **`docs/lab/demecal_unattended_spec.md`** | **【無人定期取得の正本 2026-08-31】** 発注者判断「最初から無人」。無人にしてよい根拠(`last_to` 単調前進=走らない日があっても取り漏れゼロ)/取り込み専用キー `LAB_INTAKE_API_KEY`(**未実装・ADMIN_API_KEY を PC に置かないため必須**)/実行ログAPI/秘密の保管(DPAPI)/タスク設定/監視(GitHub Actions を見張りにして通知基盤を作らない)/失敗時の挙動表/未確定と実装TODO |
-| `docs/lab/demecal_inquiry_email_template.md` | 検査会社への自動DL可否 照会メール雛形 |
 | `docs/subscription/subscription_management_feature_requirements.md` | サブスク契約管理 拡張 機能要件 (要件1〜4・データモデル・付録Bマトリクス) |
 | `docs/subscription/subscription_management_implementation_guide.md` | 上記の実装手順書 |
 | `docs/subscription/kit_lifecycle_and_handoff_management_spec.md` | **検査キット 出荷・進捗・データ受渡 統合管理仕様(サブスク駆動)**。プラン×キット×発送タイミング/タカセ定期出荷/ライフサイクル状態機械+AI問診促し/進捗駆動の各社受渡・Elith作成指示。**§4.1.1=LAiF上りCSV(AI疾病発症予測 入力フォーム 約158項目)の写像仕様＋生成フロー**(健診スキャン+AI問診+基本情報を集約=スキャンフローに足さない別export・整理番号/生年月日は要確認) |
