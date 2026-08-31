@@ -348,6 +348,14 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
       (OneDrive既知フォルダ移動の対象外)・**パスに `OneDrive` を含んだら書かず中止**・
       送信成功後に削除・**使ったパスを必ず表示**。**接続チェックがデスクトップに出すのは意図どおり**
       (メール返送用・PII非含有)。変えるのは本番CSV取得だけ。
+    - **OneDrive 側の設定は変えない (相手PCの設定に触らない)**。公式挙動で**停止すると既存ファイルが
+      デバイスのフォルダーから見えなくなる**(support.microsoft.com ja-jp/office/…d61a7930) ため
+      非エンジニアには「デスクトップが全部消えた」に見え、影響がPC業務全体に及ぶ。ポリシー強制なら操作も不可。
+      **書き先を変えれば済む。**
+    - **手動運用(attended)にも同じ危険**: 担当者がCSVを**デスクトップに保存**するとPIIがクラウドへ。
+      → `demecal_attended_manual_guide.md` ステップ②-6 に「デスクトップに保存しない」明記済み。
+      OneDrive のバックアップ対象は **デスクトップ/ドキュメント/ミュージック/画像/ビデオ の5つで
+      ダウンロードは含まれない**(同出典) ので、ブラウザ既定の保存先のままなら同期されない。
   - **【ログイン形式 確定 2026-08-31・`demecal_login_page.html` 実測】サーバは ASP.NET Core MVC**
     (`DSS.Demecal.Web`)。`POST /account/login` に `UserID` / `Password` ＋
     **hidden `__RequestVerificationToken` (antiforgery) が在る**
