@@ -325,6 +325,18 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
   **Wellfort が検査機関から手動取得 → admin バッチ (サーバ実行) で処理**
 - 血液 (`BloodTestData`) … デメカル (dl.demecal.net) から取得。自動DLは
   `docs/lab/demecal_auto_download_overview_spec.md` (クライアント証明書 mTLS)
+  - **【方式確定 2026-08-31・専用PC 実測】自動取得は PowerShell 方式。PAD は不要**
+    (ライセンス不要・ブラウザ要素を指さないので画面変更に強い)。根拠=
+    `docs/lab/demecal_powershell_probe_guide.md`「実測結果」: 証明書つき接続 **HTTP 200**
+    (`CN=Q05-0010`・発行者 `demecal.net CA`・**期限 2028-12-12**)、証明書なしは 400、
+    ログイン画面は `<form>`1/`<input>`4 の**通常の HTML フォーム**。
+  - **証明書は `Cert:\CurrentUser\My` にしか無い (ユーザー `info`)。`LocalMachine` には無い。**
+    → **SYSTEM/別ユーザーのタスク実行では証明書が見えず失敗・サービス化も不可**。
+    証明書の選択は **発行者CN=`demecal.net CA` かつ 秘密鍵あり**で絞る (CN ベタ書きにしない=更新で変わる)。
+    出力先は **OneDrive 外**にする (デスクトップが OneDrive 配下=同期/ロック事故)。
+  - **未確定**: ログインフォームの hidden (CSRF) の有無 → `demecal_login_page.html` 待ち。
+    有無で「POST 1 回」か「GET でトークン取得→POST」かが変わる。
+    **`probe-list` API は page.html の本文を返さない**設計なので S3 か Wellfort から受け取る。
 - 生活習慣・問診 (`LifestyleQuestionnaireData`) … アプリの AI 問診
 
 ### 検査値と原本の保存 (2026-08-20 確定・発注者承認)
