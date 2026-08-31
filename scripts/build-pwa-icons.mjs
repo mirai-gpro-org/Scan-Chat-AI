@@ -22,6 +22,9 @@
  * どちらの場合も**ロゴ自体の色は変えない** (ブランド資産は無加工)。
  *
  * 生成物:
+ *   public/favicon-mark.png            ブラウザのタブ (favicon)。**マークのみ・背景は透過**
+ *                                      → タブ 16px でワードマークは潰れて読めないため
+ *                                        (ロゴ全体を使っていた頃の「小さくて分からない」の対処)
  *   public/icons/icon-192.png          manifest icons (purpose any)
  *   public/icons/icon-512.png          同上
  *   public/icons/icon-maskable-512.png manifest icons (purpose maskable)
@@ -112,3 +115,21 @@ await make('public/icons/icon-512.png', 512, R_ANY);
 await make('public/icons/icon-maskable-512.png', 512, USE_FULL ? 0.78 : 0.60);
 // iOS は角丸を OS 側で付ける。透過を残すと黒背景になることがあるので不透明で書き出す。
 await make('public/apple-touch-icon.png', 180, R_ANY);
+/*
+ * タブの favicon。64px を 1 枚置けばブラウザ側が 16/32 へ縮めてくれる。
+ *
+ * ・**ロゴ全体 (full) を指定したときも favicon はマークだけ**にする
+ *   — 16px ではワードマークの線幅が 1px を切って潰れ、何のアイコンか分からなくなるため
+ *     (発注者指摘 2026-08「ファビコンも小さいので文字を削除してマークだけに」)。
+ * ・ホーム画面アイコンと違い OS のマスク (角丸・円形) が掛からないので余白は最小 (0.94)。
+ * ・**背景は透過のまま**。白で塗るとダークテーマのタブに白い四角が出る。
+ */
+const FAVICON_ART = await markBuffer();
+await sharp({ create: { width: 64, height: 64, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+  .composite([{
+    input: await sharp(FAVICON_ART).resize({ width: Math.round(64 * 0.94), fit: 'inside' }).toBuffer(),
+    gravity: 'center',
+  }])
+  .png()
+  .toFile('public/favicon-mark.png');
+console.log('public/favicon-mark.png  64x64 (透過・マークのみ)');
