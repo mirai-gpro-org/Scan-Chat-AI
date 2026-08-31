@@ -22,6 +22,8 @@
 
 | ファイル | 現行と食い違う点 |
 |---|---|
+| `demecal_pad_flow_skeleton.md` / `demecal_pad_operation_guide.md` / `demecal_pad_setup_guide.md` | **PAD（Power Automate Desktop）でブラウザを自動操作する前提**。血液CSVの自動取得は **PowerShell 方式**に確定したので不採用（2026-08-31・専用PC 実測で証明書つき接続 HTTP 200／ログイン画面は素の HTML フォーム）。正本 = `docs/lab/demecal_unattended_spec.md` |
+| `demecal_server_playwright_design.md` | **証明書をサーバへ移設して Playwright(mTLS) で自動DL**する案。**移設が不要になった**ため不採用（専用PC 上の PowerShell で完結する）。同上 |
 | `elith_report_integration.md` | **3 モード表示 (a/b/c)** と `diagnosis_result_items` テーブル、**Gemini 2.5 Flash による二次抽出**を定義。現行は 3 モードを廃止し、LLM を使わない（仕様書 §6 の D-6 / D-19 / D-19b の引用元） |
 | `ai_prevention_report_generation_spec.md` | 現行仕様書の前身。**内部に矛盾を抱えている**（全編の既定 開く⇔畳む / サーバ側 PDF 生成 する⇔しない⇔条件付き）。**ただし §1.1「目的」は現行仕様書 §1 が逐語で引用しており、そこだけは生きている**（仕様書 §6 の S-1 / S-3 の引用元） |
 | `ai_prevention_report_HANDOVER.md` | 1 回目リバート直後の引き継ぎ書。ミッションの記述が現行仕様書 §1 と食い違う |

@@ -1,6 +1,10 @@
 # デメカル血液CSV — 手動取込 運用手順書
 
-> **※本書の位置づけ**：RPA（Power Automate Desktop）構築後は、この作業は**PCが起動していれば週次で自動実行**されます（`demecal_pad_operation_guide.md §4`）。本書は **RPA構築前の運用**、および**RPA障害時のフォールバック**手順です。
+> **※本書の位置づけ**：**現在この手順が本番の運用です。**
+> 自動化は **PowerShell 方式**で無人定期実行する方針が確定していますが（2026-08-31・正本
+> `docs/lab/demecal_unattended_spec.md`）、**まだ実装されていません**。
+> 自動化後も、本書は**障害時のフォールバック手順**として残ります。
+> （旧記載の「RPA／Power Automate Desktop 構築後は週次で自動実行」は**不採用**。PAD は使いません。）
 
 <div align="center">
 <svg viewBox="0 0 760 430" xmlns="http://www.w3.org/2000/svg" style="max-width:100%;height:auto;font-family:'IPAPGothic','IPAGothic',sans-serif;">
@@ -53,7 +57,8 @@
 > **③で取り込めば、あとはサーバ側が自動で Elith 用 JSON を AWS S3 に書き出します**（担当者の作業は③まで。JSON化・S3アップロードは不要）。
 > RPA（自動化）を組む前でも、この手順で**今日から本番運用**できます（サーバ側の変換・S3保存・状態管理は実装済み。RPAは将来この手動クリックを省くだけ）。
 
-**関連**: 画面手順の詳細＝`demecal_auto_download_overview_spec.md §2.1`／取込API＝`elith-blood-csv`・状態管理＝`demecal-state`／RPA化＝`demecal_rpa_operation_design.md`・`demecal_server_playwright_design.md`。
+**関連**: 画面手順の詳細＝`demecal_auto_download_overview_spec.md §2.1`／取込API＝`elith-blood-csv`・状態管理＝`demecal-state`／
+**自動化＝`demecal_unattended_spec.md`（PowerShell・無人定期実行の正本）**。
 
 ---
 

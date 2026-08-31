@@ -17,8 +17,8 @@
    └─▶ ②プラン→キット構成・検査タイミング(版管理)  ……(c)§1,§6.1
           └─▶ ③倉庫(タカセ)へ発送指示 / ユーザーへ進捗管理  ……(c)§2,§3
                  ├─▶ ④AI問診＋検体返送を促し、問診データを各社へ所定方式で受渡  ……(b)全体 / (a)受取方式 / (c)§4.1
-                 │       ・血液=リージャー(RPA) / がん=プリベント(専用ポータル+S3を提案中) /
-                 │        AI疾病予測=LAiF(専用ポータル+S3) / 遺伝子=Genoplan(RPA)
+                 │       ・血液=リージャー(PowerShell・専用PC/mTLS) / がん=プリベント(専用ポータル+S3を提案中) /
+                 │        AI疾病予測=LAiF(専用ポータル+S3) / 遺伝子=Genoplan(RPA・PowerShell化を検討中)
                  └─▶ ⑤各社の検査結果を所定タイミング(仮:週次)でチェック→
                          必要データが揃ったらElith形式へラップ→AWS S3へ書き出し  ……(a)変換 / Elith各spec
                             └─▶ ⑥ElithのAI診断結果(PDF)をS3から受取→Webアプリへ表示UP
@@ -75,10 +75,10 @@
 ### ④-3 各社への受渡方式（所定方式＝会社別）
 | # | 検査 | 検査会社 | 受渡・受取方式 | Elith format_id | ステータス |
 |---|---|---|---|---|---|
-| 1 | 血液 | リージャー（デメカルDSS） | **デスクトップRPA**（PAD本命・mTLS）で CSV DL → 決定論パース | `BloodTestData` | サーバ側実装済／PC側RPA構築中 |
+| 1 | 血液 | リージャー（デメカルDSS） | **PowerShell**（専用PC・mTLS・無人定期実行）で CSV DL → 決定論パース。**RPA/PAD 不要**（2026-08-31 確定・正本 `demecal_unattended_spec.md`） | `BloodTestData` | サーバ側実装済／**PC側は未実装**（残=ログイン後のCSV一覧URL） |
 | 2 | がんリスク（尿） | プリベント（ALA-PDS） | **専用ポータル＋AWS S3＋パスキー方式を提案中**（LAiF流用）／現状はメール＋フォルダ共有の手動 | `CancerRiskAssessmentData` | **提案中（プレゼン段階）** |
 | 3 | AI疾病発症予測 | LAiF | **AWS S3 専用バケット**（ポータル・パスキー・上りCSV/下りPDF） | `Other`(ai_prediction) | 受取方式確定・スキャン実装済 |
-| 4 | 遺伝子 | Genoplan | **デスクトップRPA**（PDF取得） | `GeneticTestResultData` | RPA方針・スキャン実装済 |
+| 4 | 遺伝子 | Genoplan | **デスクトップRPA**（PDF取得）**※要再検討＝PowerShell 化の可能性あり**（血液の PAD 流用前提が消えたため。判定は `lab_data_reception_overview.md §4`） | `GeneticTestResultData` | RPA方針・スキャン実装済 |
 - **正本**: (a) 各章（§1血液／§2がん／§3 LAiF／§4遺伝子）。LAiF/プリベントのセキュア受渡設計＝`docs/lab/laif_s3_secure_handoff_spec.md`（ゼロトラスト・多層防御）。
 
 ## ⑤ 検査結果を所定タイミング（仮：週次）でチェック → Elith へラップ → AWS S3 書き出し

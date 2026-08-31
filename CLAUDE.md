@@ -386,6 +386,11 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
     `docs/lab/demecal_powershell_probe_guide.md`「ログインフォームの構造」が正。
   - **未確定**: **ログイン後**の CSV 一覧 URL とダウンロードリンクの形 (プローブはログインしない設計)。
     実装に要るのはこれだけ。**専用PCでの実行が要る**(証明書がその PC にしかない)。
+- 遺伝子 (`GeneticTestResultData`) … Genoplan。**受取自動化は RPA 方針だが PowerShell 化の可能性あり (2026-08-31)**。
+  血液で PAD が不要になった理屈が当てはまり得る。判定=①ログインが素の HTML フォームか
+  ②PDF が URL で直接取れるか。**血液と同じ読み取り専用プローブを 1 回流して決める**
+  (`scripts/demecal-probe.ps1` 流用)。**証明書不要ならサーバ側で完結し専用PCも不要になり得る (未確認)**。
+  詳細=`docs/lab/lab_data_reception_overview.md §4`。
 - 生活習慣・問診 (`LifestyleQuestionnaireData`) … アプリの AI 問診
 
 ### 検査値と原本の保存 (2026-08-20 確定・発注者承認)

@@ -1,3 +1,14 @@
+> ## ⚠ 不採用（2026-08-31）。この文書のとおりに作らないこと。
+>
+> 血液CSVの自動取得は **PowerShell 方式**に確定した（専用PC 実測で証明書つき接続 HTTP 200・
+> ログイン画面は素の HTML フォーム）。**PAD もサーバ側 Playwright も不要**になった。
+>
+> - 無人運用の正本 … `docs/lab/demecal_unattended_spec.md`
+> - 方式決定の実測 … `docs/lab/demecal_powershell_probe_guide.md`
+> - 手動運用（稼働中）… `docs/lab/demecal_attended_manual_guide.md`
+>
+> 残しているのは経緯の記録のため。**実装・運用の根拠にしない。**
+
 # デメカルRPA — PADフロー雛形（画面非依存部分・UNFIX構築用）
 
 | 項目 | 内容 |

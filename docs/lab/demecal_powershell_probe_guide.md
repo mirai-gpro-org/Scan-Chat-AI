@@ -7,7 +7,7 @@
 | 実行する方 | 専用PCを操作できる方（**専門知識は不要**です） |
 | 目的 | 血液検査CSVの取得を**自動化できる方式**を決めるための事前確認 |
 | 配布物 | `デメカル接続チェック.bat`（PowerShell を内蔵した 1 ファイル。元は `scripts/demecal-probe.ps1`）。**URL でダウンロードしていただく**（.bat はメール添付も ChatWork も弾かれるため・2026-08-28 実測） |
-| 関連 | `docs/lab/demecal_rpa_operation_design.md` / `demecal_pad_setup_guide.md` |
+| 関連 | **`docs/lab/demecal_unattended_spec.md`（無人運用の正本）** / `demecal_rpa_operation_design.md`（§1-3 のみ有効） |
 
 ---
 
@@ -284,5 +284,5 @@ $res = Invoke-WebRequest -Uri 'https://dl.demecal.net/account/login' -Method Pos
 別の PC で試すと、方式の問題なのか証明書が無いだけなのかを区別できません。
 
 また、専用PC を使うのは技術的な理由だけでなく、**Pマーク対応の管理下で個人情報を扱う**という
-運用上の取り決めでもあります（`demecal_rpa_operation_design.md` 前提／`demecal_pad_flow_skeleton.md:10`）。
+運用上の取り決めでもあります（`demecal_rpa_operation_design.md` 前提）。
 方式が変わってもこの前提は変わりません。
