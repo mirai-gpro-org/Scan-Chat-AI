@@ -16,7 +16,7 @@
 
 | # | 検査 | 検査会社 | 受取方式 | 取得データ | Elith format_id | 変換方法 | ステータス |
 |---|---|---|---|---|---|---|---|
-| 1 | 血液検査 | 株式会社リージャー（Leisure／デメカル DSS） | **PowerShell 方式**（専用PC・mTLS＋無人定期実行。**RPA/PAD は不要**・2026-08-31 確定） | CSV | `BloodTestData` | **決定論パース**（CSV→JSON・LLM不使用） | 自動アクセス承認済・サーバ側実装済／**方式確定・PC側は未実装**（残=ログイン後のCSV一覧URL） |
+| 1 | 血液検査 | 株式会社リージャー（Leisure／デメカル DSS） | **PowerShell 方式**（専用PC・mTLS＋無人定期実行。**RPA/PAD は不要**・2026-08-31 確定） | CSV | `BloodTestData` | **決定論パース**（CSV→JSON・LLM不使用） | 自動アクセス承認済・サーバ側実装済／**方式確定・PC側は未実装**（**外部からの回答待ちは無い**） |
 | 2 | がんリスク検査（尿） | プリベント社（ALA-PDS） | **専用ポータル＋AWS S3＋パスキー方式を提案中**（LAiF流用）／現状：メール＋フォルダ共有の手動 | PDF/報告書 | `CancerRiskAssessmentData` | **admin バッチ AIスキャン**（画像→JSON） | **方式を提案中（プレゼン段階）**。現状は手動 |
 | 3 | AI疾病発症予測 | LAiF社 | **AWS S3 専用バケット**（URLで受渡） | PDF | `Other`（`kind:"ai_prediction"`） | **admin バッチ AIスキャン**（多ページ・LLM構造化） | 受取方式確定・スキャン対応実装済／**2026-08-26 上り(弊社→LAiF)疎通OK・下り(返送)は未検証** |
 | 4 | 遺伝子検査 | Genoplan社（ジェノプランジャパン） | **デスクトップRPA**（PAD / UiPath / WinAutomation）**※要再検討＝PowerShell 化の可能性あり** | PDF | `GeneticTestResultData` | **admin バッチ AIスキャン**（多ページ・LLM構造化） | 受取方式=RPA方針／スキャン対応実装済。**血液の PAD 枠組みを流用する前提が消えた**（血液は PowerShell 化）→ §4 |
@@ -75,11 +75,16 @@
   `scripts/verify-blood-csv-structure.ts`＋`scripts/blood-csv-fixtures/demecal_sample_v1.csv`。実行 `npm run verify:blood-csv`（決定論・鍵不要・26チェック全PASS）。
 - **DL画面手順（確定済）**: `demecal_auto_download_overview_spec.md §2.1` と
   `demecal_attended_manual_guide.md` ステップ② に**確定手順を記載済**（ログイン→データDL→汎用CSV設定→確認→DL）。
-  **ただし「ログイン後の一覧 URL とダウンロードの form」は未取得**＝スクリプト化にはこれが要る。
+  **HTML レベルの `action` / `name` だけが未取得**（接続チェックの bat は**設計上ログインしない**ので、
+  取れたのは `/account/login` のログイン**前**ページだけ）。**ただし人手で取り直す必要は無い** —
+  ログインはスクリプトが行うので、**初回実行の「偵察モード」が form 構造を実行ログAPIへ報告する**
+  （PII を含む CSV は取らない）。`demecal_unattended_spec.md §8`。
 - **ステータス**: 自動アクセス承認済／サーバ側（変換・S3・状態管理・取込UI）実装済／DL画面手順=仕様確定済／
   ④構造照合fixture=実装済。**残＝PC側の PowerShell 実装**（`demecal_unattended_spec.md §9` に TODO 9 件）。
-  **着手を止めているのは 2 点**: ①ログイン後の CSV 一覧 URL とダウンロードの form（専用PCで 1 回取得が必要）
-  ②`指図番号` から本人（`diagnostic_user_id`）を特定する経路（§5.4 の実装ギャップ③と同根）。
+  **外部からの回答待ちは無い**（2026-08-31 訂正）。
+  ①ログイン後の一覧 URL／form は **スクリプトの初回実行が自分で報告する**（画面手順は既知＝下記「DL画面手順」）。
+  ②`指図番号`→本人の対応づけは **§5.1/§5.2 と `id_management_and_correlation_spec.md:131` に設計済**で、
+  **未実装なだけ**（§5.4 の #3）。残る決めは同 :145 の「採番タイミング・スキャン工程・突合ルール」の社内確定。
   先方確認は `demecal_auto_download_overview_spec §6`（日付基準/レート制限）。**証明書のサーバ移設は不要になった**（下記）。
 - **進め方（技術者不在への対応・2案並行）**:
   - **案1（即運用・技術者不要）**: attended手動DL＋admin取込。スタッフ向けクリック手順書＝`docs/lab/demecal_attended_manual_guide.md`。
@@ -272,7 +277,7 @@ LAiF の条件は「**英字を 1 文字以上含む／大小不問／文字は�
 
 | 検査 | 受取自動化 | 主な次アクション |
 |---|---|---|
-| 血液（リージャー） | **方式確定（PowerShell・無人定期実行）／PC側は未実装**。**attended 手動取込が現在の本番運用**（admin 独立メニュー `/admin/demecal-csv`・手順書 v1.1） | ①**ログイン後の CSV 一覧 URL／form** を専用PCで 1 回取得 ②`指図番号`→`diagnostic_user_id` の写像（§5.4-③）③`LAB_INTAKE_API_KEY`・実行ログAPI・監視（`demecal_unattended_spec.md §9`） |
+| 血液（リージャー） | **方式確定（PowerShell・無人定期実行）／PC側は未実装**。**attended 手動取込が現在の本番運用**（admin 独立メニュー `/admin/demecal-csv`・手順書 v1.1） | **外部待ちは無し**。①`LAB_INTAKE_API_KEY`・実行ログAPI・監視（`demecal_unattended_spec.md §9` の 1〜5）②スクリプト本体（初回は**偵察モード**で form 構造を自己報告）③`external_test_id` 受領時格納＝本人への対応づけ（設計は `id_management_and_correlation_spec.md:131`・**未実装**＝§5.4-#3） |
 | がんリスク（プリベント） | **専用ポータル＋S3方式を提案中**（現状は手動） | **デモ画面ご確認依頼の送付**（文面・PDF作成済／**デモURLが開けることの確認が前提**）＋固定IP有無・担当者/通知先・生年月日提供の同意前提を確認 |
 | AI疾病予測（LAiF） | S3 URL（確定）／**上り疎通OK・下り未検証** | ①**上りID採番規則の決定**（§5.3・英字必須）②**ダミーでの往復テスト**を再依頼（下り経路の検証）③今回分 `…0001W` の突合記録 ④Elith へ `Other`/`ai_prediction` の**受領仕様確認**（`elith_assembly_wrapping_spec §5.6`） |
 | 遺伝子（Genoplan） | RPA方針**（要再検討＝PowerShell 化の可能性あり）** | **血液の PAD 枠組みを流用する前提が消えた**（血液は PowerShell 化）。→ **血液と同じ読み取り専用プローブを Genoplan ポータルへ 1 回流し**、①ログインが素の HTML フォームか ②PDF が URL で直接取れるか を判定。素のフォームなら **PowerShell 化**（ライセンス不要・画面変更に強い）。**証明書不要ならサーバ側で完結し専用PCも不要になり得る（未確認）** |
