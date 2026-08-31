@@ -96,7 +96,7 @@ demecal_login_page.html     ← ログイン画面の作り
 
 | | |
 |---|---|
-| 配布口 | `GET /api/ops/probe-bat?k=<token>`。`.ps1` をその場で bat に包み、トークンを注入して返す |
+| 配布口 | `GET /api/ops/probe-bat?k=<token>`。`.ps1` をその場で bat に包み、トークンを注入して返す。**`&script=recon` で ①初回セットアップ＆偵察 bat**（既定は従来の接続チェック） |
 | 受け口 | `POST /api/ops/probe-upload`。**テキストのみ・書き込み専用** |
 | 確認口 | `GET /api/ops/probe-list?k=<token>`。**実行の一覧**（新しい順）。`&key=<report.txt の key>` でその中身。**`ops/probe/` 配下しか読まない・`page.html` の本文は返さない**（2026-08-30 追加） |
 | 認可 | どちらも env `PROBE_UPLOAD_TOKEN`（配布=`?k=` / 受取=ヘッダ `x-probe-token`）。**`ADMIN_API_KEY` は使わない** — 配布物に埋まるので、漏れてもこの 2 口だけに閉じる使い捨てにする |

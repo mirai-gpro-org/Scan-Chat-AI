@@ -20,14 +20,26 @@
 import type { APIRoute } from 'astro';
 // scripts/ の .ps1 をビルド時に文字列として取り込む (実行時の fs 読みは Vercel で不可)。
 import PROBE_PS1 from '../../../../scripts/demecal-probe.ps1?raw';
+import RECON_PS1 from '../../../../scripts/demecal-recon.ps1?raw';
 import { buildProbeBat } from '../../../lib/probe-bat';
 
 export const prerender = false;
 
-/** 保存されるファイル名。手順書と揃えること。 */
-const FILENAME_JA = 'デメカル接続チェック.bat';
-/** RFC 6266 の ASCII フォールバック (日本語を解釈しないクライアント用)。 */
-const FILENAME_ASCII = 'demecal-check.bat';
+/**
+ * 配布する bat は 2 本 (`docs/lab/demecal_unattended_spec.md §7`)。
+ *
+ * **Wellfort に何度も実行を頼まない**ため、①で必要な情報を全部取り切る設計にしてある。
+ *   ① `?script=recon` … 初回セットアップ＆偵察。資格情報の保存・ログイン・
+ *                        CSV ダウンロード画面の form 構造の採取まで 1 回で行う
+ *   ② `?script=probe` … 既存の接続チェック (ログインしない)。実行済みなので通常は使わない
+ *
+ * 本番の自動実行 bat は①の結果を見てから作る (別口で配布)。
+ */
+const SCRIPTS = {
+  probe: { ps1: PROBE_PS1, ja: 'デメカル接続チェック.bat', ascii: 'demecal-check.bat' },
+  recon: { ps1: RECON_PS1, ja: 'デメカル初回セットアップ.bat', ascii: 'demecal-setup.bat' },
+} as const;
+type ScriptKey = keyof typeof SCRIPTS;
 
 function env(name: string): string | undefined {
   const m = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.[name];
@@ -50,9 +62,14 @@ export const GET: APIRoute = async ({ url }) => {
   const given = (url.searchParams.get('k') || '').trim();
   if (given !== expected) return text('unauthorized', 401);
 
+  // 既定は従来どおり接続チェック (既存の配布 URL を壊さない)。
+  const key = ((url.searchParams.get('script') || 'probe').trim() as ScriptKey);
+  const spec = SCRIPTS[key];
+  if (!spec) return text(`unknown script: ${key} (probe | recon)`, 400);
+
   let bat: Uint8Array;
   try {
-    bat = buildProbeBat(PROBE_PS1, expected).bytes;
+    bat = buildProbeBat(spec.ps1, expected).bytes;
   } catch (err) {
     return text(`build_failed: ${err instanceof Error ? err.message : String(err)}`, 500);
   }
@@ -63,8 +80,8 @@ export const GET: APIRoute = async ({ url }) => {
       'content-type': 'application/octet-stream',
       'content-length': String(bat.byteLength),
       'content-disposition':
-        `attachment; filename="${FILENAME_ASCII}"; `
-        + `filename*=UTF-8''${encodeURIComponent(FILENAME_JA)}`,
+        `attachment; filename="${spec.ascii}"; `
+        + `filename*=UTF-8''${encodeURIComponent(spec.ja)}`,
       'cache-control': 'no-store',
       'x-robots-tag': 'noindex',
     },
