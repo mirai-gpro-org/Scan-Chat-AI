@@ -3,7 +3,7 @@ import { getServerSupabase } from '../../../lib/supabase';
 import { isHpEdgeConfigured, resolveCustomerWithAdmin } from '../../../lib/hp-edge';
 import { VIEWER_COOKIE, signViewer, viewerCookieOptions } from '../../../lib/viewer';
 import { isAdminEmailAsync } from '../../../lib/admin-auth';
-import { linkDemoEmail } from '../../../lib/demo-accounts';
+import { linkDemoEmail, resolveDemoUidByEmail } from '../../../lib/demo-accounts';
 
 export const prerender = false;
 
@@ -97,6 +97,17 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     const failed = await resolveLocally();
     if (failed) return failed.error;
   }
+
+  /*
+   * **デモ用アカウントは EC の顧客ではない (2026-08-31)。**
+   *
+   * 記者やパートナーに見せるためのアカウントなので `resolve-customer` では引けず、
+   * ここまでで uid が決まらない。そのまま下の未連携へ落ちると
+   * 「お客様情報が見つかりませんでした」で止まり、**デモ登録しても入口で弾かれる**。
+   * → デモ用として登録されている人にだけ、デモ専用の uid を与えて中へ通す。
+   *   **登録の無い人はここを素通りする** (従来どおり未連携)。
+   */
+  if (!diagnosticUserId) diagnosticUserId = await resolveDemoUidByEmail(email);
 
   // 未連携 (適格性なし)
   if (!diagnosticUserId) return json({ linked: false }, 200);

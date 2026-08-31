@@ -258,6 +258,22 @@ if (!/Array\.isArray\(row\.report\)\s*&&\s*demoFallbackEnabled\(/.test(read('src
     fails.push('api/auth/resolve.ts: linkDemoEmail を呼んでいない'
       + ' — メールで登録しても uid が埋まらず、本人がサインインしてもデモが出ない');
   }
+  /*
+   * **EC の顧客でない人に uid を与える処理が、未連携の早期 return より前にあること。**
+   * 後ろにあると記者・パートナーは「お客様情報が見つかりませんでした」で入口で弾かれ、
+   * デモ登録が何の役にも立たない (実測 2026-08-31)。
+   */
+  {
+    const iDemo = resolveSrc.indexOf('resolveDemoUidByEmail(email)');
+    const iBail = resolveSrc.indexOf('return json({ linked: false }');
+    if (iDemo < 0) {
+      fails.push('api/auth/resolve.ts: resolveDemoUidByEmail を呼んでいない'
+        + ' — EC の顧客でないデモ用アカウント (記者・パートナー) が入口で弾かれる');
+    } else if (iBail >= 0 && iDemo > iBail) {
+      fails.push('api/auth/resolve.ts: resolveDemoUidByEmail が未連携の early return より後ろ'
+        + ' — そこまで到達しないので、デモ登録しても記者は入れない');
+    }
+  }
   if (!/getUser|auth\/v1\/user/.test(resolveSrc)) {
     fails.push('api/auth/resolve.ts: email をサーバで検証していない'
       + ' — 申告された email で突き合わせると、誰でもデモを有効化できる');
@@ -478,6 +494,37 @@ const setConfig = async (u) => { __writes.push(u); Object.assign(__store, u); re
   M.__store['demo.account_uids'] = BUILT;
   M.__store['demo.account_denied_uids'] = BUILT;
   eq('除外は和のあと（config で足し直しても復活しない）', M.isDemoAccount(BUILT), false);
+
+  /*
+   * ── EC の顧客でない人（記者・パートナー）─────────────────────
+   *
+   * `resolve-customer` では引けないので uid が決まらず、そのままだと
+   * 「お客様情報が見つかりませんでした」で入口で弾かれる（実測 2026-08-31）。
+   * デモ登録されている人にだけ uid を与えて通す。
+   */
+  console.log('\nEC の顧客でないデモ用アカウント（記者・パートナー）\n');
+  M.__store['demo.account_uids'] = '';
+  M.__store['demo.account_denied_uids'] = '';
+  M.__store['demo.account_emails'] = '';
+
+  eq('登録の無い人には uid を与えない（従来どおり未連携）',
+    await M.resolveDemoUidByEmail('stranger@example.com'), null);
+
+  M.__store['demo.account_emails'] =
+    M.serializeEmailEntries([{ hash: h, masked: M.maskEmail(MAIL), uid: '', label: '○○新聞 取材' }]);
+  const minted = await M.resolveDemoUidByEmail(MAIL);
+  eq('登録済みの人には uid を与える', /^[0-9a-f-]{36}$/.test(String(minted)), true);
+
+  // 与えた uid を linkDemoEmail が保存する（書き込み口を 2 つに増やさない）
+  await M.linkDemoEmail(MAIL, minted);
+  eq('  → その uid でデモが出る', M.isDemoAccount(minted), true);
+  /*
+   * **2 回目のサインインで uid が変わらないこと。** 変わると `app_users` に
+   * 行が増え続け、前回まで見えていたものと繋がらなくなる。
+   */
+  eq('  → 次のサインインでも同じ uid', await M.resolveDemoUidByEmail(MAIL), minted);
+  eq('  → 現物のアドレスは保存物のどこにも無い',
+    /reporter@example\.com/.test(JSON.stringify(M.__store)), false);
 })();
 
 // ══════════════════════════════════════════════════════════════════════

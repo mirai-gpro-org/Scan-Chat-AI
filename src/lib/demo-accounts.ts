@@ -253,6 +253,37 @@ export function serializeEmailEntries(entries: DemoEmailEntry[]): string {
 }
 
 /**
+ * **顧客レコードを持たないデモ用アカウントに、診断ユーザー ID を与える。**
+ *
+ * 記者やパートナーは **EC の顧客ではない**ので `resolve-customer` では引けず、
+ * そのままだと `linked:false` で「お客様情報が見つかりませんでした」で止まる
+ * (実測 2026-08-31: デモ登録しても入口で弾かれる)。
+ * デモ用として登録されている人にだけ、**デモ専用の uid** を与えて中へ通す。
+ *
+ * - **1 度決めたら変わらない。** メール行に記録した uid をそのまま返す
+ *   (毎回変わると `app_users` に行が増え続け、履歴も繋がらない)
+ * - **顧客レコードは作らない。** 作るのは診断側の識別子だけで、
+ *   氏名・住所などの PII は一切生まれない (それらは Wellfort 側にしかない)
+ * - **保存はしない。** 直後に呼ばれる `linkDemoEmail` が uid 側の一覧と
+ *   メール行の両方へ書く (書き込み口を 2 つに増やさない)
+ *
+ * @returns デモ用アカウントなら uid。登録が無ければ null (＝従来どおり未連携)。
+ */
+export async function resolveDemoUidByEmail(email: string | null | undefined): Promise<string | null> {
+  try {
+    if (!email) return null;
+    await refreshConfig();
+    const h = await hashEmail(email);
+    const hit = demoEmailEntries().find((e) => e.hash === h);
+    if (!hit) return null;
+    return hit.uid || crypto.randomUUID();
+  } catch (e) {
+    console.error('[demo-accounts] resolveDemoUidByEmail 失敗:', e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+/**
  * **サインイン時に呼ぶ。** この email がデモ用として登録されていれば、
  * その uid を uid 側の一覧へ写す (以後は uid だけで毎リクエスト判定できる)。
  *
