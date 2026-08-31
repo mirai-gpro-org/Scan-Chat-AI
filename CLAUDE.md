@@ -334,9 +334,19 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
     → **SYSTEM/別ユーザーのタスク実行では証明書が見えず失敗・サービス化も不可**。
     証明書の選択は **発行者CN=`demecal.net CA` かつ 秘密鍵あり**で絞る (CN ベタ書きにしない=更新で変わる)。
     出力先は **OneDrive 外**にする (デスクトップが OneDrive 配下=同期/ロック事故)。
-  - **未確定**: ログインフォームの hidden (CSRF) の有無 → `demecal_login_page.html` 待ち。
-    有無で「POST 1 回」か「GET でトークン取得→POST」かが変わる。
-    **`probe-list` API は page.html の本文を返さない**設計なので S3 か Wellfort から受け取る。
+  - **【ログイン形式 確定 2026-08-31・`demecal_login_page.html` 実測】サーバは ASP.NET Core MVC**
+    (`DSS.Demecal.Web`)。`POST /account/login` に `UserID` / `Password` ＋
+    **hidden `__RequestVerificationToken` (antiforgery) が在る**
+    → **「GET でトークン取得 → 同一セッションで POST」が必須** (POST 1 回では通らない)。
+    antiforgery は **hidden と Cookie (`.AspNetCore.Antiforgery.*`) の対**で検証されるので
+    `-SessionVariable`/`-WebSession` を使い、**証明書は GET・POST の両方に付ける**。
+    **ログインを動かす JS は無い**(素の form POST)。プローブの「input 4/script 5」は
+    コメントアウト込みの素の出現数で、実体は input 3 (UserID/Password/token) + script 3。
+    失敗時も **200** が返る(`validation-summary-valid` にエラー)ので**302 かフォーム消失で判定**。
+    **`page.html` をリポジトリに入れない**(有効な antiforgery トークンの実値が入る)。構造は
+    `docs/lab/demecal_powershell_probe_guide.md`「ログインフォームの構造」が正。
+  - **未確定**: **ログイン後**の CSV 一覧 URL とダウンロードリンクの形 (プローブはログインしない設計)。
+    実装に要るのはこれだけ。**専用PCでの実行が要る**(証明書がその PC にしかない)。
 - 生活習慣・問診 (`LifestyleQuestionnaireData`) … アプリの AI 問診
 
 ### 検査値と原本の保存 (2026-08-20 確定・発注者承認)

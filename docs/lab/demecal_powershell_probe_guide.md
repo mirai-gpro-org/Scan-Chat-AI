@@ -205,17 +205,72 @@ CN のベタ書きで選ばない（証明書更新で変わり得る）。
   CSV の保存先をここにすると同期・ファイルロック・容量の問題を拾う。
   **OneDrive 外のローカルフォルダ**（例 `C:\demecal\`）に出す前提で組む。
 
+### ログインフォームの構造（2026-08-31・`demecal_login_page.html` 実測で確定）
+
+**サーバは ASP.NET Core MVC**（`<title>DSS.Demecal.Web` / Bootstrap 3 + jQuery /
+footer `© 2018 - DSS Web System`）。
+
+```html
+<form method="post" action="/account/login">
+  <input type="text"     id="UserID"   name="UserID" />
+  <input type="password" id="Password" name="Password" />
+  <input type="hidden"   name="__RequestVerificationToken" value="…" />
+  <button type="submit">ログイン</button>
+</form>
+```
+
+**`__RequestVerificationToken` = ASP.NET Core の antiforgery トークンが在る。**
+→ **「GET でトークンを取ってから POST」が必須**（POST 1 回では通らない）。
+しかも antiforgery は **hidden フィールドと Cookie（`.AspNetCore.Antiforgery.*`）の対**で
+検証されるので、**GET と POST を同一セッションで行う**こと。
+
+プローブが数えた `<input>` 4 / `<script>` 5 の内訳（**コメントアウトを含む素の出現数**）:
+
+| | 実体 | コメントアウト |
+|---|---|---|
+| `<input>` 4 | UserID / Password / `__RequestVerificationToken` の **3 個** | `DairitenID`（代理店ID）1 個 |
+| `<script>` 5 | jQuery / Bootstrap / `site.min.js` の **3 本** | CDN 版 2 本 |
+
+**ログインを動かす JS は無い**（素の form POST）。`data-val-*` は jQuery unobtrusive の
+クライアント検証なので、直接 POST する分には無関係。
+
+実装の形（**プローブで 200 を確認済みの呼び方に揃える**）:
+
+```powershell
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12  # PS 5.1 は既定で TLS1.2 でない
+
+# ① GET（証明書つき・セッションを保持）
+$r = Invoke-WebRequest -Uri 'https://dl.demecal.net/account/login' `
+       -Certificate $cert -SessionVariable s -UseBasicParsing -TimeoutSec 30
+
+# ② トークンを取り出す
+$token = ($r.InputFields | Where-Object { $_.name -eq '__RequestVerificationToken' }).value
+
+# ③ POST（同じセッション・同じ証明書）
+$res = Invoke-WebRequest -Uri 'https://dl.demecal.net/account/login' -Method Post `
+        -Certificate $cert -WebSession $s -UseBasicParsing -TimeoutSec 30 `
+        -Body @{ UserID = $id; Password = $pw; __RequestVerificationToken = $token }
+```
+
+- `$cert` は **発行者 CN=`demecal.net CA` かつ秘密鍵あり**で絞る（= `Q05-0010`）
+- **証明書は GET・POST の両方に付ける**
+- 成否判定: 失敗時は `validation-summary-valid` にエラーが入って **200 が返る**ので、
+  **302 が返るか / ログインフォームが消えたか**で見る（ステータスコードだけで判定しない）
+
+> **`page.html` をリポジトリに入れないこと。** 実物には**有効な antiforgery トークンの実値**が
+> 入っている（Cookie と対でしか使えず短命だが、置く理由が無い）。**構造はこの節が正**。
+> なお `probe-list` API は設計上 `page.html` の本文を返さない（HTML を素で返す口を作らない方針）。
+
 ### 残っている確認事項
 
-**`demecal_login_page.html` の中身を見て、hidden の有無を確定する。**
-`<input>` が 4 個なので ID / PW / hidden / submit と推測できるが、
-**CSRF トークン等の hidden があるか**で実装が変わる。
+**ログイン後**の CSV 一覧ページ URL とダウンロードリンクの形。
+プローブはログインしない設計なのでここまでは分からない。
+方式判断はもう決着しているので、実装に要るのはこれだけ。
 
-- 無い → ログイン POST を 1 回叩くだけ
-- ある → GET でトークンを拾ってから POST
+**専用PCでの実行が要る点は変わらない**（証明書がその PC にしかない）。進め方は 2 つ:
 
-**`probe-list` API は設計上 `page.html` の本文を返さない**（HTML を素で返す口を作らない方針）ので、
-S3 コンソールから落とすか、Wellfort から送ってもらう。
+1. **ログイン後の CSV 一覧ページを 1 枚保存してもらう**（今回と同じ要領）← 往復が少ない
+2. ログイン〜一覧取得までのスクリプトを書き、専用PCで実行して結果を返してもらう
 
 ### 運用メモ
 
