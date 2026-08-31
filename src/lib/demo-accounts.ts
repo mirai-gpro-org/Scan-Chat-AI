@@ -267,16 +267,28 @@ export function serializeEmailEntries(entries: DemoEmailEntry[]): string {
  * - **保存はしない。** 直後に呼ばれる `linkDemoEmail` が uid 側の一覧と
  *   メール行の両方へ書く (書き込み口を 2 つに増やさない)
  *
+ * @param existingUid **その Google アカウントに既に割り当てられている uid**
+ *   (`diagnosis.app_users` を `auth_user_id` / `google_sub` で引いた結果)。
+ *   **これを渡さないと新しい uid を作ってしまい、`app_users.auth_user_id` の
+ *   UNIQUE 制約に衝突してサインインが 500 で壊れる** (2026-08-31 に本番で実測)。
  * @returns デモ用アカウントなら uid。登録が無ければ null (＝従来どおり未連携)。
  */
-export async function resolveDemoUidByEmail(email: string | null | undefined): Promise<string | null> {
+export async function resolveDemoUidByEmail(
+  email: string | null | undefined,
+  existingUid?: string | null,
+): Promise<string | null> {
   try {
     if (!email) return null;
     await refreshConfig();
     const h = await hashEmail(email);
     const hit = demoEmailEntries().find((e) => e.hash === h);
     if (!hit) return null;
-    return hit.uid || crypto.randomUUID();
+    /*
+     * **新しい uid を作るのは最後の手段。**
+     * ① メール行に記録済みの uid → ② その Google アカウントの既存の uid → ③ 新規発行
+     * ②を飛ばすと、既に `app_users` に行がある人で UNIQUE 制約に衝突する。
+     */
+    return hit.uid || norm(existingUid) || crypto.randomUUID();
   } catch (e) {
     console.error('[demo-accounts] resolveDemoUidByEmail 失敗:', e instanceof Error ? e.message : e);
     return null;

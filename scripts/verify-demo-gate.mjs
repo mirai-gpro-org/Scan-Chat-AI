@@ -264,7 +264,7 @@ if (!/Array\.isArray\(row\.report\)\s*&&\s*demoFallbackEnabled\(/.test(read('src
    * デモ登録が何の役にも立たない (実測 2026-08-31)。
    */
   {
-    const iDemo = resolveSrc.indexOf('resolveDemoUidByEmail(email)');
+    const iDemo = resolveSrc.indexOf('resolveDemoUidByEmail(email');
     const iBail = resolveSrc.indexOf('return json({ linked: false }');
     if (iDemo < 0) {
       fails.push('api/auth/resolve.ts: resolveDemoUidByEmail を呼んでいない'
@@ -272,6 +272,26 @@ if (!/Array\.isArray\(row\.report\)\s*&&\s*demoFallbackEnabled\(/.test(read('src
     } else if (iBail >= 0 && iDemo > iBail) {
       fails.push('api/auth/resolve.ts: resolveDemoUidByEmail が未連携の early return より後ろ'
         + ' — そこまで到達しないので、デモ登録しても記者は入れない');
+    }
+    /*
+     * **既存の割り当てを渡すこと。** 渡さないと毎回新しい uid を作り、
+     * `app_users.auth_user_id` の UNIQUE 制約に衝突してサインインが 500 で止まる。
+     * しかも保存は後段の `linkDemoEmail` なので、**500 で止まると永久に直らない**
+     * (2026-08-31 に本番で実測)。
+     */
+    if (!/resolveDemoUidByEmail\(email,\s*linkedUid\)/.test(resolveSrc)) {
+      fails.push('api/auth/resolve.ts: resolveDemoUidByEmail に既存の割り当て (linkedUid) を渡していない'
+        + ' — 毎回新しい uid を作って app_users の UNIQUE 制約に衝突し、サインインが壊れる');
+    }
+    const iLinked = resolveSrc.indexOf('const linkedUid = await findLinkedUid(');
+    if (iLinked < 0) {
+      fails.push('api/auth/resolve.ts: findLinkedUid で既存の連携を引いていない');
+    } else if (iDemo >= 0 && iLinked > iDemo) {
+      fails.push('api/auth/resolve.ts: findLinkedUid が resolveDemoUidByEmail より後ろ — 渡せていない');
+    }
+    // **生の Postgres メッセージを画面に出さない** (実際にサインイン画面へ出た)
+    if (/app_users upsert: \$\{upErr\.message\}/.test(resolveSrc)) {
+      fails.push('api/auth/resolve.ts: DB の生エラーを利用者に返している — ログへ回すこと');
     }
   }
   if (!/getUser|auth\/v1\/user/.test(resolveSrc)) {
@@ -514,6 +534,18 @@ const setConfig = async (u) => { __writes.push(u); Object.assign(__store, u); re
     M.serializeEmailEntries([{ hash: h, masked: M.maskEmail(MAIL), uid: '', label: '○○新聞 取材' }]);
   const minted = await M.resolveDemoUidByEmail(MAIL);
   eq('登録済みの人には uid を与える', /^[0-9a-f-]{36}$/.test(String(minted)), true);
+
+  /*
+   * **既にこの Google アカウントに uid が割り当てられていたら、それを使う。**
+   * ここで新しい uid を作ると `app_users.auth_user_id` の UNIQUE 制約に衝突し、
+   * サインインが 500 で止まる (2026-08-31 に本番で実測。しかも保存は後段なので
+   * 毎回新しい uid が作られて永久に直らなかった)。
+   */
+  const EXIST = 'cccccccc-1111-2222-3333-444444444444';
+  eq('既存の uid があればそれを使う (新しく作らない)',
+    await M.resolveDemoUidByEmail(MAIL, EXIST), EXIST);
+  eq('  → 登録の無い人には既存 uid があっても与えない',
+    await M.resolveDemoUidByEmail('stranger@example.com', EXIST), null);
 
   // 与えた uid を linkDemoEmail が保存する（書き込み口を 2 つに増やさない）
   await M.linkDemoEmail(MAIL, minted);

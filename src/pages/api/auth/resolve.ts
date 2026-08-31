@@ -99,6 +99,17 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   }
 
   /*
+   * **この Google アカウントに既に割り当てられている uid を先に引く (2026-08-31)。**
+   *
+   * `app_users` は `diagnostic_user_id` が主キーで、**`auth_user_id` と `google_sub` は UNIQUE**
+   * (`20260601000010_schemas_and_tables.sql:173-175`)。下の upsert は
+   * `onConflict: 'diagnostic_user_id'` なので、**同じ Google アカウントが別の uid に
+   * 束縛されていると UNIQUE 違反で 500 になりサインインが完全に止まる**
+   * (本番で実測: `duplicate key ... "app_users_auth_user_id_key"`)。
+   */
+  const linkedUid = await findLinkedUid(sb, authId, sub);
+
+  /*
    * **デモ用アカウントは EC の顧客ではない (2026-08-31)。**
    *
    * 記者やパートナーに見せるためのアカウントなので `resolve-customer` では引けず、
@@ -106,11 +117,41 @@ export const POST: APIRoute = async ({ request, cookies }) => {
    * 「お客様情報が見つかりませんでした」で止まり、**デモ登録しても入口で弾かれる**。
    * → デモ用として登録されている人にだけ、デモ専用の uid を与えて中へ通す。
    *   **登録の無い人はここを素通りする** (従来どおり未連携)。
+   *
+   * `linkedUid` を渡すのが要点。**渡さないと毎回新しい uid を作って UNIQUE 違反になる**
+   * (しかも保存は下の `linkDemoEmail` なので、500 で止まると永久に保存されず毎回壊れる)。
    */
-  if (!diagnosticUserId) diagnosticUserId = await resolveDemoUidByEmail(email);
+  const uidIsAuthoritative = diagnosticUserId !== null; // 顧客DB由来か (= デモ発行でないか)
+  if (!diagnosticUserId) diagnosticUserId = await resolveDemoUidByEmail(email, linkedUid);
 
   // 未連携 (適格性なし)
   if (!diagnosticUserId) return json({ linked: false }, 200);
+
+  /*
+   * **束縛の張り替え。** ここまで来て `linkedUid` と食い違う場合:
+   *   ・デモ発行の uid   → **既存の uid を採る**(勝手に新しい人格を作らない)
+   *   ・顧客DB由来の uid → **顧客DBが正**。古い行から認証の束縛だけ外して張り直す
+   *                        (**行は消さない**。検査データはその uid のまま残る)
+   */
+  if (linkedUid && linkedUid !== diagnosticUserId) {
+    if (!uidIsAuthoritative) {
+      diagnosticUserId = linkedUid;
+    } else {
+      console.warn(
+        `[auth/resolve] Google アカウントの束縛を張り替えます: ${linkedUid} → ${diagnosticUserId}` +
+        ' (顧客DBが正。旧行は残し auth_user_id / google_sub のみ解除)',
+      );
+      const { error: detachErr } = await sb
+        .schema('diagnosis')
+        .from('app_users')
+        .update({ auth_user_id: null, google_sub: null, updated_at: new Date().toISOString() })
+        .eq('diagnostic_user_id', linkedUid);
+      if (detachErr) {
+        console.error('[auth/resolve] 旧束縛の解除に失敗:', detachErr.message);
+        return json({ error: 'この Google アカウントの連携情報が競合しています。事務局へご連絡ください。' }, 500);
+      }
+    }
+  }
 
   // 2) #2 app_users に本人連携を永続化 (display_name_cache は「姓+様」規約)
   const nowIso = new Date().toISOString();
@@ -126,7 +167,16 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     .schema('diagnosis')
     .from('app_users')
     .upsert(row, { onConflict: 'diagnostic_user_id' });
-  if (upErr) return json({ error: `app_users upsert: ${upErr.message}` }, 500);
+  if (upErr) {
+    /*
+     * **生の Postgres メッセージを画面に出さない (2026-08-31)。**
+     * 実際に `duplicate key value violates unique constraint "app_users_auth_user_id_key"` が
+     * サインイン画面へそのまま出た。利用者には意味が無く、内部構造を晒すだけ。
+     * 詳細はサーバログへ。切り分けに要る uid はログ側に出す。
+     */
+    console.error(`[auth/resolve] app_users upsert 失敗 (uid=${diagnosticUserId}, linked=${linkedUid}):`, upErr.message);
+    return json({ error: 'アカウント連携の保存に失敗しました。時間をおいて再度お試しください。' }, 500);
+  }
 
   /*
    * 本人確認済みの uid を **HttpOnly Cookie** に載せる（2026-08-30）。
@@ -162,6 +212,44 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 
   return json({ linked: true, diagnosticUserId }, 200);
 };
+
+/**
+ * この Google アカウントに**既に割り当てられている** `diagnostic_user_id`。
+ *
+ * `auth_user_id` と `google_sub` はどちらも UNIQUE なので、どちらかで引ければそれが本人の識別子。
+ * **無ければ null**（初回サインイン）。失敗しても null を返す（サインインを壊さない）。
+ */
+async function findLinkedUid(
+  sb: ReturnType<typeof getServerSupabase>,
+  authId: string,
+  sub: string | null,
+): Promise<string | null> {
+  if (!sb) return null;
+  // **値を検証してから or フィルタへ入れる**（PostgREST の or は文字列構文なので生値を混ぜない）。
+  const uuid = /^[0-9a-f-]{36}$/i.test(authId) ? authId : null;
+  const gsub = sub && /^[A-Za-z0-9_-]{1,64}$/.test(sub) ? sub : null;
+  const terms = [uuid ? `auth_user_id.eq.${uuid}` : '', gsub ? `google_sub.eq.${gsub}` : '']
+    .filter(Boolean)
+    .join(',');
+  if (!terms) return null;
+  try {
+    const { data, error } = await sb
+      .schema('diagnosis')
+      .from('app_users')
+      .select('diagnostic_user_id')
+      .or(terms)
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      console.error('[auth/resolve] app_users 既存連携の照会に失敗:', error.message);
+      return null;
+    }
+    return (data as { diagnostic_user_id?: string } | null)?.diagnostic_user_id ?? null;
+  } catch (e) {
+    console.error('[auth/resolve] app_users 既存連携の照会で例外:', e instanceof Error ? e.message : e);
+    return null;
+  }
+}
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
