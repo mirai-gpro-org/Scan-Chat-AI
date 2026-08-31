@@ -15,9 +15,12 @@
  * **管理者にデモを見せるためのものではない**。デモの資格は uid の登録だけで決まり、
  * admin であることは資格にならない (仕様書 §2)。
  *
- *   GET    → { ok, rows:[{uid,label,source}], emails:[{hash,masked,label,linked}], disabledGlobally }
+ *   GET    → { ok, rows:[{uid,label,source,viaEmail,denied}], emails:[…], disabledGlobally,
+ *              seededFromAdmins }
  *   POST   → { add_email:[{email,label}] } / { remove_email:[hash] }   ← **人が使う入口**
  *            { add:[{uid,label}] }        / { remove:[uid] }           ← uid を直接
+ *            { deny:[uid] }               / { undeny:[uid] }           ← 組み込み / env を止める
+ *            { mark_seeded:true }                                      ← 初回登録の目印
  *          → 更新後の一覧 + rejected[]
  *
  * 認可: wellfort-site から Bearer ADMIN_API_KEY (`api-auth.ts`・キー未設定の本番は拒否)。
@@ -35,6 +38,8 @@ export const prerender = false;
 
 const KEY = 'demo.account_uids';
 const EMAIL_KEY = 'demo.account_emails';
+const DENY_KEY = 'demo.account_denied_uids';
+const SEEDED_KEY = 'demo.seeded_from_admins';
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -64,6 +69,8 @@ export const POST: APIRoute = async ({ request }) => {
   let body: {
     add?: unknown; remove?: unknown;
     add_email?: unknown; remove_email?: unknown;
+    deny?: unknown; undeny?: unknown;
+    mark_seeded?: unknown;
     updated_by?: unknown;
   } = {};
   try {
@@ -72,11 +79,16 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ ok: false, error: 'invalid_json' }, 400);
   }
 
+  const lower = (v: unknown[]) => v.map((x) => String(x).trim().toLowerCase());
   const add = Array.isArray(body.add) ? body.add : [];
-  const remove = Array.isArray(body.remove) ? body.remove.map((v) => String(v).trim().toLowerCase()) : [];
+  const remove = Array.isArray(body.remove) ? lower(body.remove) : [];
   const addEmail = Array.isArray(body.add_email) ? body.add_email : [];
-  const removeEmail = Array.isArray(body.remove_email) ? body.remove_email.map((v) => String(v).trim().toLowerCase()) : [];
-  if (add.length === 0 && remove.length === 0 && addEmail.length === 0 && removeEmail.length === 0) {
+  const removeEmail = Array.isArray(body.remove_email) ? lower(body.remove_email) : [];
+  const deny = Array.isArray(body.deny) ? lower(body.deny) : [];
+  const undeny = Array.isArray(body.undeny) ? lower(body.undeny) : [];
+  const markSeeded = body.mark_seeded === true;
+  if (add.length === 0 && remove.length === 0 && addEmail.length === 0
+      && removeEmail.length === 0 && deny.length === 0 && undeny.length === 0 && !markSeeded) {
     return json({ ok: false, error: 'nothing_to_do' }, 400);
   }
 
@@ -112,7 +124,8 @@ export const POST: APIRoute = async ({ request }) => {
 
   for (const uid of remove) {
     if (cur.rows.some((r) => r.uid === uid && r.source !== 'config')) {
-      rejected.push({ uid, reason: '組み込み / env は画面から外せない (コード / Vercel env を直す)' });
+      // 供給元 (コード / Vercel env) は書き換えられないので、除外リストで止める。
+      rejected.push({ uid, reason: '組み込み / env は除外リストで止める (画面の「外す」がそうする)' });
       continue;
     }
     /*
@@ -160,8 +173,33 @@ export const POST: APIRoute = async ({ request }) => {
     }
   }
 
+  /*
+   * ── 除外リスト ────────────────────────────────────────────────
+   *
+   * 組み込み / env は供給元を書き換えられない (コード / Vercel env なので)。
+   * **引き算を 1 段足す**ことで、どの行でも画面から外せるようにする。
+   * 供給元は残るので「戻す」で元どおりになる。
+   */
+  const denied = parseEntries(cur.deniedRaw);
+  for (const raw of deny) {
+    const uid = String(raw).trim().toLowerCase();
+    if (!isUuid(uid)) { rejected.push({ uid, reason: 'uid の形式が違う' }); continue; }
+    const row = cur.rows.find((r) => r.uid === uid);
+    if (denied.some((e) => e.uid === uid)) { rejected.push({ uid, reason: 'すでに除外されている' }); continue; }
+    denied.push({ uid, label: row?.label ?? '' });
+  }
+  for (const raw of undeny) {
+    const uid = String(raw).trim().toLowerCase();
+    const at = denied.findIndex((e) => e.uid === uid);
+    if (at < 0) rejected.push({ uid, reason: '除外リストに無い' });
+    else denied.splice(at, 1);
+  }
+
   // 保存形式は **1 行 1 件 + `#` 注釈**。人が読める形で残す (admin が直接編集しても壊れない)。
-  const value = entries.map((e) => (e.label ? `${e.uid}  # ${e.label}` : e.uid)).join('\n');
+  const ser = (list: { uid: string; label: string }[]) =>
+    list.map((e) => (e.label ? `${e.uid}  # ${e.label}` : e.uid)).join('\n');
+  const value = ser(entries);
+  const deniedValue = ser(denied);
   const emailValue = serializeEmailEntries(emails);
 
   /*
@@ -172,6 +210,12 @@ export const POST: APIRoute = async ({ request }) => {
   const updates: Record<string, string> = {};
   if (value !== cur.configRaw) updates[KEY] = value;
   if (emailValue !== cur.emailsRaw) updates[EMAIL_KEY] = emailValue;
+  if (deniedValue !== cur.deniedRaw) updates[DENY_KEY] = deniedValue;
+  /*
+   * **初回登録の目印。** これが入っていると管理者リストからの自動登録は二度と走らない。
+   * 走り続けると、admin 画面から外した人が次のアクセスで黙って戻ってしまう。
+   */
+  if (markSeeded && !cur.seededFromAdmins) updates[SEEDED_KEY] = new Date().toISOString();
   if (Object.keys(updates).length > 0) {
     const updatedBy = typeof body.updated_by === 'string' ? body.updated_by : undefined;
     const r = await setConfig(updates, updatedBy);

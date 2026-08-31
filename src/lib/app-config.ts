@@ -50,8 +50,16 @@ export const CONFIG_SPECS: ConfigSpec[] = [
   { key: 'demo.account_uids', type: 'string', group: 'デモ', label: 'デモ用アカウントの uid', default: '',
     description: 'ダミーデータを表示する diagnostic_user_id をカンマ / 空白 / 改行 区切りで。'
       + ' **組み込みの 2 件 (テスト用 d0000001… / OEM 用 da000001…) と env DEMO_ALLOWED_UIDS に足される** '
-      + '(ここを空にしても組み込みは消えない)。uid は当人の /dashboard「デバッグ」に出ている。'
+      + '(ここを空にしても組み込みは消えない → 外すには下の除外リストを使う)。uid は当人の /dashboard「デバッグ」に出ている。'
       + ' 全部止めるときは env PUBLIC_DEMO_FALLBACK=false。' },
+  { key: 'demo.account_denied_uids', type: 'string', group: 'デモ', label: 'デモ用アカウントの除外リスト', default: '',
+    description: '**供給元に関わらずダミーを出さない uid。** 組み込み / env の行を admin 画面から'
+      + '外すための唯一の手段 (供給元を書き換えず引き算するので「戻す」で元に戻る)。'
+      + ' 直接編集せず /admin/demo-accounts から操作すること。' },
+  { key: 'demo.seeded_from_admins', type: 'string', group: 'デモ', label: '管理者リストからの初回登録 (実施日時)', default: '',
+    description: '**内部用の目印。手で編集しない。** /admin/demo-accounts を最初に開いたとき、'
+      + '管理者リストのメンバーを 1 度だけ自動登録し、その日時を記録する。'
+      + ' **空にすると次回のアクセスで再び自動登録が走る** (外した人が戻ってしまうので注意)。' },
 
   // ── AI疾病予防報告書 (docs/旧版・ボツ/ai_prevention_report_generation_spec.md) ──
   // A「初期がんの早期発見」のフォールバック文言 (spec §4.0.1)。

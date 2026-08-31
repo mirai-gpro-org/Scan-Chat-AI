@@ -69,11 +69,27 @@ export function demoDisabledGlobally(): boolean {
  * admin の登録が反映されない。文字列の分割だけなので毎回計算してよい。
  */
 function demoAccountUids(): ReadonlySet<string> {
-  return new Set([
+  const set = new Set([
     ...BUILTIN_DEMO_UIDS,
     ...splitUids(String(import.meta.env.DEMO_ALLOWED_UIDS ?? '')),
     ...splitUids(cfg('demo.account_uids')),
   ]);
+  // **除外は和のあと。** 組み込みと env は「消せない下限」だったが、
+  // それでは admin 画面から外せない行が残る (発注者指示 2026-08-30「削除のできるようにして」)。
+  // 供給元を消すのではなく**引き算を 1 段足す**ので、戻すのも 1 操作で済む。
+  for (const uid of deniedUids()) set.delete(uid);
+  return set;
+}
+
+/**
+ * **除外リスト** — 供給元に関わらずダミーを出さない uid。
+ *
+ * 組み込み / env の行を admin 画面から外すための唯一の手段。
+ * 供給元の側を書き換えるのではなく引き算にしてあるので、
+ * **「戻す」で元に戻る**（コードや env を触らなくてよい）。
+ */
+function deniedUids(): ReadonlySet<string> {
+  return new Set(splitUids(cfg('demo.account_denied_uids')));
 }
 
 /**
@@ -295,13 +311,15 @@ export async function linkDemoEmail(email: string | null | undefined, uid: strin
  * 氏名やメールは**ここでは扱わない**。
  */
 export interface DemoAccountRow extends DemoAccountEntry {
-  /** どこから来たか。`config` だけが admin から編集できる。 */
+  /** どこから来たか。`config` は消せる / `builtin`・`env` は除外リストで止める。 */
   source: 'builtin' | 'env' | 'config';
   /**
    * メール登録のサインインで自動的に入った行か。
    * **この行は uid 側から外しても次のサインインで戻る**ので、画面でそう示す。
    */
   viaEmail?: boolean;
+  /** 除外リストに入っていて、いまダミーが出ない行。画面では「除外中」＋「戻す」。 */
+  denied?: boolean;
 }
 
 export function listDemoAccounts(): {
@@ -309,12 +327,17 @@ export function listDemoAccounts(): {
   /** メールで登録した一覧。uid はサインイン時に自動で埋まる。 */
   emails: (DemoEmailEntry & { linked: boolean })[];
   disabledGlobally: boolean;
+  /** 管理者リストからの初回登録を済ませたか (空なら未実施)。 */
+  seededFromAdmins: string;
   /** admin が編集する生テキスト (app_config の値そのまま)。 */
   configRaw: string;
   emailsRaw: string;
+  deniedRaw: string;
 } {
   const configRaw = cfg('demo.account_uids');
   const emailsRaw = cfg('demo.account_emails');
+  const deniedRaw = cfg('demo.account_denied_uids');
+  const denied = deniedUids();
   const rows: DemoAccountRow[] = [
     ...BUILTIN_DEMO_UIDS.map((uid) => ({ uid, label: BUILTIN_LABELS[uid] ?? '', source: 'builtin' as const })),
     ...parseEntries(String(import.meta.env.DEMO_ALLOWED_UIDS ?? '')).map((e) => ({ ...e, source: 'env' as const })),
@@ -335,9 +358,20 @@ export function listDemoAccounts(): {
   }));
 
   const fromEmail = new Set(emails.filter((e) => e.uid).map((e) => e.uid));
-  for (const r of rows) if (fromEmail.has(r.uid)) r.viaEmail = true;
+  for (const r of rows) {
+    if (fromEmail.has(r.uid)) r.viaEmail = true;
+    if (denied.has(r.uid)) r.denied = true;
+  }
 
-  return { rows, emails, disabledGlobally: demoDisabledGlobally(), configRaw, emailsRaw };
+  return {
+    rows,
+    emails,
+    disabledGlobally: demoDisabledGlobally(),
+    seededFromAdmins: cfg('demo.seeded_from_admins'),
+    configRaw,
+    emailsRaw,
+    deniedRaw,
+  };
 }
 
 /** 監査・診断用の件数だけ (`/api/debug/viewer` が使う)。 */

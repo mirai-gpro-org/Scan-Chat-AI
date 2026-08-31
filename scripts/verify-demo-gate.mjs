@@ -311,8 +311,41 @@ if (!/Array\.isArray\(row\.report\)\s*&&\s*demoFallbackEnabled\(/.test(read('src
       + ' — 次のサインインで復活するので、メール行の側で外させる');
   }
 
-  if (!read('src/lib/app-config.ts').includes("key: 'demo.account_emails'")) {
-    fails.push('app-config.ts に demo.account_emails が無い — admin の設定画面に出ない');
+  for (const k of ['demo.account_emails', 'demo.account_denied_uids', 'demo.seeded_from_admins']) {
+    if (!read('src/lib/app-config.ts').includes(`key: '${k}'`)) {
+      fails.push(`app-config.ts に ${k} が無い — setConfig が未知キーとして弾く`);
+    }
+  }
+
+  /*
+   * **管理者リストからの登録は「初回だけ」であること。**
+   * 毎回走らせると、画面から外した人が次のアクセスで黙って戻り、「外す」が効かなくなる。
+   * 目印は `demo.seeded_from_admins`。**一度入ったら上書きしない。**
+   */
+  if (!/markSeeded && !cur\.seededFromAdmins/.test(apiSrc)) {
+    fails.push('api/admin/demo-accounts.ts: 初回登録の目印を上書きしている'
+      + ' — 管理者リストからの自動登録が繰り返され、外した人が黙って戻る');
+  }
+  const page = '../wellfort-site/src/pages/admin/demo-accounts.astro';
+  try {
+    const pg = readFileSync(resolve(ROOT, page), 'utf8');
+    if (!/!j\.seededFromAdmins/.test(pg)) {
+      fails.push(`${page}: 自動登録が目印を見ていない — 毎回走ると「外す」が効かなくなる`);
+    }
+    /*
+     * **管理者名簿は Wellfort 側にしかない。** この画面が `admin_users` を引いて
+     * メールとして送る。Scan-Chat-AI 側に名簿を持たせない (PII 境界)。
+     */
+    if (!/admin_users\?is_active=eq\.true/.test(pg)) {
+      fails.push(`${page}: 有効な管理者だけを引いていない (is_active=eq.true)`);
+    }
+    // **氏名を送らない。** ラベルは PII を含めない固定文言にする。
+    if (/label: *a\.name|name: *a\.name/.test(pg)) {
+      fails.push(`${page}: 管理者の氏名をデモ登録のメモに入れている — PII は載せない`);
+    }
+  } catch {
+    // wellfort-site を並べて clone していない環境ではスキップ (CI の片側実行を壊さない)
+    console.log('  (wellfort-site が隣に無いので admin 画面のチェックはスキップ)');
   }
 }
 
@@ -412,6 +445,39 @@ const setConfig = async (u) => { __writes.push(u); Object.assign(__store, u); re
   globalThis.__demoEnv.PUBLIC_DEMO_FALLBACK = 'false';
   eq('全停止スイッチが効く', M.demoDisabledGlobally(), true);
   globalThis.__demoEnv.PUBLIC_DEMO_FALLBACK = undefined;
+
+  /*
+   * ── 除外リスト ──────────────────────────────────────────────
+   *
+   * 発注者指示 2026-08-30「削除のできるようにして」。
+   * 組み込み / env は供給元を書き換えられないので、**引き算で止める**。
+   * 供給元は残るので「戻す」で元どおりになる。
+   */
+  console.log('\n除外リスト（どの行も外せること）\n');
+  const BUILT = BUILTIN[0];
+  M.__store['demo.account_uids'] = '';
+  M.__store['demo.account_emails'] = '';
+  M.__store['demo.account_denied_uids'] = '';
+
+  eq('組み込みは既定で出る', M.isDemoAccount(BUILT), true);
+  M.__store['demo.account_denied_uids'] = BUILT;
+  eq('**組み込みでも除外できる**（画面から外せる）', M.isDemoAccount(BUILT), false);
+  eq('  → 一覧には残り「除外中」と分かる',
+    M.listDemoAccounts().rows.filter((r) => r.uid === BUILT).map((r) => r.denied), [true]);
+  M.__store['demo.account_denied_uids'] = '';
+  eq('  → 戻せば元どおり（供給元を消していない）', M.isDemoAccount(BUILT), true);
+
+  // メール登録で入った uid も止められること
+  M.__store['demo.account_uids'] = UID;
+  M.__store['demo.account_denied_uids'] = `${UID}  # PR 終了`;
+  eq('メール登録から来た uid も止められる', M.isDemoAccount(UID), false);
+  eq('注釈つきでも除外が効く（`#` を uid と読まない）', M.isDemoAccount(UID), false);
+  M.__store['demo.account_denied_uids'] = '';
+
+  // 除外は**和のあと**。順序を逆にすると config で足し直せてしまう。
+  M.__store['demo.account_uids'] = BUILT;
+  M.__store['demo.account_denied_uids'] = BUILT;
+  eq('除外は和のあと（config で足し直しても復活しない）', M.isDemoAccount(BUILT), false);
 })();
 
 // ══════════════════════════════════════════════════════════════════════
