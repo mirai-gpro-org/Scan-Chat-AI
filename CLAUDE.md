@@ -333,10 +333,21 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
   - **証明書は `Cert:\CurrentUser\My` にしか無い (ユーザー `info`)。`LocalMachine` には無い。**
     → **SYSTEM/別ユーザーのタスク実行では証明書が見えず失敗・サービス化も不可**。
     証明書の選択は **発行者CN=`demecal.net CA` かつ 秘密鍵あり**で絞る (CN ベタ書きにしない=更新で変わる)。
-  - **【上記2制約の潰し方 確定 2026-08-31】正本 `demecal_rpa_operation_design.md §4.4`。
+  - **【運用形態 確定 2026-08-31・発注者判断】最初から無人で定期実行する。段階導入は採らない。**
+    正本 = **`docs/lab/demecal_unattended_spec.md`**。
+    **無人にしてよい根拠 = `last_to` の単調前進** (取り込み成功時だけ前進・
+    `demecal-state.ts` POST)。**走らない日があっても次の成功回がまとめて回収=取り漏れゼロ**。
+    → だから「ログオン中のみ実行」で足り、自動ログオンも LocalMachine 移設も要らない。
+    **失敗時に `last_to` を前進させてはならない** (この性質が壊れたら無人運用も壊れる)。
+    **最優先の未実装 = `LAB_INTAKE_API_KEY`** (設計文書に6か所あるが `grep src/` = 0)。
+    無人だと**PCが鍵を持ち続ける**が、現状 2 API とも `ADMIN_API_KEY`(フル権限=config/elith-delete/
+    demo-accounts 等が全部開く) を要求する。**専用PCに置いてよい鍵ではない**ので、
+    intake 専用キーを `api-auth.ts` に実装し**3つの口だけ**に通す (+スコープ回帰チェック)。
+    監視は**通知基盤を作らず GitHub Actions の日次ワークフローを見張りにする**
+    (失敗すると購読者へ自動メール。既存 `charge-subscriptions-cron.yml` と同型)。
+  - **【上記2制約の潰し方 確定 2026-08-31】詳細は上記正本 §4.3/§4.4
+    (旧 `demecal_rpa_operation_design.md §4.4` は取り込み済み)。
     どちらも Wellfort の作業を増やさずに潰す (非エンジニアなので「ダブルクリック1回」に収める)。**
-    - **前提: 2つとも「無人で定期実行」する場合だけの問題。まず定期実行にしない**
-      (`血液CSV取得.bat` ダブルクリック → 取得→送信→削除 で完結)。自動化は安定後。
     - **①: 証明書を動かさない。** タスクを **ユーザー`info` / 「ログオン中のみ実行」/
       トリガー=ログオン時＋毎日 / 「開始時刻を過ぎたらすぐ開始」ON** で組む
       → **自動ログオンもLocalMachine移設も不要**。設定は XML で流し込み**タスクスケジューラを開かせない**。
@@ -1267,6 +1278,7 @@ Supabase database linter の指摘を棚卸しした結果。**テストフェ�
 | `docs/lab/lab_data_reception_overview.md` | **4検査のデータ受取 詳細**(血液=リージャー/RPA・がん=プリベント/専用ポータル+S3を提案中・AI疾病予測=LAiF/S3 URL・遺伝子=Genoplan/RPA。方式/経路/現状/課題/次アクション)。E2E全体像は上記 master_spec が上位 |
 | `docs/lab/questionnaire_to_lab_csv_spec.md` | **AI問診回答→各社CSV 変換仕様(実装用)**。共通設問No→各社必要行のマスターマッピング表+各社項目リスト+生成ルール(フリー/選択/範囲/複数)+PII確認事項。元=Wellfort問診項目マトリクスExcel |
 | `docs/lab/demecal_auto_download_overview_spec.md` | 血液検査データ自動DL (デメカル/mTLS) 概要 |
+| **`docs/lab/demecal_unattended_spec.md`** | **【無人定期取得の正本 2026-08-31】** 発注者判断「最初から無人」。無人にしてよい根拠(`last_to` 単調前進=走らない日があっても取り漏れゼロ)/取り込み専用キー `LAB_INTAKE_API_KEY`(**未実装・ADMIN_API_KEY を PC に置かないため必須**)/実行ログAPI/秘密の保管(DPAPI)/タスク設定/監視(GitHub Actions を見張りにして通知基盤を作らない)/失敗時の挙動表/未確定と実装TODO |
 | `docs/lab/demecal_inquiry_email_template.md` | 検査会社への自動DL可否 照会メール雛形 |
 | `docs/subscription/subscription_management_feature_requirements.md` | サブスク契約管理 拡張 機能要件 (要件1〜4・データモデル・付録Bマトリクス) |
 | `docs/subscription/subscription_management_implementation_guide.md` | 上記の実装手順書 |

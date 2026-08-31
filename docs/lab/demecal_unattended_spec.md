@@ -1,0 +1,302 @@
+# デメカル 血液CSV 無人定期取得 仕様書
+
+**確定: 2026-08-31・発注者判断「最初から無人で定期実行でいく」**
+
+この文書が**無人運用の正本**。`demecal_rpa_operation_design.md` は PAD 前提の旧設計
+（§1 役割分担・§3 attended は生きているが、**§4 unattended はこの文書が上書きする**）。
+
+段階導入案（まず手動ダブルクリック → 安定後に自動化）は**発注者判断で採らない**。
+以下はすべて「初回から無人」を前提に組んである。
+
+---
+
+## 1. 前提（すべて実測で確定済み）
+
+| | 出典 |
+|---|---|
+| 方式は **PowerShell**（PAD 不要） | `demecal_powershell_probe_guide.md`「実測結果」 |
+| 証明書つき接続 **HTTP 200** ／ 証明書なし 400 | 同上 |
+| 証明書 `CN=Q05-0010`（発行者 `demecal.net CA`・**期限 2028-12-12**） | 同上 |
+| 証明書は **`Cert:\CurrentUser\My` にしかない**（ユーザー `info`） | 同上 |
+| ログインは `POST /account/login` ＋ **antiforgery hidden** | 同上「ログインフォームの構造」 |
+| デスクトップが **OneDrive 配下** | 同上 |
+| 原本CSVは**個人情報を含む**・取込後に削除 | `demecal_attended_manual_guide.md:114,127` |
+
+---
+
+## 2. 「無人にしてよい」根拠 — `last_to` の単調前進
+
+**この設計の安全性は、実行が毎回成功することに依存していない。**
+
+`last_to`（前回取得済みの最終日）は **取り込み成功時にだけ前進**する
+（`src/pages/api/admin/demecal-state.ts` の POST・過去日付は据置）。次回は `from = last_to + 1日`。
+
+したがって:
+
+- PC が落ちていた日・ログオンしていなかった日・ネットワーク障害の日に**走らなくても、取り漏れは起きない**
+- 次に成功した回が、**溜まっていた範囲をまとめて回収する**
+- 同じ範囲を二度取っても、`client_id + test_date` で決まる S3 キーへ上書きされるだけ（要確認 → §9）
+
+**だから「毎日走らせて、走らない日は諦める」で成立する。**
+これが後述 §4.3 で「ログオン中のみ実行」を選べる理由でもある。
+
+**逆に言うと、この性質が壊れたら無人運用も壊れる。** `last_to` を失敗時に前進させてはならない。
+
+---
+
+## 3. サーバ側（Scan-Chat-AI）の仕様
+
+### 3.1 取り込み専用キー `LAB_INTAKE_API_KEY`【新規・要実装】
+
+**無人化で最初に埋めるべき穴。**
+
+現状、専用PCが叩く 2 つの API はどちらも **`ADMIN_API_KEY`**（フル権限）を要求する
+（`demecal-state.ts:20` / `elith-blood-csv.ts:30` → `src/lib/api-auth.ts`）。
+無人運用では**この鍵が Windows PC に置きっぱなしになる**。
+`ADMIN_API_KEY` は admin API を全部開ける — 設定変更（`config`）、Elith データ削除（`elith-delete`）、
+デモ用アカウント追加（`demo-accounts`）、報告書アップロード等。**専用PCに置いてよい鍵ではない。**
+
+`LAB_INTAKE_API_KEY` は**設計文書に 6 か所出てくるが実装は無い**（`grep -rn src/` = 0 件）。実装する。
+
+| | |
+|---|---|
+| env | `LAB_INTAKE_API_KEY`（Vercel・Scan-Chat-AI） |
+| ヘッダ | `x-intake-key: <値>`（`demecal_auto_download_overview_spec.md:29` の記載に合わせる） |
+| 通る口 | **`/api/admin/demecal-state`（GET/POST）・`/api/admin/elith-blood-csv`（POST）・`/api/admin/demecal-run`（§3.2）の 3 つだけ** |
+| 通らない口 | **それ以外の admin API 全部**（config / elith-delete / demo-accounts / elith-report / health-age …） |
+| 未設定時 | intake 認可は**無効**（＝`ADMIN_API_KEY` のみ受理）。attended 運用は影響を受けない |
+| `ADMIN_API_KEY` | 従来どおり全 API で有効（wellfort-site の admin 画面用） |
+
+実装は `src/lib/api-auth.ts` に `isIntakeAuthorized(request)` を足し、上記 3 ファイルだけ
+`isAdminAuthorized(req) || isIntakeAuthorized(req)` にする。
+**`api-auth.ts` 以外に認可判定を複製しない**（14 ファイルに dev 素通しを複製して本番が
+無防備になった前例がある・同ファイル冒頭の経緯）。
+
+**回帰チェックを付ける**（`verify:intake-scope` 想定）: intake キーで通ってよい口の一覧を固定し、
+**他の admin API が intake キーで通ったら落とす**。ここは静かに壊れる（広がっても画面上は正常に見える）。
+
+### 3.2 実行ログ API `/api/admin/demecal-run`【新規・要実装】
+
+**無人運用の本体はここ。** 誰も見ていないので、**走ったか／失敗したかがサーバ側に残らないと運用できない。**
+
+```
+POST /api/admin/demecal-run   (x-intake-key)
+  { started_at, finished_at, result: "ok"|"fail", stage, rows?, range?: {from,to},
+    error?, host, script_version, cert_expires_on, cert_days_left }
+GET  /api/admin/demecal-run   (x-intake-key | ADMIN_API_KEY)
+  → { ok, runs: [...直近N件], health: { last_success_at, days_since_success, cert_days_left, stale: bool } }
+```
+
+- 置き場は `{AWS_S3_PREFIX}state/demecal_runs.json`（`demecal_last_to.json` と同じ流儀）。
+  **直近 N 件のリングバッファ**（N=50 程度）。無限に伸ばさない。
+- **失敗も必ず記録する。** 「記録が無い＝走っていない」と「失敗した」を区別できるようにする。
+- `stage` は失敗箇所を示す（`cert` / `login` / `range` / `download` / `intake` / `state` / `cleanup`）。
+  これが無いと、証明書切れなのかサイト変更なのかを毎回リモートで問い合わせることになる。
+- **`error` に ID・パスワード・受診者情報を入れない。** 例外メッセージをそのまま載せない
+  （URL とステータスコードまで）。
+- **`cert_days_left` を毎回載せる。** 証明書は 2028-12-12 に切れ、切れた瞬間に全部止まる。
+  **60 日を切ったら警告**を出す（§5）。
+
+### 3.3 既存 API（変更なし）
+
+| API | 用途 | 実装 |
+|---|---|---|
+| `GET/POST /api/admin/demecal-state` | `last_to` の読み書き（単調前進） | 実装済 |
+| `POST /api/admin/elith-blood-csv` | CSV → `BloodTestData` JSON 群 → S3 | 実装済 |
+
+**原本CSVはサーバにも S3 にも保存しない**（PII）。既存の挙動どおり。
+
+---
+
+## 4. 専用PC側の仕様
+
+### 4.1 スクリプト（`demecal-fetch.ps1`）
+
+```
+1. 証明書を選ぶ        発行者CN = "demecal.net CA" かつ HasPrivateKey
+                       → 0 件なら stage=cert で失敗報告して終了（CN をベタ書きしない）
+2. 範囲を決める        GET /api/admin/demecal-state → from = last_to + 1日
+                       to = 当日 - N日（反映遅延マージン。N は §8 未確定）
+3. ログイン            GET  /account/login（証明書つき・-SessionVariable）
+                       → __RequestVerificationToken 抽出
+                       → POST /account/login（同一セッション・同一証明書）
+                       → 成否は「302 か、ログインフォームが消えたか」で判定
+                         （失敗時も 200 が返る作りなのでステータスだけで見ない）
+4. CSV 取得            汎用CSV: 代理店 Q05-0010 / 販売先 000000 / 日付範囲 from〜to
+                       / 検査結果=正常終了のみ / 項目見出し=出力する
+                       → C:\demecal\ へ保存（§4.4）
+5. 取り込み            POST /api/admin/elith-blood-csv (x-intake-key) { csvBase64, filename }
+6. 前進                POST /api/admin/demecal-state (x-intake-key) { last_to: max_test_date }
+                       ※ 5 が成功したときだけ
+7. 後始末              原本CSVを削除（5 が成功したときだけ）
+8. 報告                POST /api/admin/demecal-run  ← 成功・失敗にかかわらず必ず
+```
+
+- `[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12`
+  （PS 5.1 は既定で TLS1.2 でない。プローブと同じ）
+- **証明書は全リクエストに付ける**（GET も POST も CSV 取得も）
+- **0 件は成功**として扱い `last_to` を前進させる（検査が無い週は普通にある）
+- `script_version` を持ち、実行ログに載せる（どの版が動いているか分からなくなるため）
+
+### 4.2 秘密の保管
+
+置くのは **デメカル ID / PW** と **`LAB_INTAKE_API_KEY`** の 3 つ。**`ADMIN_API_KEY` は置かない**（§3.1）。
+
+| | |
+|---|---|
+| 方式 | PowerShell 標準の **`Export-CliXml`（DPAPI 暗号化）** |
+| 置き場 | `C:\demecal\secrets\demecal.cred.xml` / `intake.cred.xml` |
+| 性質 | **ユーザー `info` かつ その PC でしか復号できない**。コピーしても他所では開かない |
+| 追加インストール | **不要**（PS 5.1 組み込み） |
+
+**Windows 資格情報マネージャーを使わない理由**: PowerShell から扱うには `CredentialManager`
+モジュール（PSGallery）の導入が要る。ロックダウンされた業務 PC に外部モジュールを入れるより、
+組み込みの DPAPI で足りる。
+
+**スクリプト本体・bat・リポジトリに秘密を書かない。** 変更（ローテーション）はセットアップの再実行。
+
+### 4.3 タスク登録
+
+| 設定 | 値 | 理由 |
+|---|---|---|
+| 実行ユーザー | `info` | 証明書がこのユーザーのストアにしかない |
+| 実行条件 | **ログオン中のみ実行** | 対話セッションなので証明書が確実に見える。**パスワード保存が不要** |
+| トリガー | **ログオン時** ＋ **毎日 HH:MM** | 片方だと取りこぼす |
+| 設定 | **「開始時刻を過ぎた場合はすぐに開始」ON** | 落ちていた日も次のログオンで回収 |
+| 多重起動 | **禁止**（前回が動いていたらスキップ） | 二重取り込みを避ける |
+| 実行時間 | 上限 30 分で強制終了 | ぶら下がり防止 |
+
+登録は**セットアップ bat が XML を流し込む**。**タスクスケジューラの画面は開かせない。**
+
+> **完全な 24 時間ヘッドレスにはしない（この仕様の意識的な選択）。**
+> そうするには ①自動ログオン（パスワードを OS に保存）か ②証明書を LocalMachine へ移設
+> （管理者権限＋秘密鍵入り pfx。**そもそもエクスポート可否が未確認**）のどちらかが要る。
+> **§2 の `last_to` 単調前進により、走らない日があっても取り漏れは起きない**ので、
+> リスクを取る理由が無い。**運用条件は「専用PCは通常ログオンしたままにする」の 1 行だけ。**
+> これが満たせない事情が出たら再検討する（§8）。
+
+### 4.4 ファイルの置き場と削除（PII）
+
+| | |
+|---|---|
+| 保存先 | **`C:\demecal\`** に固定。作れなければ `%LOCALAPPDATA%\demecal` |
+| 禁止 | 解決したパスに **`OneDrive` が含まれていたら書かずに中止**（stage=`cleanup` で失敗報告） |
+| 削除 | **取り込み成功後に即削除** |
+| 取り残し | 失敗時は再試行のため残す。ただし**毎回の実行開始時に、7 日より古い CSV を削除**する |
+| ログ | `C:\demecal\logs\` にテキストで残す（**値は書かない**・件数とステージのみ）。30 日で削除 |
+
+**PII を無期限に PC へ溜めない。** 失敗が続いた場合に古い CSV が残り続けるのを防ぐため、
+「成功時に削除」だけでなく「古いものは無条件に削除」を入れる。
+
+---
+
+## 5. 監視 — 無人運用の必須条件
+
+**無人化とは「人が見なくなる」こと。** したがって**失敗が人に届く経路**が無ければ無人にしてはいけない。
+
+現状、このリポジトリにメール／Teams／Slack の通知基盤は**無い**（`grep` 0 件）。作らずに済ませる。
+
+### 5.1 表示（pull）
+
+wellfort-site の admin「🩸 デメカルCSV 取り込み」画面に**自動取得の状態**を出す。
+`GET /api/admin/demecal-run` の `health` をそのまま表示:
+
+- 最終成功日時 / 直近の失敗と `stage`
+- **`days_since_success`** — これが主指標
+- **証明書の残日数**（60 日未満で警告表示）
+
+### 5.2 通知（push）— GitHub Actions を見張り役にする
+
+**既存の仕組みだけで push 通知が作れる。** wellfort-site には既に日次 cron のワークフローがある
+（`.github/workflows/charge-subscriptions-cron.yml`・毎日 JST 10:00）。同じ形で見張りを 1 本足す。
+
+```
+毎日 1 回 GET /api/admin/demecal-run
+  days_since_success > しきい値  → ジョブを exit 1 で失敗させる
+  cert_days_left < 60           → 同上
+```
+
+**GitHub Actions はワークフローが失敗するとリポジトリの購読者へ自動でメールを送る。**
+新しい通知基盤を作らずに「失敗が人に届く」を満たせる。
+
+- しきい値は**検査の実施間隔より短く**する（血液検査は年3回だが、取得は日次なので
+  「7 日成功なし」程度から。運用開始後に調整）
+- **0 件成功も成功**として扱うので、「検査が無かった週」で誤報しない
+
+### 5.3 サイト変更の検知
+
+デメカル側の画面が変わると黙って壊れる。スクリプトが以下を**失敗として報告**する:
+
+- `__RequestVerificationToken` が見つからない → `stage=login` / `error=token_not_found`
+- ログイン後にフォームが残っている → `stage=login` / `error=login_rejected`
+- CSV が 0 バイト／想定のヘッダでない → `stage=download`
+
+**「取れなかった」を成功として通さない。** ここを緩めると `last_to` が進んで取り漏れになる。
+
+---
+
+## 6. 失敗時の挙動（まとめ）
+
+| 事象 | `last_to` | 原本CSV | 報告 |
+|---|---|---|---|
+| 正常（1 件以上） | **前進** | 削除 | ok |
+| 正常（0 件） | **前進** | — | ok |
+| 証明書が無い/期限切れ | 据置 | — | fail / `cert` |
+| ログイン失敗 | 据置 | — | fail / `login` |
+| CSV 取得失敗 | 据置 | — | fail / `download` |
+| 取り込み API 失敗 | **据置** | **残す**（7日で削除） | fail / `intake` |
+| `last_to` 更新失敗 | 据置 | 残す | fail / `state` |
+| 保存先が OneDrive 配下 | 据置 | **書かない** | fail / `cleanup` |
+| PC が落ちていた | 据置 | — | **記録なし**（§5.1 の `days_since_success` で検知） |
+
+**「据置」＝次回が同じ範囲から取り直す＝取り漏れゼロ。**
+
+---
+
+## 7. Wellfort にお願いすること
+
+**セットアップ bat をダブルクリック 1 回。** それだけ。
+
+1. `血液CSV自動取得セットアップ.bat` を URL からダウンロードしてダブルクリック
+   （.bat はメール添付・ChatWork とも弾かれる実績があるため URL 配布。プローブと同じ）
+2. 画面の指示で **デメカルの ID / パスワード**を入力（DPAPI で暗号化して保存・§4.2）
+3. bat が自動で行う: フォルダ作成 → 秘密の保存 → タスク登録 → **その場で 1 回試験実行**
+4. 画面に出る **○ / ×** を確認して、結果を連絡
+
+**× のときに何が悪いかまで画面に出す**（証明書／ログイン／ネットワーク／保存先）。
+**黙って失敗させない** — 無人運用でここを曖昧にすると、数週間気づけない。
+
+`LAB_INTAKE_API_KEY` は bat に注入して配布する（プローブの `PROBE_UPLOAD_TOKEN` と同じ方式・
+`src/lib/probe-bat.ts`）。**リポジトリには置かない。**
+
+---
+
+## 8. 未確定（着手前に潰す）
+
+| # | 事項 | 誰に |
+|---|---|---|
+| 1 | **ログイン後の CSV 一覧 URL とダウンロードの form/パラメータ** | 専用PCで 1 回取得してもらう（プローブと同じ要領） |
+| 2 | 日付範囲が**報告日基準か採取日基準か**、反映遅延の日数（= `to = 当日 - N日` の N） | デメカル（先方確認） |
+| 3 | デメカルの **ID / パスワード**の受け渡し方法 | Wellfort |
+| 4 | 実行時刻（毎日 HH:MM）と `days_since_success` のしきい値 | Wellfort |
+| 5 | **専用PCを常時ログオンのままにできるか**（できない場合のみ §4.3 の注記を再検討） | Wellfort |
+| 6 | レート制限・アクセス時間帯・IP 制限 | デメカル（`demecal_auto_download_overview_spec.md §6`） |
+
+**1 が最優先。** これが無いと §4.1 の 4 が書けない。
+
+---
+
+## 9. 実装 TODO（こちら側）
+
+| # | 内容 | 状態 |
+|---|---|---|
+| 1 | `LAB_INTAKE_API_KEY` の認可を `api-auth.ts` に実装し、3 つの口だけに通す（§3.1） | **未** |
+| 2 | intake キーのスコープ回帰チェック（他の admin API が通ったら落とす） | **未** |
+| 3 | `/api/admin/demecal-run`（実行ログ・GET/POST）（§3.2） | **未** |
+| 4 | wellfort-site admin に自動取得の状態表示（§5.1） | **未** |
+| 5 | wellfort-site に見張り用 GitHub Actions（§5.2） | **未** |
+| 6 | `demecal-fetch.ps1` 本体（§4.1）※ 未確定 #1 待ち | **未** |
+| 7 | セットアップ bat ＋ 配布 API（§7）※ `probe-bat.ts` を踏襲 | **未** |
+| 8 | 同一範囲の再取得が S3 上で上書きになる（重複を作らない）ことの確認 | **未** |
+
+**1〜5 は未確定 #1 を待たずに着手できる。** 6・7 は #1 が要る。
