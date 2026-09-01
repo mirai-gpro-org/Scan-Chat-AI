@@ -107,9 +107,32 @@
 | **2** | `health_checkup.json` | `src/data/elith/health_checkup_20260826.json` | 発注者提供分と**バイト一致** |
 | **2** | 受領 PDF | `docs/elith/2026_08_26_Elith_健康アドバイスレポート.pdf` | `9562edb7af6f3138…` |
 | **1** | 受領 PDF（**JSON は未受領**） | `docs/elith/2026_08_06_Elith_健康アドバイスレポート_Stage2.pdf` | `c3c9b5b4c5e935db…` |
+| **1** | `report_text.json`【2026-09-01 受領】 | `src/data/elith/type1_20260824/report_text.json` | `25777861296cb905…` |
+| **1** | `health_checkup.json`【同上】 | `src/data/elith/type1_20260824/health_checkup.json` | `f6bf2acd4a51f92e…` |
+| **1** | `blood_test.json`【同上・**新規**】 | `src/data/elith/type1_20260824/blood_test.json` | `54d34b0f4b221573…` |
+| **1** | `cancer_risk.json`【同上・**新規**】 | `src/data/elith/type1_20260824/cancer_risk.json` | `209a4275001f532b…` |
 | 共通 | **フォーマット見本**（§4.3・**素材ではない**） | `docs/elith/フォーマット見本_AI疾病予防レポート.pdf` | `dab4bbb3b7c48909…` |
 
 **素材を差し替えるときは sha256 を本表に記録する。** 「どの検体で検証したか」が後から辿れなくなるため。
+
+### 【2026-09-01 受領】タイプ1 の JSON — **4 点に増えた**
+
+S3 の `wellfort-ai-input/output/user/elith-{plot-,}test-001/` に 2 人分が届き、うち **1 人分（4 点）**を受領。
+**S3 の 2 つの prefix のどちらの分かは未確認**（受け取った時点でファイル名しか分からないため）。
+受取パスは §6.1 R-2 のとおり受取仕様が未確定で、テストフェーズの暫定処置（発注者確認）。
+
+| | タイプ2（2026-08-26） | タイプ1（2026-08-24 検査 / 2026-09-01 受領） |
+|---|---|---|
+| ファイル数 | **2**（＋PDF） | **4** |
+| 検査値ファイル | `health_checkup.json` のみ | `health_checkup.json` **37 キー** ／ `blood_test.json` **42 キー** ／ `cancer_risk.json` **2 キー** |
+| `report_text` のセクション | 11 キー | **11 キー（同一。順序だけ違う）** |
+| 本文字数 | 20,499 | **18,737** |
+| `health_age` | 46.6 | **`null`** |
+| 基準値の書き方 | `基準値：`（**全角コロン**）8 件 | **`基準値 `（コロン無し・スペース）7 件** |
+| 「がん」「腫瘍」「マーカー」 | 0 回 | **0 回**（`cancer_risk.json` を渡しているのに本文に無い。「ポルフィリン」のみ 2 回） |
+| 「遺伝」 | 1 回 | **19 回** |
+
+**増えたのは `report_text` ではなく検査値ファイル。** セクション構成は同一。
 
 ## 3.1 受領物（実測）
 
