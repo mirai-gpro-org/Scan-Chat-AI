@@ -82,7 +82,9 @@ def build(token: str | None, out: pathlib.Path,
     head = [
         '@echo off',
         'chcp 65001 >nul',
-        'title Demecal connection check',
+        # ウィンドウ名にスクリプトと版を入れる (src/lib/probe-bat.ts と同じ理由)。
+        # 固定名だと版違いの窓が見分けられず、旧版の窓を新版と取り違える。
+        f'title demecal-check v{script_version(ps)}'.replace('probe-', ''),
         'set "ERRLOG=%TEMP%\\demecal_error.txt"',
         'powershell -NoProfile -ExecutionPolicy Bypass -Command '
         '"$s=Get-Content -LiteralPath \'%~f0\' -Encoding UTF8; '

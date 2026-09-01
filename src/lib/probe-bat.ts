@@ -40,6 +40,12 @@ export interface ProbeBatResult {
   skip: number;
 }
 
+/** cmd の `title` に置ける形へ落とす (ASCII のみ・cmd の特殊文字を除去)。 */
+function asciiTitle(v?: string): string {
+  const s = (v ?? '').replace(/[^\x20-\x7E]/g, '').replace(/[&|<>^%"]/g, '').trim();
+  return s || 'Demecal';
+}
+
 /** PowerShell のシングルクォート文字列へ安全に入れる (`'` は `''` へ)。 */
 function psQuote(v: string): string {
   return v.split("'").join("''");
@@ -56,6 +62,7 @@ export function buildProbeBat(
   ps1: string,
   token?: string,
   creds?: { user: string; pass: string },
+  title?: string,
 ): ProbeBatResult {
   let ps = ps1.replace(READ_HOST_LINE, '');
 
@@ -86,7 +93,17 @@ export function buildProbeBat(
   const head = [
     '@echo off',
     'chcp 65001 >nul',
-    'title Demecal connection check',
+    /*
+     * ウィンドウ名。**スクリプトと版を必ず入れる。**
+     *
+     * 【なぜ — 実測 2026-09-01】ここが全版・全スクリプトで
+     * `Demecal connection check` 固定だったため、接続チェックの窓も
+     * v1.1 の窓も v1.7 の窓も**タスクバー上で見分けが付かなかった**。
+     * 実際に「v1.7 が 30 分終わらない」と報告された窓が、
+     * [2] の資格情報ダイアログで止まったままの旧版の窓だった疑いが出ている。
+     * **cmd 部は ASCII のみ**(自己検証で弾かれる)なので英字で書く。
+     */
+    `title ${asciiTitle(title)}`,
     // PowerShell 自身のエラー (構文エラー・未捕捉の例外) は stderr に出る。
     // **ここで拾わないと、スクリプトが 1 行も動かなかった場合に何も残らない**
     // (実測 2026-09-01: recon が 2 版続けて無反応で、起動したのかどうかも分からなかった)。

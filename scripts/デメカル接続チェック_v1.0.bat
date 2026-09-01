@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title Demecal connection check
+title demecal-check v1.0
 set "ERRLOG=%TEMP%\demecal_error.txt"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$s=Get-Content -LiteralPath '%~f0' -Encoding UTF8; Invoke-Expression (($s[11..($s.Count-1)]) -join [Environment]::NewLine)" 2> "%ERRLOG%"
 echo.
