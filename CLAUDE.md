@@ -1372,6 +1372,33 @@ Supabase database linter の指摘を棚卸しした結果。**テストフェ�
     (0/0) で、対象コミット `71e7936`/`680c73e` を含んでいなかった。
     **既存ブランチで作業を再開するときは、まず本番ブランチとの差分を確認すること。**
 
+- **【再発 2026-09-01・実測】上の注意が現実になった。デプロイ元が別ブランチに差し替わっていた。**
+  発端は「`https://www.wellfort.co.jp/partner-portal-preview` が 404」。
+  - **本番サイトのデプロイ元は `claude/hopeful-darwin-1vdsq0` だった** (2 つの独立した証拠で断定):
+    ① `/admin/notify-recipients` = **このブランチにしか無いページ**が HTTP 200 で
+    `<title>注文通知先 - Wellfort Admin` を返す ② `/company` が「本田大作 5 件 /
+    物部慶幸 **0 件**」= hopeful-darwin と一致 (本番ブランチ側は物部慶幸が
+    `company.astro` に 5・`news.astro` に 2 残っていた)。
+  - 同ブランチは **2026-07-30 分岐で本番ブランチの 144 コミットを欠いていた**。
+    結果、**11 本のページ・API が本番サイトから丸ごと消えていた**:
+    `partner-portal-preview` / `api/partner/upload` / `admin/payment-config` +
+    `api/admin/payment-config` / `api/payment-status` / `admin/demo-accounts` +
+    `api/admin/demo-accounts` / `admin/demecal-csv` / `api/admin/config` /
+    `api/admin/elith-verify` / `api/admin/elith-plan-timeseries`。
+    内容面でも 8/24〜8/31 の更新 (提携=BISEIDO・医師の声の写真・recruit 準備中・
+    アイコン `?v=3`・resolve-customer の admin 判定 等) が全部落ちていた。
+  - **切り戻す順序を間違えない**: 先に**稼働中のブランチの独自コミットを本番ブランチへマージ**
+    してから Vercel を戻す。逆にすると代表者名が物部慶幸へ戻る等の巻き戻りが起きる。
+    → マージ済み (`20169a3`・10 コミット。競合 3 件は config.toml=両方採用 /
+    AdminLayout=メニュー両方 / `gmo-return.ts`=**本番の `resolvePaymentEnv` を残し**
+    hopeful-darwin 側の `gmoEnvBrand`/`gmoApiBase` は**本番ブランチに存在しない**ので
+    解決経路だけ移植)。
+  - **404 は「どのページが 404 か」で分岐点が割り出せる**。ページの追加日を
+    `git log --diff-filter=A` で引き、200 と 404 の境界を挟めば分岐日が出る
+    (今回: `/admin/elith-batch` 7/16=200 ⇔ `/partner-portal-preview` 8/10=404 → 7/30 分岐)。
+  - **どのブランチが実際にデプロイされているかは、そのブランチにしか無いページを叩いて確かめる。**
+    設定画面を見られない側からでも、これで確定できる。
+
 ## 開発ブランチ / ブランチ管理 (2リポジトリ・ドメイン別・ペア運用・2026-08 定義)
 - **ドメイン別ブランチ**: wellfort-site は EC/FA/Elith 等 関心事が混在するため、関心事ごとにブランチを分ける
   (`claude/<domain>-<topic>`。EC/FA と Elith を混ぜない)。
