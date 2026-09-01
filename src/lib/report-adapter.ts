@@ -26,7 +26,7 @@ import type {
   ChapterVM, CoverVM, DigestBlock, DigestCardVM, DigestItem,
   LifestylePair, MeasurementRow, ReportAudit, ReportVM, TopicVM,
 } from './report-model';
-import { CHAPTER_REGISTRY, REPORT_AXES, anchorFor, resolveChapters } from './report-sections';
+import { CHAPTER_REGISTRY, REPORT_AXES, anchorFor, chapterAnchor, resolveChapters } from './report-sections';
 
 /** 紙面テンプレートの版 (spec §1.3.9)。紙面を変えたら上げ、紙面に印字する。 */
 export const SHEET_VERSION = 'v1.0';
@@ -539,7 +539,8 @@ function card(
     (b.kind === 'pairs' && b.items.length) ||
     (b.kind === 'weeks' && b.items.length));
   if (!filled.length) return null;
-  return { key, title, axis, tone, blocks: filled, source };
+  // `detailAnchor` は章が出揃ってから入れる (下記)。ここでは決められない。
+  return { key, title, axis, tone, blocks: filled, source, detailAnchor: null };
 }
 
 // ── 本体 ────────────────────────────────────────────────
@@ -714,6 +715,21 @@ export function buildReportVM(input: BuildInput): ReportVM {
       topics,
       ...(spec.key === 'measurements' ? { table: measured.rows } : {}),
     });
+  }
+
+  /*
+   * ダイジェストのカードから、全編の**同じ章**へ送るアンカーを入れる
+   * (発注者裁定 2026-09-01・案 03「カード下端の淡色バー」)。
+   *
+   * **章が実際に在るカードにだけ入れる。** `report.sections.hidden` で章を隠した回に
+   * 導線を出すと、押しても何も起きないリンクになる — 主軸 A のリンクで一度
+   * 遷移先の無い 404 を出しているので、同じ轍を踏まない (spec §1.3.10 の④)。
+   */
+  const chapterKeys = new Set(chapters.map((c) => c.key));
+  for (const c of digest) {
+    const spec = specs.find((x) => x.key === c.key);
+    const target = (spec?.detailKeys ?? [c.key]).find((k) => chapterKeys.has(k));
+    if (target) c.detailAnchor = chapterAnchor(target);
   }
 
   /*

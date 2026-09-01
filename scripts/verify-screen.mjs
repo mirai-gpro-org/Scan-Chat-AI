@@ -130,6 +130,28 @@ const shellWidth = async (page, path) => {
   const waOk = wa.nums === 2 && wa.gauge;
   console.log(`${waOk ? '✓' : '✗'} 画面の冒頭にウェルネス年齢 (大数字 ${wa.nums} 枚 / 数直線 ${wa.gauge ? '有' : '無'})`);
   if (!waOk) fails.push('画面の冒頭にウェルネス年齢のセクションが無い (裁定 D-C2′)');
+
+  /*
+   * **詳細への導線** (発注者裁定 2026-09-01・案 03「カード下端の淡色バー」)。
+   * ここは 3 つとも落ちうる: ①画面に出ない ②飛び先が実在しない ③印刷に出てしまう。
+   * 特に③は「紙に押せないボタンが印字される」ので、名指しで見張る。
+   */
+  await page.goto(`${BASE}/report?preview=1`, { waitUntil: 'domcontentloaded' });
+  const jump = await page.evaluate(() => {
+    const bars = [...document.querySelectorAll('.rp-jump')];
+    const cards = document.querySelectorAll('article.rp-card').length;
+    const dead = bars.filter((a) => !document.querySelector(a.getAttribute('href') ?? '#'));
+    const minH = Math.min(...bars.map((a) => a.getBoundingClientRect().height));
+    return { bars: bars.length, cards, dead: dead.length, minH: Math.round(minH) };
+  });
+  const jumpOk = jump.bars > 0 && jump.dead === 0 && jump.minH >= 44;
+  console.log(`${jumpOk ? '✓' : '✗'} 詳細への導線 ${jump.bars} 本 / カード ${jump.cards} 枚 / 飛び先なし ${jump.dead} / 最小高 ${jump.minH}px`);
+  if (!jumpOk) fails.push(`詳細への導線: ${jump.bars} 本・飛び先なし ${jump.dead}・最小高 ${jump.minH}px`);
+
+  await page.goto(`${BASE}/report?preview=1&print=1`, { waitUntil: 'domcontentloaded' });
+  const inPrint = await page.evaluate(() => document.querySelectorAll('.rp-jump').length);
+  console.log(`${inPrint === 0 ? '✓' : '✗'} 印刷ビューに導線を出さない (${inPrint} 本)`);
+  if (inPrint !== 0) fails.push(`印刷ビューに導線が ${inPrint} 本出ている (押せないボタンが紙に載る)`);
   await page.goto(`${BASE}/report?preview=2`, { waitUntil: 'domcontentloaded' });
 
   // **A 軸のカードが在ること。** ここが実際に落ちていた箇所なので名指しで見る。

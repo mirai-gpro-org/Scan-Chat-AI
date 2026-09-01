@@ -646,6 +646,34 @@
 .rp-gauge-dot-well { background: #287F86; }  /* brand-600 = ウェルネス年齢 */
 .rp-gauge-dot-age { background: #3E4C52; }   /* slate-700 = 実年齢 (上の大数字と同色) */
 
+/*
+ * 詳細への導線 (発注者裁定 2026-09-01・案 03「カード下端の淡色バー」)。
+ * ダイジェストのカードから、全編の同じ章へ送る。
+ *
+ * - **見本にある色だけで作る**: 地は表紙パネルの `--rp-teal-panel`、
+ *   枠は表紙の円と同じ `--rp-teal-circle`。新しい色を足していない。
+ * - **淡赤は使わない** (救急サイン専用・裁定 D-C3 の波及)。
+ * - 文字は brand-700 (白地に 7.09:1)、枠は #A8DCD8 では非文字 3:1 に届かないため
+ *   **枠だけを濃くはせず、地との差で面を示す**。押せることは文字色と矢印で伝える。
+ * - **タップ領域 44px 以上** (min-height: 3rem)。
+ */
+.rp-jump {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  margin-top: .9rem; padding: .8rem 1rem; min-height: 3rem;
+  background: var(--rp-teal-panel);
+  border: 1px solid var(--rp-teal-circle);
+  border-radius: 4px;
+  color: #1E6167;                /* brand-700 */
+  font-weight: 700; font-size: .9375rem; line-height: 1.5;
+  text-decoration: none;
+}
+.rp-jump:hover { background: #E7F5F6; }
+.rp-jump-lbl { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
+.rp-jump-lbl small {
+  font-size: 13px;               /* 12px 以下を作らない (CLAUDE.md 禁止事項) */
+  font-weight: 400; color: #55636A;  /* slate-600 */
+}
+
 /* ⑤ 章扉のバッジ (見本 p2/p9) */
 .rp-badge {
   flex: 0 0 auto; width: 1.5rem; height: 1.5rem; border-radius: 50%;

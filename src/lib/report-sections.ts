@@ -52,6 +52,16 @@ export interface ChapterSpec {
    * **印刷ビュー (`?print=1`) では無視して全展開する** (spec §3.2 / §4.3)。
    */
   collapsed: boolean;
+  /**
+   * ダイジェストのカードから「詳しい説明」として送る先の章 (先に在るものを 1 つ選ぶ)。
+   *
+   * **省略時は自分自身の `key`。** ダイジェスト専用のカード
+   * (`sourceKey: null` = 章を持たない) だけ、中身を引いてきた章を明示する。
+   * 順に見て**最初に紙面へ出ている章**を採るので、`report.sections.hidden` で
+   * 章を隠しても導線が死なない。1 つも無ければ導線を出さない (押しても何も
+   * 起きないリンクを置かない・spec §1.3.10 の④)。
+   */
+  detailKeys?: readonly string[];
 }
 
 /**
@@ -62,14 +72,17 @@ export interface ChapterSpec {
  */
 export const CHAPTER_REGISTRY: readonly ChapterSpec[] = [
   // ── 主軸 A ──
-  { key: 'cancer_finding', label: '今回の所見',   sourceKey: null,             axis: 'a', collapsed: true },
+  // 中身は abstract と summary から選んでいる。着地は先に出るほう (アブストラクト)。
+  { key: 'cancer_finding', label: '今回の所見',   sourceKey: null,             axis: 'a', collapsed: true,
+    detailKeys: ['abstract', 'summary'] },
   // ── 主軸 B ──
   { key: 'medical_visit',  label: '',             sourceKey: 'medical_visit',  axis: 'b', collapsed: true },
   { key: 'measurements',   label: '',             sourceKey: 'blood_analysis', axis: 'b', collapsed: true },
   { key: 'summary',        label: '',             sourceKey: 'summary',        axis: 'b', collapsed: true },
   { key: 'abstract',       label: '',             sourceKey: 'abstract',       axis: 'b', collapsed: true },
   { key: 'lifestyle',      label: '',             sourceKey: 'lifestyle',      axis: 'b', collapsed: true },
-  { key: 'diet_plan',      label: '1か月の食事改善プラン', sourceKey: null,     axis: 'b', collapsed: true },
+  { key: 'diet_plan',      label: '1か月の食事改善プラン', sourceKey: null,     axis: 'b', collapsed: true,
+    detailKeys: ['diet'] },
   { key: 'diet',           label: '',             sourceKey: 'diet',           axis: 'b', collapsed: true },
   { key: 'exercise',       label: '',             sourceKey: 'exercise',       axis: 'b', collapsed: true },
   { key: 'sleep',          label: '',             sourceKey: 'sleep',          axis: 'b', collapsed: true },
@@ -154,6 +167,17 @@ export function resolveChapters(read: (key: string) => string = cfg): ResolvedCh
  * **連番にしない。** 章を並べ替えたときに保存済みリンクが別の見出しを指してしまう。
  * 見出し文字列から引くので、並べ替えてもリンクは同じ見出しに刺さる (spec §5.4)。
  */
+/**
+ * 章そのもののアンカー。**ダイジェストのカードから全編の同じ章へ送る**ために使う
+ * (発注者裁定 2026-09-01・案 03「カード下端の淡色バー」)。
+ *
+ * トピックの `anchorFor` と違って**見出しのハッシュを使わない** — 章は
+ * `key` で一意なので、見出しが変わってもリンクが外れないほうがよい。
+ */
+export function chapterAnchor(chapterKey: string): string {
+  return `ch-${chapterKey}`;
+}
+
 export function anchorFor(chapterKey: string, heading: string): string {
   let h = 0x811c9dc5;
   const s = `${chapterKey} ${heading}`;

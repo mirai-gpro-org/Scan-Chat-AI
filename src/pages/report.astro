@@ -4,6 +4,7 @@ import AppNav from '../components/AppNav.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { loadReportVM, previewVM } from '../lib/elith-report-queries';
 import { renderReportMarkdown } from '../lib/report-view';
+import { chapterAnchor } from '../lib/report-sections';
 import { countUnreadImportant } from '../lib/notice-queries';
 import { refreshConfig, cfg } from '../lib/app-config';
 import { loadDashboard, getHealthAge, withHonorific, formatJpDate } from '../lib/dashboard-queries';
@@ -388,7 +389,28 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
               </>
             ))}
 
-            <p class="mt-0.5 font-mono text-[11px] text-slate-500">{card.source}</p>
+            {/* ══════════ 詳細への導線 ══════════
+                【発注者裁定 2026-09-01・案 03「カード下端の淡色バー」】
+                出典と操作を 1 つにまとめ、**カード幅いっぱいの押せる面**にする。
+                主要利用者は 50〜65 代なので、下線だけの弱い導線にしない。
+                地 `#F0FAFB` と枠 `#A8DCD8` は**どちらも見本にある色**(表紙のパネルと円)。
+
+                **`?print=1` では出さない。** 紙に押せないボタンが印字されるため
+                (保存手順を印刷ビューに置かないのと同じ理屈・spec §4.4)。
+                **章が無い回は出さない** (`detailAnchor` が null)。押しても何も起きない
+                リンクを置かない。そのときは従来どおり出典だけを出す。 */}
+            {!isPrint && card.detailAnchor ? (
+              <a class="rp-jump" href={`#${card.detailAnchor}`} data-jump>
+                <span class="rp-jump-lbl">
+                  <span>詳しい説明を読む</span>
+                  <small class="font-mono">{card.source}</small>
+                </span>
+                <AppIcon name="next" size={18} class="shrink-0 text-brand-600" />
+              </a>
+            ) : (
+              /* 13px 以上にする。11px は禁止事項「12px 以下を作らない」に触れていた。 */
+              <p class="mt-0.5 font-mono text-[13px] text-slate-600">{card.source}</p>
+            )}
           </article>
         ))}
 
@@ -424,7 +446,7 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
       <section class="mt-4 flex flex-col gap-3">
         <h2 class="border-t border-slate-200 pt-5 text-lg font-bold text-navy-800">全編</h2>
         {(['a', 'b'] as const).flatMap((ax) => chaptersByAxis(ax)).map((ch) => (
-          <details class="rp-card card" open={isPrint || !ch.collapsed}>
+          <details class="rp-card card" id={chapterAnchor(ch.key)} open={isPrint || !ch.collapsed}>
             <summary class={`cursor-pointer text-base font-bold text-navy-800 ${isPrint ? 'list-none' : ''}`}>
               {ch.title}
             </summary>
@@ -523,6 +545,41 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
     </div>{/* /.rp-inner */}
   </main>
 </BaseLayout>
+
+<script>
+  /*
+   * ダイジェストの「詳しい説明を読む」から全編の章へ飛ぶとき、**先に章を開く**。
+   * 全編は既定で畳んである (`report.sections.collapsed`) ので、開かずに飛ぶと
+   * 見出しの位置で止まって中身が見えない。
+   *
+   * **リンク自体は素の `<a href="#...">`** なので、この script が動かなくても
+   * 移動はする (開くのは上乗せ)。`?print=1` にはこの導線を出していない。
+   */
+  function openTarget(hash: string): void {
+    if (!hash || hash === '#') return;
+    let el: Element | null = null;
+    try { el = document.querySelector(hash); } catch { return; }
+    const details = el?.closest('details');
+    if (details && !details.open) details.open = true;
+  }
+  document.addEventListener('click', (e) => {
+    const a = (e.target as Element | null)?.closest?.('a[data-jump]');
+    if (a) openTarget(a.getAttribute('href') ?? '');
+  });
+  /*
+   * 同一ページ内でハッシュだけが変わる場合 (戻る/進む・保存したリンクを踏み直す)。
+   * `<script>` は再実行されないので、ここで拾わないと**その回だけ開かない**
+   * (実測で取りこぼした)。
+   */
+  addEventListener('hashchange', () => openTarget(location.hash));
+  // 直接 `/report#ch-...` で開かれた場合。位置合わせのため開いてから scroll し直す。
+  if (location.hash) {
+    openTarget(location.hash);
+    requestAnimationFrame(() => {
+      try { document.querySelector(location.hash)?.scrollIntoView(); } catch { /* 不正な hash */ }
+    });
+  }
+</script>
 
 <style is:global>
   /*
