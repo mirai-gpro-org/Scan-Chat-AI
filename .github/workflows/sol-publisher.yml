@@ -1,0 +1,51 @@
+# PoC-2: PR を GPT-5.6 Sol にレビューさせ、結果を PR コメントへ投稿する。
+#
+# **トリガは workflow_dispatch のみ。** PoC 段階で暴発させないため、
+# label / pull_request イベントでは起動しない (PoC-3 以降の判断)。
+#
+# 必要な secret: OPENAI_API_KEY (リポジトリ Actions secret。人が設定する)
+#
+# 権限は最小。コメント投稿に要る pull-requests: write だけを与え、
+# contents は read に留める (このワークフローは何も push しない)。
+name: Sol Publisher (PoC-2)
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'レビュー対象の PR 番号 (数字のみ)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# 同じ PR に対する多重起動を防ぐ。走行中のものは取り消さない
+# (投稿途中で切ると、投稿されたのかどうかが分からなくなるため)。
+concurrency:
+  group: sol-publisher-${{ github.event.inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # CLAUDE.md をリポジトリ規約としてモデルへ渡すため checkout する。
+      # fetch-depth: 1 で足りる (このジョブは git 履歴を辿らない)。
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Review PR with GPT-5.6 Sol and post comment
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.inputs.pr_number }}
+        run: node scripts/sol-publisher.mjs
