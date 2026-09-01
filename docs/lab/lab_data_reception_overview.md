@@ -4,7 +4,7 @@
 |---|---|
 | 目的 | Wellfort が外部検査会社から受け取る **4 検査**のデータ受取方式・経路・現状・課題を一枚に集約する。各検査は最終的に **Elith 形式 JSON（`elith-handoff-v0.1`）へ変換し S3 経由で Elith へ受け渡す**（詳細=`docs/elith/elith_s3_data_handoff_spec.md` / `docs/elith/elith_assembly_wrapping_spec.md`）。 |
 | 対象 | ①血液検査（リージャー）②がんリスク検査・尿（プリベント）③AI疾病発症予測（LAiF）④遺伝子検査（Genoplan）。※健診・人間ドックは会員がアプリでAIスキャンするため本書対象外。 |
-| 版 | **2026-09-01（遺伝子=Genoplan の受取方式を実測で判定。**RPA も PowerShell も不要でサーバ側完結**・§4 を全面改訂／§0.1 追随）**<br>2026-08-31（血液=受取方式を RPA/PAD から **PowerShell 方式**へ変更・§1/§0.1/§7 を更新）<br>2026-08-26（Draft・LAiF 実データ疎通の結果／ID 連携仕様／問診データの渡し方マトリクスを追記） |
+| 版 | **2026-09-01b（遺伝子=実アカウントで疎通確認。許諾取得済・partner選択不要・`kit_status='600'`で72件・PDF実体21MBを確認。§4.1.1／§4.2／§4.4 を更新）**<br>2026-09-01（遺伝子=Genoplan の受取方式を実測で判定。**RPA も PowerShell も不要でサーバ側完結**・§4 を全面改訂／§0.1 追随）<br>2026-08-31（血液=受取方式を RPA/PAD から **PowerShell 方式**へ変更・§1/§0.1/§7 を更新）<br>2026-08-26（Draft・LAiF 実データ疎通の結果／ID 連携仕様／問診データの渡し方マトリクスを追記） |
 | 上位文書 | **本書は「受取方式（各社別）」に特化した詳細。EC購入→キット→問診→受取→Elith→表示の E2E 全体像は `docs/lab/lab_data_pipeline_master_spec.md`（総合仕様書）が正本。** |
 | 関連 | **`docs/lab/demecal_unattended_spec.md`（血液=無人定期取得の正本・PowerShell方式）** / `docs/lab/demecal_powershell_probe_guide.md`（方式決定の実測）/ `docs/lab/demecal_auto_download_overview_spec.md`（概要）、`docs/elith/elith_assembly_wrapping_spec.md`（LAiF/ウェルネス年齢のラップ）、`docs/lab/lab_integration_workflow.md`（割当・PII）、`docs/lab/kit_progress_management.md`（進捗）、`docs/lab/wellfort_admin_lab_upload_spec.md`（admin取込） |
 
@@ -19,7 +19,7 @@
 | 1 | 血液検査 | 株式会社リージャー（Leisure／デメカル DSS） | **PowerShell 方式**（専用PC・mTLS＋無人定期実行。**RPA/PAD は不要**・2026-08-31 確定） | CSV | `BloodTestData` | **決定論パース**（CSV→JSON・LLM不使用） | 自動アクセス承認済・サーバ側実装済／**方式確定・PC側は未実装**（**外部からの回答待ちは無い**） |
 | 2 | がんリスク検査（尿） | プリベント社（ALA-PDS） | **専用ポータル＋AWS S3＋パスキー方式を提案中**（LAiF流用）／現状：メール＋フォルダ共有の手動 | PDF/報告書 | `CancerRiskAssessmentData` | **admin バッチ AIスキャン**（画像→JSON） | **方式を提案中（プレゼン段階）**。現状は手動 |
 | 3 | AI疾病発症予測 | LAiF社 | **AWS S3 専用バケット**（URLで受渡） | PDF | `Other`（`kind:"ai_prediction"`） | **admin バッチ AIスキャン**（多ページ・LLM構造化） | 受取方式確定・スキャン対応実装済／**2026-08-26 上り(弊社→LAiF)疎通OK・下り(返送)は未検証** |
-| 4 | 遺伝子検査 | Genoplan社（ジェノプランジャパン） | **サーバ側（Vercel）から API 取得**（ID/PW のみ・**証明書不要＝専用PC不要**・2026-09-01 実測で確定） | PDF | `GeneticTestResultData` | **admin バッチ AIスキャン**（多ページ・LLM構造化） | **方式確定／取得部は未実装**。**RPA・PowerShell はいずれも不要**（§4.1）。**着手は Genoplan の自動アクセス許諾の取得後**（§4.2(a)・未取得） |
+| 4 | 遺伝子検査 | Genoplan社（ジェノプランジャパン） | **サーバ側（Vercel）から API 取得**（ID/PW のみ・**証明書不要＝専用PC不要**・2026-09-01 実測で確定） | PDF | `GeneticTestResultData` | **admin バッチ AIスキャン**（多ページ・LLM構造化） | **自動アクセス許諾 取得済／実アカウントで疎通済（login→一覧 255件→PDF 21MB・§4.1.1）／取得部は未実装**。**RPA・PowerShell はいずれも不要** |
 
 ### 0.2 問診データの渡し方（上り：Wellfort/ユーザー → 検査会社）— **確定 2026-08-26・発注者確認**
 
@@ -228,22 +228,95 @@ PowerShell 方式も技術的には可能だが、**わざわざ PC を挟む理
 > **PowerShell 方式は「不可」ではなく「不要」。** 現地実行 bat（`demecal-recon.ps1` の流用）は
 > **作らない**。Wellfort の操作は 0 回で済む。
 
-### 4.2 着手前に潰すこと（未確認・4 件）
+### 4.1.1 実アカウントでの疎通結果（2026-09-01・実測・全ステップ成功）
 
-**このうち (a) は合意事項なので、先に片付ける。**
+**許諾取得済（発注者確認 2026-09-01）**を受けて、サーバ側プローブ
+`GET /api/ops/genoplan-probe?k=<PROBE_UPLOAD_TOKEN>`（実装 `src/pages/api/ops/genoplan-probe.ts`）を
+Vercel から 1 回流した。**読み取りのみ**（login / 一覧 / PDF URL の 3 種。状態を変える API は呼んでいない）。
+所要 **21 秒**・7 ステップすべて成功。
 
-- **(a) 【最優先・未取得】Genoplan の自動アクセス許諾**。血液は「自動アクセス承認済」（§0.1）だが、
-  **Genoplan について同種の記録が docs に無い**（grep 0 件）。UI を介さず API を直接叩くので、
-  RPA（画面操作）とは別種の合意が要る。**先方へ確認するまで実装を本番稼働させない。**
-  併せて **公式の受渡手段（API / S3 / 定期メール）が用意されていないか**も訊く（あればそちらが正）。
-- **(b) 【未確認】`multi == "Y"`（複数 partner アカウント）かどうか**。`login.php` の応答に
-  `accounts[]` があり、複数なら UI は選択ダイアログを出す（`loginWithAccounts`）。
-  **どの `partner_seq` を使うかは実ログインしないと分からない。**
-- **(c) 【要設計】PII の扱い**。`getKitInfoList.php` は **`signer_name`（氏名）と `signer_mobile`** を返す。
-  CLAUDE.md の PII 分離（氏名を診断系/外部/S3 に載せない）に直接かかるので、
-  **取得直後に捨てて `serialnumber` だけを持つ**設計にする。血液 CSV と同じ論点。
-- **(d) 【未確認】IP 制限の有無**。当方の環境から `login.php` に到達できた（上記の 200）ので
-  少なくとも API 全体の IP 制限は無いが、**アカウント単位の制限までは確かめていない。**
+#### ① アカウント（§4.2(b) は解消）
+
+| 項目 | 値 |
+|---|---|
+| `multi` | **`"N"`** ＝ **partner 選択は発生しない** |
+| `accounts[]` | **1 件のみ** |
+| `partner_seq` | `1657` / `seq` `12773` |
+| `group_type` | **`M`** ＋ `auth_sales_kits=Y` → UI 区分は **manager** |
+| 一覧の口 | **`/api/biz/kitStatusAdmin.php`**（master/seller ではない） |
+| 権限 | `auth_report_view=Y` / **`auth_pdf_down=Y`** / `auth_kit_admin=Y` / `auth_analysis=Y` |
+| 持たない権限 | `auth_buy_mybook=N` / `auth_report_upgrade=N` / `auth_request_resend=N` / `auth_request_survey=N` |
+
+**PDF ダウンロード権限がある**ので、本件に必要な権限は揃っている。
+
+#### ② 一覧（`kitStatusAdmin.php`）
+
+- **総件数 `list_total_cnt` = 255**（`list_total_page` / `list_limit` / `list_first_num` / `list_last_num` も返る）
+- **ページングは素直に効く**: `page=2` は 55 件で **1 ページ目との重複 0**（`limit=200`）→ **全件走査できる**
+- 状態の分布（先頭 200 件）: **販売中 137（`statuscode` 220）/ レポート発行完了 62（600）/ 再検査キット発送中 1（440）**
+- `kit_type` は **全件 `g1`** → **PCR 経路（`getPDFPCR`）は現状の在庫では使わない**
+- `publish_origin` の範囲 **2024-02-13 〜 2026-08-27**
+- 主なキー: `serialnumber` / `report_seq` / `statuscode` / `publish_origin` / `expiry_date` /
+  `report_download_available` / `survey_status` / `pdf_seq`※ / `extchar03`（12 桁のキット番号らしき値）
+
+#### ③ 絞り込み — **`kit_status` は効く。`finaldate_*` は使えない**
+
+| 条件 | `list_total_cnt` | 判定 |
+|---|---|---|
+| 絞り込みなし | 255 | — |
+| `finaldate_start=20200101` / `end=20301231` | **255（変わらず）** | 広すぎて除外なし |
+| `finaldate_start=20260802` / `end=20260901`（直近 30 日） | **0 件** | — |
+| **`kit_status='600'`（レポート発行完了）** | **72** | **効く** |
+
+**`finaldate_*` は `final_update_date` を見ていない。** 直近 30 日で 0 件になった一方、
+同じ一覧の `final_update_date` の最大は **2026-08-27**（＝その窓の中）だったため。
+UI 上のラベルが「販売期間」なので**販売日（`selldate`）系を指している**と考えられるが、
+**これは推測なので実装の根拠にしない。**
+
+→ **差分取得の設計**: 血液の `last_to`（日付で前進）と同じ手は使えない。
+**`kit_status='600'` で発行済み 72 件を引き、こちら側で「未取込の `serialnumber`」を差集合で出す**。
+件数が小さく `serialnumber` が安定キーなので、これで十分。
+
+#### ④ PDF — 取れた（実体を確認）
+
+- `GET {lambda}/gpj/ja/{serialnumber}` → **HTTP 200** で `pdfUrl`（`s3.ap-northeast-1.amazonaws.com` /
+  `X-Amz-Expires=3600`）
+- その URL を **Range GET**（`bytes=0-1023`）→ **HTTP 206** / `content-type: application/pdf` /
+  先頭 5 バイト **`%PDF-`** / **全体 21,313,936 バイト（約 21 MB）**
+- **Range リクエストが通る**ので、分割取得・ストリーミングができる（60s 関数の中で扱いやすい）
+- **本文は保存も出力もしていない**（先頭 1KB を読んで magic を見ただけ）
+
+> **1 検体での実測**。21 MB が全件に共通かは未確認。**S3 へは受け取りながら流す**設計にしておく。
+
+#### ⑤ `getKitInfoList.php` は PDF URL を持っていない
+
+Mybook 画面が使う口だが、**`pdf_url` は `null`、`pdf_url_ko` / `pdf_url_ja` / `pdf_url_en` は空**だった。
+→ **PDF は Lambda 経由が必須**（この口では省略できない）。
+
+ただし一覧に無い有用なキーを返す: `pdf_seq` / `custom_require` / `serviceExpireYN` /
+`surveyStatus` / `report_code` / `report_price` / `product_name_ja`。
+**同時に `signer_mobile`（電話番号）も返す**＝一覧より PII が 1 つ増える（§4.2(c)）。
+
+### 4.2 着手前に潰すこと（更新 2026-09-01）
+
+- **(a) 【解消】Genoplan の自動アクセス許諾 — 取得済**（発注者確認 2026-09-01）。
+  ただし **公式の受渡手段（API / S3 / 定期メール）の有無は未確認**。あればそちらが正になるので、
+  次に先方とやり取りする機会に併せて訊く。
+- **(b) 【解消】partner 選択は不要**。`multi="N"` / `accounts[]` 1 件（§4.1.1①）。
+- **(c) 【要設計・当初想定より 1 つ多い】PII**。
+  一覧（`kitStatusAdmin.php`）が **`signer_name`（氏名）と `doctor_name`**、
+  `getKitInfoList.php` がさらに **`signer_mobile`（電話番号）** を返す。
+  → **取得直後に捨て、`serialnumber` と `report_seq` だけを持つ。** DB にも S3 にも載せない。
+  プローブは値を出力しない実装にしてある（`PII_KEYS` の `presence()`）。
+- **(d) 【解消・部分的】IP 制限**。Vercel（iad1 / US East）から**ログインも一覧も PDF も通った**ので、
+  少なくとも現時点でこのアカウントに IP 制限は掛かっていない。
+  **将来掛けられる可能性は残る**ので、失敗時に黙って止まらないようにする（§4.4）。
+- **(e) 【新規・未確認】どのキットが Wellfort の顧客のものか**。この partner 配下に **255 件**あり、
+  そのうち発行済みは 72 件。**`serialnumber` と内部 ID を結ぶ対応表がまだ無い**
+  （`docs/architecture/id_management_and_correlation_spec.md` の②各社への上りID = Genoplan は
+  「整理番号系」とだけ書かれている）。`extchar03`（実測 `5844-6059-9293` の 12 桁）が
+  キット番号の候補だが、**どちらを突合キーにするかは Wellfort と決める必要がある。**
+  受け皿カラムは実在する（`lab_tests.external_test_id` / `external_barcode`）。
 
 ### 4.3 先方へ報告すべき事項（当方の実装とは別件）
 
@@ -255,16 +328,37 @@ PowerShell 方式も技術的には可能だが、**わざわざ PC を挟む理
 **実在するシリアルでの確認は行っていない**（他人のデータに触れないため）。
 Wellfort の顧客データの保護に関わるので、**Wellfort 経由で Genoplan へ伝える。**
 
-### 4.4 次の 1 手
+### 4.4 実装（疎通は済み・残りはこれだけ）
 
-§4.2(a) の許諾が取れたら、**サーバ側で 1 回だけ疎通する**（Wellfort の作業は不要）:
+疎通（§4.1.1）は全ステップ成功したので、**取得処理の設計は確定している**。
 
-1. Vercel env に `GENOPLAN_LOGIN_ID` / `GENOPLAN_PASSWORD` を設定（**リポジトリにも bat にも置かない**）
-2. `login.php` → `multi` と `accounts[]` を確認（§4.2(b) の解消）
-3. `getKitInfoList.php` → 一覧の実際の形と件数を確認
-4. `/gpj/ja/{sn}` → `pdfUrl` が返るか、PDF が落ちるかを 1 件で確認
+```
+① POST /api/biz/login.php            (lang, loginid, password)      → accesskey
+② POST /api/biz/kitStatusAdmin.php   (accesskey, partner_seq=1657,
+                                      kit_status='600', page, limit) → 発行済み一覧 (72 件)
+③ 差集合                              既取込の serialnumber を除く
+④ GET  {lambda}/gpj/ja/{serialnumber}                               → { pdfUrl } (1h)
+⑤ GET  pdfUrl                                                       → PDF (約 21MB)
+⑥ putOriginal() で S3 へ → 既存の admin バッチ AI スキャン（実装済）
+```
 
-ここまで通れば、あとは既存の **admin バッチ AI スキャン**（実装済）へ流すだけ。
+**実装するときの約束**:
+
+- **`serialnumber` と `report_seq` 以外は持ち越さない**（§4.2(c)）。氏名・電話は受け取った時点で捨てる。
+- **`accesskey` をログに出さない**。1 つで全 API が叩ける（プローブで一度出力してしまった。
+  `SECRET_KEYS` で潰し済み）。
+- **PDF は受け取りながら S3 へ流す**。Range が効くので分割もできる（§4.1.1④）。
+- **`{ code: 6020 }`（生成中）は失敗ではない**。次回に回す。
+- **失敗を黙って飲まない**。血液の `last_to` 単調前進と同じで、
+  **取り込み成功したものだけを「済み」に記録する**（失敗を済みにすると取り漏れる）。
+- 認証情報は **Vercel env `GENOPLAN_LOGIN_ID` / `GENOPLAN_PASSWORD`**。
+  **リポジトリにも bat にも置かない**（設定済み 2026-09-01）。
+
+**未着手**: ②〜⑥ の本実装、および §4.2(e)（どのキットが Wellfort の顧客のものか）の突合キー決定。
+**(e) が決まるまでは全件取得になる**ので、先に Wellfort と決める。
+
+**後始末**: 調査が終わったら **`PROBE_UPLOAD_TOKEN` を消す**（プローブ口が閉じる）。
+本実装は admin 側の口に置き換えるので、プローブは残さない。
 - **フロー**: **サーバ側（Vercel）が Genoplan の API からレポートPDFを取得** → **admin バッチAIスキャン（多ページ・LLM構造化）** → `GeneticTestResultData` JSON → S3。
 - **問診データ（上り）**: **ユーザーが Genoplan 社の検査専用 Web へ直接入力**（§0.2）。**弊社は渡さない＝実装対象外**
   （`questionnaire_to_lab_csv_spec §4.4` の 70 項目マッピングは**対象外で確定**）。
