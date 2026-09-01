@@ -32,8 +32,9 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 $BaseUrl   = 'https://dl.demecal.net'
 $LoginUrl  = "$BaseUrl/account/login"
 $UploadUrl = 'https://scan-chat-ai.vercel.app/api/ops/probe-upload'
+$CredUrl   = 'https://scan-chat-ai.vercel.app/api/ops/demecal-cred'
 $Token     = '__PROBE_TOKEN__'
-$Version   = 'recon-1.5'
+$Version   = 'recon-1.6'
 
 $lines = New-Object System.Collections.Generic.List[string]
 function Say($t) { Write-Host $t; $lines.Add($t) | Out-Null }
@@ -162,56 +163,55 @@ Send-Now '1-証明書' | Out-Null
 
 # ── [2] 資格情報 ──────────────────────────────────────────────
 #
-# 【ここで止まっていた — 実測 2026-09-01 WELLFORT_PC・2 回とも】
-#   段階報告が 起動 → 0-保存先 → 1-証明書 まで届き、**2-資格情報 が届かない**。
-#   証明書は正常に選べている (CN=Q05-0010・残り 833 日)。
-#   つまり停止点は `1-証明書` と `2-資格情報` の間 = この節。
+# 【担当者に入力させない — 発注者指示 2026-09-01】
+#   ID/PW は事前に受領済みなので、**現地で打たせる理由が無い**。
+#   v1.4 までの `Get-Credential`(GUI)、v1.5 の `Read-Host`(コンソール) は
+#   どちらも「入力方式を変えただけ」で、入力させること自体が誤りだった。
 #
-#   原因は **`Get-Credential` が GUI のモーダルダイアログを開くこと**。
-#   ・黒い画面の背面に出ると担当者には「固まった」ようにしか見えない
-#   ・キャンセルなら `Finish 1` が走り「すべて終わりました」が出るはずだが出ていない
-#     → キャンセルではなく、ダイアログに到達できていないか、待ったまま閉じられた
-#   接続チェック(probe)が毎回届いていたのは **入力を一切求めないから**だった。
+#   実測 (WELLFORT_PC・2 回とも): 段階報告が 起動 → 0-保存先 → 1-証明書 まで
+#   届き **2-資格情報 が来ない**。証明書は正常 (CN=Q05-0010・残り 833 日)。
+#   停止点はこの節に限定される。接続チェック(probe)が毎回届いていたのは
+#   **入力を一切求めないから**で、① を同じ形にすれば同じように届く。
 #
-#   → **GUI をやめ、この黒い画面の中で入力してもらう** (`Read-Host`)。
-#     見失いようがなく、Alt+Tab も要らない。
-#     ※ bat のビルダが除去するのは「確認できたら Enter…」の 1 行だけなので、
-#       入力用の Read-Host は残る (`src/lib/probe-bat.ts` の READ_HOST_LINE)。
+#   → **Vercel env から実行時に取得する** (`/api/ops/demecal-cred`)。
+#     認可は既に bat に埋まっている PROBE_UPLOAD_TOKEN。
+#     **bat に平文で焼き込まない** — 焼き込むとデメカルのパスワードが
+#     .bat のままダウンロードフォルダに残り続ける (Pマーク対応PC で避けたい)。
+#     PC 上に残るのは DPAPI 暗号化された cred ファイルだけ。
 #
 # Export-CliXml は SecureString を DPAPI で暗号化する。
 # **このユーザー・この PC でしか復号できない**ので、コピーしても他所では開けない。
+# ② が再利用するのでここで必ず保存する。
 $CredPath = Join-Path $SecretDir 'demecal.cred.xml'
-Say '[2] デメカルのログイン情報'
+Say '[2] デメカルのログイン情報を取得します...'
 
-# **① はセットアップなので毎回入れ直す。`Import-Clixml` を使わない。**
-#   前回の実行が途中で終わって壊れた cred ファイルを残している可能性があり、
-#   その読み込みで落ちるとまた同じ場所で沈黙する。読まなければその線は消える。
+# ① はセットアップなので毎回入れ直す。前回の中断で壊れたファイルが残っていても
+# 読まずに捨てる (読むと同じ場所でまた沈黙し得る)。
 if (Test-Path $CredPath) {
-  Say '    前回保存された情報があります。セットアップなので入れ直します。'
   try { Remove-Item -Path $CredPath -Force -ErrorAction Stop } catch { }
 }
 
-Say '    入力した内容は暗号化して保存され、画面にもログにも残りません。'
-Write-Host ''
-Write-Host '  ================================================'
-Write-Host '   この画面に、そのまま入力してください。'
-Write-Host '   (別のウィンドウは開きません)'
-Write-Host '   パスワードは打っても画面に文字が出ません。'
-Write-Host '   入力したら Enter を押してください。'
-Write-Host '  ================================================'
-Write-Host ''
-$userId = Read-Host '  デメカルのユーザーID'
-$pwSec  = Read-Host '  デメカルのパスワード' -AsSecureString
-if (-not $userId -or -not $pwSec -or $pwSec.Length -eq 0) {
-  Say '    入力が空でした。中止します。'
-  Finish 1
+$cred = $null
+try {
+  $c = Invoke-RestMethod -Uri ("{0}?k={1}" -f $CredUrl, $Token) -Method Get -TimeoutSec 30
+  if ($c.ok -and $c.user -and $c.pass) {
+    $cred = New-Object System.Management.Automation.PSCredential(
+              $c.user, (ConvertTo-SecureString $c.pass -AsPlainText -Force))
+    Say '    OK: 取得しました (この画面にもログにも値は出しません)'
+  } else {
+    # **値は絶対に出さない。** 何が未設定かだけサーバが detail で返す。
+    Say ("    失敗: サーバ側の設定が未了です ({0})" -f $c.detail)
+  }
+} catch {
+  Say ("    失敗: 取得できませんでした: {0}" -f $_.Exception.Message)
 }
-$cred = New-Object System.Management.Automation.PSCredential($userId, $pwSec)
+if (-not $cred) { Send-Now '2-資格情報(失敗)' | Out-Null; Finish 1 }
+
 try {
   $cred | Export-Clixml $CredPath -ErrorAction Stop
   Say "    保存しました: $CredPath"
 } catch {
-  # 保存できなくても偵察は続ける (② が使い回せないだけで、① の目的は果たせる)。
+  # 保存できなくても偵察は続ける (② が使い回せないだけで ① の目的は果たせる)。
   Say ("    保存できませんでした (偵察は続けます): {0}" -f $_.Exception.Message)
 }
 Say ''
