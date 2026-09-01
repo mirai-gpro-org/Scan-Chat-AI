@@ -18,11 +18,35 @@
 """
 import argparse
 import pathlib
+import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PS_PATH = ROOT / 'scripts' / 'demecal-probe.ps1'
-OUT_PATH = ROOT / 'scripts' / 'デメカル接続チェック.bat'
+
+
+def script_version(ps: str) -> str:
+    """`.ps1` の `$Version = 'probe-1.0'` を読む。**配布ファイル名に入れるため**。
+
+    ファイル名が版によらず同じだと、Wellfort 側は手元の古い bat と新しい bat を
+    見分けられない (実測 2026-09-01: 「初回セットアップを実行した」と連絡を受けたが
+    実行ログに届いていたのは接続チェックだけ、という切り分けの効かない状況になった)。
+    版が読めなければ**落とす** — 無言で版なしの名前を配ると、付いていないのが
+    「古いから」なのか「付け忘れ」なのか区別できなくなる。
+    サーバ側の同等処理は `src/pages/api/ops/probe-bat.ts` の `readScriptVersion`。
+    """
+    m = re.search(r"^\s*\$Version\s*=\s*'([^']+)'", ps, re.M)
+    if not m:
+        raise SystemExit('ERROR: $Version が .ps1 に見つかりません')
+    v = m.group(1).strip()
+    if not re.fullmatch(r'[A-Za-z0-9._-]+', v):
+        raise SystemExit(f'ERROR: $Version の書式が不正: {v}')
+    return v
+
+
+def default_out(ps: str) -> pathlib.Path:
+    num = script_version(ps).split('-')[-1]
+    return ROOT / 'scripts' / f'デメカル接続チェック_v{num}.bat'
 
 
 def build(token: str | None, out: pathlib.Path) -> int:
@@ -73,9 +97,10 @@ def build(token: str | None, out: pathlib.Path) -> int:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--token', help='Vercel env PROBE_UPLOAD_TOKEN と同値。省略で送信なし版')
-    ap.add_argument('--out', default=str(OUT_PATH))
+    ap.add_argument('--out', help='既定は .ps1 の $Version から組む (例 デメカル接続チェック_v1.0.bat)')
     a = ap.parse_args()
-    sys.exit(build(a.token, pathlib.Path(a.out)))
+    out = pathlib.Path(a.out) if a.out else default_out(PS_PATH.read_text(encoding='utf-8'))
+    sys.exit(build(a.token, out))
 
 
 if __name__ == '__main__':

@@ -3,7 +3,7 @@
  *
  * 用途: 専用PC など**こちらから触れない端末**で実行した診断スクリプトの結果を、
  *       メール添付を待たずに回収する。第一の利用者は
- *       `scripts/デメカル接続チェック.bat` (docs/lab/demecal_powershell_probe_guide.md)。
+ *       `scripts/デメカル接続チェック_v*.bat` (docs/lab/demecal_powershell_probe_guide.md)。
  *
  * 設計方針 (2026-08-28・admin API が無認可で開いていた件を踏まえて):
  *   ・**既定 off の fail-closed**。env `PROBE_UPLOAD_TOKEN` が設定されているときだけ動く。

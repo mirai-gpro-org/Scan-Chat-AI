@@ -1,5 +1,6 @@
 /**
- * 「デメカル接続チェック.bat」が Wellfort 側で実行されたかを**こちらから確認する**口。
+ * 現地実行の bat (接続チェック / 初回セットアップ) が Wellfort 側で実行されたかを
+ * **こちらから確認する**口。どの版が走ったかは report.txt の「版」行で分かる。
  *
  * 正本: `docs/lab/demecal_powershell_probe_guide.md` §「実行ログの回収」。
  *
