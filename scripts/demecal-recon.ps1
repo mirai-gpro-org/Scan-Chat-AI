@@ -33,93 +33,54 @@ $BaseUrl   = 'https://dl.demecal.net'
 $LoginUrl  = "$BaseUrl/account/login"
 $UploadUrl = 'https://scan-chat-ai.vercel.app/api/ops/probe-upload'
 $Token     = '__PROBE_TOKEN__'
-$Version   = 'recon-1.3'
+$Version   = 'recon-1.4'
 
 $lines = New-Object System.Collections.Generic.List[string]
 function Say($t) { Write-Host $t; $lines.Add($t) | Out-Null }
 
-# ── 報告 (どんな終わり方でも必ずここを通る) ─────────────────────
+# ── 報告 ────────────────────────────────────────────────────
 #
-# 【経緯 2026-09-01】recon は v1.0・v1.1 とも実行の連絡を受けたのに実行ログに 0 件だった。
-#   v1.1 を別 PC で実走させて **構文は正常・中止時の報告も届く**ことを実証済み。
-#   それでも専用PCからは届かないので、**残る沈黙経路を全部塞ぐ**のが v1.3 の目的。
-#     ① 想定外の terminating error で Finish に来ない  → trap で受ける
-#     ② Get-Credential が例外を投げる                  → try/catch
-#     ③ 送信が 1 回失敗しただけで諦める                → 3 回 + 別方式で再試行
-#     ④ 送信が落ちても理由が残らない                   → 例外文を画面と報告に出す
-#     ⑤ 保存先 C:\demecal\recon\ を見つけられない       → **デスクトップにも置く**
-#        (接続チェックはデスクトップ出力で実際に回収できている。報告は PII 非含有)
-
-# 送信は 2 方式・3 回まで試す。**「送れませんでした」で終わらせない。**
-# 方式を 2 つ持つのは、cmdlet 固有の問題 (プロキシ・TLS・シリアライズ) を切り分けるため。
-function Send-Report([string]$json) {
-  $errs = New-Object System.Collections.Generic.List[string]
-  for ($i = 1; $i -le 3; $i++) {
-    try {
-      Invoke-RestMethod -Uri $UploadUrl -Method Post -TimeoutSec 60 `
-        -Body ([Text.Encoding]::UTF8.GetBytes($json)) `
-        -ContentType 'application/json; charset=utf-8' `
-        -Headers @{ 'x-probe-token' = $Token } | Out-Null
-      return "ok (Invoke-RestMethod / {0} 回目)" -f $i
-    } catch { $errs.Add(("IRM#{0}: {1}" -f $i, $_.Exception.Message)) | Out-Null }
-
-    try {
-      $req = [Net.HttpWebRequest]::Create($UploadUrl)
-      $req.Method = 'POST'
-      $req.ContentType = 'application/json; charset=utf-8'
-      $req.Timeout = 60000
-      $req.Headers.Add('x-probe-token', $Token)
-      $b = [Text.Encoding]::UTF8.GetBytes($json)
-      $req.ContentLength = $b.Length
-      $st = $req.GetRequestStream(); $st.Write($b, 0, $b.Length); $st.Close()
-      $res = $req.GetResponse(); $res.Close()
-      return "ok (HttpWebRequest / {0} 回目)" -f $i
-    } catch { $errs.Add(("HWR#{0}: {1}" -f $i, $_.Exception.Message)) | Out-Null }
-
-    if ($i -lt 3) { Start-Sleep -Seconds 3 }
-  }
-  return "ng: " + ($errs -join ' | ')
+# 【なぜ「段階ごと」に送るのか — 2 本の比較で判明 2026-09-01】
+#   送信コードは接続チェック(probe)と**実質同一**(probe.ps1:168)。TLS/プロキシ等の
+#   グローバル状態も一致 (どちらも ErrorActionPreference=Continue / Tls12)。
+#   それでも probe は 8/31 に WELLFORT_PC から 3 回届き、recon は 0 回。
+#   **差は「送信までの距離」だけ**:
+#
+#     probe : 入力待ち 0 回 / 通信 2 回 / 数秒で送信に到達 (190 行中 168 行目)
+#     recon : Get-Credential のダイアログ 1 回 / 通信 最大 5 回 (各 30〜60 秒)
+#
+#   同じコードでも、**到達する前に窓を閉じられれば何も残らない**。
+#   probe は閉じる隙が無いから取りこぼさなかっただけ。
+#   → 距離を無くす。**段階ごとに送れば、どこで止まってもそこまでが必ず届く。**
+function Send-Now([string]$stage) {
+  if ($Token -eq ('__PROBE' + '_TOKEN__')) { return $false }
+  try {
+    $payload = @{
+      report = (($lines -join "`r`n") + "`r`n`r`n---- ここまでが段階 [$stage] 時点の内容です ----")
+      label  = 'demecal-recon'
+      host   = $env:COMPUTERNAME
+    } | ConvertTo-Json -Compress
+    Invoke-RestMethod -Uri $UploadUrl -Method Post -TimeoutSec 20 `
+      -Body ([Text.Encoding]::UTF8.GetBytes($payload)) `
+      -ContentType 'application/json; charset=utf-8' `
+      -Headers @{ 'x-probe-token' = $Token } | Out-Null
+    return $true
+  } catch { return $false }   # 送信は本処理の前提ではない。落ちても続ける。
 }
 
 function Finish($code) {
-  $report = ($lines -join "`r`n")
+  $dir = if ($script:ReconDir -and (Test-Path $script:ReconDir)) { $script:ReconDir } else { $env:TEMP }
+  $reportPath = Join-Path $dir 'demecal_recon_report.txt'
+  try { Set-Content -Path $reportPath -Value ($lines -join "`r`n") -Encoding UTF8 } catch { }
 
-  # 置き場は 2 つ。**デスクトップを必ず含める。**
-  #   C:\demecal\recon\ は今回初めて使うフォルダで「どこ？」になりやすい。
-  #   接続チェックはデスクトップに出していて実際に回収できている実績がある。
-  #   報告に PII は入らない (ページ本文・hidden 値・CSV データ行を出さない設計)。
-  $paths = New-Object System.Collections.Generic.List[string]
-  $dirs  = New-Object System.Collections.Generic.List[string]
-  if ($script:ReconDir -and (Test-Path $script:ReconDir)) { $dirs.Add($script:ReconDir) | Out-Null }
-  try { $d = [Environment]::GetFolderPath('Desktop'); if ($d) { $dirs.Add($d) | Out-Null } } catch {}
-  if ($dirs.Count -eq 0) { $dirs.Add($env:TEMP) | Out-Null }
-  foreach ($d in $dirs) {
-    try {
-      $f = Join-Path $d 'demecal_recon_report.txt'
-      Set-Content -Path $f -Value $report -Encoding UTF8
-      $paths.Add($f) | Out-Null
-    } catch { }
-  }
-
-  $sent = if ($Token -ne ('__PROBE' + '_TOKEN__')) {
-    Write-Host ''
-    Write-Host '結果を送信しています... (最大 3 回試します)'
-    Send-Report (@{ report = $report; label = 'demecal-recon'; host = $env:COMPUTERNAME } | ConvertTo-Json -Compress)
-  } else { 'ng: 自動送信が無効な版です' }
-
+  $ok = Send-Now 'final'
   Write-Host ''
   Write-Host '=================================================='
-  if ($sent -like 'ok*') {
-    Write-Host " 送信できました。 [$sent]"
-    Write-Host ' 担当者側で確認できます。このまま閉じて構いません。'
-  } else {
-    # **失敗の理由を必ず残す。** 「送れませんでした」だけだと次に何を調べるか決められない。
-    Write-Host ' 送信できませんでした。お手数ですが下のファイルをメールでお送りください。'
+  Write-Host '  すべて終わりました。この画面を閉じて構いません。'
+  if (-not $ok) {
     Write-Host ''
-    foreach ($f in $paths) { Write-Host "   $f" }
-    Write-Host ''
-    Write-Host ' --- 担当者向け (送信エラーの内容) ---'
-    Write-Host " $sent"
+    Write-Host '  ※ 送信できませんでした。下のファイルをメールでお送りください。'
+    Write-Host "     $reportPath"
   }
   Write-Host '=================================================='
 
@@ -127,40 +88,24 @@ function Finish($code) {
   exit $code
 }
 
-# 想定外の terminating error を受け止める。**ここが無いと Finish に来ないまま死ぬ。**
-# [4] の form 解析・[5] のドライランは個別 try/catch を持つが、
-# 「持たせ忘れた 1 箇所」で全部が沈黙するのは今回の件で懲りたので網を張る。
-trap {
-  Say ''
-  Say ("予期しないエラーで中断しました: {0}" -f $_.Exception.Message)
-  Say ("  発生位置: {0}" -f $_.InvocationInfo.PositionMessage)
-  Finish 9
-}
+Say '=================================================='
+Say ' デメカル 初回セットアップ＆偵察'
+Say (" 実行日時 : {0}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
+Say (" PC名     : {0}" -f $env:COMPUTERNAME)
+Say (" 版       : {0}" -f $Version)
+Say '=================================================='
+Say ''
 
-# ── 起動の合図 ────────────────────────────────────────────────
-# **「走ったこと」だけを先に送る。**
-#
-# 【なぜ要るか — 実測 2026-09-01】recon は v1.0・v1.1 とも実行の連絡を受けたのに
-#   実行ログAPI に 1 件も届かなかった。届かない理由が
-#     ①そもそも起動していない ②起動したが途中で落ちた ③送信だけ失敗した
-#   のどれなのかを区別できず、毎回 Wellfort に確認することになる。
-#   → **最初に 1 回だけ合図を送る**ことで、少なくとも ① と ②③ を分ける。
-#   これが届いて本報告が届かなければ「起動はした・途中で落ちた」と確定する。
-#
-# 失敗しても**絶対に止めない** (合図は診断用で、本処理の前提ではない)。
-if ($Token -ne ('__PROBE' + '_TOKEN__')) {
-  try {
-    $hello = @{
-      report = ("起動しました`r`n 版: {0}`r`n PC名: {1}`r`n 時刻: {2}" -f `
-                $Version, $env:COMPUTERNAME, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
-      label  = 'demecal-recon-start'
-      host   = $env:COMPUTERNAME
-    } | ConvertTo-Json -Compress
-    Invoke-RestMethod -Uri $UploadUrl -Method Post -TimeoutSec 30 `
-      -Body ([Text.Encoding]::UTF8.GetBytes($hello)) `
-      -ContentType 'application/json; charset=utf-8' -Headers @{ 'x-probe-token' = $Token } | Out-Null
-  } catch {}
-}
+# **窓を閉じられると全部消える**のが v1.1 までの弱点だった (上記の比較)。
+# 段階ごとの送信で保険を掛けたうえで、閉じない理由を最初にはっきり伝える。
+Write-Host '  ------------------------------------------------'
+Write-Host '  この画面は自動では閉じません。'
+Write-Host '  「すべて終わりました」と出るまで閉じないでください。'
+Write-Host '  3〜5 分かかります。途中、画面が止まって見える時間が'
+Write-Host '  ありますが、通信の待ち時間です。そのままお待ちください。'
+Write-Host '  ------------------------------------------------'
+Write-Host ''
+Send-Now '起動' | Out-Null
 
 # ── [0] 保存先 ────────────────────────────────────────────────
 # デスクトップは OneDrive 同期対象 (実測)。PII を含む CSV をそこへ置かないため、
@@ -168,11 +113,16 @@ if ($Token -ne ('__PROBE' + '_TOKEN__')) {
 Say '[0] 保存先を用意します...'
 $Root = 'C:\demecal'
 try {
-  if (-not (Test-Path $Root)) { New-Item -ItemType Directory -Path $Root -Force | Out-Null }
+  # **`-ErrorAction Stop` が要る。** 無いと New-Item の失敗は非終了エラーになり
+  # catch が発火しない = $Root が C:\demecal のまま先へ進み、作れていないのに
+  # 「OK: C:\demecal」と表示される (probe との比較で発覚 2026-09-01)。
+  # C: 直下は一般ユーザー権限だと作れないことがある。
+  if (-not (Test-Path $Root)) { New-Item -ItemType Directory -Path $Root -Force -ErrorAction Stop | Out-Null }
 } catch {
   $Root = Join-Path $env:LOCALAPPDATA 'demecal'
-  if (-not (Test-Path $Root)) { New-Item -ItemType Directory -Path $Root -Force | Out-Null }
+  if (-not (Test-Path $Root)) { New-Item -ItemType Directory -Path $Root -Force -ErrorAction SilentlyContinue | Out-Null }
 }
+if (-not (Test-Path $Root)) { Say "    中止: 保存先を作れませんでした ($Root)"; Finish 1 }
 if ($Root -match 'OneDrive') {
   Say "    中止: 保存先が OneDrive 配下です ($Root)。同期されるため使えません。"
   Say '    担当者へご連絡ください。'
@@ -183,6 +133,7 @@ $ReconDir  = Join-Path $Root 'recon'
 foreach ($d in @($SecretDir, $ReconDir)) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null } }
 Say "    OK: $Root"
 Say ''
+Send-Now '0-保存先' | Out-Null
 
 # ── [1] 証明書 ────────────────────────────────────────────────
 # CN をベタ書きしない (証明書更新で変わりうる)。発行者と秘密鍵の有無で絞る。
@@ -207,6 +158,7 @@ if (-not $cert) {
   Finish 1
 }
 Say ''
+Send-Now '1-証明書' | Out-Null
 
 # ── [2] 資格情報 ──────────────────────────────────────────────
 # Export-CliXml は SecureString を DPAPI で暗号化する。
@@ -220,15 +172,18 @@ if (Test-Path $CredPath) {
 } else {
   Say '    初回のみ入力をお願いします。入力した内容は暗号化して保存され、'
   Say '    画面にもログにも残りません。'
-  # ダイアログが出せない環境で例外になり得る。**投げっぱなしにしない。**
-  $cred = $null
-  try { $cred = Get-Credential -Message 'デメカル (dl.demecal.net) のユーザーID とパスワード' }
-  catch { Say ("    入力画面を出せませんでした: {0}" -f $_.Exception.Message); Finish 1 }
+  Write-Host ''
+  Write-Host '  >>> ID とパスワードの入力欄が「別のウィンドウ」で開きます。'
+  Write-Host '      この黒い画面の後ろに隠れることがあります。'
+  Write-Host '      見当たらないときは タスクバー か Alt+Tab で探してください。'
+  Write-Host ''
+  $cred = Get-Credential -Message 'デメカル (dl.demecal.net) のユーザーID とパスワード'
   if (-not $cred) { Say '    入力がキャンセルされました。'; Finish 1 }
   $cred | Export-Clixml $CredPath
   Say "    保存しました: $CredPath"
 }
 Say ''
+Send-Now '2-資格情報' | Out-Null
 
 # ── [3] ログイン ──────────────────────────────────────────────
 # ASP.NET Core の antiforgery。GET で hidden トークンを取り、
@@ -270,6 +225,7 @@ try {
   Say ("    失敗: {0}" -f $_.Exception.Message)
 }
 Say ''
+Send-Now '3-ログイン' | Out-Null
 
 # ── [4] 偵察 ──────────────────────────────────────────────────
 # **本文は出さない。** form のメタデータだけを抜く。
@@ -361,6 +317,8 @@ if ($loggedIn) {
   Say '    ログインできていないので飛ばします。'
 }
 Say ''
+# **ここが本命。** form の action/name が取れていれば、以降で止まっても②が書ける。
+Send-Now '4-form採取' | Out-Null
 
 # ── [5] ドライラン ────────────────────────────────────────────
 # **結果が出ないはずの過去日付**で叩き、応答の形だけを見る。
