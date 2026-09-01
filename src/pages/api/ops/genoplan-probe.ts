@@ -38,6 +38,18 @@ const PII_KEYS = new Set([
   'store_name', 'address', 'birth', 'birthday',
 ]);
 
+/**
+ * 値を出してはいけないキー (**認証情報**)。PII とは別枠にする。
+ *
+ * 【実測 2026-09-01・初回実行で漏らした】`accounts[]` の各要素にも `accesskey` が入っており、
+ * PII しか見ていなかったため**フルの accesskey を出力してしまった**。
+ * `accesskey` は**これ 1 つで全 API が叩ける**ので PII より扱いが重い。
+ * `report_access_token` も同様 (レポート閲覧の token)。**キー名で機械的に潰す。**
+ */
+const SECRET_KEYS = new Set([
+  'accesskey', 'access_key', 'token', 'report_access_token', 'password', 'api_key',
+]);
+
 function env(name: string): string | undefined {
   const m = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.[name];
   if (m != null && m !== '') return m;
@@ -74,6 +86,8 @@ function maskSn(sn: unknown, full: boolean): string {
 function safeRow(row: Record<string, unknown>, full: boolean): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(row)) {
+    // 認証情報が先。PII より重い (1 つで全 API が叩ける)。
+    if (SECRET_KEYS.has(k)) { out[k] = presence(v); continue; }
     if (PII_KEYS.has(k)) { out[k] = presence(v); continue; }
     if (k === 'serialnumber' || k === 'sn') { out[k] = maskSn(v, full); continue; }
     if (v && typeof v === 'object') { out[k] = `<${Array.isArray(v) ? 'array' : 'object'}>`; continue; }
@@ -180,34 +194,154 @@ export const GET: APIRoute = async ({ url }) => {
       : accountType === 'manager' ? '/api/biz/kitStatusAdmin.php'
         : '/api/biz/kitStatusSeller.php';
 
-  let rows: Record<string, unknown>[] = [];
-  try {
+  /** 一覧を 1 ページ引く。paging / 日付フィルタの検証で使い回す。 */
+  async function fetchList(over: Record<string, unknown> = {}) {
     const body: Record<string, unknown> = {
       accesskey, partner_seq: partnerSeq, lang, page: 1, limit,
       // UI の既定と同じ「絞り込みなし」。日付を空にすると全期間。
       kit_status: '', keyword: '', keyword_type: '', finaldate_start: '', finaldate_end: '',
+      ...over,
     };
     if (accountType === 'master') body.mode = 'kitStatus';
     const r = await apiPost(listPath, body) as
       { success?: boolean; code?: string; message?: string; data?: Record<string, unknown> };
     const list = Array.isArray(r?.data?.list) ? r.data!.list as Record<string, unknown>[] : [];
+    return { r, list };
+  }
+
+  /** 値の分布 (件数の多い順)。**個々の行を出さずに全体像を見る**ため。 */
+  function tally(list: Record<string, unknown>[], key: string): Record<string, number> {
+    const m = new Map<string, number>();
+    for (const row of list) {
+      const k = String(row[key] ?? '<null>');
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return Object.fromEntries([...m.entries()].sort((a, b) => b[1] - a[1]));
+  }
+
+  let rows: Record<string, unknown>[] = [];
+  try {
+    const { r, list } = await fetchList();
     rows = list;
+    const dates = list.map((x) => String(x.publish_origin ?? '')).filter(Boolean).sort();
     steps.push({
       step: '2-list',
       ok: r?.success === true,
       note: `accountType=${accountType} endpoint=${listPath}` + (r?.success === true ? '' : ` code=${r?.code} message=${r?.message}`),
       detail: {
-        total: r?.data?.total ?? r?.data?.cnt ?? null,
+        // 総件数がどのキーに入るかは未知なので、`list` 以外の data キーをそのまま見せる。
+        data_keys_besides_list: Object.keys(r?.data ?? {}).filter((k) => k !== 'list'),
+        data_scalars: Object.fromEntries(
+          Object.entries(r?.data ?? {}).filter(([k, v]) => k !== 'list' && (v == null || typeof v !== 'object')),
+        ),
         returned: list.length,
         // 「どんなキーが返るか」が実装設計の要。1 行目のキー一覧を出す。
         keys: list[0] ? Object.keys(list[0]) : [],
-        // PII キーが実在するかを名指しで確認 (§4.2(c) の設計判断のため)。
+        // PII / 認証情報が実在するかを名指しで確認 (§4.2(c) の設計判断のため)。
         pii_keys_present: list[0] ? Object.keys(list[0]).filter((k) => PII_KEYS.has(k)) : [],
-        rows: list.slice(0, 5).map((x) => safeRow(x, full)),
+        secret_keys_present: list[0] ? Object.keys(list[0]).filter((k) => SECRET_KEYS.has(k)) : [],
+        // 全体像 (行を並べずに分布で見る)。
+        by_status: tally(list, 'status'),
+        by_statuscode: tally(list, 'statuscode'),
+        by_kit_type: tally(list, 'kit_type'),
+        by_report_download_available: tally(list, 'report_download_available'),
+        by_allow_report_view_yn: tally(list, 'allow_report_view_yn'),
+        by_update_type: tally(list, 'update_type'),
+        publish_origin_range: dates.length ? { min: dates[0], max: dates[dates.length - 1] } : null,
+        rows: list.slice(0, 3).map((x) => safeRow(x, full)),
       },
     });
   } catch (e) {
     steps.push({ step: '2-list', ok: false, note: String(e) });
+  }
+
+  // ── ②-b ページング ────────────────────────────────────
+  //
+  // **全件を引けるか**を決める。1 ページ目と 2 ページ目が別物なら paging は効いている。
+  try {
+    const { r, list } = await fetchList({ page: 2 });
+    const first1 = rows.map((x) => String(x.serialnumber ?? ''));
+    const first2 = list.map((x) => String(x.serialnumber ?? ''));
+    const overlap = first2.filter((s) => first1.includes(s)).length;
+    steps.push({
+      step: '2b-paging',
+      ok: r?.success === true,
+      note: list.length === 0 ? 'page=2 が空 (1 ページに収まっている可能性)' : undefined,
+      detail: {
+        page2_returned: list.length,
+        overlap_with_page1: overlap,
+        // 重なり 0 なら paging は素直に効いている = 全件走査ができる。
+        paging_works: list.length > 0 && overlap === 0,
+      },
+    });
+  } catch (e) {
+    steps.push({ step: '2b-paging', ok: false, note: String(e) });
+  }
+
+  // ── ②-c 日付フィルタ ──────────────────────────────────
+  //
+  // **無人運用の肝**。血液の `last_to` 単調前進と同じ「前回以降だけ引く」をやるには、
+  // サーバ側で日付を絞れる必要がある。絞れなければ毎回全件を引いて差分をこちらで取る。
+  try {
+    const to = new Date();
+    const from = new Date(to.getTime() - 30 * 24 * 3600 * 1000);
+    const ymd = (d: Date) => d.toISOString().slice(0, 10).replace(/-/g, '');
+    const { r, list } = await fetchList({ finaldate_start: ymd(from), finaldate_end: ymd(to) });
+    steps.push({
+      step: '2c-date-filter',
+      ok: r?.success === true,
+      note: `finaldate_start=${ymd(from)} finaldate_end=${ymd(to)} (UI と同じ yyyymmdd)`,
+      detail: {
+        returned: list.length,
+        unfiltered_returned: rows.length,
+        // 件数が減れば効いている。同じなら「30 日以内に全件が収まっている」可能性もあるので
+        // 断定せず、日付の範囲も併記して判断材料にする。
+        final_update_range: (() => {
+          const ds = list.map((x) => String(x.final_update_date ?? '')).filter(Boolean).sort();
+          return ds.length ? { min: ds[0], max: ds[ds.length - 1] } : null;
+        })(),
+      },
+    });
+  } catch (e) {
+    steps.push({ step: '2c-date-filter', ok: false, note: String(e) });
+  }
+
+  // ── ②-d getKitInfoList ────────────────────────────────
+  //
+  // Mybook 画面が使う口。**一覧に無い `pdf_url*` 系**を返すので、
+  // Lambda を経由せずここから URL が取れるなら経路が 1 本減る。
+  const firstSn = String(rows[0]?.serialnumber ?? '');
+  if (!firstSn) {
+    steps.push({ step: '2d-kitinfo', ok: false, note: '一覧が空のため未検証 (捏造しない)' });
+  } else {
+    try {
+      const r = await apiPost('/api/biz/getKitInfoList.php', {
+        accesskey, partner_seq: partnerSeq, lang, sn: [firstSn],
+      }) as { success?: boolean; code?: string; message?: string; data?: Record<string, unknown> };
+      const list = Array.isArray(r?.data?.list) ? r.data!.list as Record<string, unknown>[] : [];
+      steps.push({
+        step: '2d-kitinfo',
+        ok: r?.success === true,
+        note: r?.success === true ? undefined : `code=${r?.code} message=${r?.message}`,
+        detail: {
+          returned: list.length,
+          keys: list[0] ? Object.keys(list[0]) : [],
+          // 一覧 (kitStatusAdmin) に無いキーだけを見る = この口を使う価値があるか。
+          keys_not_in_list_endpoint: list[0] && rows[0]
+            ? Object.keys(list[0]).filter((k) => !Object.keys(rows[0]).includes(k))
+            : [],
+          // pdf_url 系が実際に埋まっているか (空なら Lambda 経由が必須)。
+          pdf_url_fields: list[0]
+            ? Object.fromEntries(Object.entries(list[0])
+              .filter(([k]) => k.startsWith('pdf_url'))
+              .map(([k, v]) => [k, presence(v)]))
+            : {},
+          row: list[0] ? safeRow(list[0], full) : null,
+        },
+      });
+    } catch (e) {
+      steps.push({ step: '2d-kitinfo', ok: false, note: String(e) });
+    }
   }
 
   // ── ③ PDF ────────────────────────────────────────────
