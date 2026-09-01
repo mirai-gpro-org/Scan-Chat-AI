@@ -398,11 +398,45 @@ API 実測（`list_total_cnt=255` / `kit_status='600'` → 72）と**完全に�
   **Workflow 2 のデメリット「`external_test_id` の OCR が必要」は Genoplan では発生しない** —
   **API が両 ID を構造化データで返す**ので OCR 不要。PDF 2 ページ目の印字は突合の裏取りに使える。
 
-  **残るのは運用工程だけ**で、これも既に登録済みの確認事項＝
-  `id_management_and_correlation_spec.md §7-3`「`external_test_id`/`external_barcode` の
-  **採番タイミング・スキャン工程・突合ルール**」の Genoplan 版。具体的には
-  **キット発送時に 認証キー／ボックスナンバー を控えて注文に結び付ける工程があるか**。
-  （同 §7-2「プリベント/Genoplan の上りID採番元」も同じ束）。
+  **残りは「当方の未実装」であって Wellfort への確認事項ではない**（発注者指摘 2026-09-01）。
+  **検査キットの出荷管理はこのシステムの機能**（`kit_lifecycle_and_handoff_management_spec.md`＝
+  タカセ出荷指示 → ライフサイクル管理 → 進捗駆動の受渡）なので、
+  **箱番号を控えて注文に結び付けるのは、こちらが実装すること**。
+
+  受け皿は揃っている:
+
+  ```
+  subscriptions → 出荷スケジュール → タカセ出荷指示CSV → customer.kit_shipments
+                                                            (order_id / customer_id / test_type / shipped_at)
+                                                                │ shipment_id
+  customer.lab_tests { diagnostic_user_id, external_test_id, external_barcode,
+                       workflow_used(1|2|3), assigned_by }
+  ```
+
+  `20260601000010_schemas_and_tables.sql` の `lab_tests` に
+  `external_test_id`（`unique (lab_company_id, external_test_id)` 付き）/ `external_barcode` /
+  `workflow_used` / `assigned_by` があり、**Workflow 2 はスキーマの段階で表現済み**。
+
+  **実際に欠けているもの（実測）**:
+
+  | 欠けているもの | 根拠 |
+  |---|---|
+  | `lab_tests` に行を作るコードが無い | `grep` で読み取り（`chat-context.ts:78` の `select`）のみ |
+  | Scan-Chat-AI から `customer` へ書けない | `supabase.ts:58` が `HP_BRIDGE_READONLY_KEY`＝読み取り専用。**書き込みは wellfort-site 側** |
+  | `kit_shipments` に個体 ID の列が無い | 同マイグレーションの列一覧（`tracking_no` はあるが物流用・個体IDではない） |
+  | タカセ出荷指示 CSV に個体 ID を戻す欄が無い | `kit_lifecycle §2-4`「タカセCSV様式（確定）＝現行様式を踏襲」 |
+
+  **`id_management_and_correlation_spec.md §7-3`「採番タイミング・スキャン工程」がそのまま未実装。**
+  ただし §5 の想定フロー「出荷時に `external_barcode` を**印字/貼付**」は Genoplan では当てはまらない —
+  **ボックスナンバーは Genoplan が箱に印字済み**なので、こちらは**出荷時に読む**ことになる。
+
+  **実装の形**: ①wellfort-site が出荷実績登録でボックスナンバーを受け `kit_shipments`（列追加）と
+  `lab_tests` へ書く ②Scan-Chat-AI は取得済み PDF の manifest を引き当て API として出し、
+  `external_barcode` → `shipment_id` → `diagnostic_user_id`（**二重照合＝識別子＋検査日＋検査機関名**）
+  ③一致しない分は `workflow_used=3`（人手承認）。**氏名からの推測割当はしない。**
+
+  **外部に依存するのは 1 点だけ** = **タカセ倉庫が出荷実績としてボックスナンバーを返せるか**
+  （現行 CSV に欄が無いため様式追加か別経路が要る）。**Wellfort ではなくタカセ側の運用確認。**
 
   なお **partner 配下の 255 件はすべて Wellfort のキット**（画面の「キット販売現況」と API の
   `list_total_cnt` が一致）なので、他社分を除外する処理は要らない。
