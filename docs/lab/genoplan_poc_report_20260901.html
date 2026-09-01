@@ -1,0 +1,321 @@
+<!doctype html>
+<!--
+  遺伝子検査(Genoplan) 自動取得 実証テスト報告 — Wellfort 提出用。
+
+  【この HTML が正】PDF は scripts/build-genoplan-poc-pdf.mjs で組版するだけ。
+  内容を直すときは必ずこちらを直して再生成する (PDF を直接いじらない)。
+
+  【中身の根拠】docs/lab/lab_data_reception_overview.md §4 (実測値の正本)。
+  数字はすべて 2026-09-01 の実行結果。推定値には「約」を付け、断定しない。
+
+  【PII】顧客氏名・電話・認証キー・ボックスナンバーの実値は載せない。
+  書式の例示は架空の値を使う。
+-->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>遺伝子検査データ自動取得 実証テスト報告</title>
+<style>
+  @page { size: A4; margin: 16mm 15mm 16mm 15mm; }
+
+  :root {
+    --ink: #1F2933;
+    --sub: #52606D;
+    --line: #D8DEE4;
+    --brand: #287F86;
+    --brand-bg: #EAF3F3;
+    --ok: #2F7A4F;
+    --paper: #FFFFFF;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    /*
+      欧文・数字は Liberation Sans / DejaVu Sans が先に当たる。
+      IPAGothic は**欧文も等幅**なので、これを先頭にすると
+      "Genoplan" や "info@wellfort.co.jp" がタイプライタ体になって読みにくい (実測)。
+      和文はそれらに無いので 1 文字ずつ後段へ落ちて IPAGothic が拾う。
+      コンテナには IPAGothic しか無いことがあるので、末尾に必ず残す (無いと豆腐)。
+    */
+    font-family: "Liberation Sans", "DejaVu Sans", "Hiragino Sans", "Noto Sans JP",
+                 "BIZ UDGothic", "IPAGothic", "IPAPGothic", sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.7;
+  }
+
+  .head { border-bottom: 3px solid var(--brand); padding-bottom: 8px; margin-bottom: 16px; }
+  .head h1 { font-size: 16pt; margin: 0 0 4px; letter-spacing: .02em; }
+  .head .meta { font-size: 9pt; color: var(--sub); }
+
+  h2 {
+    font-size: 12pt; margin: 20px 0 10px; padding-left: 10px;
+    border-left: 5px solid var(--brand);
+  }
+
+  .lead {
+    background: var(--brand-bg); border-radius: 6px;
+    padding: 12px 14px; margin: 0 0 16px;
+    font-size: 11.5pt; font-weight: 700; line-height: 1.6;
+  }
+  .lead span { display: block; font-size: 9.5pt; font-weight: 400; color: var(--sub); margin-top: 4px; }
+
+  /* 数字カード */
+  .cards { display: flex; gap: 8px; margin: 0 0 16px; }
+  .card {
+    flex: 1; border: 1px solid var(--line); border-radius: 6px;
+    padding: 10px 8px; text-align: center;
+  }
+  .card .n { font-size: 17pt; font-weight: 700; color: var(--brand); line-height: 1.2; }
+  .card .n.ok { color: var(--ok); }
+  .card .l { font-size: 8.5pt; color: var(--sub); margin-top: 3px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 9.5pt; margin: 6px 0 14px; }
+  th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: var(--brand); color: #fff; font-weight: 700; white-space: nowrap; }
+  td.num { white-space: nowrap; }
+
+  .q { margin: 0 0 12px; }
+  .q h3 {
+    font-size: 10.5pt; margin: 0 0 4px;
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  .q h3 .no {
+    background: var(--brand); color: #fff; border-radius: 3px;
+    font-size: 9pt; padding: 1px 7px; flex: none;
+  }
+  .q p { margin: 0 0 4px; font-size: 9.5pt; }
+  .q .ask { color: var(--brand); font-weight: 700; }
+  .note { font-size: 8.5pt; color: var(--sub); }
+
+  figure { margin: 0 0 16px; }
+  figcaption { font-size: 8.5pt; color: var(--sub); margin-top: 4px; }
+  svg { display: block; font-family: inherit; }
+
+  .pagebreak { break-before: page; }
+  .foot { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 6px; font-size: 8.5pt; color: var(--sub); }
+</style>
+</head>
+<body>
+
+<div class="head">
+  <h1>遺伝子検査（Genoplan）データ自動取得　実証テスト報告</h1>
+  <div class="meta">2026 年 9 月 1 日 ／ 株式会社UNFIX</div>
+</div>
+
+<p class="lead">
+  専用パソコンも RPA ソフトも不要。サーバだけで全自動化できることを確認しました。
+  <span>対象 72 件すべてのレポート PDF を、人の操作なしで取得・保存できました（失敗 0 件）。</span>
+</p>
+
+<div class="cards">
+  <div class="card"><div class="n">72<span style="font-size:10pt">件</span></div><div class="l">対象レポート</div></div>
+  <div class="card"><div class="n ok">72<span style="font-size:10pt">件</span></div><div class="l">取得成功</div></div>
+  <div class="card"><div class="n ok">0<span style="font-size:10pt">件</span></div><div class="l">失敗</div></div>
+  <div class="card"><div class="n">1.43<span style="font-size:10pt">GB</span></div><div class="l">保存容量</div></div>
+  <div class="card"><div class="n">32<span style="font-size:10pt">秒</span></div><div class="l">1 件あたり</div></div>
+</div>
+
+<h2>1. 今回できるようになったこと</h2>
+
+<figure>
+<svg viewBox="0 0 700 118" width="100%" height="118" role="img" aria-label="自動取得の流れ">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#287F86"/>
+    </marker>
+  </defs>
+  <!-- サーバ帯 -->
+  <rect x="0" y="6" width="700" height="76" rx="8" fill="#EAF3F3"/>
+  <text x="10" y="22" font-size="9" fill="#52606D">Wellfort のサーバ（自動・人の操作なし）</text>
+
+  <g font-size="10" fill="#1F2933" text-anchor="middle">
+    <rect x="14" y="32" width="120" height="40" rx="5" fill="#fff" stroke="#287F86"/>
+    <text x="74" y="50">① ログイン</text>
+    <text x="74" y="64" font-size="8" fill="#52606D">ID・パスワードのみ</text>
+
+    <rect x="158" y="32" width="130" height="40" rx="5" fill="#fff" stroke="#287F86"/>
+    <text x="223" y="50">② 発行済み一覧</text>
+    <text x="223" y="64" font-size="8" fill="#52606D">72 件を取得</text>
+
+    <rect x="312" y="32" width="140" height="40" rx="5" fill="#fff" stroke="#287F86"/>
+    <text x="382" y="50">③ 未取得だけ選別</text>
+    <text x="382" y="64" font-size="8" fill="#52606D">ボックスナンバーで判定</text>
+
+    <rect x="476" y="32" width="120" height="40" rx="5" fill="#fff" stroke="#287F86"/>
+    <text x="536" y="50">④ PDF を取得</text>
+    <text x="536" y="64" font-size="8" fill="#52606D">1 件 約 21MB</text>
+
+    <rect x="620" y="32" width="66" height="40" rx="5" fill="#287F86"/>
+    <text x="653" y="50" fill="#fff">⑤ 保存</text>
+    <text x="653" y="64" font-size="8" fill="#DCEDED">S3</text>
+  </g>
+  <g stroke="#287F86" stroke-width="1.4" marker-end="url(#ar)">
+    <line x1="136" y1="52" x2="154" y2="52"/>
+    <line x1="290" y1="52" x2="308" y2="52"/>
+    <line x1="454" y1="52" x2="472" y2="52"/>
+    <line x1="598" y1="52" x2="616" y2="52"/>
+  </g>
+  <text x="350" y="102" font-size="9" fill="#52606D" text-anchor="middle">
+    ※ これまでは、担当者が画面で 1 件ずつ選んでダウンロードしていた作業です（一度に 10 件まで・生成待ち 30〜60 秒）
+  </text>
+</svg>
+<figcaption>図 1　自動取得の流れ</figcaption>
+</figure>
+
+<h2>2. 2 回目以降は「差分」だけ取ります</h2>
+
+<figure>
+<svg viewBox="0 0 700 104" width="100%" height="104" role="img" aria-label="差分取得のしくみ">
+  <g font-size="9.5" fill="#1F2933">
+    <rect x="10" y="14" width="180" height="58" rx="6" fill="#fff" stroke="#D8DEE4"/>
+    <text x="100" y="34" text-anchor="middle" font-size="10">Genoplan にある一覧</text>
+    <text x="100" y="54" text-anchor="middle" font-size="14" font-weight="700" fill="#287F86">発行済み 72 件</text>
+
+    <text x="212" y="48" font-size="18" fill="#52606D">−</text>
+
+    <rect x="240" y="14" width="180" height="58" rx="6" fill="#fff" stroke="#D8DEE4"/>
+    <text x="330" y="34" text-anchor="middle" font-size="10">すでに保存したもの</text>
+    <text x="330" y="54" text-anchor="middle" font-size="14" font-weight="700" fill="#287F86">ボックスナンバー照合</text>
+
+    <text x="442" y="48" font-size="18" fill="#52606D">=</text>
+
+    <rect x="470" y="14" width="215" height="58" rx="6" fill="#EAF3F3" stroke="#287F86"/>
+    <text x="577" y="34" text-anchor="middle" font-size="10">今回取りに行くもの</text>
+    <text x="577" y="54" text-anchor="middle" font-size="14" font-weight="700" fill="#2F7A4F">新しい分だけ</text>
+  </g>
+  <text x="350" y="92" font-size="9" fill="#52606D" text-anchor="middle">
+    保存できたものだけを「取得済み」と数えるため、途中で止まっても取りこぼしません
+  </text>
+</svg>
+<figcaption>図 2　差分取得のしくみ</figcaption>
+</figure>
+
+<h2>3. 取得したもの</h2>
+
+<table>
+  <tr><th style="width:34%">項目</th><th>内容</th></tr>
+  <tr><td>ファイル</td><td>レポート PDF（1 件 208 ページ・平均 21.3MB）＋ 管理用の情報ファイル 1 本</td></tr>
+  <tr><td>管理用の情報</td><td>認証キー／ボックスナンバー／発行日／改ざん検知用のハッシュ値。<b>氏名・電話番号は含めていません</b></td></tr>
+  <tr><td>保存場所</td><td>東京リージョンの S3（テスト用の領域。本番では専用の保管領域へ）</td></tr>
+  <tr><td>合計</td><td class="num">1,535,344,850 バイト（約 1.43GB）</td></tr>
+</table>
+
+<div class="foot">
+  本紙の数値はすべて 2026 年 9 月 1 日の実行結果です。詳細な技術記録は別途保管しています。
+</div>
+
+<!-- ===================== 2 ページ目 ===================== -->
+<div class="pagebreak"></div>
+
+<div class="head">
+  <h1>ご確認いただきたいこと（5 件）</h1>
+  <div class="meta">遺伝子検査（Genoplan）データ自動取得　実証テスト報告　2026 年 9 月 1 日</div>
+</div>
+
+<div class="q">
+  <h3><span class="no">1</span>ボックスナンバーの紐づけ方法</h3>
+  <p>「どのレポートが、どのお客様のものか」を自動で判定するには、<b>発送したキットの箱に印字された番号（ボックスナンバー）</b>を記録する必要があります。次の 2 案をご提案します。</p>
+</div>
+
+<figure>
+<svg viewBox="0 0 700 176" width="100%" height="176" role="img" aria-label="ボックスナンバー紐づけの2案">
+  <g font-size="9.5" fill="#1F2933">
+    <!-- 案A -->
+    <rect x="6" y="8" width="336" height="158" rx="7" fill="#fff" stroke="#287F86" stroke-width="1.6"/>
+    <rect x="6" y="8" width="336" height="24" rx="7" fill="#287F86"/>
+    <text x="18" y="25" fill="#fff" font-size="10" font-weight="700">案A（主）　タカセの返送 CSV に 1 列追加</text>
+
+    <rect x="24" y="46" width="86" height="34" rx="4" fill="#F4F7F8" stroke="#D8DEE4"/>
+    <text x="67" y="60" text-anchor="middle" font-size="9">タカセ倉庫</text>
+    <text x="67" y="72" text-anchor="middle" font-size="8" fill="#52606D">キット発送</text>
+
+    <rect x="132" y="46" width="86" height="34" rx="4" fill="#F4F7F8" stroke="#D8DEE4"/>
+    <text x="175" y="60" text-anchor="middle" font-size="9">返送 CSV</text>
+    <text x="175" y="72" text-anchor="middle" font-size="8" fill="#52606D">伝票番号 ＋ 箱番号</text>
+
+    <rect x="240" y="46" width="86" height="34" rx="4" fill="#EAF3F3" stroke="#287F86"/>
+    <text x="283" y="60" text-anchor="middle" font-size="9">Wellfort</text>
+    <text x="283" y="72" text-anchor="middle" font-size="8" fill="#52606D">注文と紐づけ</text>
+
+    <g stroke="#287F86" stroke-width="1.3" marker-end="url(#ar)">
+      <line x1="112" y1="63" x2="128" y2="63"/>
+      <line x1="220" y1="63" x2="236" y2="63"/>
+    </g>
+
+    <text x="24" y="102" font-size="9" fill="#2F7A4F">◎ 伝票番号を CSV で返す仕組みが既にあります</text>
+    <text x="24" y="118" font-size="9" fill="#2F7A4F">◎ 出荷した時点で確定（お客様の操作を待たない）</text>
+    <text x="24" y="134" font-size="9" fill="#52606D">→ お願いすることは「CSV に 1 列足す」だけです</text>
+    <text x="24" y="152" font-size="8.5" fill="#52606D">※ 新しい仕組みは不要です</text>
+
+    <!-- 案B -->
+    <rect x="358" y="8" width="336" height="158" rx="7" fill="#fff" stroke="#A9B4BC" stroke-width="1.4"/>
+    <rect x="358" y="8" width="336" height="24" rx="7" fill="#7A8892"/>
+    <text x="370" y="25" fill="#fff" font-size="10" font-weight="700">案B（補助）　受取時にスマートフォンで撮影</text>
+
+    <rect x="376" y="46" width="86" height="34" rx="4" fill="#F4F7F8" stroke="#D8DEE4"/>
+    <text x="419" y="60" text-anchor="middle" font-size="9">お客様</text>
+    <text x="419" y="72" text-anchor="middle" font-size="8" fill="#52606D">受け取り確認</text>
+
+    <rect x="484" y="46" width="86" height="34" rx="4" fill="#F4F7F8" stroke="#D8DEE4"/>
+    <text x="527" y="60" text-anchor="middle" font-size="9">箱番号を撮影</text>
+    <text x="527" y="72" text-anchor="middle" font-size="8" fill="#52606D">アプリから送信</text>
+
+    <rect x="592" y="46" width="86" height="34" rx="4" fill="#EEF1F3" stroke="#A9B4BC"/>
+    <text x="635" y="60" text-anchor="middle" font-size="9">Wellfort</text>
+    <text x="635" y="72" text-anchor="middle" font-size="8" fill="#52606D">注文と紐づけ</text>
+
+    <g stroke="#7A8892" stroke-width="1.3" marker-end="url(#ar2)">
+      <line x1="464" y1="63" x2="480" y2="63"/>
+      <line x1="572" y1="63" x2="588" y2="63"/>
+    </g>
+
+    <text x="376" y="102" font-size="9" fill="#2F7A4F">◎ 案A が漏れた回の保険になります</text>
+    <text x="376" y="118" font-size="9" fill="#52606D">・読み取れた番号は書式と実在を確認してから採用</text>
+    <text x="376" y="134" font-size="9" fill="#52606D">・読めなければ担当者の確認に回します</text>
+    <text x="376" y="152" font-size="8.5" fill="#52606D">※ 任意操作。受け取り確認そのものは止めません</text>
+  </g>
+  <defs>
+    <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7A8892"/>
+    </marker>
+  </defs>
+</svg>
+<figcaption>図 3　ボックスナンバーの紐づけ 2 案</figcaption>
+</figure>
+
+<p class="q ask" style="margin-top:-6px">→ 案A のみ／案A ＋ 案B の併用、どちらがよろしいでしょうか。</p>
+
+<div class="q">
+  <h3><span class="no">2</span>原本 PDF の保存について</h3>
+  <p>本番では<b>日本国内リージョンの専用保管領域</b>で別途管理します（今回のテスト分は受渡用の領域に置いており、削除可能です）。</p>
+  <p class="ask">レポート PDF の 2 ページ目にはお客様の氏名が印字されています。氏名等の個人情報が入ったままの原本として保存してよろしいでしょうか。</p>
+  <p class="note">※ AI 診断（Elith）へお渡しするデータには氏名を含めません。保存するのは原本のみです。</p>
+</div>
+
+<div class="q">
+  <h3><span class="no">3</span>取得の頻度</h3>
+  <p class="ask">「週 1 回の自動取得」＋「必要なときに管理画面から手動実行」の 2 本立てでよろしいでしょうか。</p>
+</div>
+
+<div class="q">
+  <h3><span class="no">4</span>アカウントの扱い</h3>
+  <p class="ask">info@wellfort.co.jp を、自動処理と人の操作で共用してよろしいでしょうか。</p>
+  <p class="note">※ 分ける場合は、自動処理専用アカウントの発行を Genoplan 社へご依頼いただく形になります（必要な権限は「レポート閲覧」「PDF ダウンロード」のみです）。</p>
+</div>
+
+<div class="q">
+  <h3><span class="no">5</span>Genoplan 社へお伝えいただきたいこと（セキュリティ）</h3>
+  <p><b>報告書 PDF の配布 URL に認証が掛かっていません。</b>ログインしていない状態でも、認証キーを指定するだけでダウンロード URL（有効 1 時間の署名付き）が発行されることを確認しました。</p>
+  <p><b>実在しない認証キーで確認しており、他のお客様のデータには触れていません。</b></p>
+  <p class="ask">認証キーが漏れると、その方の遺伝子検査報告書が第三者に読める可能性があります。Wellfort のお客様の情報に関わりますので、Genoplan 社へお伝えください。</p>
+</div>
+
+<div class="foot">
+  株式会社UNFIX　2026 年 9 月 1 日
+</div>
+
+</body>
+</html>
