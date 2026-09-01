@@ -33,7 +33,7 @@ $BaseUrl   = 'https://dl.demecal.net'
 $LoginUrl  = "$BaseUrl/account/login"
 $UploadUrl = 'https://scan-chat-ai.vercel.app/api/ops/probe-upload'
 $Token     = '__PROBE_TOKEN__'
-$Version   = 'recon-1.1'
+$Version   = 'recon-1.2'
 
 $lines = New-Object System.Collections.Generic.List[string]
 function Say($t) { Write-Host $t; $lines.Add($t) | Out-Null }
@@ -85,6 +85,31 @@ Say (" PC名     : {0}" -f $env:COMPUTERNAME)
 Say (" 版       : {0}" -f $Version)
 Say '=================================================='
 Say ''
+
+# ── 起動の合図 ────────────────────────────────────────────────
+# **「走ったこと」だけを先に送る。**
+#
+# 【なぜ要るか — 実測 2026-09-01】recon は v1.0・v1.1 とも実行の連絡を受けたのに
+#   実行ログAPI に 1 件も届かなかった。届かない理由が
+#     ①そもそも起動していない ②起動したが途中で落ちた ③送信だけ失敗した
+#   のどれなのかを区別できず、毎回 Wellfort に確認することになる。
+#   → **最初に 1 回だけ合図を送る**ことで、少なくとも ① と ②③ を分ける。
+#   これが届いて本報告が届かなければ「起動はした・途中で落ちた」と確定する。
+#
+# 失敗しても**絶対に止めない** (合図は診断用で、本処理の前提ではない)。
+if ($Token -ne ('__PROBE' + '_TOKEN__')) {
+  try {
+    $hello = @{
+      report = ("起動しました`r`n 版: {0}`r`n PC名: {1}`r`n 時刻: {2}" -f `
+                $Version, $env:COMPUTERNAME, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
+      label  = 'demecal-recon-start'
+      host   = $env:COMPUTERNAME
+    } | ConvertTo-Json -Compress
+    Invoke-RestMethod -Uri $UploadUrl -Method Post -TimeoutSec 30 `
+      -Body ([Text.Encoding]::UTF8.GetBytes($hello)) `
+      -ContentType 'application/json; charset=utf-8' -Headers @{ 'x-probe-token' = $Token } | Out-Null
+  } catch {}
+}
 
 # ── [0] 保存先 ────────────────────────────────────────────────
 # デスクトップは OneDrive 同期対象 (実測)。PII を含む CSV をそこへ置かないため、

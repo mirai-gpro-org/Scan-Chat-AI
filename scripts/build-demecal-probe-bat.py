@@ -64,19 +64,29 @@ def build(token: str | None, out: pathlib.Path) -> int:
             return 2
         ps = ps.replace('__PROBE_TOKEN__', token)
 
+    # PowerShell 自身のエラー (構文エラー・未捕捉の例外) は stderr に出る。
+    # **ここで拾わないと、スクリプトが 1 行も動かなかった場合に何も残らない**
+    # (実測 2026-09-01)。stdout は触らないので画面表示は従来どおり。
+    # src/lib/probe-bat.ts と**同じ bat を出す**こと。
     head = [
         '@echo off',
         'chcp 65001 >nul',
         'title Demecal connection check',
+        'set "ERRLOG=%TEMP%\\demecal_error.txt"',
         'powershell -NoProfile -ExecutionPolicy Bypass -Command '
         '"$s=Get-Content -LiteralPath \'%~f0\' -Encoding UTF8; '
-        'Invoke-Expression (($s[{SKIP}..($s.Count-1)]) -join [Environment]::NewLine)"',
+        'Invoke-Expression (($s[{SKIP}..($s.Count-1)]) -join [Environment]::NewLine)" 2> "%ERRLOG%"',
+        'echo.',
+        'echo ---- error log (empty is normal): %ERRLOG%',
+        'type "%ERRLOG%"',
         'echo.',
         'pause',
         'exit /b',
     ]
     skip = len(head)                       # PowerShell 部が始まる行 (0-indexed)
-    head[3] = head[3].replace('{SKIP}', str(skip))
+    # powershell 行は探す (ヘッダに行を足したときに黙ってずれないように)。
+    ps_line = next(i for i, l in enumerate(head) if l.startswith('powershell '))
+    head[ps_line] = head[ps_line].replace('{SKIP}', str(skip))
 
     content = '\r\n'.join(head) + '\r\n' + ps.replace('\n', '\r\n')
     data = content.encode('utf-8')         # BOM 無し

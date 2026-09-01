@@ -1,7 +1,11 @@
 @echo off
 chcp 65001 >nul
 title Demecal connection check
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$s=Get-Content -LiteralPath '%~f0' -Encoding UTF8; Invoke-Expression (($s[7..($s.Count-1)]) -join [Environment]::NewLine)"
+set "ERRLOG=%TEMP%\demecal_error.txt"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$s=Get-Content -LiteralPath '%~f0' -Encoding UTF8; Invoke-Expression (($s[11..($s.Count-1)]) -join [Environment]::NewLine)" 2> "%ERRLOG%"
+echo.
+echo ---- error log (empty is normal): %ERRLOG%
+type "%ERRLOG%"
 echo.
 pause
 exit /b

@@ -47,15 +47,26 @@ export function buildProbeBat(ps1: string, token?: string): ProbeBatResult {
     '@echo off',
     'chcp 65001 >nul',
     'title Demecal connection check',
+    // PowerShell 自身のエラー (構文エラー・未捕捉の例外) は stderr に出る。
+    // **ここで拾わないと、スクリプトが 1 行も動かなかった場合に何も残らない**
+    // (実測 2026-09-01: recon が 2 版続けて無反応で、起動したのかどうかも分からなかった)。
+    // stdout は触らないので画面表示は従来どおり。
+    'set "ERRLOG=%TEMP%\\demecal_error.txt"',
     'powershell -NoProfile -ExecutionPolicy Bypass -Command '
       + '"$s=Get-Content -LiteralPath \'%~f0\' -Encoding UTF8; '
-      + 'Invoke-Expression (($s[{SKIP}..($s.Count-1)]) -join [Environment]::NewLine)"',
+      + 'Invoke-Expression (($s[{SKIP}..($s.Count-1)]) -join [Environment]::NewLine)" 2> "%ERRLOG%"',
+    'echo.',
+    'echo ---- error log (empty is normal): %ERRLOG%',
+    'type "%ERRLOG%"',
     'echo.',
     'pause',
     'exit /b',
   ];
   const skip = head.length;
-  head[3] = head[3].replace('{SKIP}', String(skip));
+  // powershell 行の位置は固定でなく探す (ヘッダに行を足したときに黙ってずれないように)。
+  const psLine = head.findIndex((l) => l.startsWith('powershell '));
+  if (psLine < 0) throw new Error('powershell 行が見つかりません');
+  head[psLine] = head[psLine].replace('{SKIP}', String(skip));
 
   const content = head.join('\r\n') + '\r\n' + ps.replace(/\n/g, '\r\n');
   const bytes = new TextEncoder().encode(content);   // BOM は付けない
