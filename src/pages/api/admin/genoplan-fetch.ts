@@ -61,14 +61,37 @@ type Outcome = {
   detail?: string;
 };
 
+function env(name: string): string | undefined {
+  const m = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.[name];
+  if (m != null && m !== '') return m;
+  const p = typeof process !== 'undefined' ? process.env?.[name] : undefined;
+  return p != null && p !== '' ? p : undefined;
+}
+
+/**
+ * 認可。**書き込み (POST) は Bearer `ADMIN_API_KEY` だけ。**
+ *
+ * 差分の確認 (GET=dry-run) に限り `?k=<PROBE_UPLOAD_TOKEN>` も通す。
+ * 理由: 同じトークンで開いている `/api/ops/genoplan-probe` が既に**一覧そのもの**を
+ * 返しており、dry-run はその部分集合 (件数と発行日だけ・副作用なし) なので**露出が増えない**。
+ * **`PROBE_UPLOAD_TOKEN` を消すときにこの経路も一緒に閉じる** (調査用の一時口)。
+ */
+function authorized(request: Request, url: URL, dryRun: boolean): boolean {
+  if (isAdminAuthorized(request)) return true;
+  if (!dryRun) return false;
+  const probe = env('PROBE_UPLOAD_TOKEN');
+  return !!probe && (url.searchParams.get('k') ?? '').trim() === probe;
+}
+
 async function run(request: Request, url: URL): Promise<Response> {
-  if (!isAdminAuthorized(request)) return json({ ok: false, error: 'unauthorized' }, 401);
+  const isDry = url.searchParams.get('dry') === '1';
+  if (!authorized(request, url, isDry)) return json({ ok: false, error: 'unauthorized' }, 401);
   if (!isGenoplanConfigured()) {
     return json({ ok: false, error: 'not_configured', detail: 'GENOPLAN_LOGIN_ID / GENOPLAN_PASSWORD が未設定' }, 400);
   }
 
   /** 実際には取らずに差分だけ見る。運用前の確認用。 */
-  const dryRun = url.searchParams.get('dry') === '1';
+  const dryRun = isDry;
   const max = Math.min(Math.max(Number(url.searchParams.get('max') ?? 1) || 1, 1), 10);
   const t0 = Date.now();
 
