@@ -4,7 +4,7 @@
 |---|---|
 | 目的 | Wellfort が外部検査会社から受け取る **4 検査**のデータ受取方式・経路・現状・課題を一枚に集約する。各検査は最終的に **Elith 形式 JSON（`elith-handoff-v0.1`）へ変換し S3 経由で Elith へ受け渡す**（詳細=`docs/elith/elith_s3_data_handoff_spec.md` / `docs/elith/elith_assembly_wrapping_spec.md`）。 |
 | 対象 | ①血液検査（リージャー）②がんリスク検査・尿（プリベント）③AI疾病発症予測（LAiF）④遺伝子検査（Genoplan）。※健診・人間ドックは会員がアプリでAIスキャンするため本書対象外。 |
-| 版 | **2026-08-31（血液=受取方式を RPA/PAD から **PowerShell 方式**へ変更・§1/§0.1/§7 を更新）**<br>2026-08-26（Draft・LAiF 実データ疎通の結果／ID 連携仕様／問診データの渡し方マトリクスを追記） |
+| 版 | **2026-09-01（遺伝子=Genoplan の受取方式を実測で判定。**RPA も PowerShell も不要でサーバ側完結**・§4 を全面改訂／§0.1 追随）**<br>2026-08-31（血液=受取方式を RPA/PAD から **PowerShell 方式**へ変更・§1/§0.1/§7 を更新）<br>2026-08-26（Draft・LAiF 実データ疎通の結果／ID 連携仕様／問診データの渡し方マトリクスを追記） |
 | 上位文書 | **本書は「受取方式（各社別）」に特化した詳細。EC購入→キット→問診→受取→Elith→表示の E2E 全体像は `docs/lab/lab_data_pipeline_master_spec.md`（総合仕様書）が正本。** |
 | 関連 | **`docs/lab/demecal_unattended_spec.md`（血液=無人定期取得の正本・PowerShell方式）** / `docs/lab/demecal_powershell_probe_guide.md`（方式決定の実測）/ `docs/lab/demecal_auto_download_overview_spec.md`（概要）、`docs/elith/elith_assembly_wrapping_spec.md`（LAiF/ウェルネス年齢のラップ）、`docs/lab/lab_integration_workflow.md`（割当・PII）、`docs/lab/kit_progress_management.md`（進捗）、`docs/lab/wellfort_admin_lab_upload_spec.md`（admin取込） |
 
@@ -19,7 +19,7 @@
 | 1 | 血液検査 | 株式会社リージャー（Leisure／デメカル DSS） | **PowerShell 方式**（専用PC・mTLS＋無人定期実行。**RPA/PAD は不要**・2026-08-31 確定） | CSV | `BloodTestData` | **決定論パース**（CSV→JSON・LLM不使用） | 自動アクセス承認済・サーバ側実装済／**方式確定・PC側は未実装**（**外部からの回答待ちは無い**） |
 | 2 | がんリスク検査（尿） | プリベント社（ALA-PDS） | **専用ポータル＋AWS S3＋パスキー方式を提案中**（LAiF流用）／現状：メール＋フォルダ共有の手動 | PDF/報告書 | `CancerRiskAssessmentData` | **admin バッチ AIスキャン**（画像→JSON） | **方式を提案中（プレゼン段階）**。現状は手動 |
 | 3 | AI疾病発症予測 | LAiF社 | **AWS S3 専用バケット**（URLで受渡） | PDF | `Other`（`kind:"ai_prediction"`） | **admin バッチ AIスキャン**（多ページ・LLM構造化） | 受取方式確定・スキャン対応実装済／**2026-08-26 上り(弊社→LAiF)疎通OK・下り(返送)は未検証** |
-| 4 | 遺伝子検査 | Genoplan社（ジェノプランジャパン） | **デスクトップRPA**（PAD / UiPath / WinAutomation）**※要再検討＝PowerShell 化の可能性あり** | PDF | `GeneticTestResultData` | **admin バッチ AIスキャン**（多ページ・LLM構造化） | 受取方式=RPA方針／スキャン対応実装済。**血液の PAD 枠組みを流用する前提が消えた**（血液は PowerShell 化）→ §4 |
+| 4 | 遺伝子検査 | Genoplan社（ジェノプランジャパン） | **サーバ側（Vercel）から API 取得**（ID/PW のみ・**証明書不要＝専用PC不要**・2026-09-01 実測で確定） | PDF | `GeneticTestResultData` | **admin バッチ AIスキャン**（多ページ・LLM構造化） | **方式確定／取得部は未実装**。**RPA・PowerShell はいずれも不要**（§4.1）。**着手は Genoplan の自動アクセス許諾の取得後**（§4.2(a)・未取得） |
 
 ### 0.2 問診データの渡し方（上り：Wellfort/ユーザー → 検査会社）— **確定 2026-08-26・発注者確認**
 
@@ -167,28 +167,110 @@
 ## 4. 遺伝子検査（Genoplan社）
 
 - **検査会社**: Genoplan社（ジェノプランジャパン／GenePlanet）。
-- **受取方式**: **デスクトップRPA 方針。ただし PowerShell 方式へ変更できる可能性があり、着手前に判定する（2026-08-31）。**
-  当初は「血液で作る PAD の枠組みを流用する」前提だったが、**血液が PowerShell 方式に変わったのでその前提が消えた**。
-  **血液で PAD が不要になったのと同じ理屈が、Genoplan にも当てはまる可能性がある。**
+- **受取方式**: **【判定済み 2026-09-01・実測】RPA も PowerShell も不要。サーバ側（Vercel）で完結できる。**
+  §4.1 に判定の根拠、§4.2 に着手前に潰す項目を書く。
 
-  - **判定の観点（血液で決め手になったのと同じ 2 点）**
-    1. **ログイン画面が素の HTML フォームか** — フォーム POST だけで通るなら PowerShell で完結する。
-       SPA / OAuth・SSO / MFA / CAPTCHA / Bot 対策があるならブラウザ自動操作が要る
-    2. **レポート PDF が URL で直接取れるか** — JS が生成する一時 URL やブラウザ内描画だと難しい
-  - **判定の仕方**: **血液で使ったプローブと同じ手を使える。** ログインせず画面の作りだけを記録する
-    読み取り専用の bat を渡し、**ダブルクリック 1 回**で結果を返してもらう
-    （`scripts/demecal-probe.ps1` / `src/lib/probe-bat.ts` が流用元。Wellfort 側は同じ手順に 1 回成功済み）。
-  - **【未確認・仮説】クライアント証明書が不要なら、そもそも専用PCが要らない可能性がある。**
-    血液で専用PCが必須なのは **証明書がその PC の証明書ストアにしかない**ため。
-    Genoplan が ID/PW だけなら **サーバ側（Vercel）で完結**でき、PC の起動状態にも左右されない。
-    **Genoplan の認証方式は未確認**なので、まず上記プローブで確かめる。
-  - **結論の出し方**: 素のフォーム＋直リンク → **PowerShell**（ライセンス不要・画面変更に強い）。
-    そうでなければ従来どおり **RPA**。**確認するまでどちらとも決めない。**
-- **フロー**: 自動取得（方式未定）で Genoplan ポータル等からレポートPDFを取得 → **admin バッチAIスキャン（多ページ・LLM構造化）** → `GeneticTestResultData` JSON → S3。
+### 4.1 判定（2026-09-01・実測）
+
+判定の観点は血液で決め手になったのと同じ 2 点。**両方とも満たす。**
+
+| 観点 | 結果 | 根拠（実測） |
+|---|---|---|
+| ① ログインが機械で通せるか | **通せる** | 画面は Vue SPA だが、背後は素の PHP REST API |
+| ② レポート PDF が URL で直接取れるか | **取れる** | `window.open(url)` のみ。Blob/ブラウザ内描画を使っていない |
+| （追加）クライアント証明書 | **不要** | Wellfort 提供情報。ID/PW のみ |
+
+**測り方**: 配布中の SPA バンドルを静的解析した（`https://biz.genoplan.com/static/js/app.4a670d265dc496d6c712.js`
+＋遅延チャンク `466.301d1e7427cc6cc6d37d.js`）。**ログインは行っていない**（パスワード未受領）。
+
+#### ① 画面は SPA。ただし「素の HTML フォームか」は問う意味がない
+
+`https://biz.genoplan.com/` の HTML は `<div id="app"></div>` と JS 1 本だけ＝**Vue SPA**。
+`<form>` も antiforgery hidden も無い。**だが SPA の背後は普通の PHP REST API** で、
+デメカル（ASP.NET Core・antiforgery の GET→POST 往復が必須）**より簡単**。
+
+- **API ベース**: `https://bizapi.genoplan.com`（バンドル内の `RequestAPI.getBaseURL()`。
+  `biz.genoplan.com` から来たときのみ本番、他は `testbizapi` へ向く）
+- **ログイン**: `POST /api/biz/login.php` — 本文は `lang` / `loginid` / `password` の
+  **form-urlencoded**（axios ラッパ `Mt = (url, body) => xt.post(url, URLSearchParams(body))`）
+  → `{ success, data: { accesskey, seq, multi, accounts[] } }`
+- **以降の認証 = `accesskey` と `partner_seq` を毎回 body に載せるだけ**。
+  **Cookie セッションを使わない・CSRF トークン無し・`Authorization` ヘッダ無し**
+  （axios の request interceptor は `console.log` のみ）
+- **ログイン経路に MFA / CAPTCHA が無い**。`sendAuthNumber.php` / `checkAuthNumber.php` は
+  **パスワード再設定・新規登録・マイページの電話番号認証にしか出てこない**（バンドル内 grep）
+- **疎通確認（資格情報を送らずに 1 回だけ）**: `GET https://bizapi.genoplan.com/api/biz/login.php`
+  → **HTTP 200** `{"success":false,"code":"1002","message":"User ID/Password does not exist."}`。
+  403 でも 419 でもなくアプリ層のエラーが返る＝**前提となるトークンもセッションも要らない**ことの裏付け。
+
+#### ② PDF は URL で取れる（しかも 2 経路とも直リンク）
+
+- **一覧**: `POST /api/biz/getKitInfoList.php`（`accesskey` / `partner_seq` / `sn[]` / `lang`）
+  → `serialnumber` / `signer_name` / `publish_origin` / `statuscode` / `report_seq` /
+  `pdf_seq` / `serviceExpireYN` / `surveyStatus` などを返す
+- **本レポート（My Book）**:
+  `GET https://s3r5oxqcgwmyf4inuxdao64wae0yflhw.lambda-url.ap-northeast-1.on.aws/gpj/{lang}/{serialnumber}`
+  （カスタム版は `?custom-seq={pdf_seq}`）→ `{ pdfUrl }` = **S3 の署名付き URL（有効 1 時間）**
+  → その URL を GET すれば PDF。生成中は `{ code: 6020 }` が返るのでリトライ
+- **PCR レポート**:
+  `GET https://api.genoplan.com/pdfMaker5/dtc_pdf/php/download.php?qq={base64}`
+  — `qq` は `{"report_seq":N,"time":<ミリ秒>}` を UTF-8 base64 したもの（`getPDFPCR()`）
+- **ブラウザ内描画・Blob 生成は無い**（`saveAs` / `createObjectURL` / `a.download` の出現 **0 件**）。
+  UI は `window.open(url)` を呼ぶだけ＝**そのまま `Invoke-WebRequest` / `fetch` で落とせる**。
+
+#### ③ 結論：専用PC が要らない
+
+クライアント証明書が無く、Cookie セッションも使わないので、**血液で専用PC が必須だった理由が
+そもそも成立しない**（血液は証明書が `Cert:\CurrentUser\My` にしか無いのが制約）。
+→ **Vercel のサーバ側で完結**でき、PC の電源・ログオン状態に左右されない。
+PowerShell 方式も技術的には可能だが、**わざわざ PC を挟む理由が無い**。
+
+> **PowerShell 方式は「不可」ではなく「不要」。** 現地実行 bat（`demecal-recon.ps1` の流用）は
+> **作らない**。Wellfort の操作は 0 回で済む。
+
+### 4.2 着手前に潰すこと（未確認・4 件）
+
+**このうち (a) は合意事項なので、先に片付ける。**
+
+- **(a) 【最優先・未取得】Genoplan の自動アクセス許諾**。血液は「自動アクセス承認済」（§0.1）だが、
+  **Genoplan について同種の記録が docs に無い**（grep 0 件）。UI を介さず API を直接叩くので、
+  RPA（画面操作）とは別種の合意が要る。**先方へ確認するまで実装を本番稼働させない。**
+  併せて **公式の受渡手段（API / S3 / 定期メール）が用意されていないか**も訊く（あればそちらが正）。
+- **(b) 【未確認】`multi == "Y"`（複数 partner アカウント）かどうか**。`login.php` の応答に
+  `accounts[]` があり、複数なら UI は選択ダイアログを出す（`loginWithAccounts`）。
+  **どの `partner_seq` を使うかは実ログインしないと分からない。**
+- **(c) 【要設計】PII の扱い**。`getKitInfoList.php` は **`signer_name`（氏名）と `signer_mobile`** を返す。
+  CLAUDE.md の PII 分離（氏名を診断系/外部/S3 に載せない）に直接かかるので、
+  **取得直後に捨てて `serialnumber` だけを持つ**設計にする。血液 CSV と同じ論点。
+- **(d) 【未確認】IP 制限の有無**。当方の環境から `login.php` に到達できた（上記の 200）ので
+  少なくとも API 全体の IP 制限は無いが、**アカウント単位の制限までは確かめていない。**
+
+### 4.3 先方へ報告すべき事項（当方の実装とは別件）
+
+**PDF の署名付き URL を返す Lambda に認証が無い。** 実測（2026-09-01）:
+存在しないシリアル `INVALID-TEST-0000` を指定した無認証の GET に対し、
+`https://s3.ap-northeast-1.amazonaws.com/pdf-resources.genoplan.com/2026-09-01/INVALID-TEST-0000.pdf?X-Amz-...`
+という**署名付き URL が返ってきた**（`X-Amz-Expires=3600`）。
+つまり **シリアル番号を知っていれば誰でも他人の遺伝子検査レポートの URL を取得できる**可能性がある。
+**実在するシリアルでの確認は行っていない**（他人のデータに触れないため）。
+Wellfort の顧客データの保護に関わるので、**Wellfort 経由で Genoplan へ伝える。**
+
+### 4.4 次の 1 手
+
+§4.2(a) の許諾が取れたら、**サーバ側で 1 回だけ疎通する**（Wellfort の作業は不要）:
+
+1. Vercel env に `GENOPLAN_LOGIN_ID` / `GENOPLAN_PASSWORD` を設定（**リポジトリにも bat にも置かない**）
+2. `login.php` → `multi` と `accounts[]` を確認（§4.2(b) の解消）
+3. `getKitInfoList.php` → 一覧の実際の形と件数を確認
+4. `/gpj/ja/{sn}` → `pdfUrl` が返るか、PDF が落ちるかを 1 件で確認
+
+ここまで通れば、あとは既存の **admin バッチ AI スキャン**（実装済）へ流すだけ。
+- **フロー**: **サーバ側（Vercel）が Genoplan の API からレポートPDFを取得** → **admin バッチAIスキャン（多ページ・LLM構造化）** → `GeneticTestResultData` JSON → S3。
 - **問診データ（上り）**: **ユーザーが Genoplan 社の検査専用 Web へ直接入力**（§0.2）。**弊社は渡さない＝実装対象外**
   （`questionnaire_to_lab_csv_spec §4.4` の 70 項目マッピングは**対象外で確定**）。
 - **データ内容**: 疾患ごとの**発症リスク倍率**＋発症率（％/定性）。🎯倍率ゴールデン照合（220項目）対応済。
-- **ステータス**: 受取方式=RPA方針**（要再検討・上記）**。スキャン→JSON化 実装済（admin「🧬 遺伝子検査」・ページ範囲指定）。
+- **ステータス**: **受取方式=サーバ側 API 取得で確定（2026-09-01・§4.1 実測）。RPA・PowerShell・専用PC はいずれも不要。**
+  取得部は**未実装**（着手は §4.2(a) の許諾取得後）。スキャン→JSON化 実装済（admin「🧬 遺伝子検査」・ページ範囲指定）。
 
 ---
 

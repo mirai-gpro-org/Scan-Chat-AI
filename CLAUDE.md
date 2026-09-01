@@ -403,11 +403,25 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
     `docs/lab/demecal_powershell_probe_guide.md`「ログインフォームの構造」が正。
   - **未確定**: **ログイン後**の CSV 一覧 URL とダウンロードリンクの形 (プローブはログインしない設計)。
     実装に要るのはこれだけ。**専用PCでの実行が要る**(証明書がその PC にしかない)。
-- 遺伝子 (`GeneticTestResultData`) … Genoplan。**受取自動化は RPA 方針だが PowerShell 化の可能性あり (2026-08-31)**。
-  血液で PAD が不要になった理屈が当てはまり得る。判定=①ログインが素の HTML フォームか
-  ②PDF が URL で直接取れるか。**血液と同じ読み取り専用プローブを 1 回流して決める**
-  (`scripts/demecal-probe.ps1` 流用)。**証明書不要ならサーバ側で完結し専用PCも不要になり得る (未確認)**。
-  詳細=`docs/lab/lab_data_reception_overview.md §4`。
+- 遺伝子 (`GeneticTestResultData`) … Genoplan。**【判定済み 2026-09-01・実測】RPA も PowerShell も専用PC も不要。
+  サーバ側 (Vercel) から API 取得で確定。** 正本=`docs/lab/lab_data_reception_overview.md §4`。
+  - **画面は Vue SPA だが背後は素の PHP REST API** (`https://bizapi.genoplan.com`)。
+    `POST /api/biz/login.php` (`lang`/`loginid`/`password`・form-urlencoded) → `accesskey`。
+    **以降は `accesskey` + `partner_seq` を body に載せるだけ**で、**Cookie セッション無し・
+    CSRF トークン無し・`Authorization` 無し・ログイン経路に MFA/CAPTCHA 無し**
+    (`sendAuthNumber`/`checkAuthNumber` はパスワード再設定・新規登録・電話番号認証にしか出ない)。
+    → **デメカル (ASP.NET Core antiforgery の GET→POST 往復) より簡単**。
+  - **PDF は直リンクで取れる** (`window.open(url)` のみ。`saveAs`/`createObjectURL`/`a.download` は 0 件)。
+    一覧=`POST /api/biz/getKitInfoList.php` → 本レポート=`GET {lambda}/gpj/{lang}/{serialnumber}` →
+    `{pdfUrl}` (S3 署名付き・1h) → GET。PCR=`.../pdfMaker5/dtc_pdf/php/download.php?qq={base64}`。
+  - **クライアント証明書が無い**ので血液の「専用PCが必須」の理由が成立しない。
+    **現地実行 bat は作らない** (PowerShell は「不可」でなく「不要」)。
+  - **着手前に潰す (§4.2)**: **(a) Genoplan の自動アクセス許諾が未取得** (血液は承認済だが
+    Genoplan は docs に記録 0 件。API 直叩きは RPA と別種の合意が要る) / (b) `multi=="Y"` の
+    partner 選択 / (c) `getKitInfoList` が **`signer_name`/`signer_mobile` を返す**=PII 分離の設計 /
+    (d) アカウント単位の IP 制限。
+  - **先方へ報告 (§4.3)**: **PDF の署名付き URL を返す Lambda が無認証**。実測でシリアル番号だけで
+    署名付き URL が返る (存在しないシリアルで確認・実在シリアルは試していない)。Wellfort 経由で伝える。
 - 生活習慣・問診 (`LifestyleQuestionnaireData`) … アプリの AI 問診
 
 ### 検査値と原本の保存 (2026-08-20 確定・発注者承認)
