@@ -91,7 +91,15 @@ export const POST: APIRoute = async ({ request }) => {
   const id = uuid();
   const label = slug(body.label, 'probe', 24);
   const host = slug(body.host, 'unknown', 32);
-  const folder = `${prefix}ops/probe/${day}/${label}-${host}-${id}/`;
+  /*
+   * 区切りは `~`。**`-` にしない。**
+   *   `slug()` は `-` を通すので、PC名が `DESKTOP-S0J0000` のように `-` を含むと
+   *   一覧側 (`probe-list`) が label と host を割れず、実測 2026-09-01 で
+   *   label=`demecal-recon-DESKTOP` / host=`S0J0000` と誤表示した (2 回誤読の元になった)。
+   *   `~` は `slug()` が通さない文字なので、label にも host にも絶対に現れない。
+   *   旧 `-` 区切りのフォルダは probe-list 側が従来どおり解釈する。
+   */
+  const folder = `${prefix}ops/probe/${day}/${label}~${host}~${id}/`;
 
   const files = [
     {

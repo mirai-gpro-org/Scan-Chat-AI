@@ -108,12 +108,29 @@ export const GET: APIRoute = async ({ url }) => {
       // 新しい順。同日は uuid 込みのフォルダ名で安定化させる。
       .sort((a, b) => (a.folder < b.folder ? 1 : a.folder > b.folder ? -1 : 0))
       .map((r) => {
-        // `{label}-{PC名}-{uuid}` を後ろから割る (label に `-` を含み得るため)。
         const dir = r.folder.slice(`${root}${r.date}/`.length).replace(/\/$/, '');
-        const seg = dir.split('-');
-        const uuid = seg.length >= 3 ? seg.slice(-5).join('-') : '';
-        const host = seg.length >= 6 ? seg[seg.length - 6] : '';
-        const label = seg.length >= 7 ? seg.slice(0, seg.length - 6).join('-') : dir;
+        let label: string;
+        let host: string;
+        let uuid: string;
+        if (dir.includes('~')) {
+          // 現行 (`probe-upload` 2026-09-01 以降): `{label}~{PC名}~{uuid}`。
+          // `~` は slug() が通さないので曖昧さが無い。
+          const seg = dir.split('~');
+          label = seg[0] ?? dir;
+          host = seg[1] ?? '';
+          uuid = seg.slice(2).join('~');
+        } else {
+          /*
+           * 旧 (`-` 区切り): `{label}-{PC名}-{uuid}` を後ろから割る。
+           * **PC名が `-` を含むと正しく割れない** (実測: `DESKTOP-S0J0000` が
+           * label=`demecal-recon-DESKTOP` / host=`S0J0000` になった)。
+           * 過去のフォルダを読むためだけに残す。新しい実行はここに来ない。
+           */
+          const seg = dir.split('-');
+          uuid = seg.length >= 3 ? seg.slice(-5).join('-') : '';
+          host = seg.length >= 6 ? seg[seg.length - 6] : '';
+          label = seg.length >= 7 ? seg.slice(0, seg.length - 6).join('-') : dir;
+        }
         const report = r.files.find((f) => f.name === 'report.txt');
         return {
           date: r.date,
