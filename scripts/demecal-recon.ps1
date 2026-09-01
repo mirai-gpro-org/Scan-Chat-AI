@@ -15,6 +15,7 @@
 #   [4] 偵察               CSV ダウンロード画面の form 構造を調べる
 #   [5] ドライラン         **過去の空レンジ**で DL を試し、応答の形だけ記録
 #   [6] 報告               結果を保存 ＋ (トークンがあれば) サーバへ送信
+#       ※ [0]〜[2] で**中止したときも報告する** (recon-1.1)。黙って終わらない。
 #
 # 【やらないこと — PII を持ち出さない】
 #   ・**ページ本文を保存も送信もしない。** form のメタデータ (action/method/
@@ -32,10 +33,50 @@ $BaseUrl   = 'https://dl.demecal.net'
 $LoginUrl  = "$BaseUrl/account/login"
 $UploadUrl = 'https://scan-chat-ai.vercel.app/api/ops/probe-upload'
 $Token     = '__PROBE_TOKEN__'
-$Version   = 'recon-1.0'
+$Version   = 'recon-1.1'
 
 $lines = New-Object System.Collections.Generic.List[string]
 function Say($t) { Write-Host $t; $lines.Add($t) | Out-Null }
+
+# 途中で中止したときも**必ず**報告して終わる。
+#
+# 【なぜ要るか — 実測 2026-09-01】recon-1.0 は [0]〜[2] の中止が `exit 1` で、
+#   ローカル保存もサーバ送信も**その手前**にあった。結果、Wellfort が実行しても
+#   こちら側には**何も届かず**、「中止したのか / 別の bat を実行したのか /
+#   送信だけ失敗したのか」を切り分けられなかった (S3 に recon の実行が 0 件)。
+#   往復を減らすのがこの bat の目的なので、**沈黙で終わらせない**。
+function Finish($code) {
+  $report = ($lines -join "`r`n")
+
+  # 保存先が決まる前 ([0] の中止) は保存先が無い。その場合はテンポラリへ逃がす。
+  $dir = if ($script:ReconDir -and (Test-Path $script:ReconDir)) { $script:ReconDir } else { $env:TEMP }
+  $reportPath = Join-Path $dir 'demecal_recon_report.txt'
+  try {
+    Set-Content -Path $reportPath -Value $report -Encoding UTF8
+    Write-Host ""
+    Write-Host "結果を保存しました: $reportPath"
+  } catch {
+    Write-Host "結果の保存に失敗しました: $($_.Exception.Message)"
+  }
+
+  if ($Token -ne ('__PROBE' + '_TOKEN__')) {
+    Write-Host "結果を送信しています..."
+    try {
+      $payload = @{ report = $report; label = 'demecal-recon'; host = $env:COMPUTERNAME } | ConvertTo-Json -Compress
+      $bytes = [Text.Encoding]::UTF8.GetBytes($payload)
+      Invoke-RestMethod -Uri $UploadUrl -Method Post -Body $bytes -TimeoutSec 60 `
+        -ContentType 'application/json; charset=utf-8' -Headers @{ 'x-probe-token' = $Token } | Out-Null
+      Write-Host "送信しました。"
+    } catch {
+      Write-Host "送信できませんでした（問題ありません）。上のファイルをメールでお送りください。"
+    }
+  } else {
+    Write-Host "自動送信は無効です。上のファイルをメールでお送りください。"
+  }
+
+  Read-Host "確認できたら Enter キーを押してください"
+  exit $code
+}
 
 Say '=================================================='
 Say ' デメカル 初回セットアップ＆偵察'
@@ -59,8 +100,7 @@ try {
 if ($Root -match 'OneDrive') {
   Say "    中止: 保存先が OneDrive 配下です ($Root)。同期されるため使えません。"
   Say '    担当者へご連絡ください。'
-  Read-Host '確認できたら Enter キーを押してください'
-  exit 1
+  Finish 1
 }
 $SecretDir = Join-Path $Root 'secrets'
 $ReconDir  = Join-Path $Root 'recon'
@@ -88,8 +128,7 @@ try {
 if (-not $cert) {
   Say '    見つかりません。この PC はデメカル用の専用PCでない可能性があります。'
   Say '    担当者へご連絡ください。'
-  Read-Host '確認できたら Enter キーを押してください'
-  exit 1
+  Finish 1
 }
 Say ''
 
@@ -106,7 +145,7 @@ if (Test-Path $CredPath) {
   Say '    初回のみ入力をお願いします。入力した内容は暗号化して保存され、'
   Say '    画面にもログにも残りません。'
   $cred = Get-Credential -Message 'デメカル (dl.demecal.net) のユーザーID とパスワード'
-  if (-not $cred) { Say '    入力がキャンセルされました。'; Read-Host '確認できたら Enter キーを押してください'; exit 1 }
+  if (-not $cred) { Say '    入力がキャンセルされました。'; Finish 1 }
   $cred | Export-Clixml $CredPath
   Say "    保存しました: $CredPath"
 }
@@ -334,29 +373,4 @@ if ($loggedIn) {
 Say '=================================================='
 Say ''
 
-$reportPath = Join-Path $ReconDir 'demecal_recon_report.txt'
-$report = ($lines -join "`r`n")
-try {
-  Set-Content -Path $reportPath -Value $report -Encoding UTF8
-  Write-Host ""
-  Write-Host "結果を保存しました: $reportPath"
-} catch {
-  Write-Host "結果の保存に失敗しました: $($_.Exception.Message)"
-}
-
-if ($Token -ne ('__PROBE' + '_TOKEN__')) {
-  Write-Host "結果を送信しています..."
-  try {
-    $payload = @{ report = $report; label = 'demecal-recon'; host = $env:COMPUTERNAME } | ConvertTo-Json -Compress
-    $bytes = [Text.Encoding]::UTF8.GetBytes($payload)
-    Invoke-RestMethod -Uri $UploadUrl -Method Post -Body $bytes -TimeoutSec 60 `
-      -ContentType 'application/json; charset=utf-8' -Headers @{ 'x-probe-token' = $Token } | Out-Null
-    Write-Host "送信しました。"
-  } catch {
-    Write-Host "送信できませんでした（問題ありません）。上のファイルをメールでお送りください。"
-  }
-} else {
-  Write-Host "自動送信は無効です。上のファイルをメールでお送りください。"
-}
-
-Read-Host "確認できたら Enter キーを押してください"
+Finish 0
