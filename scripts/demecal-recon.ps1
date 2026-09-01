@@ -33,7 +33,7 @@ $BaseUrl   = 'https://dl.demecal.net'
 $LoginUrl  = "$BaseUrl/account/login"
 $UploadUrl = 'https://scan-chat-ai.vercel.app/api/ops/probe-upload'
 $Token     = '__PROBE_TOKEN__'
-$Version   = 'recon-1.8'
+$Version   = 'recon-1.9'
 
 $lines = New-Object System.Collections.Generic.List[string]
 function Say($t) { Write-Host $t; $lines.Add($t) | Out-Null }
@@ -92,6 +92,11 @@ Say '=================================================='
 Say ' デメカル 初回セットアップ＆偵察'
 Say (" 実行日時 : {0}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
 Say (" PC名     : {0}" -f $env:COMPUTERNAME)
+# 【なぜログオン名を出すか】クライアント証明書は `Cert:\CurrentUser\My` にしか無い
+# (CLAUDE.md 確定事項)。**別のユーザーでログオンすると [1] が「見つかりません」になる**。
+# 名前が出ていれば「証明書の問題」か「ログオンユーザーの問題」かを、
+# Wellfort へ何も尋ねずにこちらで切り分けられる。顧客 PII ではない (PC のアカウント名)。
+Say (" ログオン : {0}" -f $env:USERNAME)
 Say (" 版       : {0}" -f $Version)
 Say '=================================================='
 Say ''
