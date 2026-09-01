@@ -33,7 +33,7 @@ $BaseUrl   = 'https://dl.demecal.net'
 $LoginUrl  = "$BaseUrl/account/login"
 $UploadUrl = 'https://scan-chat-ai.vercel.app/api/ops/probe-upload'
 $Token     = '__PROBE_TOKEN__'
-$Version   = 'recon-1.4'
+$Version   = 'recon-1.5'
 
 $lines = New-Object System.Collections.Generic.List[string]
 function Say($t) { Write-Host $t; $lines.Add($t) | Out-Null }
@@ -161,26 +161,58 @@ Say ''
 Send-Now '1-証明書' | Out-Null
 
 # ── [2] 資格情報 ──────────────────────────────────────────────
+#
+# 【ここで止まっていた — 実測 2026-09-01 WELLFORT_PC・2 回とも】
+#   段階報告が 起動 → 0-保存先 → 1-証明書 まで届き、**2-資格情報 が届かない**。
+#   証明書は正常に選べている (CN=Q05-0010・残り 833 日)。
+#   つまり停止点は `1-証明書` と `2-資格情報` の間 = この節。
+#
+#   原因は **`Get-Credential` が GUI のモーダルダイアログを開くこと**。
+#   ・黒い画面の背面に出ると担当者には「固まった」ようにしか見えない
+#   ・キャンセルなら `Finish 1` が走り「すべて終わりました」が出るはずだが出ていない
+#     → キャンセルではなく、ダイアログに到達できていないか、待ったまま閉じられた
+#   接続チェック(probe)が毎回届いていたのは **入力を一切求めないから**だった。
+#
+#   → **GUI をやめ、この黒い画面の中で入力してもらう** (`Read-Host`)。
+#     見失いようがなく、Alt+Tab も要らない。
+#     ※ bat のビルダが除去するのは「確認できたら Enter…」の 1 行だけなので、
+#       入力用の Read-Host は残る (`src/lib/probe-bat.ts` の READ_HOST_LINE)。
+#
 # Export-CliXml は SecureString を DPAPI で暗号化する。
 # **このユーザー・この PC でしか復号できない**ので、コピーしても他所では開けない。
 $CredPath = Join-Path $SecretDir 'demecal.cred.xml'
 Say '[2] デメカルのログイン情報'
+
+# **① はセットアップなので毎回入れ直す。`Import-Clixml` を使わない。**
+#   前回の実行が途中で終わって壊れた cred ファイルを残している可能性があり、
+#   その読み込みで落ちるとまた同じ場所で沈黙する。読まなければその線は消える。
 if (Test-Path $CredPath) {
-  Say '    保存済みのものを使います。(入れ直すときはこのファイルを削除して再実行)'
-  Say "    $CredPath"
-  $cred = Import-Clixml $CredPath
-} else {
-  Say '    初回のみ入力をお願いします。入力した内容は暗号化して保存され、'
-  Say '    画面にもログにも残りません。'
-  Write-Host ''
-  Write-Host '  >>> ID とパスワードの入力欄が「別のウィンドウ」で開きます。'
-  Write-Host '      この黒い画面の後ろに隠れることがあります。'
-  Write-Host '      見当たらないときは タスクバー か Alt+Tab で探してください。'
-  Write-Host ''
-  $cred = Get-Credential -Message 'デメカル (dl.demecal.net) のユーザーID とパスワード'
-  if (-not $cred) { Say '    入力がキャンセルされました。'; Finish 1 }
-  $cred | Export-Clixml $CredPath
+  Say '    前回保存された情報があります。セットアップなので入れ直します。'
+  try { Remove-Item -Path $CredPath -Force -ErrorAction Stop } catch { }
+}
+
+Say '    入力した内容は暗号化して保存され、画面にもログにも残りません。'
+Write-Host ''
+Write-Host '  ================================================'
+Write-Host '   この画面に、そのまま入力してください。'
+Write-Host '   (別のウィンドウは開きません)'
+Write-Host '   パスワードは打っても画面に文字が出ません。'
+Write-Host '   入力したら Enter を押してください。'
+Write-Host '  ================================================'
+Write-Host ''
+$userId = Read-Host '  デメカルのユーザーID'
+$pwSec  = Read-Host '  デメカルのパスワード' -AsSecureString
+if (-not $userId -or -not $pwSec -or $pwSec.Length -eq 0) {
+  Say '    入力が空でした。中止します。'
+  Finish 1
+}
+$cred = New-Object System.Management.Automation.PSCredential($userId, $pwSec)
+try {
+  $cred | Export-Clixml $CredPath -ErrorAction Stop
   Say "    保存しました: $CredPath"
+} catch {
+  # 保存できなくても偵察は続ける (② が使い回せないだけで、① の目的は果たせる)。
+  Say ("    保存できませんでした (偵察は続けます): {0}" -f $_.Exception.Message)
 }
 Say ''
 Send-Now '2-資格情報' | Out-Null
