@@ -13,6 +13,11 @@
 
 import REPORT_TEXT from '../src/data/elith/report_text_20260826.json';
 import HEALTH_CHECKUP from '../src/data/elith/health_checkup_20260826.json';
+// タイプ1 (2026-08-24 検査 / 2026-09-01 受領)。**検体 1 つでの検証は事故を通した** (spec §5.2)。
+import T1_TEXT from '../src/data/elith/type1_20260824/report_text.json';
+import T1_CHECKUP from '../src/data/elith/type1_20260824/health_checkup.json';
+import T1_BLOOD from '../src/data/elith/type1_20260824/blood_test.json';
+import T1_CANCER from '../src/data/elith/type1_20260824/cancer_risk.json';
 import { buildReportVM, PILOT_CANCER_FINDING_TEXT, leadSentences } from '../src/lib/report-adapter';
 import { anchorFor, resolveChapters } from '../src/lib/report-sections';
 import type { ReportVM } from '../src/lib/report-model';
@@ -322,6 +327,67 @@ for (const c of oldB) {
   check('一般顧客にサンプルを出さない', asCustomer.isSample === false && asCustomer.chapters.length === 0,
     `isSample=${asCustomer.isSample} / 全編 ${asCustomer.chapters.length} 章`);
 }
+
+// ── 13) 2026-08-24 受領のタイプ1 検体 (検査値ファイルが 3 つ・health_age が null) ──
+const t1 = buildReportVM({
+  reportText: T1_TEXT,
+  checkup: { health_checkup: T1_CHECKUP, blood_test: T1_BLOOD, cancer_risk: T1_CANCER } as never,
+  name: '', issuedOn: '2026-08-24', isSample: true, hasCancerRisk: false,
+  cycleSeq: 1, chronologicalAge: 56, ourWellnessAge: 52.3, readConfig: () => '',
+});
+// ① health_age: null を 0 にしない。当社が算出して渡した元の値で埋める (発注者指示 2026-09-01)
+check('health_age が null でも 0 にしない', t1.cover.wellnessAge !== 0);
+check('health_age が無ければ当社 CABA の値で埋める', t1.cover.wellnessAge === 52.3);
+check('どちらを出したかは監査に出る',
+  t1.audit.anomalies.some((a) => a.includes('当社 CABA の値で補完')));
+const t1NoOurs = buildReportVM({
+  reportText: T1_TEXT, checkup: T1_CHECKUP as never, name: '', issuedOn: '2026-08-24',
+  isSample: true, hasCancerRisk: false, cycleSeq: null, chronologicalAge: 56, readConfig: () => '',
+});
+check('当社の値も無ければ null (0 にしない)', t1NoOurs.cover.wellnessAge === null);
+
+// ② 基準値は「基準値：」でも「基準値 」でも拾う。**世代差で黙って空にしない**
+check('基準値をコロン無しの世代でも拾う', t1.audit.referenceCount === 7,
+  `referenceCount=${t1.audit.referenceCount}`);
+
+// ③ 検査値ファイル 3 つを 1 つの表に。問診は外す (発注者指示 2026-09-01)
+check('3 ファイルぶんの検査値が入る (37+18+2)', t1.audit.measurementCount === 57,
+  `measurementCount=${t1.audit.measurementCount}`);
+/*
+ * **見るのは検査値の表だけ。** 全編 (chapters) には Elith 自身が本文で
+ * 「体重が20歳の頃と比べて10kg以上増加しており」と書いており、そちらは逐語として正しい。
+ * 落とすのは「表の行として並べること」であって、本文から消すことではない。
+ */
+const t1Table = t1.digest.find((c) => c.key === 'measurements');
+check('問診を検査値の表に出さない',
+  !!t1Table && !JSON.stringify(t1Table).includes('20歳の頃と比べて'));
+check('外した設問の件数は監査に出る (黙って落とさない)',
+  t1.audit.anomalies.some((a) => a.includes('設問 24 件を検査値の表から外しました')));
+
+// ④ 逐語 — この検体でも紙面の文が受領 JSON の部分文字列であること
+let t1Corpus = '';
+const walkT1 = (v: unknown): void => {
+  if (typeof v === 'string') { t1Corpus += `\n${v}`; return; }
+  if (Array.isArray(v)) { v.forEach(walkT1); return; }
+  if (v && typeof v === 'object') Object.values(v).forEach(walkT1);
+};
+walkT1(T1_TEXT);
+const t1Norm = t1Corpus.replace(/\s+/g, '');
+const t1Sentences: string[] = [];
+for (const c of t1.digest) {
+  for (const b of c.blocks) {
+    const any = b as unknown as { kind: string; items?: unknown[] };
+    if (any.kind === 'paragraphs') t1Sentences.push(...(any.items as string[]));
+  }
+}
+// **例外はパイロット暫定文だけ** (spec §4.1 の逐語ルールの唯一の例外)。
+const t1Pilot = new Set(PILOT_CANCER_FINDING_TEXT.map((x) => x.replace(/\s+/g, '')));
+const t1Bad = t1Sentences.filter((x) => {
+  const n = x.replace(/\s+/g, '');
+  return !t1Norm.includes(n) && !t1Pilot.has(n);
+});
+check('タイプ1 でもダイジェストの段落は受領本文の逐語 (暫定文を除く)',
+  t1Bad.length === 0, `${t1Bad.length} 文が一致しない: ${t1Bad[0]?.slice(0, 40) ?? ''}`);
 
 // ── 結果 ──────────────────────────────────────────────────────────
 console.log(`\n受領本文 ${CORPUS.length} 字 / ダイジェスト ${digestChars} 字 (削減率 ${reduction.toFixed(1)}%)`);

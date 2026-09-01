@@ -302,6 +302,60 @@ export interface MeasurementResult {
 }
 
 /**
+ * 検査値ファイル（複数）を 1 つの辞書へまとめ、**問診の設問を落とす**。
+ *
+ * 【なぜ要るか】2026-08-24 受領のタイプ1 から検査値ファイルが 3 つになった
+ * (`health_checkup` 37 / `blood_test` 42 / `cancer_risk` 2)。しかも **`blood_test` には
+ * 問診が 24 件混ざっている** — これは Elith が混ぜたのではなく、デメカルの血液検査 CSV が
+ * 問診結果を持ち (`elith-blood-csv.ts` の `項目区分` 2=問診結果)、当社の上りが
+ * それを納品しているため。検査値の表にそのまま出すと
+ * 「20歳の頃と比べて、今は１０Kg以上増加している = 2」が検査値として並ぶ。
+ *
+ * 【切り分けの規則・暫定】Elith の JSON には `項目区分` が無いので、**キーの形**で分ける。
+ *   設問文 = ひらがな 2 文字以上 ／ 全角括弧 ／ 読点 のいずれかを含む。
+ *   実測 (2026-09-01): タイプ1 の 3 ファイル ＋ タイプ2 の `health_checkup` の
+ *   計 121 キーで**誤判定 0** (検査値 18/18 を残し、問診 24/24 を外した)。
+ *   ※ 文字数で切る規則は破綻する (「夜食や間食が多い」は 8 字)。標準マスタ照合も使えない
+ *     (starter は 41 項目で、アルブミン・中性脂肪・血清鉄など本物の検査値が 17 件落ちる)。
+ *   **恒久策は Elith に `項目区分` かラベルを残してもらうこと** (§6.4 の確認事項)。
+ *
+ * 【黙って落とさない】外した設問は件数を監査に出す。
+ */
+const QUESTIONNAIRE_KEY = /[ぁ-ゖ].*[ぁ-ゖ]|（|、/;
+
+export interface LabFiles {
+  health_checkup?: Record<string, { date?: string; value?: unknown }[]> | null;
+  blood_test?: Record<string, { date?: string; value?: unknown }[]> | null;
+  cancer_risk?: Record<string, { date?: string; value?: unknown }[]> | null;
+}
+
+/** `checkup_values` は旧行が素の `health_checkup` 辞書、新行がファイル別の入れ子。両方読む。 */
+export function flattenLabFiles(
+  raw: Record<string, { date?: string; value?: unknown }[]> | LabFiles | null,
+): { checkup: Record<string, { date?: string; value?: unknown }[]> | null; dropped: string[] } {
+  if (!raw) return { checkup: null, dropped: [] };
+  const grouped = raw as LabFiles;
+  const isGrouped = ['health_checkup', 'blood_test', 'cancer_risk'].some(
+    (k) => (grouped as Record<string, unknown>)[k] != null,
+  );
+  const files = isGrouped
+    ? [grouped.health_checkup, grouped.blood_test, grouped.cancer_risk]
+    : [raw as Record<string, { date?: string; value?: unknown }[]>];
+
+  const out: Record<string, { date?: string; value?: unknown }[]> = {};
+  const dropped: string[] = [];
+  for (const f of files) {
+    if (!f) continue;
+    for (const [key, arr] of Object.entries(f)) {
+      const name = key.replace(/\s*\[[^\]]*\]\s*$/, '').trim();
+      if (QUESTIONNAIRE_KEY.test(name)) { dropped.push(key); continue; }
+      if (!(key in out)) out[key] = arr;   // 先勝ち: health_checkup → blood_test → cancer_risk
+    }
+  }
+  return { checkup: Object.keys(out).length ? out : null, dropped };
+}
+
+/**
  * 検査値の表を組む。
  *
  * - 値 = `health_checkup.json` (受領そのまま)。
@@ -485,7 +539,11 @@ function card(
 
 export interface BuildInput {
   reportText: unknown;
-  checkup: Record<string, { date?: string; value?: unknown }[]> | null;
+  /**
+   * 検査値ファイル。**旧行は素の `health_checkup` 辞書、新行はファイル別の入れ子**
+   * (`{ health_checkup, blood_test, cancer_risk }`)。`flattenLabFiles` が両方を受ける。
+   */
+  checkup: Record<string, { date?: string; value?: unknown }[]> | LabFiles | null;
   name: string;
   issuedOn: string;
   isSample: boolean;
@@ -510,8 +568,14 @@ export function buildReportVM(input: BuildInput): ReportVM {
   const digest: DigestCardVM[] = [];
   const emptyCards: string[] = [];
 
-  const measured = buildMeasurements(input.checkup, sec('blood_analysis'));
+  const lab = flattenLabFiles(input.checkup);
+  const measured = buildMeasurements(lab.checkup, sec('blood_analysis'));
   anomalies.push(...measured.anomalies);
+  if (lab.dropped.length) {
+    // **黙って落とさない。** 何件を設問と判断して表から外したかを監査に出す。
+    anomalies.push(`血液検査ファイルの設問 ${lab.dropped.length} 件を検査値の表から外しました`
+      + ` (例: ${lab.dropped.slice(0, 3).join(' / ')})`);
+  }
 
   // ウェルネス年齢は当社が算出して Elith へ渡した値がそのまま返る = 本来必ず一致する。
   // 不一致は往復のどこかでデータが壊れた兆候 (spec §1.3.8)。**紙面には出さず監査に出す。**
@@ -659,7 +723,7 @@ export function buildReportVM(input: BuildInput): ReportVM {
     name: input.name,
     issuedOn: input.issuedOn,
     sheetVersion: SHEET_VERSION,
-    testedOn: firstCheckupDate(input.checkup),
+    testedOn: firstCheckupDate(lab.checkup),
     cycleSeq: input.cycleSeq,
     cycleTotal: CYCLE_TOTAL,
     wellnessAge,

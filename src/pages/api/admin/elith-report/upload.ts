@@ -7,7 +7,9 @@
  *   | 受領物                | フォーム項目     | 格納先                        |
  *   |-----------------------|------------------|-------------------------------|
  *   | `report_text.json`    | `report_text`    | `report` (jsonb)              |
- *   | `health_checkup.json` | `health_checkup` | `checkup_values` (jsonb)      |
+ *   | `health_checkup.json` | `health_checkup` | `checkup_values` (jsonb・ファイル別の入れ子) |
+ *   | `blood_test.json`     | `blood_test`     | 同上 (2026-08-24 受領のタイプ1 から) |
+ *   | `cancer_risk.json`    | `cancer_risk`    | 同上 (同上)                    |
  *   | 組版済み PDF          | `file`           | `report_pdf_*` (**原本保管**) |
  *
  *   **PDF は任意**。表示の主役は JSON で、PDF は JSON の部分集合 (固有情報ゼロ・spec §2.3)。
@@ -29,7 +31,7 @@ import type { APIRoute } from 'astro';
 import { getServerSupabase } from '../../../../lib/supabase';
 import { putOriginal } from '../../../../lib/originals-storage';
 import { isAdminAuthorized } from '../../../../lib/api-auth';
-import { buildReportVM } from '../../../../lib/report-adapter';
+import { buildReportVM, type LabFiles } from '../../../../lib/report-adapter';
 
 export const prerender = false;
 
@@ -101,16 +103,26 @@ export const POST: APIRoute = async ({ request }) => {
     }
   }
 
-  // health_checkup.json (40 項目)。
-  let checkup: Record<string, { date?: string; value?: unknown }[]> | null = null;
-  const hc = await readJson('health_checkup');
-  if (hc && !hc.ok) return json({ ok: false, error: 'invalid health_checkup json' }, 400);
-  if (hc?.ok) {
-    if (!hc.value || typeof hc.value !== 'object' || Array.isArray(hc.value)) {
-      return json({ ok: false, error: 'health_checkup must be an object' }, 400);
+  /*
+   * 検査値ファイル。**2026-08-24 受領のタイプ1 から 3 つに増えた**
+   * (`health_checkup` 37 / `blood_test` 42 / `cancer_risk` 2)。
+   * `checkup_values` は 1 列なので、**ファイル別の入れ子**で入れる。
+   * 旧行は素の `health_checkup` 辞書が入っており、**読み手 (`report-adapter.ts` の
+   * `flattenLabFiles`) が両方の形を受ける** = 形式の世代差はアダプタで吸収する (spec §5.3)。
+   * ここでは中身を 1 バイトも加工しない (問診の切り分けも表示側の仕事)。
+   */
+  const LAB_PARTS = ['health_checkup', 'blood_test', 'cancer_risk'] as const;
+  const lab: Record<string, unknown> = {};
+  for (const part of LAB_PARTS) {
+    const r = await readJson(part);
+    if (r && !r.ok) return json({ ok: false, error: `invalid ${part} json` }, 400);
+    if (!r?.ok) continue;
+    if (!r.value || typeof r.value !== 'object' || Array.isArray(r.value)) {
+      return json({ ok: false, error: `${part} must be an object` }, 400);
     }
-    checkup = hc.value as Record<string, { date?: string; value?: unknown }[]>;
+    lab[part] = r.value;
   }
+  const checkup = Object.keys(lab).length ? (lab as LabFiles) : null;
 
   // PDF は任意 (原本として保管するだけ)。
   const file = form.get('file');
@@ -122,7 +134,7 @@ export const POST: APIRoute = async ({ request }) => {
   } else if (report === null && checkup === null) {
     // 3 つとも無い = 取り込むものが無い。**空の行を作らない。**
     return json({ ok: false, error: 'nothing_to_ingest',
-      detail: 'report_text / health_checkup / file のいずれかが要る' }, 400);
+      detail: 'report_text / health_checkup / blood_test / cancer_risk / file のいずれかが要る' }, 400);
   }
 
   const now = new Date();
