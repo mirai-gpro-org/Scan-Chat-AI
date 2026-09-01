@@ -104,8 +104,15 @@ export function parseReportText(raw: unknown): ParsedReportText {
 
   for (const [key, v] of Object.entries(raw as Record<string, unknown>)) {
     if (key === 'health_age') {
-      const n = Number(v);
-      if (Number.isFinite(n)) wellnessAge = n;
+      // **`null` を 0 にしない。** `Number(null)` は 0 で `Number.isFinite` を通るため、
+      // 以前は `health_age: null` の検体 (2026-08-24 受領のタイプ1) で
+      // **紙面に「ウェルネス年齢 0」が出て、数直線も 0 歳の位置に点を打っていた** (実測)。
+      // 値が無いことと 0 歳であることは別。ここでは null のままにし、
+      // **当社が算出した元の値での補完は `buildReportVM` が行う** (下記)。
+      if (v != null && v !== '') {
+        const n = Number(v);
+        if (Number.isFinite(n)) wellnessAge = n;
+      }
       continue;
     }
     // Elith へ依頼中の独立フィールド (spec §4.0.1)。未受領のあいだは通らない。
@@ -233,11 +240,17 @@ function toneOf(judgement: string): MeasurementRow['tone'] {
 /**
  * `名前は 値（基準値：〜）` を拾う。
  *
- * **コロンは全角 `：` と半角 `:` の両方を受ける。** 受領世代によって揺れており、
- * 全角だけを見ていたため本番 DB の検体 (半角 `（基準値: 〜129 mmHg）` が 12 箇所) で
+ * **「基準値」の後ろの区切り文字を問わない。** 受領世代ごとに揺れており、
+ * 全角コロンだけを見ていたため本番 DB の検体 (半角 `（基準値: 〜129 mmHg）` が 12 箇所) で
  * **1 件も拾えず、検査値の表が空になった** (実測 2026-08-29)。
+ * さらに 2026-08-24 受領のタイプ1 は **コロンが無く `（基準値 0.40〜1.50 mg/dl）`** で、
+ * ここでも **0 件 = 表が空**になっていた (実測 2026-09-01)。
+ * → 区切りは `：` / `:` / 空白のいずれでもよいものとし、括弧も全角・半角の両方を受ける。
+ * **構造 (`名前は 値（基準値 …）`) は 3 世代とも同じ**なので、そこだけに依存する。
+ * 実測: この形にしてもタイプ2 の抽出結果は 8 件で**現行と完全一致** (回帰なし)、
+ * タイプ1 は 0 → **7 件**。
  */
-const VALUE_RE = /([^\s、。（(]+?)(?:は|が)((?:[0-9][^（(、。]*?))（基準値[：:]\s*([^）]*)）/g;
+const VALUE_RE = /([^\s、。（(]+?)(?:は|が)((?:[0-9][^（(、。]*?))[（(]基準値[：:]?\s*([^）)]*)[）)]/g;
 
 /** `health_checkup.json` のキー `項目名 [単位]` を分解する。 */
 function splitCheckupKey(key: string): { name: string; unit: string } {
@@ -289,6 +302,67 @@ export interface MeasurementResult {
 }
 
 /**
+ * 検査値ファイル（複数）を 1 つの辞書へまとめ、**問診の設問を落とす**。
+ *
+ * 【なぜ要るか】2026-08-24 受領のタイプ1 から検査値ファイルが 3 つになった
+ * (`health_checkup` 37 / `blood_test` 42 / `cancer_risk` 2)。しかも **`blood_test` には
+ * 問診が 24 件混ざっている** — これは Elith が混ぜたのではなく、デメカルの血液検査 CSV が
+ * 問診結果を持ち (`elith-blood-csv.ts` の `項目区分` 2=問診結果)、当社の上りが
+ * それを納品しているため。検査値の表にそのまま出すと
+ * 「20歳の頃と比べて、今は１０Kg以上増加している = 2」が検査値として並ぶ。
+ *
+ * 【切り分けの規則・暫定】Elith の JSON には `項目区分` が無いので、**キーの形**で分ける。
+ *   設問文 = ひらがな 2 文字以上 ／ 全角括弧 ／ 読点 のいずれかを含む。
+ *   実測 (2026-09-01): タイプ1 の 3 ファイル ＋ タイプ2 の `health_checkup` の
+ *   計 121 キーで**誤判定 0** (検査値 18/18 を残し、問診 24/24 を外した)。
+ *   ※ 文字数で切る規則は破綻する (「夜食や間食が多い」は 8 字)。標準マスタ照合も使えない
+ *     (starter は 41 項目で、アルブミン・中性脂肪・血清鉄など本物の検査値が 17 件落ちる)。
+ *   **恒久策は Elith に `項目区分` かラベルを残してもらうこと** (§6.4 の確認事項)。
+ *
+ * 【黙って落とさない】外した設問は件数を監査に出す。
+ */
+const QUESTIONNAIRE_KEY = /[ぁ-ゖ].*[ぁ-ゖ]|（|、/;
+
+export interface LabFiles {
+  health_checkup?: Record<string, { date?: string; value?: unknown }[]> | null;
+  blood_test?: Record<string, { date?: string; value?: unknown }[]> | null;
+  cancer_risk?: Record<string, { date?: string; value?: unknown }[]> | null;
+}
+
+/** `checkup_values` は旧行が素の `health_checkup` 辞書、新行がファイル別の入れ子。両方読む。 */
+export function flattenLabFiles(
+  raw: Record<string, { date?: string; value?: unknown }[]> | LabFiles | null,
+): { checkup: Record<string, { date?: string; value?: unknown }[]> | null; dropped: string[]; cancerItems: string[] } {
+  if (!raw) return { checkup: null, dropped: [], cancerItems: [] };
+  const grouped = raw as LabFiles;
+  const isGrouped = ['health_checkup', 'blood_test', 'cancer_risk'].some(
+    (k) => (grouped as Record<string, unknown>)[k] != null,
+  );
+  const files = isGrouped
+    ? [grouped.health_checkup, grouped.blood_test, grouped.cancer_risk]
+    : [raw as Record<string, { date?: string; value?: unknown }[]>];
+
+  const out: Record<string, { date?: string; value?: unknown }[]> = {};
+  const dropped: string[] = [];
+  for (const f of files) {
+    if (!f) continue;
+    for (const [key, arr] of Object.entries(f)) {
+      const name = key.replace(/\s*\[[^\]]*\]\s*$/, '').trim();
+      if (QUESTIONNAIRE_KEY.test(name)) { dropped.push(key); continue; }
+      if (!(key in out)) out[key] = arr;   // 先勝ち: health_checkup → blood_test → cancer_risk
+    }
+  }
+  /*
+   * がんリスク検査の**項目名**。主軸 A で「本文がこの検査に触れた文」を選ぶのに使う。
+   * 名前は受領ファイルのキーそのもので、当社が決めた語ではない。
+   */
+  const cancerItems = Object.keys(grouped.cancer_risk ?? {})
+    .map((k) => k.replace(/\s*\[[^\]]*\]\s*$/, '').trim())
+    .filter(Boolean);
+  return { checkup: Object.keys(out).length ? out : null, dropped, cancerItems };
+}
+
+/**
  * 検査値の表を組む。
  *
  * - 値 = `health_checkup.json` (受領そのまま)。
@@ -335,7 +409,18 @@ export function buildMeasurements(
       }
       if (!found.length) continue;
 
-      // ② 判定句を項目へ割り当てる。
+      /*
+   * **黙って空にしない** (spec §5.3)。本文の節はあるのに 1 件も拾えないときは、
+   * 受領形式が変わった合図。実測でこれを 2 回踏んでいる —
+   * 2026-08-29 は `【` 決め打ちで節が取れず、2026-09-01 は `（基準値 …）` の
+   * 区切り文字が変わって 0 件になり、どちらも**表が空のまま何も知らせなかった**。
+   */
+  if (bloodAnalysis && fromText.size === 0) {
+    anomalies.push('本文 (検査値フィードバック) から値・基準値を 1 件も抽出できませんでした'
+      + ' — 受領形式が変わった可能性があります');
+  }
+
+  // ② 判定句を項目へ割り当てる。
       //    まず「<項目>は…<判定句>」の形で項目名に隣接するものだけを引く。
       //    「クレアチニンについても基準値との関係において…」のように判定句を伴わない
       //    言及に判定を付けないため (Elith が書いていない判定を作らない)。
@@ -461,7 +546,11 @@ function card(
 
 export interface BuildInput {
   reportText: unknown;
-  checkup: Record<string, { date?: string; value?: unknown }[]> | null;
+  /**
+   * 検査値ファイル。**旧行は素の `health_checkup` 辞書、新行はファイル別の入れ子**
+   * (`{ health_checkup, blood_test, cancer_risk }`)。`flattenLabFiles` が両方を受ける。
+   */
+  checkup: Record<string, { date?: string; value?: unknown }[]> | LabFiles | null;
   name: string;
   issuedOn: string;
   isSample: boolean;
@@ -486,8 +575,14 @@ export function buildReportVM(input: BuildInput): ReportVM {
   const digest: DigestCardVM[] = [];
   const emptyCards: string[] = [];
 
-  const measured = buildMeasurements(input.checkup, sec('blood_analysis'));
+  const lab = flattenLabFiles(input.checkup);
+  const measured = buildMeasurements(lab.checkup, sec('blood_analysis'));
   anomalies.push(...measured.anomalies);
+  if (lab.dropped.length) {
+    // **黙って落とさない。** 何件を設問と判断して表から外したかを監査に出す。
+    anomalies.push(`血液検査ファイルの設問 ${lab.dropped.length} 件を検査値の表から外しました`
+      + ` (例: ${lab.dropped.slice(0, 3).join(' / ')})`);
+  }
 
   // ウェルネス年齢は当社が算出して Elith へ渡した値がそのまま返る = 本来必ず一致する。
   // 不一致は往復のどこかでデータが壊れた兆候 (spec §1.3.8)。**紙面には出さず監査に出す。**
@@ -505,9 +600,11 @@ export function buildReportVM(input: BuildInput): ReportVM {
     switch (spec.key) {
       // ── 主軸 A ──────────────────────────────────────
       case 'cancer_finding': {
-        const texts = cancerFindingTexts(parsed.cancerText, input);
+        const texts = cancerFindingTexts(parsed.cancerText, input, lab.cancerItems,
+          [sec('abstract'), sec('summary')]);
         built = card(spec.key, title, 'a',
-          parsed.cancerText ? '総評' : 'Elith へ依頼中 (spec §10.1 E-1)',
+          parsed.cancerText ? '総評'
+            : input.hasCancerRisk ? 'アブストラクト・総評' : 'Elith へ依頼中 (spec §10.1 E-1)',
           [{ kind: 'paragraphs', items: texts }]);
         break;
       }
@@ -619,14 +716,26 @@ export function buildReportVM(input: BuildInput): ReportVM {
     });
   }
 
+  /*
+   * ウェルネス年齢は **当社が CABA で算出して `HealthAgeData` として Elith へ渡した値**で、
+   * Elith は計算しない。したがって Elith が返さなかった (`health_age: null`) ときに
+   * **当社の元の値で埋めるのは、新しい数字を作ることではない** (発注者指示 2026-09-01)。
+   * 実測: 2026-08-24 受領のタイプ1 は `health_age: null` で、補完が無いと表紙が空になる。
+   * どちらを出したかは監査に残す (紙面には出さない)。
+   */
+  const wellnessAge = parsed.wellnessAge ?? input.ourWellnessAge ?? null;
+  if (parsed.wellnessAge == null && input.ourWellnessAge != null) {
+    anomalies.push(`ウェルネス年齢が Elith 出力に無いため当社 CABA の値で補完: ${input.ourWellnessAge}`);
+  }
+
   const cover: CoverVM = {
     name: input.name,
     issuedOn: input.issuedOn,
     sheetVersion: SHEET_VERSION,
-    testedOn: firstCheckupDate(input.checkup),
+    testedOn: firstCheckupDate(lab.checkup),
     cycleSeq: input.cycleSeq,
     cycleTotal: CYCLE_TOTAL,
-    wellnessAge: parsed.wellnessAge,
+    wellnessAge,
     chronologicalAge: input.chronologicalAge,
   };
 
@@ -670,13 +779,45 @@ function isDigestChapter(key: string): boolean {
  * タイプ 1 で Elith の記述が無いのはイレギュラーなので、**カードごと非表示**にする
  * (アプリが代わりを書かない)。
  */
-function cancerFindingTexts(cancerText: string | null, input: BuildInput): string[] {
+/**
+ * 本文から「がんリスク検査に触れた文」を**逐語で選ぶ**。
+ *
+ * 【なぜ語で探さないか】2026-08-24 受領のタイプ1 は、`cancer_risk.json` を渡している
+ * にもかかわらず本文に **「がん」「腫瘍」「マーカー」が 0 回**（実測）。語で探すと 0 件になる。
+ * 一方で **`cancer_risk.json` のキー名「尿中のポルフィリン量」は本文に 2 回**出てくる。
+ *
+ * → **受領ファイルの項目名で探す。** 名前は Elith が受け取った項目そのもので、
+ *   当社が「これはがんの話だ」と決めた語ではない。**文は選ぶだけで、足さない・繋げない。**
+ */
+function findingsMentioning(items: string[], sections: (ElithSection | null)[]): string[] {
+  if (!items.length) return [];
+  const out: string[] = [];
+  for (const sec of sections) {
+    if (!sec) continue;
+    for (const raw of sec.text.match(/[^。]+。|[^。]+$/g) ?? []) {
+      const s = raw.trim();
+      if (s && items.some((it) => s.includes(it)) && !out.includes(s)) out.push(s);
+    }
+  }
+  return out;
+}
+
+function cancerFindingTexts(
+  cancerText: string | null,
+  input: BuildInput,
+  cancerItems: string[],
+  sections: (ElithSection | null)[],
+): string[] {
   // ① Elith が書いていれば、その本文をそのまま。当社は但し書きを足さない
   //    (Stage2 では Elith 自身が「がんがないことを断定するものではない」と書いている)。
   if (cancerText) return [cancerText];
-  // ② タイプ 1 で Elith の記述が無いのはイレギュラー。**カードごと非表示**にして、
-  //    アプリが代わりを書かない。欠落は監査に出る (spec §4.0.1「記載が無いこと ≠ 所見が無いこと」)。
-  if (input.hasCancerRisk) return [];
+  if (input.hasCancerRisk) {
+    // ② タイプ 1。**がんリスク検査の項目名に触れた文を逐語で選ぶ** (発注者指示 2026-09-01)。
+    const found = findingsMentioning(cancerItems, sections);
+    // ③ 1 文も無ければ**カードごと非表示**。アプリが代わりを書かない
+    //    (spec §4.0.1「記載が無いこと ≠ 所見が無いこと」)。欠落は監査に出る。
+    return found;
+  }
   // ③ タイプ 2。admin で文言が確定していればそれを使う。
   const fallback = (input.cancerFallbackText ?? '').trim();
   if (fallback) return [fallback];

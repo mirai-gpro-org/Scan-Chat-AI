@@ -2,7 +2,7 @@
 import AppIcon from '../components/AppIcon.astro';
 import AppNav from '../components/AppNav.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
-import { loadReportVM } from '../lib/elith-report-queries';
+import { loadReportVM, previewVM } from '../lib/elith-report-queries';
 import { renderReportMarkdown } from '../lib/report-view';
 import { countUnreadImportant } from '../lib/notice-queries';
 import { refreshConfig, cfg } from '../lib/app-config';
@@ -43,10 +43,21 @@ const viewer = await resolveViewer(Astro);
  * **代理表示中 (`?u=` で他人を見ている) は渡さない** — 相手の実データを見せるため。
  */
 const u = viewer.uid;
-/** 印刷/PDF 用ビュー。全展開・UI なし・ウェルネス年齢を冒頭に出す。 */
+/** 印刷/PDF 用ビュー。全展開・UI なし。 */
 const isPrint = url.searchParams.get('print') === '1';
 /** 端末に保存する手順を出すモード。**印刷ビューには置かない** (手順が PDF に載るため・spec §4.4)。 */
 const showSave = url.searchParams.get('save') === '1';
+/*
+ * **紙面のタイプを切り替えて確認するモード** (テストフェーズ限定・発注者指示 2026-09-01)。
+ * `?preview=1` / `?preview=2` で、受領 JSON から組んだ紙面をタイプ別に見る。
+ * **モックではなく本番のアダプタ・本番のレンダラを通した出力**を見せる
+ * (紙面の正はモックだが、実装が何を出しているかはここで見る)。
+ * 値が無い・不正なときは 1 (既定はタイプ1)。入口は `/dashboard` のデバッグ欄で、
+ * **デバッグ欄を遮蔽するときに一緒に閉じる。**
+ */
+const previewParam = url.searchParams.get('preview');
+const previewType: 1 | 2 | null =
+  previewParam == null ? null : previewParam === '2' ? 2 : 1;
 
 const authEnabled = !!import.meta.env.PUBLIC_GOOGLE_CLIENT_ID;
 const needsSignIn = authEnabled && !u;
@@ -79,7 +90,8 @@ const healthAge = data ? await getHealthAge(data.diagnosticUserId) : null;
  */
 const cancerArtifact = (data?.artifacts ?? []).find((a) => a.test_type === 'cancer_urine') ?? null;
 
-const vm = await loadReportVM({
+/** 表示モデルの入力。**プレビューと本番で同じものを渡す** (二重に書かない)。 */
+const reportCtx = {
   diagnosticUserId: data?.diagnosticUserId ?? null,
   name: data?.appUser?.display_name_cache ? withHonorific(data.appUser.display_name_cache) : 'お客様',
   chronologicalAge: healthAge?.latest?.chronologicalAge ?? null,
@@ -87,8 +99,11 @@ const vm = await loadReportVM({
   // タイプ判定はアプリが持つ (spec §1.0.3)。Elith 出力から推測しない。
   hasCancerRisk: !!cancerArtifact,
   cycleSeq: data?.subscription?.current_cycle_seq ?? null,
-});
+};
 
+const vm = previewType != null
+  ? previewVM(reportCtx, previewType)
+  : await loadReportVM(reportCtx);
 
 const q = (extra: Record<string, string>) => {
   const p = new URLSearchParams();
@@ -114,8 +129,11 @@ const q = (extra: Record<string, string>) => {
 const GAUGE_STEP = 10;
 const gWell = vm.cover.wellnessAge;
 const gAge = vm.cover.chronologicalAge;
-/** 2 値が揃った回だけ描く。片方でも欠けたら数直線を出さない (位置を作らない = 捏造ゼロ)。 */
-const showGauge = isPrint && gWell != null && gAge != null;
+/**
+ * 2 値が揃った回だけ描く。片方でも欠けたら数直線を出さない (位置を作らない = 捏造ゼロ)。
+ * **画面と PDF の両方に出す** — 裁定 D-C2 の見直し (発注者指示 2026-09-01)。
+ */
+const showGauge = gWell != null && gAge != null;
 const gLo = Math.min(30, Math.floor(Math.min(gWell ?? 30, gAge ?? 30) / GAUGE_STEP) * GAUGE_STEP);
 const gHi = Math.max(80, Math.ceil(Math.max(gWell ?? 80, gAge ?? 80) / GAUGE_STEP) * GAUGE_STEP);
 const gTicks: number[] = [];
@@ -184,10 +202,12 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
     <div class="rp-inner">
 
     {/* ══════════ ② 2 連の大数字カード (見本 p1) ══════════
-        【発注者裁定 D-C2・2026-08-29】見本は表紙に大数字を 2 連で置く。
-        **画面版には出さない**（ダッシュボード上部で表示済み）が、**PDF 版は出す**
-        — アプリから切り離されて単体で読まれるため (仕様書 §4.3.3)。 */}
-    {isPrint && vm.cover.wellnessAge != null && (
+        【裁定 D-C2 の見直し・発注者指示 2026-09-01】**画面にも出す。**
+        以前は「ダッシュボード上部で表示済みだから画面版には出さない」としていたが、
+        **画面と PDF で紙面が違うことの違和感**の方が大きい、という判断
+        (「画面とPDFで表示が違う違和感があるので、画面HTMLでも冒頭はウェルネス年齢の
+        セクションを再表示させて」)。以後、②と数直線は**画面・PDF 共通**。 */}
+    {vm.cover.wellnessAge != null && (
       <div class="rp-nums">
         <div class="rp-num">
           <b class="block font-mono text-[2.4rem] font-medium leading-none text-brand-700">
@@ -208,7 +228,7 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
         発注者指示 2026-08-30「見本の横並びは尊重しつつ、その下にダッシュボードの
         バーグラフ表示のレイアウトを移植」。**見本 p1 の 2 連大数字はそのまま**で、
         その下にダッシュボード (`HealthAgeCard.astro`) の数直線を移植した。
-        `?print=1` のみ (裁定 D-C2 = ウェルネス年齢は PDF 版にだけ出す)。 */}
+        **画面・PDF の両方に出す** (裁定 D-C2 の見直し・2026-09-01)。 */}
     {showGauge && (
       <div
         class="rp-gauge px-2"
