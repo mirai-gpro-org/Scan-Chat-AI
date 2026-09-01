@@ -332,8 +332,8 @@ export interface LabFiles {
 /** `checkup_values` は旧行が素の `health_checkup` 辞書、新行がファイル別の入れ子。両方読む。 */
 export function flattenLabFiles(
   raw: Record<string, { date?: string; value?: unknown }[]> | LabFiles | null,
-): { checkup: Record<string, { date?: string; value?: unknown }[]> | null; dropped: string[] } {
-  if (!raw) return { checkup: null, dropped: [] };
+): { checkup: Record<string, { date?: string; value?: unknown }[]> | null; dropped: string[]; cancerItems: string[] } {
+  if (!raw) return { checkup: null, dropped: [], cancerItems: [] };
   const grouped = raw as LabFiles;
   const isGrouped = ['health_checkup', 'blood_test', 'cancer_risk'].some(
     (k) => (grouped as Record<string, unknown>)[k] != null,
@@ -352,7 +352,14 @@ export function flattenLabFiles(
       if (!(key in out)) out[key] = arr;   // 先勝ち: health_checkup → blood_test → cancer_risk
     }
   }
-  return { checkup: Object.keys(out).length ? out : null, dropped };
+  /*
+   * がんリスク検査の**項目名**。主軸 A で「本文がこの検査に触れた文」を選ぶのに使う。
+   * 名前は受領ファイルのキーそのもので、当社が決めた語ではない。
+   */
+  const cancerItems = Object.keys(grouped.cancer_risk ?? {})
+    .map((k) => k.replace(/\s*\[[^\]]*\]\s*$/, '').trim())
+    .filter(Boolean);
+  return { checkup: Object.keys(out).length ? out : null, dropped, cancerItems };
 }
 
 /**
@@ -593,9 +600,11 @@ export function buildReportVM(input: BuildInput): ReportVM {
     switch (spec.key) {
       // ── 主軸 A ──────────────────────────────────────
       case 'cancer_finding': {
-        const texts = cancerFindingTexts(parsed.cancerText, input);
+        const texts = cancerFindingTexts(parsed.cancerText, input, lab.cancerItems,
+          [sec('abstract'), sec('summary')]);
         built = card(spec.key, title, 'a',
-          parsed.cancerText ? '総評' : 'Elith へ依頼中 (spec §10.1 E-1)',
+          parsed.cancerText ? '総評'
+            : input.hasCancerRisk ? 'アブストラクト・総評' : 'Elith へ依頼中 (spec §10.1 E-1)',
           [{ kind: 'paragraphs', items: texts }]);
         break;
       }
@@ -770,13 +779,45 @@ function isDigestChapter(key: string): boolean {
  * タイプ 1 で Elith の記述が無いのはイレギュラーなので、**カードごと非表示**にする
  * (アプリが代わりを書かない)。
  */
-function cancerFindingTexts(cancerText: string | null, input: BuildInput): string[] {
+/**
+ * 本文から「がんリスク検査に触れた文」を**逐語で選ぶ**。
+ *
+ * 【なぜ語で探さないか】2026-08-24 受領のタイプ1 は、`cancer_risk.json` を渡している
+ * にもかかわらず本文に **「がん」「腫瘍」「マーカー」が 0 回**（実測）。語で探すと 0 件になる。
+ * 一方で **`cancer_risk.json` のキー名「尿中のポルフィリン量」は本文に 2 回**出てくる。
+ *
+ * → **受領ファイルの項目名で探す。** 名前は Elith が受け取った項目そのもので、
+ *   当社が「これはがんの話だ」と決めた語ではない。**文は選ぶだけで、足さない・繋げない。**
+ */
+function findingsMentioning(items: string[], sections: (ElithSection | null)[]): string[] {
+  if (!items.length) return [];
+  const out: string[] = [];
+  for (const sec of sections) {
+    if (!sec) continue;
+    for (const raw of sec.text.match(/[^。]+。|[^。]+$/g) ?? []) {
+      const s = raw.trim();
+      if (s && items.some((it) => s.includes(it)) && !out.includes(s)) out.push(s);
+    }
+  }
+  return out;
+}
+
+function cancerFindingTexts(
+  cancerText: string | null,
+  input: BuildInput,
+  cancerItems: string[],
+  sections: (ElithSection | null)[],
+): string[] {
   // ① Elith が書いていれば、その本文をそのまま。当社は但し書きを足さない
   //    (Stage2 では Elith 自身が「がんがないことを断定するものではない」と書いている)。
   if (cancerText) return [cancerText];
-  // ② タイプ 1 で Elith の記述が無いのはイレギュラー。**カードごと非表示**にして、
-  //    アプリが代わりを書かない。欠落は監査に出る (spec §4.0.1「記載が無いこと ≠ 所見が無いこと」)。
-  if (input.hasCancerRisk) return [];
+  if (input.hasCancerRisk) {
+    // ② タイプ 1。**がんリスク検査の項目名に触れた文を逐語で選ぶ** (発注者指示 2026-09-01)。
+    const found = findingsMentioning(cancerItems, sections);
+    // ③ 1 文も無ければ**カードごと非表示**。アプリが代わりを書かない
+    //    (spec §4.0.1「記載が無いこと ≠ 所見が無いこと」)。欠落は監査に出る。
+    return found;
+  }
   // ③ タイプ 2。admin で文言が確定していればそれを使う。
   const fallback = (input.cancerFallbackText ?? '').trim();
   if (fallback) return [fallback];

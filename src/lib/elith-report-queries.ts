@@ -16,7 +16,10 @@
 
 import { getServerSupabase } from './supabase';
 import { demoFallbackEnabled } from './demo-data';
-import { ELITH_REPORT_SAMPLE_TEXT, ELITH_REPORT_SAMPLE_CHECKUP, ELITH_SAMPLE_ISSUED_ON } from './elith-report-sample';
+import {
+  ELITH_REPORT_SAMPLE_TEXT, ELITH_REPORT_SAMPLE_CHECKUP, ELITH_SAMPLE_ISSUED_ON,
+  ELITH_REPORT_SAMPLE_TEXT_TYPE1, ELITH_REPORT_SAMPLE_LAB_TYPE1, ELITH_SAMPLE_ISSUED_ON_TYPE1,
+} from './elith-report-sample';
 import { buildReportVM, type BuildInput } from './report-adapter';
 import type { ReportVM } from './report-model';
 import { cfg } from './app-config';
@@ -58,36 +61,54 @@ function common(ctx: ReportContext): Omit<BuildInput, 'reportText' | 'checkup' |
  * 見せないため、それ以外には `emptyVM` を返す (2 本柱の帯だけが立ち、材料の無い章は出ない)。
  * 資格の判定は `demo-accounts.ts` の `isDemoAccount` が持つ (uid 1 本・admin と無関係)。
  */
-function sample(ctx: ReportContext): ReportVM {
+/** サンプルの検体。**既定はタイプ1** (発注者指示 2026-09-01)。 */
+export type SampleType = 1 | 2;
+
+function sample(ctx: ReportContext, type: SampleType = 1): ReportVM {
   if (!demoFallbackEnabled(ctx.diagnosticUserId)) return emptyVM(ctx);
+  /*
+   * **タイプは材料と同じ回のもので決める (2026-08-30・実測で確定)。**
+   *
+   * タイプは「その回の入力にがんリスク検査があったか」で決まる (spec §1.0.3) が、
+   * `ctx.hasCancerRisk` は**閲覧者の `test_artifacts`**から作られており、
+   * サンプルとは別の回のデータ。これを使うとタイプが食い違う。
+   *
+   * 実害: admin は `seed_admin_users.sql:137-145` が 真鍋の `test_artifacts`
+   * (`cancer_urine` を含む) を**自分の uid へコピー**しているため
+   * `hasCancerRisk: true` になり、当時タイプ2 だったサンプルが**タイプ1 へ反転**して
+   * A 軸のカードが消えていた。**借り物かどうか (`usingDemoData`) では判定できない** —
+   * admin の行は seed でコピー済みの自分の行なのでそのフラグは立たない。
+   * だから判定は**材料を選ぶのと同じここ**に置く。
+   *
+   * 既定がタイプ1 になった今も規則は同じで、**材料と一緒に切り替える**。
+   */
+  if (type === 1) {
+    return buildReportVM({
+      ...common(ctx),
+      hasCancerRisk: true,
+      reportText: ELITH_REPORT_SAMPLE_TEXT_TYPE1,
+      checkup: ELITH_REPORT_SAMPLE_LAB_TYPE1 as never,
+      issuedOn: ELITH_SAMPLE_ISSUED_ON_TYPE1,
+      isSample: true,
+    });
+  }
   return buildReportVM({
     ...common(ctx),
-    /*
-     * **サンプルは必ずタイプ2 として組む (2026-08-30・実測で確定)。**
-     *
-     * タイプは「その回の入力にがんリスク検査があったか」で決まる (spec §1.0.3)。
-     * サンプルの中身は 2026-08-26 受領の**タイプ2 の検体**なので、
-     * **紙面の材料と、タイプを決める根拠は同じ回のものでなければならない。**
-     * `ctx.hasCancerRisk` は閲覧者の `test_artifacts` から作られており、
-     * サンプルとは別の回のデータ。これを使うとタイプが食い違う。
-     *
-     * 実害: admin は `seed_admin_users.sql:137-145` が 真鍋の `test_artifacts`
-     * (`cancer_urine` を含む) を**自分の uid へコピー**しているため
-     * `hasCancerRisk: true` になり、サンプルが**タイプ1 (未実装) に反転**して
-     * A 軸 (初期がんの早期発見) のカードが消えていた
-     * (`report-adapter.cancerFindingTexts()` が `[]` を返す)。
-     * 紙面の先頭が空になるため「画面が空」と受け取られていた。
-     *
-     * **借り物かどうか (`usingDemoData`) で判定してはいけない** — admin の行は
-     * seed でコピー済みの**自分の行**なのでそのフラグは立たない (2026-08-30 に実測で判明)。
-     * 判定はここ、**材料を選ぶのと同じ場所**に置く。
-     */
     hasCancerRisk: false,
     reportText: ELITH_REPORT_SAMPLE_TEXT,
     checkup: ELITH_REPORT_SAMPLE_CHECKUP,
     issuedOn: ELITH_SAMPLE_ISSUED_ON,
     isSample: true,
   });
+}
+
+/**
+ * 受領 JSON から組んだ紙面を、タイプを指定して返す (テストフェーズの確認用)。
+ * **本番と同じアダプタ・同じレンダラ**を通す — モックではなく実装の出力を見せる
+ * (発注者指示 2026-09-01)。デモ表示の可否は `sample()` と同じ扱い。
+ */
+export function previewVM(ctx: ReportContext, type: SampleType): ReportVM {
+  return sample(ctx, type);
 }
 
 /**

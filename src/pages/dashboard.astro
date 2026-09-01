@@ -327,10 +327,23 @@ const q = u ? `?u=${encodeURIComponent(u)}` : '';
               **実装ではなくモックそのもの**なので、PDF から推測して作り込む線は越えない。
               デバッグ欄を遮蔽するときに `/report-mock/[type]` も一緒に閉じる。
             */}
-            <p class="pt-3">紙面モック (実装ではなく紙面の案):</p>
+            {/*
+              **本番表示**。受領 JSON を**本番のアダプタ・本番のレンダラ**に通した紙面を
+              タイプ別に見る (発注者指示 2026-09-01)。既定はタイプ1。
+              下のモックは**紙面の正**で、この 2 つを並べて突き合わせるためにどちらも置く
+              (仕様書 §5.1「差分が出たら、どちらであれ両方を突き合わせて直す」)。
+              デバッグ欄を遮蔽するときに `?preview=` と `/report-mock/` も一緒に閉じる。
+            */}
+            <p class="pt-3">本番表示 (受領 JSON から生成):</p>
             <div class="flex flex-wrap gap-2 pt-1">
-              <a href="/report-mock/1" class="chip">タイプ1 コースプラン (v0.2 予定)</a>
-              <a href="/report-mock/2" class="chip">タイプ2 単品購入相当 (実装済み)</a>
+              <a href="/report?preview=1" class="chip">タイプ1 コースプラン</a>
+              <a href="/report?preview=2" class="chip">タイプ2 単品購入相当</a>
+              <a href="/report?preview=1&print=1" class="chip">タイプ1 の印刷ビュー</a>
+            </div>
+            <p class="pt-3">紙面モック (紙面の正・実装ではない):</p>
+            <div class="flex flex-wrap gap-2 pt-1">
+              <a href="/report-mock/1" class="chip">タイプ1 のモック</a>
+              <a href="/report-mock/2" class="chip">タイプ2 のモック</a>
             </div>
             <p class="pt-3">他ユーザーで試す:</p>
             <div class="flex flex-wrap gap-2 pt-1">

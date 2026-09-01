@@ -306,11 +306,39 @@ for (const c of oldB) {
     hasCancerRisk: true,
     cycleSeq: null,
   });
-  check('サンプルはタイプ2 (isSample)', asDemoWithCancer.isSample === true,
+  check('サンプルが出る (isSample)', asDemoWithCancer.isSample === true,
     `isSample=${asDemoWithCancer.isSample}`);
+  /*
+   * **既定はタイプ1** (発注者指示 2026-09-01)。以前は「必ずタイプ2」で固定していたが、
+   * タイプ1 の受領 JSON が届いたので既定を入れ替えた。**規則は同じ** — タイプは
+   * 材料と一緒に切り替え、**閲覧者の `test_artifacts` では決めない**。
+   */
+  check('サンプルの既定はタイプ1', asDemoWithCancer.reportType === 1,
+    `reportType=${asDemoWithCancer.reportType}`);
   const aCards = asDemoWithCancer.digest.filter((c) => c.axis === 'a').length;
-  check('サンプルで主軸 A のカードが出る (hasCancerRisk:true でも消えない)', aCards >= 1,
-    `A 軸のカード ${aCards} 枚`);
+  check('サンプルで主軸 A のカードが出る', aCards >= 1, `A 軸のカード ${aCards} 枚`);
+  /*
+   * **A 軸の中身が受領本文の逐語であること。** タイプ1 は本文に「がん」が 0 回で、
+   * 代わりに `cancer_risk.json` の項目名 (尿中のポルフィリン量) が出てくる。
+   * 語ではなく**受領ファイルの項目名**で選んでいることを、ここで固定する。
+   */
+  const aCard = asDemoWithCancer.digest.find((c) => c.axis === 'a');
+  const aItems = (aCard?.blocks[0] as { items?: string[] } | undefined)?.items ?? [];
+  const t1Body = JSON.stringify(T1_TEXT);
+  check('主軸 A の文は受領本文の逐語', aItems.length > 0
+    && aItems.every((x) => t1Body.includes(x)), `${aItems.length} 文`);
+
+  /*
+   * **閲覧者の artifacts でタイプが反転しないこと** (2026-08-30 の実障害の逆向き)。
+   * がんリスク検査を持たない閲覧者が引いても、サンプルの材料はタイプ1 のままでなければ
+   * ならない。ここが連動すると、材料とタイプの根拠が別の回のものになる。
+   */
+  const asDemoNoCancer = await loadReportVM({
+    diagnosticUserId: DEMO_UID, name: 'テスト 様', chronologicalAge: 56,
+    ourWellnessAge: null, hasCancerRisk: false, cycleSeq: null,
+  });
+  check('閲覧者の検査でサンプルのタイプが変わらない', asDemoNoCancer.reportType === 1,
+    `reportType=${asDemoNoCancer.reportType}`);
 
   /*
    * **一般顧客にはサンプルが出ないこと。** ここが逆になると、実顧客の画面に

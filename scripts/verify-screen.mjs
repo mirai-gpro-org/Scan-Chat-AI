@@ -68,8 +68,10 @@ const shellWidth = async (page, path) => {
 // ── ① 契約の文が画面に出ているか (レンダラの描き落としの検知) ──────────
 //
 /*
- * 契約は**タイプ 2 (がんリスク検査なし)** の紙面。**デモ/サンプル表示は必ずタイプ 2 が正**
- * (仕様書 §2.1「対象はタイプ2 のみ」/ 契約 JSON も `hasCancerRisk: false` 前提)。
+ * 契約は**タイプ 2 の検体**の紙面なので、**タイプ 2 の紙面 (`/report?preview=2`) と突き合わせる。**
+ * 既定の `/report` は 2026-09-01 から**タイプ 1** になった (発注者指示) ため、
+ * 既定の画面に型 2 の契約を当てると全項目が不一致になる。契約は検体ごとのものなので、
+ * **契約と同じ検体を出す URL に当てる**のが筋。
  *
  * 【2026-08-30 修正・重要】ここには以前、
  *   「ローカル/デモ層はがんリスク検査を持つのでタイプ 1 になり、主軸 A は出ないのが正」
@@ -83,17 +85,39 @@ const shellWidth = async (page, path) => {
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
-  await page.goto(`${BASE}/report`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${BASE}/report?preview=2`, { waitUntil: 'domcontentloaded' });
   // 全編は `<details>` で畳まれているが DOM には在るので innerText でなく textContent。
   const raw = await page.evaluate(() => document.body.textContent ?? '');
   const body = raw.replace(/\s+/g, '');
   const isType1 = body.includes('がんリスク検査の結果を見る');
   if (isType1) {
-    console.log('✗ 紙面がタイプ 1 になっている — デモ/サンプル表示はタイプ 2 が正');
-    fails.push('デモ表示がタイプ 1 に反転している (借り物の cancer_urine を拾っていないか)');
+    console.log('✗ ?preview=2 がタイプ 1 になっている — 切替が効いていない');
+    fails.push('?preview=2 でタイプ 2 の紙面が出ていない');
   } else {
-    console.log('✓ 紙面のタイプ: 2 (がんリスク検査なし)');
+    console.log('✓ ?preview=2 の紙面のタイプ: 2 (がんリスク検査なし)');
   }
+
+  /*
+   * **既定の `/report` はタイプ 1** (発注者指示 2026-09-01)。
+   * 既定が入れ替わったことを名指しで見張る — 以前ここは「タイプ 2 が正」だった。
+   */
+  await page.goto(`${BASE}/report?preview=1`, { waitUntil: 'domcontentloaded' });
+  /*
+   * **A 軸の中だけを見る。** `document.body` 全体を見ると全編 (abstract/総評) にも
+   * 同じ文が在るので、**A 軸が空でも緑になる** — 実際に一度この誤りを書いた
+   * (壊して確かめたら通ってしまい発覚)。検証は必ず壊して落ちることを確認する。
+   */
+  const t1A = await page.evaluate(() => {
+    const band = [...document.querySelectorAll('.rp-axis')]
+      .find((b) => (b.textContent ?? '').includes('初期がんの早期発見'));
+    const section = band?.parentElement;
+    const cards = section ? [...section.querySelectorAll('.rp-card')] : [];
+    return { cards: cards.length, text: cards.map((c) => c.textContent ?? '').join('') };
+  });
+  const t1Ok = t1A.cards > 0 && t1A.text.includes('尿中のポルフィリン量');
+  console.log(`${t1Ok ? '✓' : '✗'} ?preview=1 の主軸 A に受領本文の逐語が出ている (カード ${t1A.cards} 枚)`);
+  if (!t1Ok) fails.push('?preview=1 の主軸 A が空 (がんリスク検査の項目名で選べていない)');
+  await page.goto(`${BASE}/report?preview=2`, { waitUntil: 'domcontentloaded' });
 
   // **A 軸のカードが在ること。** ここが実際に落ちていた箇所なので名指しで見る。
   const axisA = await page.evaluate(() => {

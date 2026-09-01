@@ -2,7 +2,7 @@
 import AppIcon from '../components/AppIcon.astro';
 import AppNav from '../components/AppNav.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
-import { loadReportVM } from '../lib/elith-report-queries';
+import { loadReportVM, previewVM } from '../lib/elith-report-queries';
 import { renderReportMarkdown } from '../lib/report-view';
 import { countUnreadImportant } from '../lib/notice-queries';
 import { refreshConfig, cfg } from '../lib/app-config';
@@ -47,6 +47,17 @@ const u = viewer.uid;
 const isPrint = url.searchParams.get('print') === '1';
 /** 端末に保存する手順を出すモード。**印刷ビューには置かない** (手順が PDF に載るため・spec §4.4)。 */
 const showSave = url.searchParams.get('save') === '1';
+/*
+ * **紙面のタイプを切り替えて確認するモード** (テストフェーズ限定・発注者指示 2026-09-01)。
+ * `?preview=1` / `?preview=2` で、受領 JSON から組んだ紙面をタイプ別に見る。
+ * **モックではなく本番のアダプタ・本番のレンダラを通した出力**を見せる
+ * (紙面の正はモックだが、実装が何を出しているかはここで見る)。
+ * 値が無い・不正なときは 1 (既定はタイプ1)。入口は `/dashboard` のデバッグ欄で、
+ * **デバッグ欄を遮蔽するときに一緒に閉じる。**
+ */
+const previewParam = url.searchParams.get('preview');
+const previewType: 1 | 2 | null =
+  previewParam == null ? null : previewParam === '2' ? 2 : 1;
 
 const authEnabled = !!import.meta.env.PUBLIC_GOOGLE_CLIENT_ID;
 const needsSignIn = authEnabled && !u;
@@ -79,7 +90,8 @@ const healthAge = data ? await getHealthAge(data.diagnosticUserId) : null;
  */
 const cancerArtifact = (data?.artifacts ?? []).find((a) => a.test_type === 'cancer_urine') ?? null;
 
-const vm = await loadReportVM({
+/** 表示モデルの入力。**プレビューと本番で同じものを渡す** (二重に書かない)。 */
+const reportCtx = {
   diagnosticUserId: data?.diagnosticUserId ?? null,
   name: data?.appUser?.display_name_cache ? withHonorific(data.appUser.display_name_cache) : 'お客様',
   chronologicalAge: healthAge?.latest?.chronologicalAge ?? null,
@@ -87,8 +99,11 @@ const vm = await loadReportVM({
   // タイプ判定はアプリが持つ (spec §1.0.3)。Elith 出力から推測しない。
   hasCancerRisk: !!cancerArtifact,
   cycleSeq: data?.subscription?.current_cycle_seq ?? null,
-});
+};
 
+const vm = previewType != null
+  ? previewVM(reportCtx, previewType)
+  : await loadReportVM(reportCtx);
 
 const q = (extra: Record<string, string>) => {
   const p = new URLSearchParams();
