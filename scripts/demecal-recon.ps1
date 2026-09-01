@@ -33,58 +33,109 @@ $BaseUrl   = 'https://dl.demecal.net'
 $LoginUrl  = "$BaseUrl/account/login"
 $UploadUrl = 'https://scan-chat-ai.vercel.app/api/ops/probe-upload'
 $Token     = '__PROBE_TOKEN__'
-$Version   = 'recon-1.2'
+$Version   = 'recon-1.3'
 
 $lines = New-Object System.Collections.Generic.List[string]
 function Say($t) { Write-Host $t; $lines.Add($t) | Out-Null }
 
-# 途中で中止したときも**必ず**報告して終わる。
+# ── 報告 (どんな終わり方でも必ずここを通る) ─────────────────────
 #
-# 【なぜ要るか — 実測 2026-09-01】recon-1.0 は [0]〜[2] の中止が `exit 1` で、
-#   ローカル保存もサーバ送信も**その手前**にあった。結果、Wellfort が実行しても
-#   こちら側には**何も届かず**、「中止したのか / 別の bat を実行したのか /
-#   送信だけ失敗したのか」を切り分けられなかった (S3 に recon の実行が 0 件)。
-#   往復を減らすのがこの bat の目的なので、**沈黙で終わらせない**。
+# 【経緯 2026-09-01】recon は v1.0・v1.1 とも実行の連絡を受けたのに実行ログに 0 件だった。
+#   v1.1 を別 PC で実走させて **構文は正常・中止時の報告も届く**ことを実証済み。
+#   それでも専用PCからは届かないので、**残る沈黙経路を全部塞ぐ**のが v1.3 の目的。
+#     ① 想定外の terminating error で Finish に来ない  → trap で受ける
+#     ② Get-Credential が例外を投げる                  → try/catch
+#     ③ 送信が 1 回失敗しただけで諦める                → 3 回 + 別方式で再試行
+#     ④ 送信が落ちても理由が残らない                   → 例外文を画面と報告に出す
+#     ⑤ 保存先 C:\demecal\recon\ を見つけられない       → **デスクトップにも置く**
+#        (接続チェックはデスクトップ出力で実際に回収できている。報告は PII 非含有)
+
+# 送信は 2 方式・3 回まで試す。**「送れませんでした」で終わらせない。**
+# 方式を 2 つ持つのは、cmdlet 固有の問題 (プロキシ・TLS・シリアライズ) を切り分けるため。
+function Send-Report([string]$json) {
+  $errs = New-Object System.Collections.Generic.List[string]
+  for ($i = 1; $i -le 3; $i++) {
+    try {
+      Invoke-RestMethod -Uri $UploadUrl -Method Post -TimeoutSec 60 `
+        -Body ([Text.Encoding]::UTF8.GetBytes($json)) `
+        -ContentType 'application/json; charset=utf-8' `
+        -Headers @{ 'x-probe-token' = $Token } | Out-Null
+      return "ok (Invoke-RestMethod / {0} 回目)" -f $i
+    } catch { $errs.Add(("IRM#{0}: {1}" -f $i, $_.Exception.Message)) | Out-Null }
+
+    try {
+      $req = [Net.HttpWebRequest]::Create($UploadUrl)
+      $req.Method = 'POST'
+      $req.ContentType = 'application/json; charset=utf-8'
+      $req.Timeout = 60000
+      $req.Headers.Add('x-probe-token', $Token)
+      $b = [Text.Encoding]::UTF8.GetBytes($json)
+      $req.ContentLength = $b.Length
+      $st = $req.GetRequestStream(); $st.Write($b, 0, $b.Length); $st.Close()
+      $res = $req.GetResponse(); $res.Close()
+      return "ok (HttpWebRequest / {0} 回目)" -f $i
+    } catch { $errs.Add(("HWR#{0}: {1}" -f $i, $_.Exception.Message)) | Out-Null }
+
+    if ($i -lt 3) { Start-Sleep -Seconds 3 }
+  }
+  return "ng: " + ($errs -join ' | ')
+}
+
 function Finish($code) {
   $report = ($lines -join "`r`n")
 
-  # 保存先が決まる前 ([0] の中止) は保存先が無い。その場合はテンポラリへ逃がす。
-  $dir = if ($script:ReconDir -and (Test-Path $script:ReconDir)) { $script:ReconDir } else { $env:TEMP }
-  $reportPath = Join-Path $dir 'demecal_recon_report.txt'
-  try {
-    Set-Content -Path $reportPath -Value $report -Encoding UTF8
-    Write-Host ""
-    Write-Host "結果を保存しました: $reportPath"
-  } catch {
-    Write-Host "結果の保存に失敗しました: $($_.Exception.Message)"
+  # 置き場は 2 つ。**デスクトップを必ず含める。**
+  #   C:\demecal\recon\ は今回初めて使うフォルダで「どこ？」になりやすい。
+  #   接続チェックはデスクトップに出していて実際に回収できている実績がある。
+  #   報告に PII は入らない (ページ本文・hidden 値・CSV データ行を出さない設計)。
+  $paths = New-Object System.Collections.Generic.List[string]
+  $dirs  = New-Object System.Collections.Generic.List[string]
+  if ($script:ReconDir -and (Test-Path $script:ReconDir)) { $dirs.Add($script:ReconDir) | Out-Null }
+  try { $d = [Environment]::GetFolderPath('Desktop'); if ($d) { $dirs.Add($d) | Out-Null } } catch {}
+  if ($dirs.Count -eq 0) { $dirs.Add($env:TEMP) | Out-Null }
+  foreach ($d in $dirs) {
+    try {
+      $f = Join-Path $d 'demecal_recon_report.txt'
+      Set-Content -Path $f -Value $report -Encoding UTF8
+      $paths.Add($f) | Out-Null
+    } catch { }
   }
 
-  if ($Token -ne ('__PROBE' + '_TOKEN__')) {
-    Write-Host "結果を送信しています..."
-    try {
-      $payload = @{ report = $report; label = 'demecal-recon'; host = $env:COMPUTERNAME } | ConvertTo-Json -Compress
-      $bytes = [Text.Encoding]::UTF8.GetBytes($payload)
-      Invoke-RestMethod -Uri $UploadUrl -Method Post -Body $bytes -TimeoutSec 60 `
-        -ContentType 'application/json; charset=utf-8' -Headers @{ 'x-probe-token' = $Token } | Out-Null
-      Write-Host "送信しました。"
-    } catch {
-      Write-Host "送信できませんでした（問題ありません）。上のファイルをメールでお送りください。"
-    }
+  $sent = if ($Token -ne ('__PROBE' + '_TOKEN__')) {
+    Write-Host ''
+    Write-Host '結果を送信しています... (最大 3 回試します)'
+    Send-Report (@{ report = $report; label = 'demecal-recon'; host = $env:COMPUTERNAME } | ConvertTo-Json -Compress)
+  } else { 'ng: 自動送信が無効な版です' }
+
+  Write-Host ''
+  Write-Host '=================================================='
+  if ($sent -like 'ok*') {
+    Write-Host " 送信できました。 [$sent]"
+    Write-Host ' 担当者側で確認できます。このまま閉じて構いません。'
   } else {
-    Write-Host "自動送信は無効です。上のファイルをメールでお送りください。"
+    # **失敗の理由を必ず残す。** 「送れませんでした」だけだと次に何を調べるか決められない。
+    Write-Host ' 送信できませんでした。お手数ですが下のファイルをメールでお送りください。'
+    Write-Host ''
+    foreach ($f in $paths) { Write-Host "   $f" }
+    Write-Host ''
+    Write-Host ' --- 担当者向け (送信エラーの内容) ---'
+    Write-Host " $sent"
   }
+  Write-Host '=================================================='
 
   Read-Host "確認できたら Enter キーを押してください"
   exit $code
 }
 
-Say '=================================================='
-Say ' デメカル 初回セットアップ＆偵察'
-Say (" 実行日時 : {0}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
-Say (" PC名     : {0}" -f $env:COMPUTERNAME)
-Say (" 版       : {0}" -f $Version)
-Say '=================================================='
-Say ''
+# 想定外の terminating error を受け止める。**ここが無いと Finish に来ないまま死ぬ。**
+# [4] の form 解析・[5] のドライランは個別 try/catch を持つが、
+# 「持たせ忘れた 1 箇所」で全部が沈黙するのは今回の件で懲りたので網を張る。
+trap {
+  Say ''
+  Say ("予期しないエラーで中断しました: {0}" -f $_.Exception.Message)
+  Say ("  発生位置: {0}" -f $_.InvocationInfo.PositionMessage)
+  Finish 9
+}
 
 # ── 起動の合図 ────────────────────────────────────────────────
 # **「走ったこと」だけを先に送る。**
@@ -169,7 +220,10 @@ if (Test-Path $CredPath) {
 } else {
   Say '    初回のみ入力をお願いします。入力した内容は暗号化して保存され、'
   Say '    画面にもログにも残りません。'
-  $cred = Get-Credential -Message 'デメカル (dl.demecal.net) のユーザーID とパスワード'
+  # ダイアログが出せない環境で例外になり得る。**投げっぱなしにしない。**
+  $cred = $null
+  try { $cred = Get-Credential -Message 'デメカル (dl.demecal.net) のユーザーID とパスワード' }
+  catch { Say ("    入力画面を出せませんでした: {0}" -f $_.Exception.Message); Finish 1 }
   if (-not $cred) { Say '    入力がキャンセルされました。'; Finish 1 }
   $cred | Export-Clixml $CredPath
   Say "    保存しました: $CredPath"
