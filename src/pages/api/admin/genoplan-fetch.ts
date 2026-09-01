@@ -37,10 +37,24 @@ import {
   originalKey, boxFromKey, CODE_GENERATING, type GenoplanKit,
 } from '../../../lib/genoplan';
 import {
-  putOriginal, listOriginalKeys, getOriginalsS3Config, isOriginalsS3Configured,
+  putOriginal, listOriginalKeys, getOriginalsS3Config, isOriginalsS3Configured, sha256Hex,
 } from '../../../lib/originals-storage';
+import { S3Client, PutObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 
 export const prerender = false;
+
+/**
+ * 【テスト用の保存先】`?dest=exchange`。
+ *
+ * 発注者指示 2026-09-01「PDF は S3 の `wellfort-partner-exchange` にフォルダを作って保存」。
+ * このバケットは LAiF/プリベントとの受渡用で **ap-northeast-1・2026-08-27 作成済**
+ * (`docs/lab/laif_s3_secure_handoff_spec.md §7`)。**原本ストレージ (案C′) ではない**ので、
+ * ここに置いたものは 10 年保管・削除不可の対象にならない = **テストとして安全に捨てられる**。
+ * 本番運用では `dest=originals` (既定) に戻す。
+ */
+const EXCHANGE_BUCKET = 'wellfort-partner-exchange';
+const EXCHANGE_REGION = 'ap-northeast-1';
+const EXCHANGE_PREFIX = 'genoplan/';
 
 /** 60 秒の関数なので、これを過ぎたら次の 1 件に手を出さない。 */
 const DEADLINE_MS = 45_000;
@@ -71,23 +85,89 @@ function env(name: string): string | undefined {
 }
 
 /**
- * 認可。**書き込み (POST) は Bearer `ADMIN_API_KEY` だけ。**
+ * 認可。**原本ストレージへの書き込みは Bearer `ADMIN_API_KEY` だけ。**
  *
- * 差分の確認 (GET=dry-run) に限り `?k=<PROBE_UPLOAD_TOKEN>` も通す。
- * 理由: 同じトークンで開いている `/api/ops/genoplan-probe` が既に**一覧そのもの**を
- * 返しており、dry-run はその部分集合 (件数と発行日だけ・副作用なし) なので**露出が増えない**。
- * **`PROBE_UPLOAD_TOKEN` を消すときにこの経路も一緒に閉じる** (調査用の一時口)。
+ * `?k=<PROBE_UPLOAD_TOKEN>` を通すのは次の 2 つに限る:
+ *   ① 差分の確認 (dry-run)。副作用が無く、同じトークンで開いている
+ *      `/api/ops/genoplan-probe` が既に一覧そのものを返しているので**露出が増えない**。
+ *   ② **テスト保存先 (`dest=exchange`) への書き込み**。原本ストレージ (10 年・削除不可) ではなく
+ *      受渡用バケットなので**捨てられる**。同じトークンの `/api/ops/probe-upload` も
+ *      S3 へ書いており、権限の重さが揃っている。
+ * **`PROBE_UPLOAD_TOKEN` を消すとどちらも閉じる** (調査用の一時口)。
  */
-function authorized(request: Request, url: URL, dryRun: boolean): boolean {
+function authorized(request: Request, url: URL, dryRun: boolean, dest: Dest): boolean {
   if (isAdminAuthorized(request)) return true;
-  if (!dryRun) return false;
+  if (!dryRun && dest !== 'exchange') return false;
   const probe = env('PROBE_UPLOAD_TOKEN');
   return !!probe && (url.searchParams.get('k') ?? '').trim() === probe;
 }
 
+type Dest = 'originals' | 'exchange';
+
+/** 保存先の抽象。差分は**保存先そのものに聞く**ので list と put が対になっている。 */
+interface Store {
+  label: string;
+  list(): Promise<string[]>;
+  put(key: string, contentType: string, body: Uint8Array):
+    Promise<{ storageUrl: string; sha256: string; sizeBytes: number }>;
+}
+
+function originalsStore(): Store {
+  const c = getOriginalsS3Config();
+  return {
+    label: c ? `s3://${c.bucket}/${c.prefix}genoplan/ (${c.region})` : 'supabase storage: lab-results/genoplan/',
+    list: () => listOriginalKeys('genoplan/'),
+    put: async (key, contentType, body) => {
+      const r = await putOriginal({ key, contentType, body });
+      return { storageUrl: r.storageUrl, sha256: r.sha256, sizeBytes: r.sizeBytes };
+    },
+  };
+}
+
+function exchangeStore(): Store {
+  const client = new S3Client({
+    region: EXCHANGE_REGION,
+    ...(env('AWS_ACCESS_KEY_ID') && env('AWS_SECRET_ACCESS_KEY')
+      ? {
+        credentials: {
+          accessKeyId: env('AWS_ACCESS_KEY_ID') as string,
+          secretAccessKey: env('AWS_SECRET_ACCESS_KEY') as string,
+        },
+      }
+      : {}),
+  });
+  return {
+    label: `s3://${EXCHANGE_BUCKET}/${EXCHANGE_PREFIX} (${EXCHANGE_REGION})`,
+    list: async () => {
+      const keys: string[] = [];
+      let token: string | undefined;
+      do {
+        const out = await client.send(new ListObjectsV2Command({
+          Bucket: EXCHANGE_BUCKET, Prefix: EXCHANGE_PREFIX, ContinuationToken: token, MaxKeys: 1000,
+        }));
+        for (const o of out.Contents ?? []) if (o.Key) keys.push(o.Key);
+        token = out.IsTruncated ? out.NextContinuationToken : undefined;
+      } while (token);
+      return keys;
+    },
+    put: async (key, contentType, body) => {
+      // `key` は `genoplan/...` 始まりなので、そのままバケット直下のフォルダになる。
+      const sha256 = sha256Hex(body);
+      await client.send(new PutObjectCommand({
+        Bucket: EXCHANGE_BUCKET, Key: key, Body: body, ContentType: contentType,
+        Metadata: { sha256 },
+      }));
+      return { storageUrl: `s3://${EXCHANGE_BUCKET}/${key}`, sha256, sizeBytes: body.byteLength };
+    },
+  };
+}
+
 async function run(request: Request, url: URL): Promise<Response> {
   const isDry = url.searchParams.get('dry') === '1';
-  if (!authorized(request, url, isDry)) return json({ ok: false, error: 'unauthorized' }, 401);
+  // 保存先。既定は原本ストレージ。`exchange` は発注者指示のテスト保存先 (捨てられる)。
+  const dest: Dest = url.searchParams.get('dest') === 'exchange' ? 'exchange' : 'originals';
+  if (!authorized(request, url, isDry, dest)) return json({ ok: false, error: 'unauthorized' }, 401);
+  const store = dest === 'exchange' ? exchangeStore() : originalsStore();
   if (!isGenoplanConfigured()) {
     return json({ ok: false, error: 'not_configured', detail: 'GENOPLAN_LOGIN_ID / GENOPLAN_PASSWORD が未設定' }, 400);
   }
@@ -107,7 +187,7 @@ async function run(request: Request, url: URL): Promise<Response> {
     const kits = await listPublishedKits(session);
 
     // ── ② 保存先にあるボックスナンバー ─────────────────────
-    const savedKeys = await listOriginalKeys('genoplan/');
+    const savedKeys = await store.list();
     const savedBoxes = new Set(savedKeys.map(boxFromKey).filter((x): x is string => !!x));
 
     // ── ③ 差分 ────────────────────────────────────────────
@@ -136,11 +216,9 @@ async function run(request: Request, url: URL): Promise<Response> {
        * Supabase Storage へ落ちる (原本の置き場は S3 ap-northeast-1 が正・CLAUDE.md 案C′)。
        * 1 本 21MB なので、意図しない側に 1.5GB 書いてしまうと取り返しがつかない。
        */
-      storage_backend: isOriginalsS3Configured() ? 's3' : 'supabase',
-      storage_target: (() => {
-        const c = getOriginalsS3Config();
-        return c ? `s3://${c.bucket}/${c.prefix}genoplan/ (${c.region})` : 'supabase storage: lab-results/genoplan/';
-      })(),
+      dest,
+      storage_backend: dest === 'exchange' ? 's3' : (isOriginalsS3Configured() ? 's3' : 'supabase'),
+      storage_target: store.label,
       estimated_bytes_if_all: pending.length * 21_000_000,
     };
 
@@ -179,16 +257,12 @@ async function run(request: Request, url: URL): Promise<Response> {
           outcomes.push({ ...base, result: 'not_pdf', bytes: body.byteLength, detail: `magic=${magic}` });
           continue;
         }
-        const saved = await putOriginal({
-          key: originalKey(kit),
-          contentType: 'application/pdf',
-          body,
-        });
+        const saved = await store.put(originalKey(kit), 'application/pdf', body);
         // 割り当て用の材料を横に置く (**氏名・電話は入れない**)。
-        await putOriginal({
-          key: originalKey(kit).replace(/\.pdf$/, '.json'),
-          contentType: 'application/json; charset=utf-8',
-          body: new TextEncoder().encode(JSON.stringify({
+        await store.put(
+          originalKey(kit).replace(/\.pdf$/, '.json'),
+          'application/json; charset=utf-8',
+          new TextEncoder().encode(JSON.stringify({
             source: 'genoplan',
             external_test_id: kit.serialNumber,   // 認証キー
             external_barcode: kit.boxNumber,      // ボックスナンバー
@@ -199,7 +273,7 @@ async function run(request: Request, url: URL): Promise<Response> {
             fetched_at: new Date().toISOString(),
             note: '顧客への割り当ては未実施 (対応表の運用工程が未確定・id_management_and_correlation_spec §7-3)',
           }, null, 2)),
-        });
+        );
         outcomes.push({
           ...base, result: 'saved',
           bytes: saved.sizeBytes, sha256: saved.sha256, storage_url: saved.storageUrl,
