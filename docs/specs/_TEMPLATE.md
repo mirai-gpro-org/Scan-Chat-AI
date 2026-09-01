@@ -122,6 +122,7 @@ CLAUDE.md
 .github/workflows/**
 docs/specs/**
 scripts/spec-guard.mjs
+scripts/sol-publisher.mjs
 ```
 
 この spec に固有の追加禁止対象があれば以下に列挙する。

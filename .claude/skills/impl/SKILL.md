@@ -115,6 +115,10 @@ scope guard は §8 で既に走っているので、**ここで取らないと�
 **PoC-1 では、失敗したら種別を問わず停止する**（attempt を数える workflow がまだ無いため）。
 **「これは明らかな typo だから直してよい」という判断はしない。**
 
+**ただし、停止する前に必ず §11 の verify-clean を通すこと。**
+失敗した Verification こそ tree を汚している可能性が高い。
+ここを飛ばすと、**汚れたまま停止して次の実行に持ち越す**。
+
 報告書式:
 
 ```
@@ -139,6 +143,10 @@ STOP
 ```
 node scripts/spec-guard.mjs verify-clean $0 /tmp/spec-guard-snapshot.txt
 ```
+
+**Verification の成否にかかわらず必ず実行する。**
+成功時だけ確認する作りにしない — **失敗した Verification のほうが tree を汚している可能性が高い**。
+順序は「Verification 実行 → verify-clean → その後に停止判断」。
 
 **非ゼロ終了なら停止**。目視で「実質同じ」と判断しない。
 

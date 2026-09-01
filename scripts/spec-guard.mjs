@@ -32,6 +32,20 @@ const PERMANENT_DO_NOT_TOUCH = [
   '.github/workflows/**',
   'docs/specs/**',
   'scripts/spec-guard.mjs',
+  // publisher は Sol の出力を GitHub へ書き込む経路。/impl から書き換えられると
+  // **投稿内容を実装エージェントが操作できる**ので、validator と同じく保護する。
+  'scripts/sol-publisher.mjs',
+];
+
+/**
+ * spec が使ってよいフェンスタグ。**これ以外は FAIL**。
+ * 未知タグを黙って無視すると、`verifcation` のような打ち間違いが
+ * **ブロックごと存在しないことになり、検査を素通りする** (fail-open)。
+ * 言語タグの無い ``` は通常のコードブロックとして許可する。
+ */
+const KNOWN_FENCE_TAGS = [
+  '', 'direct_fact', 'derived_fact', 'external_evidence',
+  'scope', 'do_not_touch', 'acceptance', 'verification',
 ];
 
 /** spec path はこの形以外を一切受け付けない (全 mode 共通)。 */
@@ -160,6 +174,11 @@ function parseFenced(text) {
     }
   }
   if (open !== null) fail('BLK-001', `閉じられていないフェンスブロック (${open.startLine} 行目 \`\`\`${open.tag}) — EOF まで読み進めない`);
+  for (const b of blocks) {
+    if (!KNOWN_FENCE_TAGS.includes(b.tag)) {
+      fail('BLK-008', `未知のフェンスタグ (${b.startLine} 行目): \`\`\`${b.tag} — 許可: ${KNOWN_FENCE_TAGS.filter(Boolean).join(' / ')}`);
+    }
+  }
   return blocks;
 }
 
@@ -353,7 +372,26 @@ function modeValidate(specPath) {
     if (kv.status !== undefined && !EE_STATUS.includes(kv.status)) fail('EE-011', `${id}: status が不正: ${kv.status} — ${EE_STATUS.join(' | ')}`);
     if (kv.status === 'unresolved') fail('EE-001', `${id}: status が unresolved — 実装開始禁止`);
     if (kv.collected_by !== undefined && !EE_COLLECTED_BY.includes(kv.collected_by)) fail('EE-012', `${id}: collected_by が不正: ${kv.collected_by} — ${EE_COLLECTED_BY.join(' | ')}`);
-    if (kv.collected_at !== undefined && !ISO_UTC_RE.test(kv.collected_at)) fail('EE-004', `${id}: collected_at が ISO8601 UTC (Z 終端) でない: ${kv.collected_at}`);
+    if (kv.collected_at !== undefined) {
+      if (!ISO_UTC_RE.test(kv.collected_at)) {
+        fail('EE-004', `${id}: collected_at が ISO8601 UTC (Z 終端) でない: ${kv.collected_at}`);
+      } else {
+        // 形式が合っていても実在しない日時がある (2026-02-31 等)。
+        // Date に通して往復させ、同じ瞬間に戻るかで実在を確かめる。
+        const t = Date.parse(kv.collected_at);
+        if (Number.isNaN(t)) {
+          fail('EE-006', `${id}: collected_at が実在しない日時: ${kv.collected_at}`);
+        } else {
+          const back = new Date(t).toISOString().replace(/\.000Z$/, 'Z');
+          const norm = kv.collected_at.replace(/\.000Z$/, 'Z');
+          if (back !== norm) fail('EE-006', `${id}: collected_at が実在しない日時: ${kv.collected_at} (正規化すると ${back})`);
+          // 未来に採取された証拠は存在しない。時計ずれの余地として 5 分だけ許容する。
+          else if (t - Date.now() > 5 * 60_000) {
+            fail('EE-007', `${id}: collected_at が未来: ${kv.collected_at}`);
+          }
+        }
+      }
+    }
     if (kv.max_age_hours !== undefined && kv.max_age_hours !== 'null') {
       if (!/^[1-9]\d*$/.test(kv.max_age_hours)) {
         fail('EE-003', `${id}: max_age_hours は null または 0 より大きい整数のみ: ${kv.max_age_hours}`);
