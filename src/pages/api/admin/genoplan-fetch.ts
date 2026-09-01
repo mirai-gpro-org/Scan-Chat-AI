@@ -231,8 +231,15 @@ async function run(request: Request, url: URL): Promise<Response> {
     }
 
     // ── ④ 取得 (既定 1 件) ────────────────────────────────
+    //
+    // **保存できた件数**で `max` を数える (試行回数ではない)。
+    // 生成中 (6020) の行は保存されないので、試行回数で数えると
+    // 次の呼び出しでも同じ行が先頭に来て**永遠に足踏みする** (pending は発行日の昇順)。
+    // 保存に至らなかったものは飛ばして次の行へ進む — `getPdfUrl` は速いので安い。
     const outcomes: Outcome[] = [];
-    for (const kit of pending.slice(0, max)) {
+    let savedCount = 0;
+    for (const kit of pending) {
+      if (savedCount >= max) break;
       const box = kit.boxNumber || `sn-${kit.serialNumber}`;
       const base = { box, serial: kit.serialNumber, published_on: kit.publishedOn };
       if (Date.now() - t0 > DEADLINE_MS) {
@@ -274,6 +281,7 @@ async function run(request: Request, url: URL): Promise<Response> {
             note: '顧客への割り当ては未実施 (対応表の運用工程が未確定・id_management_and_correlation_spec §7-3)',
           }, null, 2)),
         );
+        savedCount += 1;
         outcomes.push({
           ...base, result: 'saved',
           bytes: saved.sizeBytes, sha256: saved.sha256, storage_url: saved.storageUrl,
@@ -288,7 +296,7 @@ async function run(request: Request, url: URL): Promise<Response> {
       elapsed_ms: Date.now() - t0,
       summary,
       /** 取り切るまで同じ口を呼び直す。保存できた分だけ pending が減る。 */
-      remaining_after: Math.max(summary.pending - outcomes.filter((o) => o.result === 'saved').length, 0),
+      remaining_after: Math.max(summary.pending - savedCount, 0),
       outcomes,
     });
   } catch (e) {
