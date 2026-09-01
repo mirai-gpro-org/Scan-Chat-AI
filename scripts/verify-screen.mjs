@@ -117,6 +117,19 @@ const shellWidth = async (page, path) => {
   const t1Ok = t1A.cards > 0 && t1A.text.includes('尿中のポルフィリン量');
   console.log(`${t1Ok ? '✓' : '✗'} ?preview=1 の主軸 A に受領本文の逐語が出ている (カード ${t1A.cards} 枚)`);
   if (!t1Ok) fails.push('?preview=1 の主軸 A が空 (がんリスク検査の項目名で選べていない)');
+
+  /*
+   * **ウェルネス年齢は画面にも出る** (裁定 D-C2′・発注者指示 2026-09-01)。
+   * 当初は `?print=1` のみだったが、「画面と PDF で表示が違う違和感」から見直した。
+   * ここが落ちたら**画面だけ冒頭が空**になっている。
+   */
+  const wa = await page.evaluate(() => ({
+    nums: document.querySelectorAll('.rp-num').length,
+    gauge: !!document.querySelector('.rp-gauge'),
+  }));
+  const waOk = wa.nums === 2 && wa.gauge;
+  console.log(`${waOk ? '✓' : '✗'} 画面の冒頭にウェルネス年齢 (大数字 ${wa.nums} 枚 / 数直線 ${wa.gauge ? '有' : '無'})`);
+  if (!waOk) fails.push('画面の冒頭にウェルネス年齢のセクションが無い (裁定 D-C2′)');
   await page.goto(`${BASE}/report?preview=2`, { waitUntil: 'domcontentloaded' });
 
   // **A 軸のカードが在ること。** ここが実際に落ちていた箇所なので名指しで見る。
