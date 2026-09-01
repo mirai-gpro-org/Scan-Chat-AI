@@ -352,13 +352,22 @@ export const GET: APIRoute = async ({ url }) => {
   //
   // Mybook 画面が使う口。**一覧に無い `pdf_url*` 系**を返すので、
   // Lambda を経由せずここから URL が取れるなら経路が 1 本減る。
-  const firstSn = String(rows[0]?.serialnumber ?? '');
+  //
+  // 発行済みの複数件を一度に問い合わせる。**Wellfort に聞かずに済ませる**ため:
+  //   ・`custom_require` / `pdf_seq` → 「My Book 編集(カスタムPDF)を使っているか」を数える
+  //   ・`surveyStatus` → アンケート未完了がどれくらいあるか (DL 時に確認ダイアログが出る条件)
+  const publishedSns = rows
+    .filter((r) => String(r.statuscode ?? '') === '600')
+    .map((r) => String(r.serialnumber ?? ''))
+    .filter(Boolean)
+    .slice(0, 20);
+  const firstSn = publishedSns[0] ?? String(rows[0]?.serialnumber ?? '');
   if (!firstSn) {
     steps.push({ step: '2d-kitinfo', ok: false, note: '一覧が空のため未検証 (捏造しない)' });
   } else {
     try {
       const r = await apiPost('/api/biz/getKitInfoList.php', {
-        accesskey, partner_seq: partnerSeq, lang, sn: [firstSn],
+        accesskey, partner_seq: partnerSeq, lang, sn: publishedSns.length ? publishedSns : [firstSn],
       }) as { success?: boolean; code?: string; message?: string; data?: Record<string, unknown> };
       const list = Array.isArray(r?.data?.list) ? r.data!.list as Record<string, unknown>[] : [];
       steps.push({
@@ -366,7 +375,13 @@ export const GET: APIRoute = async ({ url }) => {
         ok: r?.success === true,
         note: r?.success === true ? undefined : `code=${r?.code} message=${r?.message}`,
         detail: {
+          requested: publishedSns.length || 1,
           returned: list.length,
+          // 「カスタムPDF を使っているか」を数える (聞かずに測る)。
+          by_custom_require: tally(list, 'custom_require'),
+          with_pdf_seq: list.filter((x) => String(x.pdf_seq ?? '').trim() !== '').length,
+          by_surveyStatus: tally(list, 'surveyStatus'),
+          by_serviceExpireYN: tally(list, 'serviceExpireYN'),
           keys: list[0] ? Object.keys(list[0]) : [],
           // 一覧 (kitStatusAdmin) に無いキーだけを見る = この口を使う価値があるか。
           keys_not_in_list_endpoint: list[0] && rows[0]
