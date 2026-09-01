@@ -89,7 +89,9 @@ function safeRow(row: Record<string, unknown>, full: boolean): Record<string, un
     // 認証情報が先。PII より重い (1 つで全 API が叩ける)。
     if (SECRET_KEYS.has(k)) { out[k] = presence(v); continue; }
     if (PII_KEYS.has(k)) { out[k] = presence(v); continue; }
-    if (k === 'serialnumber' || k === 'sn') { out[k] = maskSn(v, full); continue; }
+    // `extchar03` は 12 桁のキット番号らしき値 (実測 `5844-6059-9293`)。
+    // シリアルと同じく**個人の検査を指す識別子**なのでマスクする。
+    if (k === 'serialnumber' || k === 'sn' || k === 'extchar03') { out[k] = maskSn(v, full); continue; }
     if (v && typeof v === 'object') { out[k] = `<${Array.isArray(v) ? 'array' : 'object'}>`; continue; }
     const s = String(v ?? '');
     out[k] = s.length > 60 ? `${s.slice(0, 60)}…` : v;
@@ -220,9 +222,12 @@ export const GET: APIRoute = async ({ url }) => {
   }
 
   let rows: Record<string, unknown>[] = [];
+  /** 絞り込みなしの総件数 (`list_total_cnt`)。2e で「絞り込みが効いたか」の基準にする。 */
+  let unfilteredTotal: unknown = null;
   try {
     const { r, list } = await fetchList();
     rows = list;
+    unfilteredTotal = (r?.data as Record<string, unknown> | undefined)?.list_total_cnt ?? null;
     const dates = list.map((x) => String(x.publish_origin ?? '')).filter(Boolean).sort();
     steps.push({
       step: '2-list',
@@ -304,6 +309,43 @@ export const GET: APIRoute = async ({ url }) => {
     });
   } catch (e) {
     steps.push({ step: '2c-date-filter', ok: false, note: String(e) });
+  }
+
+  // ── ②-e 絞り込みが効くか ──────────────────────────────
+  //
+  // 【なぜ要るか】無人運用では**毎回 255 件 (将来もっと増える) を全部引き直したくない**。
+  // 血液の `last_to` 単調前進に相当する「前回以降だけ」をサーバ側で絞れるか確かめる。
+  // 2c で `finaldate_*` に yyyymmdd を入れたら **0 件**だったので、
+  //   ① 形式 (yyyy-mm-dd) の問題か ② そもそも `finaldate` が別の日付を指すのか
+  // を切り分ける。**分からないまま「使える/使えない」と書かない。**
+  try {
+    const probes: { label: string; over: Record<string, unknown> }[] = [
+      // ① 十分に広い範囲。ここでも 0 なら「形式が違う」か「対象日付が空」。
+      { label: 'finaldate 20200101-20301231 (yyyymmdd)', over: { finaldate_start: '20200101', finaldate_end: '20301231' } },
+      // ② ハイフン形式も試す。
+      { label: 'finaldate 2020-01-01..2030-12-31 (yyyy-mm-dd)', over: { finaldate_start: '2020-01-01', finaldate_end: '2030-12-31' } },
+      // ③ 状態で絞れるか。600 = レポート発行完了 = **取りに行きたいものだけ**。
+      { label: "kit_status='600' (レポート発行完了)", over: { kit_status: '600' } },
+    ];
+    const results: Record<string, unknown>[] = [];
+    for (const p of probes) {
+      const { r, list } = await fetchList({ ...p.over, limit: 5 });
+      results.push({
+        label: p.label,
+        success: r?.success === true,
+        total_cnt: (r?.data as Record<string, unknown> | undefined)?.list_total_cnt ?? null,
+        returned: list.length,
+        by_statuscode: tally(list, 'statuscode'),
+      });
+    }
+    steps.push({
+      step: '2e-filters',
+      ok: results.some((x) => Number(x.returned) > 0),
+      note: '絞り込みなしの総件数と比べて判断する (差分取得ができるか)',
+      detail: { unfiltered_total_cnt: unfilteredTotal, results },
+    });
+  } catch (e) {
+    steps.push({ step: '2e-filters', ok: false, note: String(e) });
   }
 
   // ── ②-d getKitInfoList ────────────────────────────────
