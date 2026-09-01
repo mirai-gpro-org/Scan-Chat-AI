@@ -36,7 +36,9 @@ import {
   isGenoplanConfigured, login, listPublishedKits, getPdfUrl, fetchPdf,
   originalKey, boxFromKey, CODE_GENERATING, type GenoplanKit,
 } from '../../../lib/genoplan';
-import { putOriginal, listOriginalKeys } from '../../../lib/originals-storage';
+import {
+  putOriginal, listOriginalKeys, getOriginalsS3Config, isOriginalsS3Configured,
+} from '../../../lib/originals-storage';
 
 export const prerender = false;
 
@@ -129,6 +131,17 @@ async function run(request: Request, url: URL): Promise<Response> {
       skipped_expired: expired.length,
       // ボックスナンバーが空の行は保存キーが `sn-…` になる。運用で気づけるように数える。
       without_box_number: kits.filter((k) => !k.boxNumber).length,
+      /**
+       * **どこへ書くのかを書く前に見せる。** 原本バケットが未設定だと
+       * Supabase Storage へ落ちる (原本の置き場は S3 ap-northeast-1 が正・CLAUDE.md 案C′)。
+       * 1 本 21MB なので、意図しない側に 1.5GB 書いてしまうと取り返しがつかない。
+       */
+      storage_backend: isOriginalsS3Configured() ? 's3' : 'supabase',
+      storage_target: (() => {
+        const c = getOriginalsS3Config();
+        return c ? `s3://${c.bucket}/${c.prefix}genoplan/ (${c.region})` : 'supabase storage: lab-results/genoplan/';
+      })(),
+      estimated_bytes_if_all: pending.length * 21_000_000,
     };
 
     if (dryRun) {
