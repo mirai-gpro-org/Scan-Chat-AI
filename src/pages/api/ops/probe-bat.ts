@@ -93,7 +93,13 @@ export const GET: APIRoute = async ({ url }) => {
   let nameJa: string;
   let nameAscii: string;
   try {
-    bat = buildProbeBat(spec.ps1, expected).bytes;
+    // デメカルの ID/PW は**リポジトリに置かず** Vercel env から注入する
+    // (発注者判断 2026-09-01「bat に平文で今回は構わない」)。
+    // 未設定なら buildProbeBat が落とすので、動かない bat を配ってしまうことはない。
+    bat = buildProbeBat(spec.ps1, expected, {
+      user: env('DEMECAL_USER_ID') ?? '',
+      pass: env('DEMECAL_PASSWORD') ?? '',
+    }).bytes;
     // `recon-1.1` → `1.1`。担当者が見るのは「v1.1」の部分だけでよい。
     const num = readScriptVersion(spec.ps1).split('-').pop() as string;
     nameJa = `${spec.ja}_v${num}.bat`;

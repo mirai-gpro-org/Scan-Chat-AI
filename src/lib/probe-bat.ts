@@ -16,6 +16,20 @@
 /** `.ps1` 内のプレースホルダ。配布時にここへトークンを差し込む。 */
 export const PROBE_TOKEN_PLACEHOLDER = '__PROBE_TOKEN__';
 
+/**
+ * デメカルの ID / PW のプレースホルダ (`scripts/demecal-recon.ps1`)。
+ *
+ * 【発注者判断 2026-09-01】「bat に平文で今回は構わない。専用PCで、PC に証明書が
+ *   入っているので、bat 漏洩しても大きな問題じゃない」。
+ *   → 実行時に取りに行く案 (`/api/ops/demecal-cred`) は撤回し、**配布時に焼き込む**。
+ *     failure point が 1 つ減る (専用PC 側でのネットワーク取得が不要)。
+ *
+ * **値はリポジトリに置かない。** トークンと同じく Vercel env から注入する
+ * (`DEMECAL_USER_ID` / `DEMECAL_PASSWORD`)。`.ps1` はプレースホルダのまま commit する。
+ */
+export const DEMECAL_USER_PLACEHOLDER = '__DEMECAL_USER__';
+export const DEMECAL_PASS_PLACEHOLDER = '__DEMECAL_PASS__';
+
 /** bat 側で pause するので PowerShell 側の入力待ちは外す。 */
 const READ_HOST_LINE = 'Read-Host "確認できたら Enter キーを押してください"\n';
 
@@ -26,12 +40,23 @@ export interface ProbeBatResult {
   skip: number;
 }
 
+/** PowerShell のシングルクォート文字列へ安全に入れる (`'` は `''` へ)。 */
+function psQuote(v: string): string {
+  return v.split("'").join("''");
+}
+
 /**
- * @param ps1     `scripts/demecal-probe.ps1` の中身
+ * @param ps1     `scripts/demecal-probe.ps1` / `demecal-recon.ps1` の中身
  * @param token   埋め込む `PROBE_UPLOAD_TOKEN`。省略すると送信なし版
  *                (bat は「自動送信は無効です」と表示し、デスクトップのファイルだけ残す)
+ * @param creds   デメカルの ID / PW。`.ps1` がプレースホルダを持つときは**必須**。
+ *                持たない `.ps1` (接続チェック) では無視される。
  */
-export function buildProbeBat(ps1: string, token?: string): ProbeBatResult {
+export function buildProbeBat(
+  ps1: string,
+  token?: string,
+  creds?: { user: string; pass: string },
+): ProbeBatResult {
   let ps = ps1.replace(READ_HOST_LINE, '');
 
   if (token) {
@@ -41,6 +66,21 @@ export function buildProbeBat(ps1: string, token?: string): ProbeBatResult {
     // PowerShell のシングルクォート文字列に入れるので ' だけは通せない。
     if (token.includes("'")) throw new Error("トークンに ' は使えません");
     ps = ps.split(PROBE_TOKEN_PLACEHOLDER).join(token);
+  }
+
+  /*
+   * 資格情報の差し込み。**プレースホルダがあるのに値が無ければ落とす。**
+   * 差し込まないまま配ると、専用PC で [2] を通過できずにまた 1 往復になる
+   * (実測 2026-09-01: recon が 2 版続けてここで止まった)。**黙って配らない。**
+   */
+  if (ps.includes(DEMECAL_USER_PLACEHOLDER) || ps.includes(DEMECAL_PASS_PLACEHOLDER)) {
+    if (!creds?.user || !creds?.pass) {
+      throw new Error(
+        'デメカルの ID/PW が未設定です (Vercel env: DEMECAL_USER_ID / DEMECAL_PASSWORD)',
+      );
+    }
+    ps = ps.split(DEMECAL_USER_PLACEHOLDER).join(psQuote(creds.user));
+    ps = ps.split(DEMECAL_PASS_PLACEHOLDER).join(psQuote(creds.pass));
   }
 
   const head = [

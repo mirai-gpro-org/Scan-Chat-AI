@@ -49,7 +49,8 @@ def default_out(ps: str) -> pathlib.Path:
     return ROOT / 'scripts' / f'デメカル接続チェック_v{num}.bat'
 
 
-def build(token: str | None, out: pathlib.Path) -> int:
+def build(token: str | None, out: pathlib.Path,
+          deme_user: str | None = None, deme_pass: str | None = None) -> int:
     ps = PS_PATH.read_text(encoding='utf-8')
 
     # bat 側で pause するので PowerShell 側の入力待ちは外す。
@@ -63,6 +64,16 @@ def build(token: str | None, out: pathlib.Path) -> int:
             print("ERROR: トークンに ' を含めないでください", file=sys.stderr)
             return 2
         ps = ps.replace('__PROBE_TOKEN__', token)
+
+    # デメカルの ID/PW (recon のみ)。**プレースホルダがあるのに値が無ければ落とす** —
+    # 差し込まないまま配ると専用PC の [2] を通過できず、また 1 往復になる。
+    # src/lib/probe-bat.ts と同じ規律。
+    if '__DEMECAL_USER__' in ps or '__DEMECAL_PASS__' in ps:
+        if not (deme_user and deme_pass):
+            print('ERROR: --demecal-user / --demecal-pass が要ります', file=sys.stderr)
+            return 2
+        ps = ps.replace('__DEMECAL_USER__', deme_user.replace("'", "''"))
+        ps = ps.replace('__DEMECAL_PASS__', deme_pass.replace("'", "''"))
 
     # PowerShell 自身のエラー (構文エラー・未捕捉の例外) は stderr に出る。
     # **ここで拾わないと、スクリプトが 1 行も動かなかった場合に何も残らない**
@@ -108,9 +119,11 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--token', help='Vercel env PROBE_UPLOAD_TOKEN と同値。省略で送信なし版')
     ap.add_argument('--out', help='既定は .ps1 の $Version から組む (例 デメカル接続チェック_v1.0.bat)')
+    ap.add_argument('--demecal-user', help='デメカルのユーザーID (recon のみ必要)')
+    ap.add_argument('--demecal-pass', help='デメカルのパスワード (recon のみ必要)')
     a = ap.parse_args()
     out = pathlib.Path(a.out) if a.out else default_out(PS_PATH.read_text(encoding='utf-8'))
-    sys.exit(build(a.token, out))
+    sys.exit(build(a.token, out, a.demecal_user, a.demecal_pass))
 
 
 if __name__ == '__main__':
