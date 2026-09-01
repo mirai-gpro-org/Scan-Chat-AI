@@ -476,7 +476,32 @@ Wellfort の顧客データの保護に関わるので、**Wellfort 経由で Ge
 | **ボックスナンバーが空の行** | **0** ＝ 全 72 件で箱番号がキーとして使える |
 | 発行日の範囲 | 2023-05-11 〜 2026-08-27 |
 
-#### 【要対応】取得を始める前に — 原本の置き場が未設定
+#### テスト取得の保存先（発注者指示 2026-09-01）
+
+**`?dest=exchange`** で **`s3://wellfort-partner-exchange/genoplan/`**（`ap-northeast-1`）へ保存する。
+このバケットは LAiF/プリベントとの受渡用で 2026-08-27 作成済み
+（`laif_s3_secure_handoff_spec.md §7`）。**原本ストレージ（案C′）ではない**ので
+Object Lock の 10 年保管に掛からず、**テスト後に消せる**。
+
+- ファイルは 2 本ずつ: `{ボックスナンバー}__{認証キー}.pdf` と 同名 `.json`
+- `.json` に入れるのは **`external_test_id`（認証キー）/ `external_barcode`（ボックスナンバー）/
+  `published_on` / `report_seq` / `pdf_sha256` / `pdf_bytes` / `fetched_at`** だけ。
+  **氏名・電話は入れない**（対応表ができたときに、この JSON だけで紐付けられる）
+- 認可は、原本ストレージへの書き込みだけ `ADMIN_API_KEY`。
+  dry-run と `dest=exchange` は `PROBE_UPLOAD_TOKEN` でも通す（**トークンを消せば両方閉じる**）
+- **本番運用では `dest` を付けない**（既定＝原本ストレージ）
+
+#### 実装上のつまずき（wellfort-site の admin UI を作る人向け）
+
+- **POST は `content-type: application/json` を付けないと Astro に弾かれる**
+  （`Cross-site POST form submissions are forbidden`＝`security.checkOrigin`）。
+  `fetch` から呼ぶときは JSON で送ること。
+- **`max` は「試行回数」でなく「保存できた件数」で数える。** 生成中（`code 6020`）は保存されず、
+  `pending` は発行日の昇順なので、試行回数で数えると**次の呼び出しでも同じ行が先頭に来て足踏みする**。
+- **1 リクエスト 1 件が上限。** 実測で 1 件 **約 32 秒**（ログイン＋一覧＋PDF URL＋21MB DL＋21MB PUT）。
+  関数は 60 秒なので 2 件にすると超える。
+
+#### 【要対応】本番運用に移す前に — 原本の置き場が未設定
 
 dry-run の `storage_backend` が **`supabase`** だった。
 **`AWS_S3_ORIGINALS_BUCKET` が Vercel env に無い**ため、このまま実行すると
