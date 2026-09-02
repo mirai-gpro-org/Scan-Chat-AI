@@ -29,7 +29,7 @@ $BaseUrl   = 'https://dl.demecal.net'
 $LoginUrl  = "$BaseUrl/account/login"
 $ApiBase   = 'https://scan-chat-ai.vercel.app'
 $IntakeKey = '__LAB_INTAKE_KEY__'
-$Version   = 'daily-1.0'
+$Version   = 'daily-1.1'
 
 # 初回の安全弁。last_to がまだ無いとき、いきなり全期間を引かない。
 # 失敗しても last_to は動かないので取り漏れは起きないが、初回から広く取ると
@@ -52,6 +52,12 @@ $script:RangeFrom = $null
 $script:RangeTo   = $null
 $script:CertOn    = $null
 $script:CertDays  = $null
+# 画面遷移の構造だけを積む診断ログ (実行ログAPI へ送る)。
+# **値は入れない。** 入れるのは 名前 / 型 / 選択肢の数 / ボタンの見出し / 送った日付 だけ
+# = 受診者の情報は 1 文字も乗らない。ここが空だと、失敗したとき現地で
+# もう一度 bat を回してもらう羽目になる (v1.0 で実際にそうなった)。
+$script:Diag      = New-Object System.Collections.Generic.List[string]
+function Diag($t) { if ($script:Diag.Count -lt 60) { $script:Diag.Add($t) | Out-Null } }
 
 # ── 実行ログ (無人運用の本体) ────────────────────────────────
 #
@@ -68,6 +74,7 @@ function Report-Run([string]$result, [string]$err) {
       rows            = $script:Rows
       range           = @{ from = $script:RangeFrom; to = $script:RangeTo }
       error           = $err
+      diag            = @($script:Diag)
       host            = $env:COMPUTERNAME
       script_version  = $Version
       cert_expires_on = $script:CertOn
@@ -174,6 +181,11 @@ Say ("[4] 取得範囲 {0} 〜 {1}" -f $script:RangeFrom, $script:RangeTo)
 # 日付だけ差し替えて送り直す。CSV (= text/html 以外) が返ったら終わり。
 $script:Stage = 'download'
 
+# 【v1.0 の欠陥・実測 2026-09-02】ここが `<input>` しか見ていなかった。
+#   ①(recon) の `Get-FormMeta` は `<select>` も `<button>` も読むのに、②だけ落ちていた。
+#   結果、選択欄と実行ボタンを**送らないまま**同じ画面を POST し続け、
+#   `/hanyou/entry` が 4 回連続で返って CSV に到達しなかった。
+#   ブラウザは「押したボタン 1 個だけ」を送るので、submit 系は fields と分けて持つ。
 function Get-Forms([string]$html, [string]$pageUrl) {
   $out = @()
   foreach ($fm in [regex]::Matches($html, '(?is)<form\b[^>]*>.*?</form>')) {
@@ -182,22 +194,120 @@ function Get-Forms([string]$html, [string]$pageUrl) {
     $ma = [regex]::Match($f, '(?i)action="([^"]*)"'); if ($ma.Success) { $action = $ma.Groups[1].Value }
     $method = 'get'
     $mm = [regex]::Match($f, '(?i)method="([^"]*)"'); if ($mm.Success) { $method = $mm.Groups[1].Value }
-    $fields = @{}
+    $fields  = @{}
+    $types   = @{}
+    $submits = @()   # 名前つきの実行ボタン (押した 1 個だけを送る)
+    $shape   = @()   # 診断用の形だけ (値は入れない)
+
     foreach ($im in [regex]::Matches($f, '(?is)<input\b[^>]*>')) {
       $tag = $im.Value
-      $n = [regex]::Match($tag, '(?i)name="([^"]*)"'); if (-not $n.Success) { continue }
       $t = [regex]::Match($tag, '(?i)type="([^"]*)"')
+      $type = if ($t.Success) { $t.Groups[1].Value.ToLower() } else { 'text' }
+      $n = [regex]::Match($tag, '(?i)name="([^"]*)"')
       $v = [regex]::Match($tag, '(?i)value="([^"]*)"')
-      $type = if ($t.Success) { $t.Value } else { 'text' }
-      # radio/checkbox は checked のものだけ採る (既定の選択を尊重する)
-      if ($type -match '(?i)radio|checkbox') {
-        if ($tag -notmatch '(?i)\bchecked\b') { continue }
+      $name = if ($n.Success) { $n.Groups[1].Value } else { '' }
+      $val  = if ($v.Success) { $v.Groups[1].Value } else { '' }
+      if ($type -eq 'reset') { continue }
+      if ($type -match '^(submit|image|button)$') {
+        # value はボタンの見出し (「次へ」等) で受診者の情報ではない。診断に出してよい。
+        if ($name) { $submits += [pscustomobject]@{ Name = $name; Value = $val; Label = $val; Pos = $im.Index } }
+        $shape += ("      submit name={0} label={1}" -f $name, $val)
+        continue
       }
-      $fields[$n.Groups[1].Value] = if ($v.Success) { $v.Groups[1].Value } else { '' }
+      if (-not $n.Success) { continue }
+      # radio/checkbox は checked のものだけ採る (既定の選択を尊重する)
+      if ($type -match '^(radio|checkbox)$' -and $tag -notmatch '(?i)\bchecked\b') {
+        $shape += ("      {0} name={1} (未チェック)" -f $type, $name); continue
+      }
+      $fields[$name] = $val
+      $types[$name]  = $type
+      $shape += ("      input  name={0} type={1}" -f $name, $type)
     }
-    $out += [pscustomobject]@{ Action = $action; Method = $method; Fields = $fields; Page = $pageUrl }
+
+    # **select を送らないと必須チェックに落ちて同じ画面が返る。**
+    # 既定の選択 (selected、無ければ先頭) = ブラウザで何も触らなかったときと同じ値。
+    foreach ($sm in [regex]::Matches($f, '(?is)<select\b(?<a>[^>]*)>(?<b>.*?)</select>')) {
+      $n = [regex]::Match($sm.Groups['a'].Value, '(?i)name="([^"]*)"')
+      if (-not $n.Success) { continue }
+      $name = $n.Groups[1].Value
+      $opts = @()
+      foreach ($o in [regex]::Matches($sm.Groups['b'].Value, '(?is)<option\b(?<oa>[^>]*)>')) {
+        $ov = [regex]::Match($o.Groups['oa'].Value, '(?i)value="([^"]*)"')
+        $opts += [pscustomobject]@{
+          Value = if ($ov.Success) { $ov.Groups[1].Value } else { '' }
+          Sel   = ($o.Groups['oa'].Value -match '(?i)\bselected\b')
+        }
+      }
+      $pick = @($opts | Where-Object { $_.Sel })
+      $use  = if ($pick.Count -gt 0) { $pick[0].Value } elseif ($opts.Count -gt 0) { $opts[0].Value } else { '' }
+      $fields[$name] = $use
+      $types[$name]  = 'select'
+      # 選択肢の**中身は出さない** (受診者一覧の可能性)。件数と、既定として送った 1 件だけ。
+      $shape += ("      select name={0} options={1} 送信={2}" -f $name, $opts.Count, $use)
+    }
+
+    foreach ($tm in [regex]::Matches($f, '(?is)<textarea\b(?<a>[^>]*)>(?<b>.*?)</textarea>')) {
+      $n = [regex]::Match($tm.Groups['a'].Value, '(?i)name="([^"]*)"')
+      if (-not $n.Success) { continue }
+      $fields[$n.Groups[1].Value] = $tm.Groups['b'].Value
+      $types[$n.Groups[1].Value]  = 'textarea'
+      $shape += ("      textarea name={0}" -f $n.Groups[1].Value)
+    }
+
+    foreach ($bm in [regex]::Matches($f, '(?is)<button\b(?<a>[^>]*)>(?<b>.*?)</button>')) {
+      $attr = $bm.Groups['a'].Value
+      # type 未指定の <button> は submit 扱い (HTML の既定)。
+      $bt = [regex]::Match($attr, '(?i)type="([^"]*)"')
+      $btype = if ($bt.Success) { $bt.Groups[1].Value.ToLower() } else { 'submit' }
+      if ($btype -ne 'submit') { continue }
+      $n = [regex]::Match($attr, '(?i)name="([^"]*)"')
+      $v = [regex]::Match($attr, '(?i)value="([^"]*)"')
+      $label = (($bm.Groups['b'].Value -replace '<[^>]+>', '') -replace '\s+', ' ').Trim()
+      if ($n.Success) {
+        $submits += [pscustomobject]@{
+          Name = $n.Groups[1].Value
+          Value = if ($v.Success) { $v.Groups[1].Value } else { '' }
+          Label = $label
+          Pos = $bm.Index
+        }
+      }
+      $bname = if ($n.Success) { $n.Groups[1].Value } else { '(名前なし)' }
+      $shape += ("      button name={0} label={1}" -f $bname, $label)
+    }
+
+    # **試す順番だけを決める。候補を絞りはしない** (どれが正解かは決め打ちしない)。
+    #   ・原則は画面に並んでいる順
+    #   ・「戻る」「取消」系は最後に回す — 先に押すと 1 段戻ってしまい、
+    #     上限 (MaxHops) を無駄に食う。全部試す点は変わらない。
+    $back = '(?i)戻|取消|キャンセル|クリア|back|cancel|reset|clear'
+    $submits = @($submits | Sort-Object `
+      @{ Expression = { if ("$($_.Label) $($_.Value)" -match $back) { 1 } else { 0 } } }, `
+      @{ Expression = { $_.Pos } })
+
+    $out += [pscustomobject]@{
+      Action = $action; Method = $method; Fields = $fields; Types = $types
+      Submits = $submits; Shape = $shape; Page = $pageUrl
+    }
   }
   return $out
+}
+
+# 「同じ画面が返ってきた」を判定する指紋。**値は含めない** (日付だけ違う同一画面を別物にしない)。
+function Get-FormSig($form) {
+  $names = @($form.Fields.Keys | Where-Object { $_ -notmatch '(?i)token|verification' } | Sort-Object)
+  $subs  = @($form.Submits | ForEach-Object { $_.Name } | Sort-Object)
+  return ('{0}|{1}|{2}' -f $form.Action, ($names -join ','), ($subs -join ','))
+}
+
+# 実際に送る form を選ぶ。**先頭決め打ちにしない** — ログアウトや検索窓が先に来ていると
+# 中身の無い form を押し続けることになる (v1.0 の 4 連続ループの候補原因のひとつ)。
+# token 以外の入力を持つ form のうち、いちばん項目が多いものを採る。
+function Select-Form($forms) {
+  $real = @($forms | Where-Object {
+    @($_.Fields.Keys | Where-Object { $_ -notmatch '(?i)token|verification' }).Count -gt 0
+  })
+  $pool = if ($real.Count -gt 0) { $real } else { $forms }
+  return ($pool | Sort-Object { -$_.Fields.Count })[0]
 }
 
 function Resolve-Url([string]$action, [string]$pageUrl) {
@@ -207,39 +317,74 @@ function Resolve-Url([string]$action, [string]$pageUrl) {
 }
 
 $csvBytes = $null
+$MaxHops  = 10
+# 「この指紋の画面では、次にどの実行ボタンを試すか」。同じ画面が返ったら次の候補へ進む。
+$tried = @{}
+
 try {
   $startUrl = "$BaseUrl/hanyou/start"
   $page = Invoke-WebRequest -Uri $startUrl -Certificate $cert -WebSession $session -UseBasicParsing -TimeoutSec 60
   $forms = Get-Forms $page.Content $startUrl
   if ($forms.Count -eq 0) { Finish 1 'fail' '汎用CSV画面に form がありません (画面が変わった可能性)' }
-  $cur = $forms[0]
+  $cur = Select-Form $forms
 
-  for ($hop = 1; $hop -le 5; $hop++) {
+  for ($hop = 1; $hop -le $MaxHops; $hop++) {
+    $sig = Get-FormSig $cur
+    $idx = if ($tried.ContainsKey($sig)) { [int]$tried[$sig] } else { 0 }
+    $cands = @($cur.Submits)
+    # **成功しても失敗しても、送る直前の form の形を残す。**
+    # ここが残っていれば、次の一手を決めるのに現地でもう一度回してもらう必要が無い。
+    if ($idx -eq 0) { foreach ($s in $cur.Shape) { Diag $s } }
+
+    # **同じ画面が返り続けたら、押すボタンを変えて試す。** 候補を使い切ったら
+    # 黙って回り続けずに落とす (v1.0 は同じ body を 4 回送って上限で終わっていた)。
+    if ($cands.Count -gt 0 -and $idx -ge $cands.Count) {
+      Diag ("  [{0}段目] 実行ボタン {1} 個を全て試しましたが画面が変わりません" -f $hop, $cands.Count)
+      Finish 1 'fail' ("同じ画面から進めません (実行ボタン {0} 個を全て試行)" -f $cands.Count)
+    }
+
     $body = @{}
     foreach ($k in $cur.Fields.Keys) { $body[$k] = $cur.Fields[$k] }
     # **日付欄だけを差し替える。** token を含む名前には絶対に触らない
     # (①v1.9 で `(?i)to` が __RequestVerificationToken に当たった実績)。
+    $dateSent = @()
     foreach ($k in @($cur.Fields.Keys)) {
       if ($k -match '(?i)token|verification') { continue }
-      if ($k -notmatch '(?i)date|ymd|日付') { continue }
-      if ($k -match '(?i)from|start|開始') { $body[$k] = $from.ToString('yyyy/MM/dd') }
-      elseif ($k -match '(?i)to|end|終了')  { $body[$k] = $to.ToString('yyyy/MM/dd') }
+      if ($k -notmatch '(?i)date|ymd|日付|ymdhms|kikan|期間') { continue }
+      if ($k -match '(?i)from|start|開始|自')     { $body[$k] = $from.ToString('yyyy/MM/dd'); $dateSent += "$k<-from" }
+      elseif ($k -match '(?i)to|end|終了|至|until') { $body[$k] = $to.ToString('yyyy/MM/dd');   $dateSent += "$k<-to" }
     }
+    $pressed = ''
+    if ($cands.Count -gt 0) {
+      $body[$cands[$idx].Name] = $cands[$idx].Value
+      $pressed = ("{0}={1}({2})" -f $cands[$idx].Name, $cands[$idx].Value, $cands[$idx].Label)
+    }
+    $tried[$sig] = $idx + 1
+
     $u = Resolve-Url $cur.Action $cur.Page
     $mth = if ($cur.Method -match '(?i)post') { 'Post' } else { 'Get' }
     $r = Invoke-WebRequest -Uri $u -Method $mth -Certificate $cert -WebSession $session `
            -Body $body -UseBasicParsing -TimeoutSec 120
     $ct = [string]$r.Headers['Content-Type']
+    $cd = [string]$r.Headers['Content-Disposition']
     Say ("    [{0}段目] {1} → HTTP {2} / {3}" -f $hop, $u, [int]$r.StatusCode, $ct)
+    Diag ("  [{0}段目] {1} {2} → {3} / ct={4}" -f $hop, $mth, $u, [int]$r.StatusCode, $ct)
+    Diag ("      form {0}個中 項目{1} ボタン{2} / 押した={3} / 日付={4}" -f `
+          $forms.Count, $cur.Fields.Count, $cands.Count, ($(if ($pressed) { $pressed } else { '(なし)' })), (($dateSent -join ' ') -replace '^$', '(該当なし)'))
 
-    if ($ct -notmatch '(?i)text/html') { $csvBytes = $r.Content; break }
+    # **CSV は content-type だけで判定しない。** 添付として返るなら中身が何であれ CSV。
+    if ($ct -notmatch '(?i)text/html' -or $cd -match '(?i)attachment') { $csvBytes = $r.Content; break }
+
     $forms = Get-Forms $r.Content $u
     if ($forms.Count -eq 0) { Finish 1 'fail' ("{0} 段目の応答に form が無く CSV も返りません" -f $hop) }
-    $cur = $forms[0]
+    $cur = Select-Form $forms
   }
 } catch { Finish 1 'fail' ("CSV 取得中に失敗: {0}" -f $_.Exception.Message) }
 
-if (-not $csvBytes) { Finish 1 'fail' '画面を辿りましたが CSV が返りませんでした' }
+if (-not $csvBytes) {
+  Diag ("  {0} 段まで辿っても CSV に届きませんでした" -f $MaxHops)
+  Finish 1 'fail' ("画面を {0} 段辿りましたが CSV が返りませんでした" -f $MaxHops)
+}
 
 # ── [6] 保存 → 送信 → 削除 ───────────────────────────────────
 #

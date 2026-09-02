@@ -37,6 +37,17 @@ interface RunRecord {
   rows?: number;
   range?: { from?: string; to?: string };
   error?: string;
+  /**
+   * 画面遷移の**形だけ**の記録 (`demecal-daily.ps1` の `Diag`)。
+   * 入るのは 段数 / URL / HTTP 状態 / form の項目名と型 / 選択肢の**件数** /
+   * ボタンの見出し / 送った日付 だけで、**入力値や CSV の中身は入らない**。
+   *
+   * 【なぜ要るか】v1.0 が「5 段辿ったが CSV が返らない」で終わったとき、
+   * 手元には URL と 200 しか残らず、**原因を絞るのに現地でもう一度 bat を
+   * 回してもらうしかなかった**。無人運用でそれは成立しないので、
+   * 失敗の形がサーバ側に残るようにする。
+   */
+  diag?: string[];
   host?: string;
   script_version?: string;
   cert_expires_on?: string;
@@ -100,6 +111,11 @@ export const POST: APIRoute = async ({ request }) => {
       : undefined,
     // **中身は書かせない。** 例外メッセージだけを長さで切って残す。
     error: str(body.error, 300),
+    // 行数・1 行の長さとも上限で切る (ここを無制限にすると、送信側の不具合で
+    // ページ本文がまるごと流れ込む余地ができる = PII の逃げ道になる)。
+    diag: Array.isArray(body.diag)
+      ? body.diag.map((v) => str(v, 200)).filter((v): v is string => !!v).slice(0, 80)
+      : undefined,
     host: str(body.host, 60),
     script_version: str(body.script_version, 40),
     cert_expires_on: str(body.cert_expires_on, 20),

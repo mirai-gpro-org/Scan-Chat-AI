@@ -108,7 +108,7 @@ CSV 側の識別子は **`指図番号`**（`scripts/blood-csv-fixtures/demecal_
 ```
 POST /api/admin/demecal-run   (x-intake-key)
   { started_at, finished_at, result: "ok"|"fail", stage, rows?, range?: {from,to},
-    error?, host, script_version, cert_expires_on, cert_days_left }
+    error?, diag?: string[], host, script_version, cert_expires_on, cert_days_left }
 GET  /api/admin/demecal-run   (x-intake-key | ADMIN_API_KEY)
   → { ok, runs: [...直近N件], health: { last_success_at, days_since_success, cert_days_left, stale: bool } }
 ```
@@ -122,6 +122,21 @@ GET  /api/admin/demecal-run   (x-intake-key | ADMIN_API_KEY)
   （URL とステータスコードまで）。
 - **`cert_days_left` を毎回載せる。** 証明書は 2028-12-12 に切れ、切れた瞬間に全部止まる。
   **60 日を切ったら警告**を出す（§5）。
+
+#### `diag` — 画面遷移の**形**（v1.1 で追加・2026-09-02）
+
+**「もう一度 bat を回してください」を無くすためのフィールド。**
+v1.0 が失敗したとき手元に残ったのは URL と `HTTP 200` だけで、
+原因を絞るのに現地での再実行が要った。無人運用でそれは成立しない。
+
+載るのは **形だけ**:
+段数 / メソッド / URL / HTTP 状態 / content-type /
+form の項目名と型 / **select の選択肢の「件数」** / ボタンの見出し /
+押したボタン / 送った日付欄の名前。
+
+**載せないもの**: 入力値・hidden の値・select の選択肢の中身・ページ本文・CSV の中身。
+サーバ側でも **1 行 200 字 × 80 行**で切る（`demecal-run.ts`）。
+無制限にすると送信側の不具合でページ本文が流れ込む余地ができる＝ PII の逃げ道になる。
 
 ### 3.3 既存 API（変更なし）
 
@@ -421,6 +436,63 @@ wellfort-site の admin「🩸 デメカルCSV 取り込み」画面に**自動�
   **HTTPステータス／Content-Type／ファイル名／ヘッダ行／行数**だけ。
   **万一データ行が返ってもヘッダ行以外は捨てる**
 - ID・パスワードは画面にもログにも出さない（保存は DPAPI 暗号化のみ）
+
+### ②-0 v1.0 の実測と、そこで直したこと（2026-09-02）
+
+**実装は `scripts/demecal-daily.ps1`**（この節の旧名 `demecal-fetch.ps1` は同じもの）。
+**①の recon v2.0 を回さずに②へ進んだ**（発注者判断「②を作ってそれで試す」）ので、
+①が埋めるはずだった form の形が分からないまま走った。結果は下記。
+
+専用PCでの v1.0 実行（`WELLFORT_PC` / 12:16）:
+
+```
+[1] 証明書 OK（2028-12-12・残 832 日）　[2] 資格情報 OK　[3] ログイン OK
+[4] 取得範囲 2026-08-29 〜 2026-09-02
+    [1段目] /hanyou/start → 200 text/html
+    [2段目] /hanyou/entry → 200 text/html
+    [3段目] /hanyou/entry → 200 text/html      ← 以降おなじ
+    [4段目] /hanyou/entry → 200 text/html
+    [5段目] /hanyou/entry → 200 text/html
+エラー: 画面を辿りましたが CSV が返りませんでした
+```
+
+**[1]〜[4] は全部通っている。** mTLS も antiforgery のログインも状態管理も動いた。
+**止まったのは [5] の 1 か所だけ**で、`/hanyou/entry` が**同じ画面を返し続けた**
+（＝ 同じ body を 4 回送っていた）。`last_to` は前進していない（仕様どおり）。
+
+**確定した欠陥（実測・推測ではない）**
+
+| # | 欠陥 | 根拠 |
+|---|---|---|
+| 1 | ② の form パーサが **`<input>` しか読まない** | v1.0 `demecal-daily.ps1:186` が唯一のタグ。①の `demecal-recon.ps1` `Get-FormMeta` は `<select>` も `<button>` も読む＝**①②で実装が食い違っていた** |
+| 2 | `<button name=… >` を送らない | 上の帰結。ASP.NET MVC は押されたボタン名で分岐するのが普通。**送らなければ「何もしていない」ので同じ画面が返る** |
+| 3 | `<select>` を送らない | 上の帰結。必須の選択欄があれば検証に落ちて同じ画面が返る |
+| 4 | 同じ画面が返っても**同じ body を送り直す** | 上限 5 段を無為に消費して終わる |
+| 5 | 失敗の中身がサーバに残らない | URL と 200 しか残らず、**原因の切り分けに現地での再実行が要る**＝無人運用として破綻 |
+
+**どれが真因かは、この 5 件を直すまで確定できない。**
+1〜3 はいずれも「同じ画面が返り続ける」を説明する（＝症状からは区別が付かない）。
+**症状から 1 つを選んで当て推量で直さない**（R1/R2）。全部直して、それでも進まなければ
+`diag`（§3.2）が form の形を返すので、**そこで初めて次の一手を決める**。
+
+**v1.1 での対処**
+
+- `Get-Forms` を①と同等にした（`<select>` は selected／無ければ先頭＝ブラウザ既定、
+  `<textarea>`、`<button type=submit>`、`<input type=submit|image>`）。
+  **submit 系は `Fields` と分けて持つ** — ブラウザは押した 1 個だけを送るため
+- **同じ画面が返ったら押すボタンを変えて試す**（`Get-FormSig` の指紋で判定）。
+  候補を使い切ったら「全部試したが進まない」と明示して落とす。**黙って回らない**
+- 試す順番は 画面の並び順、ただし **戻る／取消系は最後**（絞りはしない＝全部試す）
+- **送る form を先頭決め打ちにしない**（`Select-Form`）。ログアウト用の form が先頭にあると
+  中身の無い form を押し続けることになる
+- CSV 判定に **`Content-Disposition: attachment`** を追加（content-type だけに頼らない）
+- 上限 5 → 10 段（候補の試行ぶん）
+- **`diag` を実行ログAPIへ送る**（§3.2）。形だけで値は載らない
+
+検証: `[Parser]::ParseFile` 構文 OK ／ 合成 HTML（ログアウト form＋3 ボタン＋2 select）で
+**ログアウト form を避け・select を既定値で送り・候補を 次へ→ダウンロード→戻る の順に並べる**
+ことを実測 ／ `astro check` 0 errors ／ `verify:intake-scope` OK ／ bat 生成 OK。
+**実サイトでの動作は未確認**（証明書が専用PCにしか無いためこちらでは再現不可）。
 
 ### ② 本番の自動実行（`demecal-fetch.ps1` ＋ セットアップ bat・未実装）
 
