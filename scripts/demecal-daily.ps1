@@ -29,7 +29,7 @@ $BaseUrl   = 'https://dl.demecal.net'
 $LoginUrl  = "$BaseUrl/account/login"
 $ApiBase   = 'https://scan-chat-ai.vercel.app'
 $IntakeKey = '__LAB_INTAKE_KEY__'
-$Version   = 'daily-1.2'
+$Version   = 'daily-1.3'
 
 # 初回の安全弁。last_to がまだ無いとき、いきなり全期間を引かない。
 # 失敗しても last_to は動かないので取り漏れは起きないが、初回から広く取ると
@@ -197,6 +197,7 @@ function Get-Forms([string]$html, [string]$pageUrl) {
     $fields  = @{}
     $types   = @{}
     $submits = @()   # 名前つきの実行ボタン (押した 1 個だけを送る)
+    $radios  = @()   # ラジオ/チェックの全選択肢 (ラベル付き。既定でない側も持つ)
     $shape   = @()   # 診断用の形だけ (値は入れない)
 
     foreach ($im in [regex]::Matches($f, '(?is)<input\b[^>]*>')) {
@@ -216,8 +217,28 @@ function Get-Forms([string]$html, [string]$pageUrl) {
       }
       if (-not $n.Success) { continue }
       # radio/checkbox は checked のものだけ採る (既定の選択を尊重する)
-      if ($type -match '^(radio|checkbox)$' -and $tag -notmatch '(?i)\bchecked\b') {
-        $shape += ("      {0} name={1} (未チェック)" -f $type, $name); continue
+      if ($type -match '^(radio|checkbox)$') {
+        # **ラベルを拾う。** 画面で人が読んでいる文字＝どれを押すべきかの唯一の手掛かり。
+        #   ①<label for="id">文字</label> ②<label>…<input>文字</label> ③input の直後の文字
+        $lbl = ''
+        $idm = [regex]::Match($tag, '(?i)\bid="([^"]*)"')
+        if ($idm.Success) {
+          $lm = [regex]::Match($f, ('(?is)<label[^>]*\bfor="' + [regex]::Escape($idm.Groups[1].Value) + '"[^>]*>(.*?)</label>'))
+          if ($lm.Success) { $lbl = $lm.Groups[1].Value }
+        }
+        if (-not $lbl) {
+          $lm2 = [regex]::Match($f, ('(?is)<label[^>]*>(?:(?!</label>).)*?' + [regex]::Escape($tag) + '((?:(?!</label>).)*?)</label>'))
+          if ($lm2.Success) { $lbl = $lm2.Groups[1].Value }
+        }
+        if (-not $lbl) {
+          $after = $f.Substring($im.Index + $tag.Length)
+          $lm3 = [regex]::Match($after, '(?s)^\s*([^<]{1,40})')
+          if ($lm3.Success) { $lbl = $lm3.Groups[1].Value }
+        }
+        $lbl = (($lbl -replace '<[^>]+>', '') -replace '\s+', ' ').Trim()
+        $radios += [pscustomobject]@{ Name = $name; Value = $val; Label = $lbl; Checked = ($tag -match '(?i)\bchecked\b') }
+        $shape += ("      {0} name={1} label={2}{3}" -f $type, $name, $lbl, $(if ($tag -match '(?i)\bchecked\b') { ' [既定]' } else { '' }))
+        if ($tag -notmatch '(?i)\bchecked\b') { continue }
       }
       $fields[$name] = $val
       $types[$name]  = $type
@@ -321,7 +342,7 @@ function Get-Forms([string]$html, [string]$pageUrl) {
 
     $out += [pscustomobject]@{
       Action = $action; Method = $method; Fields = $fields; Types = $types
-      Submits = $submits; Shape = $shape; Page = $pageUrl
+      Submits = $submits; Radios = $radios; Shape = $shape; Page = $pageUrl
     }
   }
   return $out
@@ -394,6 +415,19 @@ try {
       if ($k -match '(?i)from|start|開始|自')     { $body[$k] = $from.ToString('yyyy/MM/dd'); $dateSent += "$k<-from" }
       elseif ($k -match '(?i)to|end|終了|至|until') { $body[$k] = $to.ToString('yyyy/MM/dd');   $dateSent += "$k<-to" }
     }
+    # 【実測 2026-09-02・操作の録画】「項目見出し」の既定は **出力しない**。
+    #   取り込み側 (`elith-blood-csv.ts:221`) は **1 行目をヘッダとして列名で引く**ので、
+    #   ヘッダ無しの CSV は 指図番号/性別/生年月日/採血日/結果項目数 が **1 つも引けない**
+    #   = 取り込みが丸ごと壊れる。手動運用でも担当者は毎回「出力する」に変えている。
+    #   → **ラベルが「出力する」の選択肢へ切り替える。** 値は画面から読む (埋めない)。
+    #   ラベルが取れず切り替えられなくても、[6] のヘッダ検査が最後に止める。
+    foreach ($rd in @($cur.Radios)) {
+      if ($rd.Label -notmatch '出力する') { continue }
+      if ($body[$rd.Name] -eq $rd.Value) { continue }
+      $body[$rd.Name] = $rd.Value
+      Diag ("      ラジオ {0} を『{1}』へ切替 (既定は出力しない)" -f $rd.Name, $rd.Label)
+    }
+
     $pressed = $cands[$idx].Label
     if ($cands[$idx].Name) {
       $body[$cands[$idx].Name] = $cands[$idx].Value
@@ -442,6 +476,13 @@ try {
   $script:Rows = @($txt -split "`r?`n" | Where-Object { $_ -ne '' }).Count
 } catch { $script:Rows = $null }
 Say ("[6] CSV 保存 OK ({0} 行 / ヘッダ含む)" -f $script:Rows)
+
+# **ヘッダ行が無い CSV を送らない。** 取り込み側は 1 行目を列名として引くので、
+# ヘッダ無しだと列が 1 つも引けず、壊れたデータが静かに入る (それが一番まずい)。
+# ここで止めれば last_to も進まないので、次回そのまま取り直せる。
+if ($txt -and $txt -notmatch '指図番号') {
+  Finish 1 'fail' 'CSV に見出し行がありません (「項目見出し=出力する」が効いていない)'
+}
 
 try {
   $payload = @{
