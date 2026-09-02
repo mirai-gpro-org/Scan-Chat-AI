@@ -29,7 +29,7 @@ $BaseUrl   = 'https://dl.demecal.net'
 $LoginUrl  = "$BaseUrl/account/login"
 $ApiBase   = 'https://scan-chat-ai.vercel.app'
 $IntakeKey = '__LAB_INTAKE_KEY__'
-$Version   = 'daily-1.1'
+$Version   = 'daily-1.2'
 
 # 初回の安全弁。last_to がまだ無いとき、いきなり全期間を引かない。
 # 失敗しても last_to は動かないので取り漏れは起きないが、初回から広く取ると
@@ -275,13 +275,48 @@ function Get-Forms([string]$html, [string]$pageUrl) {
       $shape += ("      button name={0} label={1}" -f $bname, $label)
     }
 
+    # 【本命・①v1.9 の偵察で判明 2026-09-02】`/hanyou/entry` の実行指示は
+    #   **ボタンではなく hidden `submitType`** に入る (偵察レポートに
+    #   `input name=submitType type=hidden` ＋ `button 確認` `button 戻る`)。
+    #   = ボタンの onclick が JS で hidden に値を入れてから submit する型。
+    #   hidden を既定値のまま送ると「何も指示していない」ので同じ画面が返る
+    #   = v1.0 が /hanyou/entry を 4 回繰り返した理由。
+    #
+    # **値をコードに埋めない** (`next` 等を決め打ちしたら画面改訂で即死ぬ・CLAUDE.md)。
+    #   代わりに**そのページの JS から実際に代入されている文字列を拾う**。
+    #   拾えた値は「押せるボタン」と同格の候補として、下の順番で 1 つずつ試す。
+    foreach ($hf in @($fields.Keys)) {
+      if ($types[$hf] -ne 'hidden') { continue }
+      if ($hf -match '(?i)token|verification') { continue }
+      $seen = @{}
+      # `X.value='v'` / `X.value = "v"` / `["X"].value='v'` / `$('#X').val('v')` を拾う。
+      $pat = ('(?i)' + [regex]::Escape($hf) + '["\x27\]]{0,3}\s*\)?\s*\.\s*(?:value|val)\s*(?:=|\(\s*)\s*["\x27]([^"\x27]{1,40})["\x27]')
+      foreach ($vm in [regex]::Matches($html, $pat)) {
+        $hv = $vm.Groups[1].Value
+        if (-not $hv -or $seen.ContainsKey($hv)) { continue }
+        $seen[$hv] = $true
+        $submits += [pscustomobject]@{
+          Name = $hf; Value = $hv; Label = ("hidden {0}" -f $hf); Pos = 100000 + $vm.Index
+        }
+      }
+      if ($seen.Count -gt 0) {
+        # 値は画面操作の識別子 (next / confirm 等) で受診者の情報ではない。診断に出してよい。
+        $shape += ("      hidden {0} に JS が入れる値 = [{1}]" -f $hf, (($seen.Keys | Sort-Object) -join ' | '))
+      }
+    }
+
     # **試す順番だけを決める。候補を絞りはしない** (どれが正解かは決め打ちしない)。
     #   ・原則は画面に並んでいる順
     #   ・「戻る」「取消」系は最後に回す — 先に押すと 1 段戻ってしまい、
     #     上限 (MaxHops) を無駄に食う。全部試す点は変わらない。
+    #   ・見出しの無いボタンはその次 (何をするか読めないので先に押さない)
     $back = '(?i)戻|取消|キャンセル|クリア|back|cancel|reset|clear'
     $submits = @($submits | Sort-Object `
-      @{ Expression = { if ("$($_.Label) $($_.Value)" -match $back) { 1 } else { 0 } } }, `
+      @{ Expression = {
+          if ("$($_.Label) $($_.Value)" -match $back) { 2 }
+          elseif (-not "$($_.Label)$($_.Value)".Trim()) { 1 }
+          else { 0 }
+        } }, `
       @{ Expression = { $_.Pos } })
 
     $out += [pscustomobject]@{
@@ -317,7 +352,7 @@ function Resolve-Url([string]$action, [string]$pageUrl) {
 }
 
 $csvBytes = $null
-$MaxHops  = 10
+$MaxHops  = 14   # 候補を 1 つずつ試すぶん、段数でなく試行回数の上限
 # 「この指紋の画面では、次にどの実行ボタンを試すか」。同じ画面が返ったら次の候補へ進む。
 $tried = @{}
 
@@ -331,16 +366,21 @@ try {
   for ($hop = 1; $hop -le $MaxHops; $hop++) {
     $sig = Get-FormSig $cur
     $idx = if ($tried.ContainsKey($sig)) { [int]$tried[$sig] } else { 0 }
-    $cands = @($cur.Submits)
+    # **「何も押さない」を最初の候補にする。**
+    #   v1.0 は一切押さずに `/hanyou/start` → `/hanyou/entry` へ**進めていた**
+    #   (止まったのは entry から先)。押す側へ全面的に切り替えると、
+    #   その通っていた 1 段目を壊しかねない。まず従来どおり送り、
+    #   同じ画面が返ったときだけ押す候補へ移る。
+    $cands = @([pscustomobject]@{ Name = ''; Value = ''; Label = '(押さない)' }) + @($cur.Submits)
     # **成功しても失敗しても、送る直前の form の形を残す。**
     # ここが残っていれば、次の一手を決めるのに現地でもう一度回してもらう必要が無い。
     if ($idx -eq 0) { foreach ($s in $cur.Shape) { Diag $s } }
 
     # **同じ画面が返り続けたら、押すボタンを変えて試す。** 候補を使い切ったら
     # 黙って回り続けずに落とす (v1.0 は同じ body を 4 回送って上限で終わっていた)。
-    if ($cands.Count -gt 0 -and $idx -ge $cands.Count) {
-      Diag ("  [{0}段目] 実行ボタン {1} 個を全て試しましたが画面が変わりません" -f $hop, $cands.Count)
-      Finish 1 'fail' ("同じ画面から進めません (実行ボタン {0} 個を全て試行)" -f $cands.Count)
+    if ($idx -ge $cands.Count) {
+      Diag ("  [{0}段目] 候補 {1} 通りを全て試しましたが画面が変わりません" -f $hop, $cands.Count)
+      Finish 1 'fail' ("同じ画面から進めません (候補 {0} 通りを全て試行)" -f $cands.Count)
     }
 
     $body = @{}
@@ -354,10 +394,10 @@ try {
       if ($k -match '(?i)from|start|開始|自')     { $body[$k] = $from.ToString('yyyy/MM/dd'); $dateSent += "$k<-from" }
       elseif ($k -match '(?i)to|end|終了|至|until') { $body[$k] = $to.ToString('yyyy/MM/dd');   $dateSent += "$k<-to" }
     }
-    $pressed = ''
-    if ($cands.Count -gt 0) {
+    $pressed = $cands[$idx].Label
+    if ($cands[$idx].Name) {
       $body[$cands[$idx].Name] = $cands[$idx].Value
-      $pressed = ("{0}={1}({2})" -f $cands[$idx].Name, $cands[$idx].Value, $cands[$idx].Label)
+      $pressed = ("{0}={1} ({2})" -f $cands[$idx].Name, $cands[$idx].Value, $cands[$idx].Label)
     }
     $tried[$sig] = $idx + 1
 
@@ -369,8 +409,8 @@ try {
     $cd = [string]$r.Headers['Content-Disposition']
     Say ("    [{0}段目] {1} → HTTP {2} / {3}" -f $hop, $u, [int]$r.StatusCode, $ct)
     Diag ("  [{0}段目] {1} {2} → {3} / ct={4}" -f $hop, $mth, $u, [int]$r.StatusCode, $ct)
-    Diag ("      form {0}個中 項目{1} ボタン{2} / 押した={3} / 日付={4}" -f `
-          $forms.Count, $cur.Fields.Count, $cands.Count, ($(if ($pressed) { $pressed } else { '(なし)' })), (($dateSent -join ' ') -replace '^$', '(該当なし)'))
+    Diag ("      form {0}個中 項目{1} 候補{2}(今回={3}) / 押した={4} / 日付={5}" -f `
+          $forms.Count, $cur.Fields.Count, $cands.Count, ($idx + 1), $pressed, (($dateSent -join ' ') -replace '^$', '(該当なし)'))
 
     # **CSV は content-type だけで判定しない。** 添付として返るなら中身が何であれ CSV。
     if ($ct -notmatch '(?i)text/html' -or $cd -match '(?i)attachment') { $csvBytes = $r.Content; break }

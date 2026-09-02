@@ -437,13 +437,11 @@ wellfort-site の admin「🩸 デメカルCSV 取り込み」画面に**自動�
   **万一データ行が返ってもヘッダ行以外は捨てる**
 - ID・パスワードは画面にもログにも出さない（保存は DPAPI 暗号化のみ）
 
-### ②-0 v1.0 の実測と、そこで直したこと（2026-09-02）
+### ②-0 v1.0 の実測 → ①の偵察レポートで真因確定（2026-09-02）
 
 **実装は `scripts/demecal-daily.ps1`**（この節の旧名 `demecal-fetch.ps1` は同じもの）。
-**①の recon v2.0 を回さずに②へ進んだ**（発注者判断「②を作ってそれで試す」）ので、
-①が埋めるはずだった form の形が分からないまま走った。結果は下記。
 
-専用PCでの v1.0 実行（`WELLFORT_PC` / 12:16）:
+#### 症状（専用PC・v1.0・`WELLFORT_PC` 12:16）
 
 ```
 [1] 証明書 OK（2028-12-12・残 832 日）　[2] 資格情報 OK　[3] ログイン OK
@@ -457,42 +455,86 @@ wellfort-site の admin「🩸 デメカルCSV 取り込み」画面に**自動�
 ```
 
 **[1]〜[4] は全部通っている。** mTLS も antiforgery のログインも状態管理も動いた。
-**止まったのは [5] の 1 か所だけ**で、`/hanyou/entry` が**同じ画面を返し続けた**
-（＝ 同じ body を 4 回送っていた）。`last_to` は前進していない（仕様どおり）。
+**1 段目 `/hanyou/start` も通っている**（応答に `action=/hanyou/entry` の form が在った＝進んだ）。
+止まったのは **`/hanyou/entry` から先だけ**。`last_to` は前進していない（仕様どおり）。
 
-**確定した欠陥（実測・推測ではない）**
+#### 真因（①v1.9 の偵察レポートで確定・推測ではない）
 
-| # | 欠陥 | 根拠 |
-|---|---|---|
-| 1 | ② の form パーサが **`<input>` しか読まない** | v1.0 `demecal-daily.ps1:186` が唯一のタグ。①の `demecal-recon.ps1` `Get-FormMeta` は `<select>` も `<button>` も読む＝**①②で実装が食い違っていた** |
-| 2 | `<button name=… >` を送らない | 上の帰結。ASP.NET MVC は押されたボタン名で分岐するのが普通。**送らなければ「何もしていない」ので同じ画面が返る** |
-| 3 | `<select>` を送らない | 上の帰結。必須の選択欄があれば検証に落ちて同じ画面が返る |
-| 4 | 同じ画面が返っても**同じ body を送り直す** | 上限 5 段を無為に消費して終わる |
-| 5 | 失敗の中身がサーバに残らない | URL と 200 しか残らず、**原因の切り分けに現地での再実行が要る**＝無人運用として破綻 |
+`ops/probe/2026-09-02/demecal-recon~WELLFORT_PC~3a540e52…/report.txt` が
+`/hanyou/entry` の form をこう記録している:
 
-**どれが真因かは、この 5 件を直すまで確定できない。**
-1〜3 はいずれも「同じ画面が返り続ける」を説明する（＝症状からは区別が付かない）。
-**症状から 1 つを選んで当て推量で直さない**（R1/R2）。全部直して、それでも進まなければ
-`diag`（§3.2）が form の形を返すので、**そこで初めて次の一手を決める**。
+```
+form#1: method=post action=/hanyou/entry
+  input name=ID / DairitenCode / DairitenName / HanbaitenCode / HanbaitenName
+  input name=DateFrom type=text        ← 日付はここ（start 側には無い）
+  input name=DateTo   type=text
+  input name=DataType     type=radio ×2
+  input name=OutputHeader type=radio ×2
+  input name=submitType type=hidden    ← ★これ
+  input name=__RequestVerificationToken type=hidden
+  button 確認
+  button 戻る
+```
 
-**v1.1 での対処**
+**実行の指示は「ボタン」ではなく hidden `submitType` に入る。**
+`確認`/`戻る` が `<button>` で、その onclick が JS で `submitType` に値を入れてから
+submit する型（ASP.NET MVC でよくある作り）。
+v1.0 は `submitType` を **HTML に書かれた既定値のまま**送っていた
+＝ サーバから見て「何も指示していない」ので同じ画面が返る。**これが 4 回連続の正体。**
 
-- `Get-Forms` を①と同等にした（`<select>` は selected／無ければ先頭＝ブラウザ既定、
-  `<textarea>`、`<button type=submit>`、`<input type=submit|image>`）。
-  **submit 系は `Fields` と分けて持つ** — ブラウザは押した 1 個だけを送るため
-- **同じ画面が返ったら押すボタンを変えて試す**（`Get-FormSig` の指紋で判定）。
-  候補を使い切ったら「全部試したが進まない」と明示して落とす。**黙って回らない**
-- 試す順番は 画面の並び順、ただし **戻る／取消系は最後**（絞りはしない＝全部試す）
-- **送る form を先頭決め打ちにしない**（`Select-Form`）。ログアウト用の form が先頭にあると
-  中身の無い form を押し続けることになる
-- CSV 判定に **`Content-Disposition: attachment`** を追加（content-type だけに頼らない）
-- 上限 5 → 10 段（候補の試行ぶん）
-- **`diag` を実行ログAPIへ送る**（§3.2）。形だけで値は載らない
+**先に立てた「`<select>`/`<button>` を読んでいないのが原因」は外れ**（R5・撤回）:
 
-検証: `[Parser]::ParseFile` 構文 OK ／ 合成 HTML（ログアウト form＋3 ボタン＋2 select）で
-**ログアウト form を避け・select を既定値で送り・候補を 次へ→ダウンロード→戻る の順に並べる**
-ことを実測 ／ `astro check` 0 errors ／ `verify:intake-scope` OK ／ bat 生成 OK。
-**実サイトでの動作は未確認**（証明書が専用PCにしか無いためこちらでは再現不可）。
+- `/hanyou/entry` に `<select>` は **1 つも無い**（選択は radio で、v1.0 も `checked` を送っていた）
+- `確認`/`戻る` に `name` があるかは**この報告からは分からない**
+  — ①の `Get-FormMeta` は `button` の**ラベルしか出力しない**（`demecal-recon.ps1:302`）。
+  名前が無ければ、ボタンを送れるようにしただけでは**やはり進まなかった**
+- 日付欄 `DateFrom`/`DateTo` は v1.0 の判定 `(?i)date|ymd|日付` に**当たっていた**＝送れていた
+
+パーサの穴（`<select>`/`<button>`/`<textarea>` を読まない・`demecal-daily.ps1:186`）は
+**①②で実装が食い違っていた実在の欠陥**なので直したが、**今回の停止の原因ではない。**
+
+#### v1.1 / v1.2 での対処
+
+**v1.2（本命）— hidden に入る値を「画面から読む」**
+
+`next` 等をコードに埋めない（画面改訂で即死ぬ・CLAUDE.md）。代わりに
+**そのページの JS が実際に代入している文字列**を拾い、押せるボタンと同格の候補として試す:
+
+```
+submitType.value='X' / .value = "X" / ["submitType"].value='X' / $('#submitType').val('X')
+```
+
+拾った値は `diag` に **`hidden submitType に JS が入れる値 = [back | confirm]`** の形で残す
+（値は画面操作の識別子で受診者の情報ではない）。**拾えなければ拾えないと報告して止まる。**
+
+**v1.1（併せて直した土台）**
+
+- `Get-Forms` を①と同等に（`<select>` は selected／無ければ先頭、`<textarea>`、`<button>`、
+  `<input type=submit|image>`）。**submit 系は `Fields` と分けて持つ**
+- **同じ画面が返ったら次の候補で送り直す**（`Get-FormSig` の指紋）。
+  使い切ったら「全部試したが進まない」と明示して落とす。**黙って回らない**
+- **最初の候補は「何も押さない」**。v1.0 はそれで 1 段目を通っていたので、
+  押す側へ全面的に切り替えて**通っていた段を壊さない**ため
+- 試す順は 画面の並び順 →（見出しの無いボタン）→（戻る／取消系）。**候補は絞らない＝全部試す**
+- 送る form を**先頭決め打ちにしない**（`Select-Form`）。ログアウト form を押し続けない
+- CSV 判定に **`Content-Disposition: attachment`** を追加
+- 上限 5 → **14**（候補を 1 つずつ試すぶん。段数でなく試行回数の上限）
+- **`diag` を実行ログAPIへ送る**（§3.2）
+
+#### 残る未確認（v1.2 を回せば `diag` に出る）
+
+- `確認`/`戻る` に `name` があるか（①はラベルしか出さないので不明）
+- `DataType` / `OutputHeader` の radio に `checked` が付いているか
+  — 付いていなければブラウザ同様「送らない」ので、必須なら検証に落ちる。
+  `diag` に `radio name=DataType (未チェック)` と出るので判別できる
+- `確認` の次にもう 1 段（実行）があるか — recon は「確認画面から実行: 200 text/html」で終わっている
+
+#### 検証（実サイトは未確認・証明書が専用PCにしか無い）
+
+`[Parser]::ParseFile` 構文 OK ／ ①が記録した `/hanyou/entry` と同じ形の合成 HTML で
+**`submitType` の候補 `confirm`/`back` を JS から抽出し、`confirm` を先に試す順に並べる**ことを実測 ／
+radio は `checked` のものだけ送る ／ ログアウト form を選ばない ／
+`astro check` 0 errors ／ `verify:intake-scope` OK ／ bat 生成 OK。
 
 ### ② 本番の自動実行（`demecal-fetch.ps1` ＋ セットアップ bat・未実装）
 
