@@ -29,6 +29,12 @@ export const PROBE_TOKEN_PLACEHOLDER = '__PROBE_TOKEN__';
  */
 export const DEMECAL_USER_PLACEHOLDER = '__DEMECAL_USER__';
 export const DEMECAL_PASS_PLACEHOLDER = '__DEMECAL_PASS__';
+/**
+ * 本番の自動実行 (bat ②) が使う**取り込み専用キー**の差し込み位置。
+ * `ADMIN_API_KEY` は**絶対に焼き込まない** — 専用PC に置いてよい鍵ではない
+ * (`demecal_unattended_spec §3.1`)。通るのは取り込みの 3 口だけ。
+ */
+export const INTAKE_KEY_PLACEHOLDER = '__LAB_INTAKE_KEY__';
 
 /** bat 側で pause するので PowerShell 側の入力待ちは外す。 */
 const READ_HOST_LINE = 'Read-Host "確認できたら Enter キーを押してください"\n';
@@ -61,7 +67,7 @@ function psQuote(v: string): string {
 export function buildProbeBat(
   ps1: string,
   token?: string,
-  creds?: { user: string; pass: string },
+  creds?: { user?: string; pass?: string; intakeKey?: string },
   title?: string,
 ): ProbeBatResult {
   let ps = ps1.replace(READ_HOST_LINE, '');
@@ -80,6 +86,12 @@ export function buildProbeBat(
    * 差し込まないまま配ると、専用PC で [2] を通過できずにまた 1 往復になる
    * (実測 2026-09-01: recon が 2 版続けてここで止まった)。**黙って配らない。**
    */
+  if (ps.includes(INTAKE_KEY_PLACEHOLDER)) {
+    if (!creds?.intakeKey) {
+      throw new Error('LAB_INTAKE_API_KEY が未設定です (② は取り込み専用キーが無いと動きません)');
+    }
+    ps = ps.split(INTAKE_KEY_PLACEHOLDER).join(psQuote(creds.intakeKey));
+  }
   if (ps.includes(DEMECAL_USER_PLACEHOLDER) || ps.includes(DEMECAL_PASS_PLACEHOLDER)) {
     if (!creds?.user || !creds?.pass) {
       throw new Error(

@@ -22,6 +22,7 @@ import type { APIRoute } from 'astro';
 // scripts/ の .ps1 をビルド時に文字列として取り込む (実行時の fs 読みは Vercel で不可)。
 import PROBE_PS1 from '../../../../scripts/demecal-probe.ps1?raw';
 import RECON_PS1 from '../../../../scripts/demecal-recon.ps1?raw';
+import DAILY_PS1 from '../../../../scripts/demecal-daily.ps1?raw';
 import { buildProbeBat } from '../../../lib/probe-bat';
 
 export const prerender = false;
@@ -39,6 +40,9 @@ export const prerender = false;
 const SCRIPTS = {
   probe: { ps1: PROBE_PS1, ja: 'デメカル接続チェック', ascii: 'demecal-check' },
   recon: { ps1: RECON_PS1, ja: 'デメカル初回セットアップ', ascii: 'demecal-setup' },
+  // ② 本番の自動実行。①が保存した資格情報を再利用し、毎日 CSV を取り込む。
+  // **`ADMIN_API_KEY` は焼き込まない。** 取り込み専用キーだけ (spec §3.1)。
+  daily: { ps1: DAILY_PS1, ja: 'デメカル自動取得', ascii: 'demecal-daily' },
 } as const;
 type ScriptKey = keyof typeof SCRIPTS;
 
@@ -87,7 +91,7 @@ export const GET: APIRoute = async ({ url }) => {
   // 既定は従来どおり接続チェック (既存の配布 URL を壊さない)。
   const key = ((url.searchParams.get('script') || 'probe').trim() as ScriptKey);
   const spec = SCRIPTS[key];
-  if (!spec) return text(`unknown script: ${key} (probe | recon)`, 400);
+  if (!spec) return text(`unknown script: ${key} (probe | recon | daily)`, 400);
 
   let bat: Uint8Array;
   let nameJa: string;
@@ -101,6 +105,7 @@ export const GET: APIRoute = async ({ url }) => {
     bat = buildProbeBat(spec.ps1, expected, {
       user: env('DEMECAL_USER_ID') ?? '',
       pass: env('DEMECAL_PASSWORD') ?? '',
+      intakeKey: env('LAB_INTAKE_API_KEY') ?? '',
     }, `${spec.ascii} v${num}`).bytes;
     nameJa = `${spec.ja}_v${num}.bat`;
     nameAscii = `${spec.ascii}-v${num}.bat`;
