@@ -112,10 +112,13 @@ export const POST: APIRoute = async ({ request }) => {
   const runs = await readRuns(prefix);
   // 新しい順に持つ。古いものから捨てる。
   const next = [rec, ...runs].slice(0, KEEP);
+  // `S3PutFile` は `bytes` も要る (`demecal-state.ts:79` と同じ書き方に揃える)。
+  const payload = JSON.stringify(next, null, 2);
   await putFiles([{
     key: runsKey(prefix),
-    body: new TextEncoder().encode(JSON.stringify(next, null, 2)),
     contentType: 'application/json; charset=utf-8',
+    body: payload,
+    bytes: new TextEncoder().encode(payload).length,
   }]);
 
   return json({ ok: true, stored: next.length });
