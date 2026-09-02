@@ -187,12 +187,15 @@
 - **実装済**: EC決済→発送指示CSV・`cron-shipping`（日次）・キット発送（パイロット）・各社スキャン/CSV写像/Elith 書き出しの各要素・LAiFスキャン→JSON・血液CSV↔JSON構造照合。⑥PDF表示のサンプル実装テスト済。
   - **【追加 2026-09-01】遺伝子（Genoplan）のレポート取得**＝`src/lib/genoplan.ts` ＋
     `POST /api/admin/genoplan-fetch`（差分取得・1 リクエスト 1 件）。**実証で発行済み 72 件を全件取得（失敗 0・計 約1.43GB）**。
-    報告書＝`docs/lab/genoplan_poc_report_20260901.pdf`（`.html` が原稿・`scripts/build-genoplan-poc-pdf.mjs` で生成）。
+    報告書＝`docs/lab/genoplan_poc_report_20260901.pdf`（`.html` が原稿・`node scripts/build-html-pdf.mjs <html>` で生成）。
 - **未実装（主眼）**: (a) プラン→キット展開の**定期出荷スケジュール**化、(b) ライフサイクル状態機械＋AI問診促しの結線、(c) 進捗駆動の各社受渡・受領・Elith作成指示の**オーケストレーション**、(d) ⑤受領チェック（週次）ジョブ、(e) ⑥Elith下り受取仕様の確定と本番表示結線。
   - **(f) 【2026-09-01 追加・遺伝子で顕在化】キット個体ID → 顧客の紐付け**（③-1）。
     `customer.lab_tests` に**行を作るコードが無い**（現状は読み取りのみ）。しかも Scan-Chat-AI は
     `customer` スキーマを**読み取り専用**でしか触れない（`HP_BRIDGE_READONLY_KEY`）ので、
     **書き込みは wellfort-site 側**。併せて `kit_shipments` への個体ID列追加が要る。
+    **Wellfort 提出用の提案書＝`docs/subscription/kit_id_linkage_proposal_20260902.pdf`**
+    （`.html` が原稿）。遺伝子・血液をまとめて、①返送CSVへの列追加 ②アプリ受取確認での撮影 の
+    2 案と確認事項 5 件。**血液は「キットに番号が印字されているか」自体が未確認**（推測で断定しない）。
     → **これが埋まるまで、取得した遺伝子レポートは「誰のものか未確定」のまま保管される**（割当はしない＝捏造ゼロ）。
   - **(h) 【単品検査商品】購入商品 → フロー分岐が未実装**（§0-2）。マイページの
     「検査結果データのアップロード」導線（①②）、「データUP ＋ 問診が揃った」判定、

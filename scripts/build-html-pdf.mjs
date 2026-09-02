@@ -1,13 +1,14 @@
 /**
- * docs/lab/genoplan_poc_report_20260901.html → Wellfort 提出用 PDF
+ * 図つき HTML 原稿 → 提出用 PDF。
  *
- * 実行: node scripts/build-genoplan-poc-pdf.mjs
- * 出力: docs/lab/genoplan_poc_report_20260901.pdf
+ * 実行: node scripts/build-html-pdf.mjs docs/lab/genoplan_poc_report_20260901.html
+ *       (出力は同じ場所の .pdf。第 2 引数で出力先を変えられる)
  *
  * 【HTML が正】このスクリプトは組版するだけで内容には触れない。
  *   直すときは HTML を直して再実行する (PDF を直接いじらない)。
  *   `build-lab-doc-pdf.mjs` と同じ方針だが、あちらは md → HTML、
  *   こちらは**図 (インライン SVG) があるので HTML そのものが原稿**。
+ *   文書ごとにスクリプトを増やさない (以前 genoplan 専用だったものを一般化した)。
  *
  * 【背景のグラフィックを必ず出す】`printBackground: true` が要る。
  *   無いと帯・カード・図の塗りが全部落ちて、罫線と文字だけの紙面になる
@@ -15,6 +16,7 @@
  *
  * 【フォント】コンテナには IPAGothic しか無いことがある。HTML 側のスタック末尾に
  *   "IPAGothic"/"IPAPGothic" を残してあるので、ここでは何もしない。
+ *   **欧文は Liberation Sans を先に置く** — IPAGothic は英数字が等幅で間延びする。
  */
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -23,8 +25,18 @@ import { chromium } from 'playwright';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
-const SOURCE = resolve(ROOT, 'docs/lab/genoplan_poc_report_20260901.html');
-const OUTPUT = resolve(ROOT, 'docs/lab/genoplan_poc_report_20260901.pdf');
+
+const [srcArg, outArg] = process.argv.slice(2);
+if (!srcArg) {
+  console.error('使い方: node scripts/build-html-pdf.mjs <入力.html> [出力.pdf]');
+  process.exit(1);
+}
+const SOURCE = resolve(ROOT, srcArg);
+const OUTPUT = outArg ? resolve(ROOT, outArg) : SOURCE.replace(/\.html?$/i, '.pdf');
+if (OUTPUT === SOURCE) {
+  console.error('入力が .html ではありません (出力先を上書きしてしまいます)');
+  process.exit(1);
+}
 
 /**
  * 環境の Chromium を明示できるようにしておく。
