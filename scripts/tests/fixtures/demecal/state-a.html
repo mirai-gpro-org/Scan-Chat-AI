@@ -1,0 +1,20 @@
+<!-- 完全架空の fixture。実サイトの HTML ではない。
+     形 (タグの種類・name・onclick の書かれ方) だけを、v1.5 が持ち帰った骨格に合わせてある。
+     販売先は「最初は空で、人がプルダウンから 000000 を選ぶ」(操作の録画) を写す。 -->
+<html><body>
+<form method="post" action="/hanyou/start">
+  <input name="__RequestVerificationToken" type="hidden" value="TOKEN&amp;amp;VALUE" />
+  <input type="hidden" id="ID" name="ID" value="1" />
+  <input readonly type="text" id="DairitenCode" name="DairitenCode" value="Q05-0010" />
+  <input readonly type="text" id="DairitenName" name="DairitenName" value="&amp;#x682A;&amp;#x5F0F;" />
+  <select id="HanbaitenCode" name="HanbaitenCode">
+    <option value="">選択してください</option>
+    <option value="000000">000000</option>
+    <option value="111111">111111</option>
+  </select>
+  <input type="hidden" id="HanbaitenName" name="HanbaitenName" value="" />
+  <input type="hidden" id="OutputHeader" name="OutputHeader" value="True" />
+  <button id="btnSubmit" type="button" onclick="dispLoading('処理中...'); submit();">次へ</button>
+</form>
+<form method="post" action="/account/logout"><button type="submit">ログアウト</button></form>
+</body></html>

@@ -23,6 +23,7 @@ import type { APIRoute } from 'astro';
 import PROBE_PS1 from '../../../../scripts/demecal-probe.ps1?raw';
 import RECON_PS1 from '../../../../scripts/demecal-recon.ps1?raw';
 import DAILY_PS1 from '../../../../scripts/demecal-daily.ps1?raw';
+import VERIFY_PS1 from '../../../../scripts/demecal-verify.ps1?raw';
 import { buildProbeBat } from '../../../lib/probe-bat';
 
 export const prerender = false;
@@ -42,9 +43,32 @@ const SCRIPTS = {
   recon: { ps1: RECON_PS1, ja: 'デメカル初回セットアップ', ascii: 'demecal-setup' },
   // ② 本番の自動実行。①が保存した資格情報を再利用し、毎日 CSV を取り込む。
   // **`ADMIN_API_KEY` は焼き込まない。** 取り込み専用キーだけ (spec §3.1)。
+  //
+  // **【凍結中 2026-09-02】`daily` は配らない** (下記 FROZEN)。
+  // 立て直し計画 `docs/lab/demecal_recovery_plan_20260902.md` により、
+  // daily-1.7 の汎用探索器は本番経路から外した。次に現地で走らせるのは
+  // `?script=verify` (verify-only) だけで、Phase B の GO が出てからになる。
   daily: { ps1: DAILY_PS1, ja: 'デメカル自動取得', ascii: 'demecal-daily' },
+  // Phase B の疎通確認。**書き込みを一切しない** (計画 §6.3)。
+  verify: { ps1: VERIFY_PS1, ja: 'デメカル疎通確認', ascii: 'demecal-verify' },
 } as const;
 type ScriptKey = keyof typeof SCRIPTS;
+
+/**
+ * **配布を止めているスクリプト。**
+ *
+ * 【なぜ口を塞ぐか — 実障害 2026-09-02】daily は v1.0→v1.7 の間、
+ * 「失敗 → 診断を足す → 現地でもう一度実行してもらう」を繰り返した。
+ * **専用PC の実行は Wellfort 役員に依頼する高コストな本番相当テスト**で、
+ * デバッグ工程に使ってはいけない (計画 §0)。
+ * 意思だけでは同じことが起きるので、**配布口を閉じて機械で止める**。
+ */
+const FROZEN: Partial<Record<ScriptKey, string>> = {
+  daily:
+    'daily-1.7 は凍結中です (docs/lab/demecal_recovery_plan_20260902.md)。\n'
+    + '次に現地で実行するのは ?script=verify (verify-only) だけで、\n'
+    + 'Phase A のレビューが通ってからになります。',
+};
 
 /**
  * `.ps1` の `$Version = 'recon-1.1'` を読む。**配布ファイル名に入れるため**。
@@ -91,7 +115,9 @@ export const GET: APIRoute = async ({ url }) => {
   // 既定は従来どおり接続チェック (既存の配布 URL を壊さない)。
   const key = ((url.searchParams.get('script') || 'probe').trim() as ScriptKey);
   const spec = SCRIPTS[key];
-  if (!spec) return text(`unknown script: ${key} (probe | recon | daily)`, 400);
+  if (!spec) return text(`unknown script: ${key} (probe | recon | daily | verify)`, 400);
+  const frozen = FROZEN[key];
+  if (frozen) return text(frozen, 409);
 
   let bat: Uint8Array;
   let nameJa: string;

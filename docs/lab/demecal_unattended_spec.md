@@ -686,6 +686,73 @@ v1.1〜v1.5 の候補探し (ボタン name / `submitType` の値 / 外部 .js �
 radio は `checked` のものだけ送る ／ ログアウト form を選ばない ／
 `astro check` 0 errors ／ `verify:intake-scope` OK ／ bat 生成 OK。
 
+### ②-1 立て直し — daily は凍結し、決定論の 3-state へ作り替えた（2026-09-02・Phase A）
+
+**正本はこの文書ではない。`docs/lab/demecal_recovery_plan_20260902.md` が正本**
+（発注者が ChatGPT/GPT-5.6 Sol と決めた立て直し計画）。ここは実装の記録だけ。
+
+**やめたこと**: v1.0〜v1.7 は「失敗 → 診断を足す → 現地でもう一度実行してもらう」を
+4 回繰り返した。専用PC の実行は**Wellfort 役員に依頼する高コストな本番相当テスト**であって
+デバッグ工程ではない（計画 §0）。**実機テストは、手元で固めた結論を確かめる最終検証工程にする。**
+
+- **`daily-1.7` は凍結**。ファイルは残すが**配布口を閉じた** —
+  `GET /api/ops/probe-bat?script=daily` は **409** を返し、計画の場所を案内する
+  （意思だけでは同じ反復が再発するので機械で止める）。
+- **新しい `scripts/demecal-verify.ps1`（`verify-1.0`）= verify-only の疎通確認**。
+  配布は `?script=verify`。**Phase A のレビューが通るまで現地では実行しない。**
+
+**探索器をやめた**（計画 §3）。daily は「押さない→候補1→候補2→戻る/cancel→`MaxHops` まで反復」
+だったが、業務サイトで総当たりするのは fail-closed ではない。新方式は**段数 3 の固定**で、
+各段で期待した状態かを機械判定し、違えば**別の操作を試さず即 STOP**する。
+
+| | 判定（**URL では見ない**。B と C は同じ `/hanyou/entry` になり得る） | 送るもの |
+|---|---|---|
+| STATE A | `HanbaitenCode` が在り、日付欄が無い | 販売先 `000000` を**画面の選択肢から**選んで「次へ」 |
+| STATE B | `DateFrom`+`DateTo` が在り、**`DataType` が radio** | 日付／検査結果`正常終了のみ`／項目見出し`出力する` を明示して「確認」 |
+| STATE C | A でも B でもなく、`ダウンロード` の押しどころが在る | 「ダウンロード」だけ |
+
+- **業務値は契約**（計画 §5.2 A-2）。`Q05-0010` / `000000` / `正常終了のみ` / `出力する`。
+  **値は画面の option・radio から取る。無ければ FAIL。代替値を選ばない。**
+  「いま checked だからそのまま」も不可（**項目見出しの既定は「出力しない」**）。
+- **押し方も推測しない**。押すボタンを見出しで 1 つに決め、**そのボタン自身の `onclick`** だけを読む
+  （外部 .js は見ない・候補を並べない）。決まらなければ
+  `STATE_B_CONFIRM_ACTION_UNKNOWN` / `STATE_C_DOWNLOAD_ACTION_UNKNOWN` で止まり、
+  画面の骨格（タグと script のみ）を 1 回だけ持ち帰る。
+- **CSV は `RawContentStream` から byte[] を取る**。Windows PowerShell 5.1 の `$r.Content` は
+  文字列で、byte[] として扱うと壊れる。取った byte[] で Shift_JIS デコード／SHA-256／
+  バイト数／行数／必須ヘッダ（`指図番号`/`結果承認日`/`結果項目数`）を見る。
+  ファイル名は `Q05-0010-000000result_YYYYMMDD_N.csv` の規則で照合。**データ 0 件は正常**。
+- **verify-only は書き込みを 1 つもしない**: 取り込み API を呼ばない／`last_to` を読まない・
+  書かない／**ファイルを 1 つも作らない**／CSV 本文をログにも probe にも送らない。
+  これは**禁止語の静的検査**（`elith-blood-csv` / `demecal-state` / `WriteAllBytes` /
+  `Set-Content` / `New-Item` / `csvBase64` / `MaxHops` …）で機械保証する。
+
+**検証（実サイトは未実施。証明書が専用PCにしか無い）**
+
+`npm run verify:demecal-flow` = **46 件 PASS**（`scripts/tests/demecal-flow.tests.ps1`）。
+配布される `.ps1` を **`-LibOnly` で dot-source して実物を呼ぶ**（判定を JS へ移植しない）。
+テスト中は `Invoke-WebRequest`/`Invoke-RestMethod` を投げる関数で覆い、
+**純粋関数が 1 回でも通信したら落ちる**ようにしてある。
+fixture は完全架空（`scripts/tests/fixtures/demecal/`・CSV は実 Shift_JIS）。
+
+**このテストが即日 2 件のバグを捕まえた**（どちらも現地で 1 回消費するはずだったもの）:
+
+1. **「ダウンロード」が消えて「戻る」だけが残った画面で、戻るを押しかけていた** —
+   「押しどころが 1 つならそれを押す」という逃げ道があった。逃げ道ごと削除。
+2. 手続き部より前で `Join-Path 'C:\...'` を評価しており、**Windows 以外では
+   読み込み自体が落ちていた**（fixture テストが dot-source できない）。
+
+**未確認のまま残していること**（推測で埋めない・計画 §4.3）:
+
+- STATE B の「確認」／STATE C の「ダウンロード」の**実際の DOM 契約**
+  （`name` の有無・`onclick` が `submitType` に入れる値）。骨格は `/hanyou/start` の分しか無い。
+- 本番 CSV 応答の `Content-Type` / `Content-Disposition` の実値。
+- `HanbaitenCode` が `<select>` か否か（動画では「プルダウン」）。
+  select でも radio でもなく、現在値も `000000` でなければ
+  `STATE_A_SELLER_000000_NOT_FOUND` で止まる。
+
+**Phase B（現地 1 回・verify-only）は ChatGPT の GO を待つ。** それまで Wellfort に依頼しない。
+
 ### ② 本番の自動実行（`demecal-fetch.ps1` ＋ セットアップ bat・未実装）
 
 **①の結果を見てから作る**（form の `action`/`name` が確定するため）。

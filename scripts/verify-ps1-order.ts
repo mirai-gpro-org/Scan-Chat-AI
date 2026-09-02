@@ -38,6 +38,7 @@ if (!existsSync(resolve(ROOT, 'package.json'))) {
 const TARGETS = [
   'scripts/demecal-daily.ps1',
   'scripts/demecal-recon.ps1',
+  'scripts/demecal-verify.ps1',
 ];
 
 interface Fn { name: string; defLine: number; startLine: number; endLine: number }
