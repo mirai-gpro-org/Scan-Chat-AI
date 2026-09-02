@@ -16,12 +16,16 @@
  * 「CI でも手元でも必ず動く」ことを優先した (鍵も DB も要らない)。
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { resolve, dirname, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { resolve, relative } from 'node:path';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = resolve(__dirname, '..');
+// esbuild で束ねて stdin から流すので `import.meta.url` は使えない。
+// npm run はリポジトリ直下で走るので cwd を使い、**そこが直下かを確かめる**。
+const ROOT = process.cwd();
+if (!existsSync(resolve(ROOT, 'package.json'))) {
+  console.error(`✗ リポジトリ直下で実行してください (cwd=${ROOT})`);
+  process.exit(1);
+}
 
 /** intake キーで通ってよい口。**ここを増やすときは spec §3.1 も直すこと。** */
 const ALLOWED = [

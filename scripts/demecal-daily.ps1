@@ -33,7 +33,7 @@ $IntakeKey = '__LAB_INTAKE_KEY__'
 # 成功時は何も送らない。送るのは form 内のタグと script だけで、本文テキストは含めない
 # (= 受診者一覧のような表は構造上入らない)。**ここを最初からやっておくべきだった。**
 $ProbeToken = '__PROBE_TOKEN__'
-$Version   = 'daily-1.6'
+$Version   = 'daily-1.7'
 
 # 初回の安全弁。last_to がまだ無いとき、いきなり全期間を引かない。
 # 失敗しても last_to は動かないので取り漏れは起きないが、初回から広く取ると
@@ -62,6 +62,23 @@ $script:CertDays  = $null
 # もう一度 bat を回してもらう羽目になる (v1.0 で実際にそうなった)。
 $script:Diag      = New-Object System.Collections.Generic.List[string]
 function Diag($t) { if ($script:Diag.Count -lt 60) { $script:Diag.Add($t) | Out-Null } }
+
+# **HTML の属性値は実体参照で書かれている。デコードしてから送る。**
+#
+# 【実障害 2026-09-02・骨格で確定】これをやっていなかったため、
+#   `DairitenName` が 1 回 POST するごとに 1 段ずつ多重エスケープされ、
+#   3 段目には `&amp;amp;amp;#x682A;…` (4 重) になっていた。
+#   = **こちらが値を壊しながら送り続け、サーバに 1 段目へ突き返されていた。**
+#   「押し方が分からない」のではなく「送っている中身が壊れていた」のが真因。
+#
+# ブラウザと同じ**1 回だけ**デコードする (2 回やると別の壊し方になる)。
+function Html-Decode([string]$v) {
+  if (-not $v) { return $v }
+  try { return [System.Net.WebUtility]::HtmlDecode($v) } catch {}
+  # 古い環境向けの保険。順序は &amp; を最後にする (先に戻すと二重に解ける)。
+  $v = $v -replace '&lt;', '<' -replace '&gt;', '>' -replace '&quot;', '"' -replace '&#39;', "'"
+  return ($v -replace '&amp;', '&')
+}
 
 # ── 実行ログ (無人運用の本体) ────────────────────────────────
 #
@@ -239,23 +256,6 @@ $script:Stage = 'download'
 #   結果、選択欄と実行ボタンを**送らないまま**同じ画面を POST し続け、
 #   `/hanyou/entry` が 4 回連続で返って CSV に到達しなかった。
 #   ブラウザは「押したボタン 1 個だけ」を送るので、submit 系は fields と分けて持つ。
-# **HTML の属性値は実体参照で書かれている。デコードしてから送る。**
-#
-# 【実障害 2026-09-02・骨格で確定】これをやっていなかったため、
-#   `DairitenName` が 1 回 POST するごとに 1 段ずつ多重エスケープされ、
-#   3 段目には `&amp;amp;amp;#x682A;…` (4 重) になっていた。
-#   = **こちらが値を壊しながら送り続け、サーバに 1 段目へ突き返されていた。**
-#   「押し方が分からない」のではなく「送っている中身が壊れていた」のが真因。
-#
-# ブラウザと同じ**1 回だけ**デコードする (2 回やると別の壊し方になる)。
-function Html-Decode([string]$v) {
-  if (-not $v) { return $v }
-  try { return [System.Net.WebUtility]::HtmlDecode($v) } catch {}
-  # 古い環境向けの保険。順序は &amp; を最後にする (先に戻すと二重に解ける)。
-  $v = $v -replace '&lt;', '<' -replace '&gt;', '>' -replace '&quot;', '"' -replace '&#39;', "'"
-  return ($v -replace '&amp;', '&')
-}
-
 # hidden へ JS が入れる値を、与えられたテキスト (ページ本文でも .js でも) から拾う。
 #   X.value='v' / X.value = "v" / ["X"].value='v' / $('#X').val('v')
 # **値をコードに埋めないための唯一の手段**なので、探す場所だけを増やしていく。
