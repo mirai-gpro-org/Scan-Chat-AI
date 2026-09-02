@@ -33,7 +33,8 @@ $BaseUrl   = 'https://dl.demecal.net'
 $LoginUrl  = "$BaseUrl/account/login"
 $UploadUrl = 'https://scan-chat-ai.vercel.app/api/ops/probe-upload'
 $Token     = '__PROBE_TOKEN__'
-$Version   = 'recon-1.9'
+$Version   = 'recon-2.0'
+$script:ReachedCsv = $false
 
 $lines = New-Object System.Collections.Generic.List[string]
 function Say($t) { Write-Host $t; $lines.Add($t) | Out-Null }
@@ -376,58 +377,82 @@ function Invoke-Recon([object]$form, [hashtable]$override) {
 }
 
 if ($loggedIn -and $script:Forms.Count -gt 0) {
-  # 日付欄を持つ form を探す (汎用CSVのダウンロード画面のはず)
-  $cand = $script:Forms | Where-Object {
-    ($_.Fields.Keys -join ' ') -match '(?i)date|ymd|from|to|開始|終了'
-  } | Select-Object -First 1
-  if (-not $cand) {
-    Say '    日付欄のある form が見つかりませんでした。上の form 一覧を担当者へお送りください。'
-  } else {
-    Say ("    対象 form: {0} (action={1})" -f $cand.Page, $cand.Action)
-    # 日付らしき欄に 2000 年を入れる (データが無い前提)
-    $ov = @{}
-    foreach ($k in $cand.Fields.Keys) {
-      if ($k -match '(?i)from|start|開始') { $ov[$k] = '2000/01/01' }
-      elseif ($k -match '(?i)to|end|終了') { $ov[$k] = '2000/01/02' }
-    }
-    Say ("    差し替えた欄: {0}" -f (($ov.Keys | Sort-Object) -join ', '))
-    try {
-      $r = Invoke-Recon $cand $ov
+  #
+  # 【v1.9 で分かったこと・v2.0 で直したこと (実測 2026-09-02)】
+  #
+  #   実際の画面は **3 段以上**ある:
+  #     /hanyou/start (GET)  → 代理店/販売店を選ぶ form 「次へ」
+  #     POST /hanyou/start   → **ここで初めて DateFrom/DateTo が出る** form 「確認」
+  #     POST /hanyou/entry   → さらに HTML (確認画面)
+  #     → その先に CSV があるはず
+  #
+  #   v1.9 の欠陥 2 件:
+  #     ① **日付欄の判定が緩すぎた**。`(?i)to` が **`__RequestVerificationToken` の "To"** に
+  #        当たり、**antiforgery トークンを日付で上書き**していた (報告書の
+  #        「差し替えた欄: __RequestVerificationToken」がその証拠)。
+  #        → 日付欄は **名前に date/ymd を含むものだけ**に限定し、
+  #          **token を含む名前は絶対に触らない**。
+  #     ② **確認画面を 1 回しか辿らなかった**。3 段目の form を記録せずに終わっていた。
+  #        → **HTML が返る限り最大 4 段まで辿り、各段の form を記録する**。
+  #
+  #   安全策は据え置き: **過去日付 (2000 年) を入れる**・**本文は保存も送信もしない**
+  #   (記録するのは 状態/種別/ファイル名/ヘッダ行/行数 だけ)。
+  #   なお v1.9 では①のせいで**日付の差し替えが効いていなかった**ため、
+  #   サーバが描いた既定の日付のまま進んでいた。v2.0 では各段で必ず 2000 年へ差し替える。
+  #
+  $cand = $script:Forms | Select-Object -First 1
+  Say ("    起点 form: {0} (action={1})" -f $cand.Page, $cand.Action)
+
+  $cur = $cand
+  $hop = 0
+  $ct  = ''
+  $r   = $null
+  try {
+    while ($hop -lt 4) {
+      $hop++
+      # **日付欄だけを 2000 年へ**。token は名指しで除外する (v1.9 の①)。
+      $ov = @{}
+      foreach ($k in $cur.Fields.Keys) {
+        if ($k -match '(?i)token|verification') { continue }
+        if ($k -notmatch '(?i)date|ymd|日付') { continue }
+        if ($k -match '(?i)from|start|開始') { $ov[$k] = '2000/01/01' }
+        elseif ($k -match '(?i)to|end|終了')  { $ov[$k] = '2000/01/02' }
+      }
+      $ovTxt = if ($ov.Count -gt 0) { ($ov.Keys | Sort-Object) -join ', ' } else { '(日付欄なし)' }
+      Say ("    [{0}段目] POST {1} / 差し替えた日付欄: {2}" -f $hop, $cur.Action, $ovTxt)
+
+      $r  = Invoke-Recon $cur $ov
       $ct = $r.Headers['Content-Type']
       $cd = $r.Headers['Content-Disposition']
-      Say ("    HTTP {0} / Content-Type: {1}" -f [int]$r.StatusCode, $ct)
-      if ($cd) { Say ("    Content-Disposition: {0}" -f $cd) }
-      if ($ct -match '(?i)text/html') {
-        # 確認画面が挟まる作り (attended 手順の「確認 → ダウンロード」)。その form も記録する。
-        Say '    → HTML が返りました (確認画面と思われます)。その form を記録します:'
-        $before = $script:Forms.Count
-        foreach ($l in (Get-FormMeta $r.Content ($cand.Page + ' [確認画面]'))) { Say $l }
-        if ($script:Forms.Count -gt $before) {
-          $conf = $script:Forms[$script:Forms.Count - 1]
-          try {
-            $r2 = Invoke-Recon $conf @{}
-            $ct2 = $r2.Headers['Content-Type']
-            Say ("    確認画面から実行: HTTP {0} / Content-Type: {1}" -f [int]$r2.StatusCode, $ct2)
-            if ($r2.Headers['Content-Disposition']) { Say ("    Content-Disposition: {0}" -f $r2.Headers['Content-Disposition']) }
-            $r = $r2
-            $ct = $ct2
-          } catch { Say ("    確認画面からの実行に失敗: {0}" -f $_.Exception.Message) }
-        }
+      Say ("      → HTTP {0} / Content-Type: {1}" -f [int]$r.StatusCode, $ct)
+      if ($cd) { Say ("      Content-Disposition: {0}" -f $cd) }
+
+      if ($ct -notmatch '(?i)text/html') { break }   # CSV に到達
+      $before = $script:Forms.Count
+      foreach ($l in (Get-FormMeta $r.Content ("{0} [{1}段目の応答]" -f $cur.Page, $hop))) { Say $l }
+      if ($script:Forms.Count -le $before) {
+        Say '      この応答に form がありません。ここで打ち切ります。'
+        break
       }
-      if ($ct -notmatch '(?i)text/html') {
-        # CSV が返った。**ヘッダ行と行数だけ**を記録して本文は捨てる。
-        $txt = ''
-        try { $txt = [Text.Encoding]::GetEncoding('shift_jis').GetString($r.Content) } catch { $txt = '' }
-        $rows = @($txt -split "`r?`n" | Where-Object { $_ -ne '' })
-        Say ("    行数: {0} (ヘッダ含む)" -f $rows.Count)
-        if ($rows.Count -gt 0) { Say ("    ヘッダ行: {0}" -f $rows[0]) }
-        if ($rows.Count -gt 1) {
-          Say '    ※ 過去日付なのにデータ行がありました。**本文は保存も送信もしていません。**'
-        }
-      }
-    } catch {
-      Say ("    失敗: {0}" -f $_.Exception.Message)
+      $cur = $script:Forms[$script:Forms.Count - 1]
     }
+
+    if ($ct -notmatch '(?i)text/html') {
+      # CSV が返った。**ヘッダ行と行数だけ**を記録して本文は捨てる。
+      $txt = ''
+      try { $txt = [Text.Encoding]::GetEncoding('shift_jis').GetString($r.Content) } catch { $txt = '' }
+      $rows = @($txt -split "`r?`n" | Where-Object { $_ -ne '' })
+      Say ("    行数: {0} (ヘッダ含む)" -f $rows.Count)
+      if ($rows.Count -gt 0) { Say ("    ヘッダ行: {0}" -f $rows[0]) }
+      if ($rows.Count -gt 1) {
+        Say '    ※ 過去日付なのにデータ行がありました。**本文は保存も送信もしていません。**'
+      }
+      $script:ReachedCsv = $true
+    } else {
+      Say ("    {0} 段辿りましたが HTML のままでした。上の form 一覧が次の手掛かりです。" -f $hop)
+    }
+  } catch {
+    Say ("    失敗: {0}" -f $_.Exception.Message)
   }
 } else {
   Say '    飛ばしました (ログイン未成立、または form が見つかりません)。'
@@ -436,8 +461,10 @@ Say ''
 
 # ── [6] 報告 ──────────────────────────────────────────────────
 Say '=================================================='
-if ($loggedIn) {
-  Say ' 判定: ○ ログインまで到達しました'
+if ($loggedIn -and $script:ReachedCsv) {
+  Say ' 判定: ◎ CSV ダウンロードまで到達しました'
+} elseif ($loggedIn) {
+  Say ' 判定: ○ ログインまで到達しました (CSV は未到達)'
 } else {
   Say ' 判定: × ログインできませんでした'
 }
