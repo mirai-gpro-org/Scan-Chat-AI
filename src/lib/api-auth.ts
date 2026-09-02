@@ -61,3 +61,53 @@ export function checkAdminAuth(request: Request): AuthResult {
 export function isAdminAuthorized(request: Request): boolean {
   return checkAdminAuth(request).ok;
 }
+
+/* ────────────────────────────────────────────────────────────
+ * 取り込み専用キー `LAB_INTAKE_API_KEY`
+ * 正本: docs/lab/demecal_unattended_spec.md §3.1
+ *
+ * 【なぜ要るか】血液(デメカル)の無人取得は**専用PCが鍵を持ち続ける**。
+ * そこへ `ADMIN_API_KEY` を置くと、設定変更(config)・Elith データ削除(elith-delete)・
+ * デモ用アカウント追加(demo-accounts)・報告書アップロードまで**全部開く**。
+ * **専用PCに置いてよい鍵ではない**ので、取り込みの 3 つの口だけを開ける別鍵を用意する。
+ *
+ * 【通る口は 3 つだけ】`/api/admin/demecal-state` (GET/POST) /
+ * `/api/admin/elith-blood-csv` (POST) / `/api/admin/demecal-run` (GET/POST)。
+ * **それ以外の admin API は intake キーでは絶対に通さない。**
+ * ここは**静かに壊れる** — 広がっても画面上は正常に見えるので、
+ * `npm run verify:intake-scope` が「他の口が intake キーで通ったら落とす」形で固定する。
+ *
+ * 【未設定なら無効】intake 認可そのものが働かず `ADMIN_API_KEY` のみ受理する。
+ * attended 運用 (人が admin 画面から操作する) は影響を受けない。
+ * ADMIN_API_KEY と違い、**未設定でも dev 素通しをしない** — この鍵は
+ * 「PC に置く用」なので、緩い経路を作らない。
+ * ──────────────────────────────────────────────────────────── */
+
+export function intakeApiKey(): string | undefined {
+  const m = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.LAB_INTAKE_API_KEY;
+  if (m != null && m !== '') return m;
+  const p = typeof process !== 'undefined' ? process.env?.LAB_INTAKE_API_KEY : undefined;
+  return p != null && p !== '' ? p : undefined;
+}
+
+/**
+ * 取り込み専用キーの認可。ヘッダは `x-intake-key`
+ * (`demecal_auto_download_overview_spec.md:29` の記載に合わせる)。
+ * **この関数を呼んでよいのは上記 3 ファイルだけ。**
+ */
+export function isIntakeAuthorized(request: Request): boolean {
+  const expected = intakeApiKey();
+  if (!expected) return false;
+  const given = (request.headers.get('x-intake-key') || '').trim();
+  return given.length > 0 && given === expected;
+}
+
+/**
+ * 取り込み 3 口の認可。**admin キー または intake キー**。
+ * 各ファイルで `isAdminAuthorized(req) || isIntakeAuthorized(req)` と書くと
+ * 書き漏れ・書き足しが起きるので、**名前の付いた 1 つの関数**にしておく
+ * (冒頭の経緯: 14 ファイルに判定を複製して本番が無防備になった)。
+ */
+export function isLabIntakeEndpointAuthorized(request: Request): boolean {
+  return isAdminAuthorized(request) || isIntakeAuthorized(request);
+}

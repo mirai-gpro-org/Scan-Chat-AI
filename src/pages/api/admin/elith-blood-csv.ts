@@ -24,13 +24,16 @@
 import type { APIRoute } from 'astro';
 import { buildBloodCsvBundles } from '../../../lib/elith-blood-csv';
 import { getS3Config, isS3Configured, putFiles, type S3PutFile } from '../../../lib/s3';
-import { isAdminAuthorized } from '../../../lib/api-auth';
+import { isLabIntakeEndpointAuthorized } from '../../../lib/api-auth';
 
 export const prerender = false;
 
 function authorized(request: Request): boolean {
   // 認可の実装は src/lib/api-auth.ts に集約 (キー未設定の本番は拒否＝fail-closed)。
-  return isAdminAuthorized(request);
+  // **取り込み 3 口のひとつ**。admin キー (wellfort-site の画面用) に加えて、
+  // 専用PC が持つ**取り込み専用キー** `x-intake-key` も通す。
+  // ADMIN_API_KEY を PC に置かないための分離 (`demecal_unattended_spec §3.1`)。用途=CSV 取り込み
+  return isLabIntakeEndpointAuthorized(request);
 }
 
 function str(v: unknown): string | null {
