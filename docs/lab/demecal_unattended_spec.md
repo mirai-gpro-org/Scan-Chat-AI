@@ -707,9 +707,18 @@ radio は `checked` のものだけ送る ／ ログアウト form を選ばな�
 
 | | 判定（**URL では見ない**。B と C は同じ `/hanyou/entry` になり得る） | 送るもの |
 |---|---|---|
-| STATE A | `HanbaitenCode` が在り、日付欄が無い | 販売先 `000000` を**画面の選択肢から**選んで「次へ」 |
 | STATE B | `DateFrom`+`DateTo` が在り、**`DataType` が radio** | 日付／検査結果`正常終了のみ`／項目見出し`出力する` を明示して「確認」 |
-| STATE C | A でも B でもなく、`ダウンロード` の押しどころが在る | 「ダウンロード」だけ |
+| STATE C | `ダウンロード` の押しどころが在る | 「ダウンロード」だけ |
+| STATE A | `HanbaitenCode` が在り、日付欄が無い | 販売先 `000000` を**画面の選択肢から**選んで「次へ」 |
+
+**判定順は B → C → A**（レビュー指摘 2026-09-02）。確認画面が `HanbaitenCode` を
+hidden で持ち回り日付を持たない形のとき、A を先に見ると **C を A と誤判定して 1 段目へ戻ろうとする**。
+「ダウンロードの押しどころが在る」は C にしか無い特徴なので A より先に見る。
+
+**form の選び方も探索にしない**（同レビュー）。「token 以外の項目が最も多い form を採る」
+というヒューリスティックは廃止した — 検索窓のような decoy が対象より項目を多く持てば
+そちらを掴む。**各段で全 form を判定し、期待状態に一致する form が「ちょうど 1 件」の
+ときだけ採用**する。0 件でも複数件でも fail-closed。
 
 - **業務値は契約**（計画 §5.2 A-2）。`Q05-0010` / `000000` / `正常終了のみ` / `出力する`。
   **値は画面の option・radio から取る。無ければ FAIL。代替値を選ばない。**
@@ -722,14 +731,21 @@ radio は `checked` のものだけ送る ／ ログアウト form を選ばな�
   文字列で、byte[] として扱うと壊れる。取った byte[] で Shift_JIS デコード／SHA-256／
   バイト数／行数／必須ヘッダ（`指図番号`/`結果承認日`/`結果項目数`）を見る。
   ファイル名は `Q05-0010-000000result_YYYYMMDD_N.csv` の規則で照合。**データ 0 件は正常**。
-- **verify-only は書き込みを 1 つもしない**: 取り込み API を呼ばない／`last_to` を読まない・
-  書かない／**ファイルを 1 つも作らない**／CSV 本文をログにも probe にも送らない。
-  これは**禁止語の静的検査**（`elith-blood-csv` / `demecal-state` / `WriteAllBytes` /
-  `Set-Content` / `New-Item` / `csvBase64` / `MaxHops` …）で機械保証する。
+- **verify-only が禁止するのは「業務データの write」**（レビューで言い方を訂正 2026-09-02）。
+  「一切書かない」ではない — **非PII の診断 POST は在るべきもの**で、無くすと無人運用で
+  黙って失敗する。
+  - **禁止**: `elith-blood-csv`（BloodTestData / S3 本番投入）／`demecal-state`（`last_to`）の
+    読み書き／CSV のディスク保存（**ファイルを 1 つも作らない**）／CSV 本文の送信。
+  - **許可**: `/api/admin/demecal-run`（非PII の実行ログ）／**失敗時のみ**
+    `/api/ops/probe-upload`（画面の骨格。タグと script だけで本文テキストは載せない）。
+  - 機械保証は 3 本立て: **禁止語の静的検査**（`elith-blood-csv` / `demecal-state` /
+    `WriteAllBytes` / `Set-Content` / `New-Item` / `csvBase64` / `MaxHops` / `Select-Form` …）
+    ＋ **診断 POST が残っていることの検査** ＋ **`Send-Skeleton` の直後が必ず `Finish 1`**
+    （= probe は失敗経路だけ）。
 
 **検証（実サイトは未実施。証明書が専用PCにしか無い）**
 
-`npm run verify:demecal-flow` = **46 件 PASS**（`scripts/tests/demecal-flow.tests.ps1`）。
+`npm run verify:demecal-flow` = **56 件 PASS**（`scripts/tests/demecal-flow.tests.ps1`）。
 配布される `.ps1` を **`-LibOnly` で dot-source して実物を呼ぶ**（判定を JS へ移植しない）。
 テスト中は `Invoke-WebRequest`/`Invoke-RestMethod` を投げる関数で覆い、
 **純粋関数が 1 回でも通信したら落ちる**ようにしてある。
@@ -741,6 +757,10 @@ fixture は完全架空（`scripts/tests/fixtures/demecal/`・CSV は実 Shift_J
    「押しどころが 1 つならそれを押す」という逃げ道があった。逃げ道ごと削除。
 2. 手続き部より前で `Join-Path 'C:\...'` を評価しており、**Windows 以外では
    読み込み自体が落ちていた**（fixture テストが dot-source できない）。
+
+**レビューで 2 件を追加修正した**（2026-09-02・上記の判定順と form 選択）。
+どちらも fixture と negative test を足してある（`state-c-hidden-seller.html` /
+`state-b-decoy.html`）。判定順を元に戻す退行を注入すると **2 件落ちる**ことを確認済み。
 
 **未確認のまま残していること**（推測で埋めない・計画 §4.3）:
 

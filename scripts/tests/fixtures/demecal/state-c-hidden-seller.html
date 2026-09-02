@@ -1,0 +1,16 @@
+<!-- 完全架空の fixture。確認画面が **HanbaitenCode を hidden で持ち回り、
+     日付欄を持たない**形。判定順が A 優先だとこれを A と誤判定し、
+     1 段目へ戻ろうとしてしまう (レビュー指摘 2026-09-02)。
+     判定順 B → C → A なら「ダウンロードの押しどころ」で C になる。 -->
+<html><body>
+<form method="post" action="/hanyou/entry">
+  <input name="__RequestVerificationToken" type="hidden" value="TOKEN4" />
+  <input type="hidden" id="ID" name="ID" value="1" />
+  <input type="hidden" id="DairitenCode" name="DairitenCode" value="Q05-0010" />
+  <input type="hidden" id="HanbaitenCode" name="HanbaitenCode" value="000000" />
+  <input type="hidden" id="HanbaitenName" name="HanbaitenName" value="" />
+  <input type="hidden" id="submitType" name="submitType" value="" />
+  <button id="btnDownload" type="button" onclick="submitType.value='download'; submit();">ダウンロード</button>
+  <button id="btnBack3" type="button" onclick="submitType.value='back'; submit();">戻る</button>
+</form>
+</body></html>

@@ -258,6 +258,15 @@ C: confirmation/download form
 
 URLだけで状態判定しない。STATE B/Cは同系URLになり得るためfield構造を併用する。
 
+**判定順は B → C → A。** STATE C が `HanbaitenCode` を hidden で持ち回り、
+`DateFrom`/`DateTo` を持たない形のとき、A を先に見ると **C を A と誤判定**して
+1段目へ戻ろうとする。「ダウンロードの押しどころが在る」は C にしか無い特徴なので A より先に見る。
+
+**form の選び方も探索にしない。** 「token以外のfieldが最も多いformを採る」ような
+ヒューリスティックは使わない（検索formのようなdecoyが対象より多くのfieldを持てば
+そちらを掴む）。**各stepで全formを判定し、期待STATEに一致するformが正確に1件のときだけ採用**する。
+0件・複数件はfail-closed。
+
 ### A-2. 業務値を明示契約化
 
 ```text
@@ -312,13 +321,22 @@ CSVは `$r.Content` をbyte[]扱いせず、`RawContentStream` からbyte[]を�
 
 **Phase B用のverify-only経路を実装する。**
 
-verify-onlyではCSV取得成功後:
+**verify-only が禁止するのは「業務データのwrite」であって、writeの一切ではない。**
+非PIIの診断用POSTは**むしろ必要**（無人運用で黙って失敗するのを避けるため）。
+実装レビュー時にここを「write一切禁止」と読んで診断POSTまで消さないこと。
 
-- **Elith/S3 writeしない**
+**禁止（業務データ）**
+
 - `/api/admin/elith-blood-csv` を呼ばない
-- `last_to` を更新しない
+- BloodTestData / S3 への本番投入をしない
+- `/api/admin/demecal-state`（`last_to`）を読まない・更新しない
 - CSVをディスクへ保存しない
-- CSV本文をログ/S3へ送らない
+- CSV本文をログ/S3/probeへ送らない
+
+**許可（非PIIの診断）**
+
+- `/api/admin/demecal-run` … 実行ログ。下記だけを送る
+- `/api/ops/probe-upload` … **失敗したときだけ**画面の骨格（タグと script。本文テキストは載せない）
 
 許可する報告:
 
@@ -360,7 +378,10 @@ sample.csv
 9. 想定外stateは即FAIL
 10. CSV byte[]を壊さない
 11. Shift_JISヘッダ検査PASS/FAIL
-12. verify-onlyではwrite系関数が1つも呼ばれない
+12. verify-onlyで業務データのwrite系が1つも現れない（診断POSTは残っていること・probeは失敗時のみ）
+13. decoy formが対象より多くのfieldを持っても、期待STATEのformを選ぶ
+14. 期待STATEのformが0件・複数件ならfail-closed
+15. `HanbaitenCode` hidden + ダウンロードbutton + datesなし をCと判定する（Aに誤判定しない）
 
 ## 5.3 Phase Aでやらないこと
 
@@ -379,7 +400,7 @@ sample.csv
 - fixtureのA→B→C→CSVがPASS
 - negative testsがPASS
 - PS5.1互換を前提にbyte処理検証済み
-- verify-onlyのwrite禁止がテストで保証される
+- verify-onlyの**業務データwrite禁止**がテストで保証される（かつ診断POSTが残っていることも）
 - Unknownを推測実装していない
 - `daily-1.7` の探索ロジックを本番経路から除外
 
@@ -415,14 +436,19 @@ report only
 memory discard
 ```
 
-## 6.3 Phase Bで禁止
+## 6.3 Phase Bで禁止（業務データのwrite）
 
 - Elith/S3へBloodTestDataを書かない
 - `elith-blood-csv` を呼ばない
-- `last_to`を書かない
+- `last_to`を書かない（読まない）
 - PII CSVをディスクへ保存しない
 - CSV本文をprobe/reportへ送らない
 - 失敗後にその場で別候補を自動試行しない
+
+**禁止されていないもの（非PIIの診断・むしろ必要）**
+
+- `/api/admin/demecal-run` への実行ログPOST（§6.2 の report only の実体）
+- **失敗時のみ** `/api/ops/probe-upload` への骨格アップロード（§6.4 の「非PII構造情報を持ち帰る」の実体）
 
 ## 6.4 失敗コード
 

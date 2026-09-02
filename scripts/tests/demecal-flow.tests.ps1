@@ -16,7 +16,12 @@
 # 【Windows PowerShell 5.1 との差】
 #   ここは pwsh 7 で走る。5.1 でしか出ない差 (`$r.Content` の型など) は
 #   このテストでは踏めないので、**バイト列は byte[] を直接渡して**検査する。
-#   `RawContentStream` から取ること自体は静的検査 (下記 T22) で固定する。
+#   `RawContentStream` から取ること自体は静的検査で固定する。
+#
+# 【verify-only の意味】
+#   「一切書かない」ではなく **業務データの write を禁止する**。
+#   非PII の診断 POST (`/api/admin/demecal-run`・失敗時のみ `/api/ops/probe-upload`) は
+#   **在るべきもの**なので、消えていないことも検査する。
 
 $ErrorActionPreference = 'Stop'
 
@@ -48,22 +53,59 @@ $htmlB = Get-Content -Path (Join-Path $FixDir 'state-b.html') -Raw -Encoding UTF
 $htmlC = Get-Content -Path (Join-Path $FixDir 'state-c.html') -Raw -Encoding UTF8
 
 function Read-Bytes([string]$n) { return [IO.File]::ReadAllBytes((Join-Path $FixDir $n)) }
-function Form-Of([string]$html) { return (Select-Form (Get-Forms $html)) }
+function Read-Html([string]$n) { return (Get-Content -Path (Join-Path $FixDir $n) -Raw -Encoding UTF8) }
+# 期待状態で選ぶ (本番経路と同じ選び方)。
+function Form-Exp([string]$html, [string]$expect) {
+  $r = Select-ExpectedForm (Get-Forms $html) $expect
+  if (-not $r.Ok) { return $null }
+  return $r.Form
+}
+# 状態判定そのものを試す単体テスト用 (選び方を挟まない)。
+function Form-Raw([string]$html) { return (Get-Forms $html)[0] }
 
 Write-Host ''
 Write-Host '── 状態判定 ────────────────────────────────────────'
 
-$fa = Form-Of $htmlA
-$fb = Form-Of $htmlB
-$fc = Form-Of $htmlC
+$htmlBD = Read-Html 'state-b-decoy.html'
+$htmlCH = Read-Html 'state-c-hidden-seller.html'
+
+$fa = Form-Exp $htmlA 'A'
+$fb = Form-Exp $htmlB 'B'
+$fc = Form-Exp $htmlC 'C'
 
 Check 'T01 state-a を A と判定' ((Get-StateOf $fa) -eq 'A') ("判定={0}" -f (Get-StateOf $fa))
 Check 'T02 state-b を B と判定' ((Get-StateOf $fb) -eq 'B') ("判定={0}" -f (Get-StateOf $fb))
 Check 'T03 state-c を C と判定 (URL が B と同じでも)' ((Get-StateOf $fc) -eq 'C') ("判定={0}" -f (Get-StateOf $fc))
 # 想定外の画面は即 UNKNOWN (別の操作を試さない)
 $htmlX = '<html><body><form method="post" action="/x"><input type="text" name="Keyword" value=""/><button type="submit">検索</button></form></body></html>'
-Check 'T04 想定外の画面は UNKNOWN' ((Get-StateOf (Form-Of $htmlX)) -eq 'UNKNOWN') ("判定={0}" -f (Get-StateOf (Form-Of $htmlX)))
+Check 'T04 想定外の画面は UNKNOWN' ((Get-StateOf (Form-Raw $htmlX)) -eq 'UNKNOWN') ("判定={0}" -f (Get-StateOf (Form-Raw $htmlX)))
 Check 'T05 ログアウト form を掴まない' ($fa.Action -eq '/hanyou/start') ("action={0}" -f $fa.Action)
+
+# 【レビュー指摘 2026-09-02】確認画面が HanbaitenCode を hidden で持ち回り、
+# 日付を持たない形。判定順が A 優先だと A と誤判定して 1 段目へ戻ろうとする。
+$fch = Form-Raw $htmlCH
+Check 'T05a HanbaitenCode hidden + ダウンロード + 日付なし を C と判定 (A に誤判定しない)' `
+  ((Get-StateOf $fch) -eq 'C') ("判定={0}" -f (Get-StateOf $fch))
+$rch = New-StateCRequest $fch
+Check 'T05b その C からダウンロードへ進める' ($rch.Ok -and $rch.Body['submitType'] -eq 'download') ("code={0}" -f $rch.Code)
+
+# 【レビュー指摘 2026-09-02】decoy (検索 form 11 項目) が対象 (9 項目) より多い。
+$pickBD = Select-ExpectedForm (Get-Forms $htmlBD) 'B'
+Check 'T05c decoy の方が項目数が多くても条件入力 form を選ぶ' `
+  ($pickBD.Ok -and $pickBD.Form.Action -eq '/hanyou/entry') ("ok={0} action={1}" -f $pickBD.Ok, $pickBD.Form.Action)
+$decoyOnly = @(Get-Forms $htmlBD | Where-Object { $_.Action -eq '/search' })
+Check 'T05d decoy はそもそも項目数で勝っている (テストが意味を持つことの確認)' `
+  ($decoyOnly.Count -eq 1 -and $decoyOnly[0].Fields.Count -gt $pickBD.Form.Fields.Count) `
+  ("decoy={0} / 対象={1}" -f $decoyOnly[0].Fields.Count, $pickBD.Form.Fields.Count)
+
+# 0 件・複数件は fail-closed (別の form を試して前進しない)
+$noB = Select-ExpectedForm (Get-Forms $htmlA) 'B'
+Check 'T05e 期待状態の form が 0 件なら FAIL' `
+  ((-not $noB.Ok) -and $noB.Code -eq 'STATE_B_EXPECTATION_FAILED' -and $noB.Count -eq 0) ("code={0}" -f $noB.Code)
+$twoC = Select-ExpectedForm (Get-Forms ($htmlC + $htmlCH)) 'C'
+Check 'T05f 期待状態の form が複数件なら FAIL (どちらかを選ばない)' `
+  ((-not $twoC.Ok) -and $twoC.Code -eq 'STATE_C_EXPECTATION_FAILED' -and $twoC.Count -eq 2) `
+  ("code={0} count={1}" -f $twoC.Code, $twoC.Count)
 
 Write-Host ''
 Write-Host '── HTML 実体参照のデコード ─────────────────────────'
@@ -81,12 +123,12 @@ Check 'T10 A で送る body に押しボタン名が混ざらない' ($ra.Ok -an
 
 # 000000 が選択肢に無ければ FAIL (代替値を選ばない)
 $htmlA2 = $htmlA -replace '<option value="000000">000000</option>', ''
-$ra2 = New-StateARequest (Form-Of $htmlA2)
+$ra2 = New-StateARequest (Form-Raw $htmlA2)
 Check 'T11 000000 が無ければ FAIL (別の販売先を選ばない)' `
   ((-not $ra2.Ok) -and $ra2.Code -eq 'STATE_A_SELLER_000000_NOT_FOUND') ("code={0}" -f $ra2.Code)
 
 $htmlA3 = $htmlA -replace 'value="Q05-0010"', 'value="Q99-9999"'
-$ra3 = New-StateARequest (Form-Of $htmlA3)
+$ra3 = New-StateARequest (Form-Raw $htmlA3)
 Check 'T12 代理店が契約値と違えば FAIL' `
   ((-not $ra3.Ok) -and $ra3.Code -eq 'STATE_A_EXPECTATION_FAILED') ("code={0}" -f $ra3.Code)
 
@@ -107,18 +149,18 @@ Check 'T16 B は「確認」を押す。「戻る」を押さない' `
   ($rb.Ok -and $rb.Body['submitType'] -eq 'confirm') ("submitType={0}" -f $rb.Body['submitType'])
 
 $htmlB2 = $htmlB -replace '<label for="DataType2">正常終了のみ</label>', '<label for="DataType2">エラーのみ</label>'
-$rb2 = New-StateBRequest (Form-Of $htmlB2) $from $to
+$rb2 = New-StateBRequest (Form-Raw $htmlB2) $from $to
 Check 'T17 「正常終了のみ」が無ければ FAIL' `
   ((-not $rb2.Ok) -and $rb2.Code -eq 'STATE_B_DATATYPE_NOT_FOUND') ("code={0}" -f $rb2.Code)
 
 $htmlB3 = $htmlB -replace '<label for="OutputHeader2">出力する</label>', '<label for="OutputHeader2">なし</label>'
-$rb3 = New-StateBRequest (Form-Of $htmlB3) $from $to
+$rb3 = New-StateBRequest (Form-Raw $htmlB3) $from $to
 Check 'T18 「出力する」が無ければ FAIL' `
   ((-not $rb3.Ok) -and $rb3.Code -eq 'STATE_B_OUTPUTHEADER_NOT_FOUND') ("code={0}" -f $rb3.Code)
 
 # 押し方が読めない画面では**別の値を試さず**止まる (Unknown を埋めない)
 $htmlB4 = $htmlB -replace 'onclick="submitType\.value=''confirm''; submit\(\);"', ''
-$rb4 = New-StateBRequest (Form-Of $htmlB4) $from $to
+$rb4 = New-StateBRequest (Form-Raw $htmlB4) $from $to
 Check 'T19 確認の押し方が読めなければ STATE_B_CONFIRM_ACTION_UNKNOWN' `
   ((-not $rb4.Ok) -and $rb4.Code -eq 'STATE_B_CONFIRM_ACTION_UNKNOWN') ("code={0}" -f $rb4.Code)
 
@@ -130,13 +172,13 @@ Check 'T20 C は「ダウンロード」だけを押す' `
   ($rc.Ok -and $rc.Body['submitType'] -eq 'download') ("submitType={0}" -f $rc.Body['submitType'])
 
 $htmlC2 = $htmlC -replace 'onclick="submitType\.value=''download''; submit\(\);"', ''
-$rc2 = New-StateCRequest (Form-Of $htmlC2)
+$rc2 = New-StateCRequest (Form-Raw $htmlC2)
 Check 'T21 ダウンロードの押し方が読めなければ STATE_C_DOWNLOAD_ACTION_UNKNOWN' `
   ((-not $rc2.Ok) -and $rc2.Code -eq 'STATE_C_DOWNLOAD_ACTION_UNKNOWN') ("code={0}" -f $rc2.Code)
 
 # 「戻る」だけの画面で、戻るを押してしまわないこと
 $htmlC3 = $htmlC -replace '(?s)<button id="btnDownload".*?</button>', ''
-$rc3 = New-StateCRequest (Form-Of $htmlC3)
+$rc3 = New-StateCRequest (Form-Raw $htmlC3)
 Check 'T22 ダウンロードが無い画面で「戻る」を押さない' `
   ((-not $rc3.Ok) -and $rc3.Code -eq 'STATE_C_DOWNLOAD_ACTION_UNKNOWN') ("code={0}" -f $rc3.Code)
 
@@ -176,14 +218,14 @@ $c7 = Test-CsvResponse $b1 'application/octet-stream' ''
 Check 'T33 content-disposition が無くても中身で判定できる' ($c7.Ok) ("code={0}" -f $c7.Code)
 
 Write-Host ''
-Write-Host '── verify-only であることの静的検査 ────────────────'
+Write-Host '── verify-only (業務データ write 禁止) の静的検査 ──'
 
 # コメントを落としてから見る (コメントで語に触れるのは禁じない)。
 $code = (($src -split "`r?`n") | ForEach-Object { $_ -replace '(^|\s)#.*$', '$1' }) -join "`n"
 
 $banned = @(
-  @{ t = 'elith-blood-csv';     why = '取り込み API を呼んではいけない' },
-  @{ t = 'demecal-state';       why = 'last_to を読み書きしてはいけない' },
+  @{ t = 'elith-blood-csv';     why = '取り込み API (BloodTestData/S3 本番投入) を呼んではいけない' },
+  @{ t = 'demecal-state';       why = 'last_to (業務の watermark) を読み書きしてはいけない' },
   @{ t = 'csvBase64';           why = 'CSV 本文を送ってはいけない' },
   @{ t = 'WriteAllBytes';       why = 'CSV をディスクへ保存してはいけない' },
   @{ t = 'Set-Content';         why = 'ファイルを作ってはいけない' },
@@ -191,7 +233,8 @@ $banned = @(
   @{ t = 'New-Item';            why = 'ファイル・フォルダを作ってはいけない' },
   @{ t = 'Remove-Item';         why = 'ファイルを消す処理を持たない' },
   @{ t = 'MaxHops';             why = '探索 (ホップ上限) を持たない' },
-  @{ t = 'Find-ActionValues';   why = '外部 JS からの値の総当たりを持たない' }
+  @{ t = 'Find-ActionValues';   why = '外部 JS からの値の総当たりを持たない' },
+  @{ t = 'Select-Form';         why = '項目数で form を選ぶヒューリスティックを持たない' }
 )
 foreach ($b in $banned) {
   Check ("T34 禁止語なし: {0}" -f $b.t) ($code -notmatch [regex]::Escape($b.t)) $b.why
@@ -207,6 +250,25 @@ $idx = $code.IndexOf('if ($LibOnly) { return }')
 $proc = $code.Substring($idx)
 $stepCount = @([regex]::Matches($proc, "Fail = 'STATE_")).Count
 Check 'T37 段は 3 つ固定 (候補総当たり・ホップ反復が無い)' ($stepCount -eq 3) ("段の数={0}" -f $stepCount)
+
+# **禁止されているのは業務データの write。診断用の POST は在るべきもの** なので、
+# 「消えていないこと」も固定する (静かに失敗が見えなくなるのを防ぐ)。
+Check 'T38 非PII の実行ログ POST が残っている (/api/admin/demecal-run)' `
+  ($code -match '/api/admin/demecal-run') ''
+Check 'T39 骨格の回収口が残っている (/api/ops/probe-upload)' `
+  ($code -match '/api/ops/probe-upload') ''
+
+# probe-upload は**失敗時だけ**。Send-Skeleton の呼び出しは全て直後に Finish 1 が続く。
+$sendLines = @([regex]::Matches($proc, '(?m)^\s*Send-Skeleton .*$'))
+$procLines = $proc -split "`n"
+$badSend = 0
+foreach ($i in 0..($procLines.Count - 1)) {
+  if ($procLines[$i] -notmatch '^\s*Send-Skeleton ') { continue }
+  if ($i + 1 -ge $procLines.Count) { $badSend++; continue }
+  if ($procLines[$i + 1] -notmatch '^\s*Finish 1 ') { $badSend++ }
+}
+Check 'T40 骨格の送信は失敗経路だけ (直後が必ず Finish 1)' `
+  ($sendLines.Count -ge 1 -and $badSend -eq 0) ("Send-Skeleton={0} / 失敗経路でない={1}" -f $sendLines.Count, $badSend)
 
 Write-Host ''
 Write-Host ('=' * 52)

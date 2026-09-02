@@ -15,14 +15,25 @@
 #     ・「戻る」「cancel」は**押さない** (候補にすら入れない)
 #     ・Unknown な操作値を外部 .js から探して総当たりしない
 #
-# 【verify-only — 書き込みを一切しない】(計画 §5.2 A-6 / §6.3)
-#   ・Elith / S3 へ書かない・`/api/admin/elith-blood-csv` を呼ばない
-#   ・`last_to` を読まない・更新しない
-#   ・CSV をディスクへ保存しない (**ファイルを 1 つも作らない**)
-#   ・CSV 本文をログにも probe にも送らない (メモリ内で捨てる)
-#   報告するのは 状態遷移 / HTTP / content-type / content-disposition / ファイル名 /
-#   バイト数 / 行数 / SHA-256 / 必須ヘッダ検査の結果 だけ。
-#   **これは `scripts/tests/demecal-flow.tests.ps1` が禁止語の静的検査で機械保証する。**
+# 【verify-only — **業務データの write を禁止する**】(計画 §5.2 A-6 / §6.3)
+#   「一切書かない」ではない。**業務データに触れないこと**が条件で、
+#   非PII の診断用 POST は**むしろ必要**(黙って失敗する運用にしないため)。
+#
+#   **禁止 (業務データ)**
+#     ・`/api/admin/elith-blood-csv` を呼ばない
+#     ・BloodTestData / S3 への本番投入をしない
+#     ・`/api/admin/demecal-state` (`last_to`) を読まない・更新しない
+#     ・CSV をディスクへ保存しない (**ファイルを 1 つも作らない**)
+#     ・CSV 本文をログにも probe にも送らない (メモリ内で捨てる)
+#
+#   **許可 (非PII の診断)**
+#     ・`/api/admin/demecal-run` … 実行ログ。状態遷移 / HTTP / content-type /
+#       content-disposition / ファイル名 / バイト数 / 行数 / SHA-256 /
+#       必須ヘッダ検査の結果 だけを送る
+#     ・`/api/ops/probe-upload` … **失敗したときだけ**画面の骨格 (タグと script)
+#
+#   **これは `scripts/tests/demecal-flow.tests.ps1` が静的検査で機械保証する**
+#   (禁止語が無いこと ＋ 診断 POST が残っていること ＋ probe が失敗経路だけであること)。
 #
 # 【Unknown を推測で埋めない】(計画 §4.3)
 #   押し方が確定できない画面では、別の値を試さずに
@@ -207,17 +218,6 @@ function Get-Forms([string]$html) {
   return $out
 }
 
-# 本命の form を選ぶ。token 以外の入力を持つもののうち項目が多いもの
-# (ログアウトや検索窓を掴まないため)。
-function Select-Form($forms) {
-  if (-not $forms -or @($forms).Count -eq 0) { return $null }
-  $real = @($forms | Where-Object {
-    @($_.Fields.Keys | Where-Object { $_ -notmatch '(?i)token|verification' }).Count -gt 0
-  })
-  $pool = $real; if ($real.Count -eq 0) { $pool = @($forms) }
-  return ($pool | Sort-Object { -$_.Fields.Count })[0]
-}
-
 # ── 状態判定 (計画 §5.2 A-1) ──────────────────────────────────
 #
 # **URL では判定しない。** STATE B と C は同じ URL (`/hanyou/entry`) になり得る
@@ -233,10 +233,42 @@ function Get-StateOf($form) {
   # (確認画面が同じ名前を hidden で持ち回る可能性があるため、名前だけでは足りない)。
   $dataTypeRadio = (@($form.Radios | Where-Object { $_.Name -eq 'DataType' }).Count -gt 0)
 
+  $hasDownload = (@($form.Buttons | Where-Object { $_.Label -match 'ダウンロード' }).Count -gt 0)
+
+  # **判定順は B → C → A。** A を先に見ると、確認画面が `HanbaitenCode` を
+  # hidden で持ち回り かつ 日付を持たない形のときに **C を A と誤判定**して
+  # 1 段目へ戻ろうとする (レビュー指摘 2026-09-02)。
+  # 「ダウンロードの押しどころが在る」は C にしか無い特徴なので、A より先に見る。
   if ($hasDates -and $dataTypeRadio) { return 'B' }
+  if ($hasDownload) { return 'C' }
   if ((-not $hasDates) -and $hasSeller) { return 'A' }
-  if (@($form.Buttons | Where-Object { $_.Label -match 'ダウンロード' }).Count -gt 0) { return 'C' }
   return 'UNKNOWN'
+}
+
+# 期待する状態の form を選ぶ。**「項目数が多いものを採る」は廃止した** —
+# 検索窓のような decoy が対象より項目を多く持てば、そちらを掴んでしまう
+# (レビュー指摘 2026-09-02)。
+#
+# **全 form を判定し、期待状態に一致するものが「ちょうど 1 件」のときだけ採る。**
+# 0 件でも複数件でも fail-closed (別の form を試して前進しない)。
+function Select-ExpectedForm($forms, [string]$expect) {
+  $all  = @($forms)
+  $hits = @($all | Where-Object { (Get-StateOf $_) -eq $expect })
+  $code = ("STATE_{0}_EXPECTATION_FAILED" -f $expect)
+  if ($hits.Count -eq 1) {
+    return [pscustomobject]@{ Ok = $true; Form = $hits[0]; Count = 1; Code = ''; Detail = '' }
+  }
+  if ($hits.Count -eq 0) {
+    $seen = ((@($all | ForEach-Object { Get-StateOf $_ })) -join ',')
+    return [pscustomobject]@{
+      Ok = $false; Form = $null; Count = 0; Code = $code
+      Detail = ("期待した状態 {0} の form がありません (form {1}個 / 判定=[{2}])" -f $expect, $all.Count, $seen)
+    }
+  }
+  return [pscustomobject]@{
+    Ok = $false; Form = $null; Count = $hits.Count; Code = $code
+    Detail = ("期待した状態 {0} の form が {1} 件あり 1 つに絞れません" -f $expect, $hits.Count)
+  }
 }
 
 # ── 押し方の決定 ──────────────────────────────────────────────
@@ -509,7 +541,7 @@ function Finish([int]$code, [string]$result, [string]$errCode, [string]$detail) 
   Say ''
   Say '=================================================='
   if ($result -eq 'ok') { Say ' 結果: ○ 3 状態を辿り CSV の検査まで通りました' }
-  else { Say ' 結果: × 期待した状態と違いました (書き込みは一切していません)' }
+  else { Say ' 結果: × 期待した状態と違いました (業務データは書いていません)' }
   Say ' ※ これは疎通確認です。取り込みも last_to の更新もしていません。'
   if (-not $sent) { Say ' ※ 実行ログをサーバへ送れませんでした' }
   Say '=================================================='
@@ -524,7 +556,7 @@ Say ' デメカル 汎用CSV 疎通確認 (verify-only)'
 Say (" 実行日時 : {0}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
 Say (" PC名     : {0} / ログオン : {1}" -f $env:COMPUTERNAME, $env:USERNAME)
 Say (" 版       : {0}" -f $Version)
-Say ' 書き込み : しません (取り込み・last_to・ファイル保存は全て無し)'
+Say ' 書き込み : 業務データには書きません (取り込み・last_to・ファイル保存は無し)'
 Say '=================================================='
 
 # [1] 証明書
@@ -592,15 +624,17 @@ try {
   foreach ($st in $steps) {
     $script:Stage = $st.Stage
     $forms = Get-Forms $pageHtml
-    $cur = Select-Form $forms
-    $state = Get-StateOf $cur
-    Diag ("  [{0}] form {1}個 / 判定={2} (期待={3})" -f $st.Stage, @($forms).Count, $state, $st.Expect)
-    if ($cur) { foreach ($s in $cur.Shape) { Diag $s } }
+    $seen = ((@($forms | ForEach-Object { Get-StateOf $_ })) -join ',')
+    Diag ("  [{0}] form {1}個 / 判定=[{2}] (期待={3})" -f $st.Stage, @($forms).Count, $seen, $st.Expect)
 
-    if ($state -ne $st.Expect) {
-      Send-Skeleton $pageHtml ("期待 {0} だが判定 {1}" -f $st.Expect, $state)
-      Finish 1 'fail' $st.Fail ("期待した状態は {0} ですが {1} でした" -f $st.Expect, $state)
+    # **期待状態の form がちょうど 1 件のときだけ進む** (項目数で選ばない)。
+    $pick = Select-ExpectedForm $forms $st.Expect
+    if (-not $pick.Ok) {
+      Send-Skeleton $pageHtml ("{0}: {1}" -f $st.Stage, $pick.Detail)
+      Finish 1 'fail' $pick.Code $pick.Detail
     }
+    $cur = $pick.Form
+    foreach ($s in $cur.Shape) { Diag $s }
 
     $req = $null
     if ($st.Expect -eq 'A') { $req = New-StateARequest $cur }
