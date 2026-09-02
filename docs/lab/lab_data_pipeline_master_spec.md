@@ -5,7 +5,7 @@
 | 目的 | **サブスク検査プランの購入から、キット発送・進捗管理・AI問診／検体返送・各社への問診データ受渡・検査結果受領・Elithへのラップ書き出し・AI診断結果の表示まで**、E2E の一連の流れを1本に束ねる**総合仕様書（正本・上位文書）**。個別の詳細は下記3ドキュメントに委譲し、本書はそれらを **6ステップの流れ**で連結・統合する。 |
 | 位置づけ | **本書＝E2E 全体像の正本**。各論の正本は下記(a)(b)(c)＋Elith/サブスク各 spec。**二重管理しない**（詳細は各 spec を参照し、本書は流れと責務分界・連結点のみ規定）。 |
 | 統合対象（3本） | (a) `docs/lab/lab_data_reception_overview.md`（各社**受取方式**）／(b) `docs/lab/questionnaire_to_lab_csv_spec.md`（**AI問診→各社CSV** 写像）／(c) `docs/subscription/kit_lifecycle_and_handoff_management_spec.md`（**キット出荷・進捗・受渡** 統合管理・データモデル） |
-| 版 | 2026-08-31（血液=PowerShell 方式へ更新・遺伝子の再検討を追記）／初版 2026-08-12 |
+| 版 | **2026-09-01（遺伝子=Genoplan を実証。RPA/専用PC 不要＝サーバ側 API 取得で確定・72 件取得成功。③にキット個体IDの捕捉を追加・④-3/⑤/⑦/⑧/⑨ を更新）**／2026-08-31（血液=PowerShell 方式へ更新・遺伝子の再検討を追記）／初版 2026-08-12 |
 | 関連 | `docs/subscription/subscription_management_feature_requirements.md`（サブスク契約管理）／`docs/billing/gmo_subscription_billing_spec.md`（決済・契約状態）／`docs/elith/elith_batch_centralization_design.md`・`docs/elith/elith_assembly_wrapping_spec.md`・`docs/elith/elith_s3_data_handoff_spec.md`（Elith 受渡）／`docs/lab/lab_integration_workflow.md`・`docs/architecture/data_integration_requirements.md`（割当・PII） |
 
 ---
@@ -18,7 +18,7 @@
           └─▶ ③倉庫(タカセ)へ発送指示 / ユーザーへ進捗管理  ……(c)§2,§3
                  ├─▶ ④AI問診＋検体返送を促し、問診データを各社へ所定方式で受渡  ……(b)全体 / (a)受取方式 / (c)§4.1
                  │       ・血液=リージャー(PowerShell・専用PC/mTLS) / がん=プリベント(専用ポータル+S3を提案中) /
-                 │        AI疾病予測=LAiF(専用ポータル+S3) / 遺伝子=Genoplan(RPA・PowerShell化を検討中)
+                 │        AI疾病予測=LAiF(専用ポータル+S3) / 遺伝子=Genoplan(サーバ側API取得・2026-09-01 実証済)
                  └─▶ ⑤各社の検査結果を所定タイミング(仮:週次)でチェック→
                          必要データが揃ったらElith形式へラップ→AWS S3へ書き出し  ……(a)変換 / Elith各spec
                             └─▶ ⑥ElithのAI診断結果(PDF)をS3から受取→Webアプリへ表示UP
@@ -52,6 +52,17 @@
 - **契約時にキット別の出荷スケジュールを確定・登録**。各回予定日＝`D0 + 発送間隔(4/6カ月)×回index`（月末クランプ・非営業日は翌営業日）。キット別ルール（遺伝子=初回のみ／がん・血液=毎回）。
 - 各予定日に、その回で発送するキットだけを **1件=1出荷指示（CSV行）** で生成→タカセへCSV送信（現行 `cron-shipping` を**スケジュール参照型**へ拡張・CSV様式は**現行踏襲**）。
 - **解約/停止**で以降の予定出荷を停止（契約状態連動）。**冪等性**（契約×回×キットの二重出荷防止・`instruction_sent` 等）。
+- **【追加 2026-09-01】出荷実績で「キット個体ID」を受ける**（＝どの箱を誰に送ったか）。
+  これが無いと ⑤ で受領した結果を**本人に紐付けられない**（`lab_integration_workflow §2 Workflow 2`＝
+  Phase 1 の主軸「発注時に `external_test_id ↔ diagnostic_user_id` を保持して逆引き」が成立しない）。
+  - **主経路＝タカセの返送 CSV に相乗り**。**伝票番号を CSV で返してもらう仕組みが既にある**
+    （下記 ③-2 の `tracking_no`）ので、**同じ CSV に個体IDを 1 列足す**。新経路は作らない。
+  - **補助経路＝受取確認時にスマホ撮影**（案・(a)§4.2(e)）。主経路が欠けた回の保険。任意操作。
+  - 受け皿カラムは実在: `customer.lab_tests.external_test_id` / `external_barcode`
+    （`20260601000010_schemas_and_tables.sql`）。**`kit_shipments` 側は列追加が要る**。
+  - 遺伝子（Genoplan）での実体＝**認証キー**（`external_test_id`）と**ボックスナンバー**（`external_barcode`）。
+    どちらも Genoplan の API が構造化データで返すので **OCR は不要**（(a)§4.1.2）。
+  - **採番タイミング・スキャン工程の確定＝`id_management_and_correlation_spec §7-3`**（未実装）。
 - **正本**: (c)§2。
 
 ### ③-2 Webアプリ 検査キット・ライフサイクル管理
@@ -82,13 +93,22 @@
 | 1 | 血液 | リージャー（デメカルDSS） | **PowerShell**（専用PC・mTLS・無人定期実行）で CSV DL → 決定論パース。**RPA/PAD 不要**（2026-08-31 確定・正本 `demecal_unattended_spec.md`） | `BloodTestData` | サーバ側実装済／**PC側は未実装**。bat は **2 本立て**＝①偵察・初回テスト `scripts/demecal-recon.ps1`（実装済・ログイン後のDL画面 form をその場で自己発見）→ ②本番の自動実行（①の結果を見てから作る）。**`LAB_INTAKE_API_KEY` が未実装**（無人化の前提） |
 | 2 | がんリスク（尿） | プリベント（ALA-PDS） | **専用ポータル＋AWS S3＋パスキー方式を提案中**（LAiF流用）／現状はメール＋フォルダ共有の手動 | `CancerRiskAssessmentData` | **提案中（プレゼン段階）** |
 | 3 | AI疾病発症予測 | LAiF | **AWS S3 専用バケット**（ポータル・パスキー・上りCSV/下りPDF） | `Other`(ai_prediction) | 受取方式確定・スキャン実装済 |
-| 4 | 遺伝子 | Genoplan | **デスクトップRPA**（PDF取得）**※要再検討＝PowerShell 化の可能性あり**（血液の PAD 流用前提が消えたため。判定は `lab_data_reception_overview.md §4`） | `GeneticTestResultData` | RPA方針・スキャン実装済 |
+| 4 | 遺伝子 | Genoplan | **サーバ側（Vercel）から API 取得**（ID/PW のみ・**クライアント証明書も Cookie セッションも無い**＝**RPA も PowerShell も専用PC も不要**・2026-09-01 実証。正本 `lab_data_reception_overview.md §4`） | `GeneticTestResultData` | **取得＝実装済**（`src/lib/genoplan.ts` ＋ `POST /api/admin/genoplan-fetch`）。**実証で 72 件全件取得成功・失敗 0**。差分は**ボックスナンバーの差集合**で判定（日付では絞れない）。**顧客への割当は未実装**（③-1 の個体ID捕捉待ち） |
 - **正本**: (a) 各章（§1血液／§2がん／§3 LAiF／§4遺伝子）。LAiF/プリベントのセキュア受渡設計＝`docs/lab/laif_s3_secure_handoff_spec.md`（ゼロトラスト・多層防御）。
 
 ## ⑤ 検査結果を所定タイミング（仮：週次）でチェック → Elith へラップ → AWS S3 書き出し
 
 - **受領チェック（週次案）**: 各社の受領方式ごとに**受領予定と実績を管理**し、未受領はアラート／再督促。受領でキット行を「検査結果受領」へ前進。〔チェック頻度＝**仮に週次**。確定は §確認事項。〕
 - **変換（会社別）**: 血液＝**CSV決定論パース**（LLM不使用）／がん・遺伝子・AI疾病予測＝**画像AIスキャン**（Gemini・サーバ側 admin バッチ）。納品整形は決定論（`sanitizeMeasurementsForDelivery`）に集約。
+  - **遺伝子の入力は「取得済みの PDF」**（1 件 208 ページ・約 21MB）。取得は ④-3 のとおり自動化済みで、
+    **スキャンは従来どおり PDF → LLM**（`elith-genetic.ts`）。読取範囲は
+    `docs/scan/golden/scan_golden_genetic_geneplanet_20240131.md`（疾患リスク項目 220 件・体質系は v1 対象外）。
+  - **【未検証・要判断】LLM を通さず JSON→JSON にできる可能性がある**。Genoplan の一般ユーザー向けサイトに
+    レポート閲覧画面があり、biz 一覧が返す `report_access_token` を渡すと
+    **`POST /api/v2/report/dna/summary_by_token.php`（引数 `token`/`lang`）** で本文を取得している
+    （配布バンドルの実測。項目単位の `detail_by_token.php` もある）。**応答の中身は未確認**
+    （検証は発注者指示で中止・2026-09-01）。中身に発症リスク倍率が含まれるなら
+    **PDF も LLM も経由せず決定論変換にできる**ので、再開の判断材料として記録しておく。
 - **Elith データ作成指示**: 当該回の**全必要データ（検査結果＋問診＋ウェルネス年齢等）が揃った時点**で、**Elith 形式 JSON 生成＋S3受渡を指示**。
   - S3 パス `user/{client_id}/date/{YYYY_MM_DD}/{format_id}_date_{YYYY_MM_DD}_user_{client_id}.json`（`client_id=diagnostic_user_id` 仮名）。
   - ウェルネス年齢（CABA）・AI疾病予測も**検査日毎の時系列**で同梱（`elith_assembly_wrapping_spec`）。
@@ -109,12 +129,27 @@
 - **鍵一元管理**: AWS/Gemini の鍵は Vercel 本番 env のみ。専用PC・operator・クライアントに鍵を置かない。
 - **PII 分離**: `client_id=diagnostic_user_id`（仮名）で橋渡し。氏名/住所は外部・S3・診断系に載せない。氏名OCRのみの割当確定は禁止。**例外**＝LAiF/プリベント上りCSVの**生年月日**（発注者決定・ポータル保護・同意前提の確認は運用）。
 - **変換の別**: 血液＝CSV決定論パース／がん・遺伝子・AI疾病予測＝画像AIスキャン。
+  ※ 遺伝子は**取得の自動化と変換の方式は別問題**。取得はサーバ側 API で自動化済み、変換は現状 PDF→LLM のまま（⑤）。
+- **取得の自動化に「専用PC」が要るのは血液だけ**（クライアント証明書が当該 PC の証明書ストアにしかないため）。
+  遺伝子は証明書が無いのでサーバ側で完結する。**「他社も RPA/専用PC が要る」と決めつけない** — 各社ごとに
+  ①ログインが機械で通せるか ②成果物が URL で取れるか の 2 点で判定する（(a)§4.1 の判定方法を流用）。
 - **admin/UI＝wellfort-site、処理/API/鍵＝Scan-Chat-AI**。
 
 ## 8. 実装状況（サマリ）
 
 - **実装済**: EC決済→発送指示CSV・`cron-shipping`（日次）・キット発送（パイロット）・各社スキャン/CSV写像/Elith 書き出しの各要素・LAiFスキャン→JSON・血液CSV↔JSON構造照合。⑥PDF表示のサンプル実装テスト済。
+  - **【追加 2026-09-01】遺伝子（Genoplan）のレポート取得**＝`src/lib/genoplan.ts` ＋
+    `POST /api/admin/genoplan-fetch`（差分取得・1 リクエスト 1 件）。**実証で発行済み 72 件を全件取得（失敗 0・計 約1.43GB）**。
+    報告書＝`docs/lab/genoplan_poc_report_20260901.pdf`（`.html` が原稿・`scripts/build-genoplan-poc-pdf.mjs` で生成）。
 - **未実装（主眼）**: (a) プラン→キット展開の**定期出荷スケジュール**化、(b) ライフサイクル状態機械＋AI問診促しの結線、(c) 進捗駆動の各社受渡・受領・Elith作成指示の**オーケストレーション**、(d) ⑤受領チェック（週次）ジョブ、(e) ⑥Elith下り受取仕様の確定と本番表示結線。
+  - **(f) 【2026-09-01 追加・遺伝子で顕在化】キット個体ID → 顧客の紐付け**（③-1）。
+    `customer.lab_tests` に**行を作るコードが無い**（現状は読み取りのみ）。しかも Scan-Chat-AI は
+    `customer` スキーマを**読み取り専用**でしか触れない（`HP_BRIDGE_READONLY_KEY`）ので、
+    **書き込みは wellfort-site 側**。併せて `kit_shipments` への個体ID列追加が要る。
+    → **これが埋まるまで、取得した遺伝子レポートは「誰のものか未確定」のまま保管される**（割当はしない＝捏造ゼロ）。
+  - **(g) 原本ストレージの本番設定**: `AWS_S3_ORIGINALS_BUCKET` が未設定のため、既定の保存先が
+    Supabase Storage にフォールバックする。**本番は S3 `ap-northeast-1`＋Object Lock**（案C′）。
+    手順＝`docs/operations/S3原本ストレージ_構築手順書.md`。実証テストは受渡用バケットへ保存した（削除可能）。
 
 ## 9. 確認事項（本書で束ねる横断項目）
 
@@ -123,6 +158,14 @@
 3. **がんリスク（プリベント）**: 専用ポータル＋S3方式の合意可否（提案中）。固定IP有無・担当者/通知先・生年月日提供の同意前提。→ (a)§7。
 4. **キット構成データ**: 案A（正規化＋版管理）の DDL 実装・初期データ投入・`subscriptions.plan_composition_id` pin の結線。→ (c)§6.1。
 5. **AI疾病予測/予防**: 物理キット外。AI疾病予測=年1回データ受領、AI疾病予防=開発中の回数/仕様（管理対象化の時期）。→ (c)§8。
+6. **【2026-09-01 追加】キット個体ID の捕捉**（③-1）: タカセの**返送 CSV に 1 列足す**合意（タカセ側の運用調整）。
+   併せて補助経路（受取確認時のスマホ撮影）を採るかの判断。→ (a)§4.2(e)。
+7. **【2026-09-01 追加】遺伝子の原本保存**: レポート PDF の 2 ページ目に**氏名が印字**されている。
+   氏名入りのまま原本として保存してよいか（AI診断へ渡す JSON には載せない）。→ (a)§4.2(c)。
+8. **【2026-09-01 追加】Genoplan アカウントの扱い**: `info@wellfort.co.jp` を自動処理と人の操作で共用してよいか。
+   分けるなら自動処理専用アカウントの発行を先方へ依頼。→ (a)§4.2。
+9. **【2026-09-01 追加・先方へ連絡】Genoplan のレポート PDF 配布 URL が無認証**。認証キーだけで
+   署名付き URL が発行される（実在しないキーで確認・他人のデータには触れていない）。→ (a)§4.3。
 
 ---
 
