@@ -1,17 +1,25 @@
 /**
- * docs/lab/lab_data_reception_overview.md → 送付/共有用 PDF
+ * docs/lab の md → 送付/共有用 PDF
  *
- * 実行: node scripts/build-lab-reception-pdf.mjs
- * 出力: docs/lab/lab_data_reception_overview.pdf
+ * 実行:
+ *   node scripts/build-lab-doc-pdf.mjs                          # 既定 = 受取方式まとめ
+ *   node scripts/build-lab-doc-pdf.mjs docs/lab/xxx.md          # 任意の md
+ *   node scripts/build-lab-doc-pdf.mjs --all                    # 既知の md を全部
+ * 出力: 同じ場所の `.pdf`（拡張子だけ差し替え）
  *
  * 【md が正】このスクリプトは md をそのまま組版するだけで、内容には触れない。
  *   仕様が変わったら md を直して再実行する（PDF を直接いじらない）。
+ *
+ * 【なぜ引数化したか 2026-09-01】受取方式まとめ専用だったが、総合仕様書
+ *   (`lab_data_pipeline_master_spec.md`) も PDF で配る必要が出た。同じ CSS を
+ *   2 ファイルへコピーすると片方だけ直る事故になるので、**組版は 1 本に集約**する。
+ *   既定の引数なし実行は従来と同じ出力（旧名 `build-lab-reception-pdf.mjs`）。
  *
  * 【フォント】本文の和文は環境にあるものへ順に落ちる。CI/コンテナには
  *   Hiragino/Noto が無く IPAGothic しか無いことがあるので、スタックの最後に
  *   "IPAGothic"/"IPAPGothic" を必ず残すこと（無いと和文が豆腐になる）。
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { marked } from 'marked';
@@ -20,8 +28,34 @@ import { chromium } from 'playwright';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 
-const SOURCE = resolve(ROOT, 'docs/lab/lab_data_reception_overview.md');
-const OUTPUT = resolve(ROOT, 'docs/lab/lab_data_reception_overview.pdf');
+/** `--all` で回す既知の md。増えたらここに足す。 */
+const KNOWN = [
+  'docs/lab/lab_data_reception_overview.md',
+  'docs/lab/lab_data_pipeline_master_spec.md',
+];
+
+const args = process.argv.slice(2);
+const targets = args.includes('--all')
+  ? KNOWN
+  : (args.filter((a) => !a.startsWith('--'))[0] ? [args.filter((a) => !a.startsWith('--'))[0]] : [KNOWN[0]]);
+
+/**
+ * 環境の Chromium を明示できるようにしておく。`@playwright/test` の版が上がると
+ * `/opt/pw-browsers` の版と食い違い「Executable doesn't exist」で落ちる (実測 2026-09-01)。
+ * 実在するパスを拾いに行き、無ければ Playwright の解決に任せる。
+ */
+const chromiumCandidates = [
+  process.env.PLAYWRIGHT_CHROMIUM_PATH,
+  '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+  '/opt/pw-browsers/chromium/chrome-linux/chrome',
+].filter(Boolean);
+const chromiumPath = chromiumCandidates.find((p) => { try { return statSync(p).isFile(); } catch { return false; } });
+
+const browser = await chromium.launch(chromiumPath ? { executablePath: chromiumPath } : {});
+try {
+for (const rel of targets) {
+const SOURCE = resolve(ROOT, rel);
+const OUTPUT = SOURCE.replace(/\.md$/, '.pdf');
 
 const md = readFileSync(SOURCE, 'utf8');
 marked.setOptions({ gfm: true, breaks: false });
@@ -168,11 +202,6 @@ ${body}
 </body>
 </html>`;
 
-// 環境の Chromium を明示できるようにしておく (CI/コンテナでは Playwright が
-// 期待するビルド番号と実際に入っている版がずれ、launch() が落ちることがある)。
-//   例: PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chrome
-const chromiumPath = process.env.PLAYWRIGHT_CHROMIUM_PATH || '';
-const browser = await chromium.launch(chromiumPath ? { executablePath: chromiumPath } : {});
 const page = await browser.newPage();
 await page.setContent(html, { waitUntil: 'load' });
 await page.pdf({
@@ -181,7 +210,10 @@ await page.pdf({
   printBackground: true,
   margin: { top: '20mm', bottom: '22mm', left: '18mm', right: '18mm' },
 });
-await browser.close();
+await page.close();
 
-const stat = await import('node:fs').then((m) => m.statSync(OUTPUT));
-console.log(`✓ PDF 生成完了: ${OUTPUT} (${(stat.size / 1024).toFixed(1)} KB)`);
+console.log(`✓ PDF 生成完了: ${OUTPUT} (${(statSync(OUTPUT).size / 1024).toFixed(1)} KB)`);
+}
+} finally {
+  await browser.close();
+}

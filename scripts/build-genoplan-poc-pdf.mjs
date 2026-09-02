@@ -6,7 +6,7 @@
  *
  * 【HTML が正】このスクリプトは組版するだけで内容には触れない。
  *   直すときは HTML を直して再実行する (PDF を直接いじらない)。
- *   `build-lab-reception-pdf.mjs` と同じ方針だが、あちらは md → HTML、
+ *   `build-lab-doc-pdf.mjs` と同じ方針だが、あちらは md → HTML、
  *   こちらは**図 (インライン SVG) があるので HTML そのものが原稿**。
  *
  * 【背景のグラフィックを必ず出す】`printBackground: true` が要る。
