@@ -87,7 +87,7 @@ repo 一致 / base_branch 存在 / baseline_sha 存在 / External Evidence の u
 
 - **§6 Scope に列挙されたファイルのみ**（modify / create / delete の種別も守る）
 - **§9 Implementation Requirements に書かれたことだけ**
-- 恒久 Do Not Touch（`CLAUDE.md` / `.claude/**` / `.github/workflows/**` / `docs/specs/**` / `scripts/spec-guard.mjs`）は**絶対に触らない**
+- 恒久 Do Not Touch（`CLAUDE.md` / `.claude/**` / `.github/workflows/**` / `docs/specs/**` / `scripts/spec-guard.mjs` / `scripts/sol-publisher.mjs`）は**絶対に触らない**
 - **Scope 外のリファクタリング・整形・改善を行わない**（たとえ改善であっても violation）
 
 ### 8. scope（**実装後の機械検査**）
@@ -104,6 +104,10 @@ node scripts/spec-guard.mjs scope $0
 node scripts/spec-guard.mjs snapshot $0 > /tmp/spec-guard-snapshot.txt
 ```
 
+**stdout だけをリダイレクトする**（`2>&1` を付けない）。snapshot は
+診断メッセージを stderr、snapshot 本体を stdout に分けて出すので、
+混ぜると snapshot が壊れて次の verify-clean が誤検知する。
+
 **Verification Command 自身が repository を書き換える**ことがある
 （例: 依存が無い repository での `npx astro check` は対話プロンプトを出し package.json を書き換える）。
 scope guard は §8 で既に走っているので、**ここで取らないと検出できない**。
@@ -114,6 +118,10 @@ scope guard は §8 で既に走っているので、**ここで取らないと�
 
 **PoC-1 では、失敗したら種別を問わず停止する**（attempt を数える workflow がまだ無いため）。
 **「これは明らかな typo だから直してよい」という判断はしない。**
+
+**ただし、停止する前に必ず §11 の verify-clean を通すこと。**
+失敗した Verification こそ tree を汚している可能性が高い。
+ここを飛ばすと、**汚れたまま停止して次の実行に持ち越す**。
 
 報告書式:
 
@@ -139,6 +147,10 @@ STOP
 ```
 node scripts/spec-guard.mjs verify-clean $0 /tmp/spec-guard-snapshot.txt
 ```
+
+**Verification の成否にかかわらず必ず実行する。**
+成功時だけ確認する作りにしない — **失敗した Verification のほうが tree を汚している可能性が高い**。
+順序は「Verification 実行 → verify-clean → その後に停止判断」。
 
 **非ゼロ終了なら停止**。目視で「実質同じ」と判断しない。
 
