@@ -30,8 +30,18 @@ const ALLOWED = [
   'src/pages/api/admin/demecal-run.ts',
 ];
 
-/** intake 認可に触れていることを示す語。1 つでも出たら「触れている」とみなす。 */
-const INTAKE_MARKERS = ['isIntakeAuthorized', 'isLabIntakeEndpointAuthorized', 'x-intake-key', 'LAB_INTAKE_API_KEY'];
+/**
+ * **intake キーを「受け付ける」側**の語。1 つでも出たら「認可に使っている」とみなす。
+ * ここが増えると鍵のスコープが黙って広がるので、ALLOWED 以外では 1 つも許さない。
+ */
+const AUTH_MARKERS = ['isIntakeAuthorized', 'isLabIntakeEndpointAuthorized', 'x-intake-key'];
+
+/**
+ * **鍵を「配る」側**の語 (env を読んで bat へ焼き込む)。受け付けるのとは別物。
+ * 配布は 1 箇所だけであるべきなので、ここも列挙して固定する。
+ */
+const DIST_MARKER = 'LAB_INTAKE_API_KEY';
+const DIST_ALLOWED = ['src/pages/api/ops/probe-bat.ts'];
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -64,10 +74,22 @@ for (const p of walk(apiDir)) {
   const rel = relative(ROOT, p).split('\\').join('/');
   if (ALLOWED.includes(rel)) continue;
   const src = readFileSync(p, 'utf8');
-  const hit = INTAKE_MARKERS.filter((m) => src.includes(m));
+  const hit = AUTH_MARKERS.filter((m) => src.includes(m));
   if (hit.length > 0) {
-    failures.push(`${rel}: intake 認可に触れている (${hit.join(', ')})。この口は intake キーで通してはいけない`);
+    failures.push(`${rel}: intake 認可を受け付けている (${hit.join(', ')})。この口は intake キーで通してはいけない`);
   }
+  // 鍵の**配布**は許可した 1 箇所だけ。増えたら落とす。
+  if (src.includes(DIST_MARKER) && !DIST_ALLOWED.includes(rel)) {
+    failures.push(`${rel}: ${DIST_MARKER} を読んでいる。鍵を配ってよいのは ${DIST_ALLOWED.join(', ')} だけ`);
+  }
+}
+
+// 配布口は**鍵を配るだけ**で、**認可には使っていない**こと。
+for (const rel of DIST_ALLOWED) {
+  const src = readFileSync(resolve(ROOT, rel), 'utf8');
+  const hit = AUTH_MARKERS.filter((m) => src.includes(m));
+  if (hit.length > 0) failures.push(`${rel}: 配布口が intake 認可も受け付けている (${hit.join(', ')})`);
+  else notes.push(`OK  ${rel} (鍵の配布のみ)`);
 }
 
 // `api-auth.ts` 自身は実装なので対象外。ただし**関数が存在すること**は確かめる。
