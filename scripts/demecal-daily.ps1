@@ -29,7 +29,11 @@ $BaseUrl   = 'https://dl.demecal.net'
 $LoginUrl  = "$BaseUrl/account/login"
 $ApiBase   = 'https://scan-chat-ai.vercel.app'
 $IntakeKey = '__LAB_INTAKE_KEY__'
-$Version   = 'daily-1.3'
+# **失敗したときだけ**、画面の「骨格」を回収するためのトークン (`/api/ops/probe-upload`)。
+# 成功時は何も送らない。送るのは form 内のタグと script だけで、本文テキストは含めない
+# (= 受診者一覧のような表は構造上入らない)。**ここを最初からやっておくべきだった。**
+$ProbeToken = '__PROBE_TOKEN__'
+$Version   = 'daily-1.5'
 
 # 初回の安全弁。last_to がまだ無いとき、いきなり全期間を引かない。
 # 失敗しても last_to は動かないので取り漏れは起きないが、初回から広く取ると
@@ -86,6 +90,55 @@ function Report-Run([string]$result, [string]$err) {
       -Headers @{ 'x-intake-key' = $IntakeKey } | Out-Null
     return $true
   } catch { return $false }
+}
+
+# 画面の骨格だけを取り出す。**テキストノードは載せない。**
+#   ・form 内の <input>/<select>/<option>/<button>/<label> の**タグそのもの**
+#   ・inline <script> の中身 (押し方はここにしか書かれていない)
+#   ・外部 script の src 一覧
+# hidden の value も含む — antiforgery トークンは 1 回きりで、
+# 回収時にはセッションごと無効になっているため実害が無い。
+function Get-Skeleton([string]$html) {
+  $o = New-Object System.Collections.Generic.List[string]
+  if (-not $html) { return $o }
+  $fi = 0
+  foreach ($fm in [regex]::Matches($html, '(?is)<form\b[^>]*>.*?</form>')) {
+    $fi++
+    $f = $fm.Value
+    $o.Add(("---- form#{0} ----" -f $fi)) | Out-Null
+    $ot = [regex]::Match($f, '(?is)<form\b[^>]*>'); if ($ot.Success) { $o.Add($ot.Value) | Out-Null }
+    foreach ($tm in [regex]::Matches($f, '(?is)<(?:input|select|option|button|label|textarea)\b[^>]*>')) {
+      $o.Add(($tm.Value -replace '\s+', ' ')) | Out-Null
+      if ($o.Count -gt 400) { break }
+    }
+  }
+  foreach ($sm in [regex]::Matches($html, '(?is)<script\b([^>]*)>(.*?)</script>')) {
+    $attr = $sm.Groups[1].Value
+    if ($attr -match '(?i)\bsrc="([^"]+)"') { $o.Add(("---- script src: {0}" -f $Matches[1])) | Out-Null; continue }
+    $body = $sm.Groups[2].Value
+    if (-not $body.Trim()) { continue }
+    $o.Add('---- inline script ----') | Out-Null
+    $o.Add($body) | Out-Null
+  }
+  return $o
+}
+
+function Send-Skeleton([string]$html, [string]$why) {
+  if ($ProbeToken -eq ('__PROBE' + '_TOKEN__')) { return }
+  try {
+    $sk = Get-Skeleton $html
+    if ($sk.Count -eq 0) { return }
+    $payload = @{
+      report = ("[{0}] {1}`r`n`r`n{2}" -f $Version, $why, ($sk -join "`r`n"))
+      label  = 'demecal-skeleton'
+      host   = $env:COMPUTERNAME
+    } | ConvertTo-Json -Compress
+    Invoke-RestMethod -Uri 'https://scan-chat-ai.vercel.app/api/ops/probe-upload' -Method Post -TimeoutSec 30 `
+      -Body ([Text.Encoding]::UTF8.GetBytes($payload)) `
+      -ContentType 'application/json; charset=utf-8' `
+      -Headers @{ 'x-probe-token' = $ProbeToken } | Out-Null
+    Say '    ※ 解析用に画面の骨格 (タグと script のみ) を送信しました'
+  } catch { }
 }
 
 function Finish([int]$code, [string]$result, [string]$err) {
@@ -186,6 +239,20 @@ $script:Stage = 'download'
 #   結果、選択欄と実行ボタンを**送らないまま**同じ画面を POST し続け、
 #   `/hanyou/entry` が 4 回連続で返って CSV に到達しなかった。
 #   ブラウザは「押したボタン 1 個だけ」を送るので、submit 系は fields と分けて持つ。
+# hidden へ JS が入れる値を、与えられたテキスト (ページ本文でも .js でも) から拾う。
+#   X.value='v' / X.value = "v" / ["X"].value='v' / $('#X').val('v')
+# **値をコードに埋めないための唯一の手段**なので、探す場所だけを増やしていく。
+function Find-ActionValues([string]$text, [string]$field) {
+  $out = @()
+  if (-not $text -or -not $field) { return $out }
+  $pat = ('(?i)' + [regex]::Escape($field) + '["\x27\]]{0,3}\s*\)?\s*\.\s*(?:value|val)\s*(?:=|\(\s*)\s*["\x27]([^"\x27]{1,40})["\x27]')
+  foreach ($m in [regex]::Matches($text, $pat)) {
+    $v = $m.Groups[1].Value
+    if ($v -and ($out -notcontains $v)) { $out += $v }
+  }
+  return $out
+}
+
 function Get-Forms([string]$html, [string]$pageUrl) {
   $out = @()
   foreach ($fm in [regex]::Matches($html, '(?is)<form\b[^>]*>.*?</form>')) {
@@ -198,6 +265,7 @@ function Get-Forms([string]$html, [string]$pageUrl) {
     $types   = @{}
     $submits = @()   # 名前つきの実行ボタン (押した 1 個だけを送る)
     $radios  = @()   # ラジオ/チェックの全選択肢 (ラベル付き。既定でない側も持つ)
+    $hiddens = @()   # hidden の名前 (外部 .js まで値を探しに行く対象)
     $shape   = @()   # 診断用の形だけ (値は入れない)
 
     foreach ($im in [regex]::Matches($f, '(?is)<input\b[^>]*>')) {
@@ -294,6 +362,8 @@ function Get-Forms([string]$html, [string]$pageUrl) {
       }
       $bname = if ($n.Success) { $n.Groups[1].Value } else { '(名前なし)' }
       $shape += ("      button name={0} label={1}" -f $bname, $label)
+      # **押し方が分からないときはここが唯一の手掛かり。** 属性だけ (中の文字は載せない)。
+      $shape += ("        └ tag: {0}" -f (($attr -replace '\s+', ' ').Trim() -replace '^(.{0,220}).*$', '$1'))
     }
 
     # 【本命・①v1.9 の偵察で判明 2026-09-02】`/hanyou/entry` の実行指示は
@@ -309,20 +379,18 @@ function Get-Forms([string]$html, [string]$pageUrl) {
     foreach ($hf in @($fields.Keys)) {
       if ($types[$hf] -ne 'hidden') { continue }
       if ($hf -match '(?i)token|verification') { continue }
-      $seen = @{}
-      # `X.value='v'` / `X.value = "v"` / `["X"].value='v'` / `$('#X').val('v')` を拾う。
-      $pat = ('(?i)' + [regex]::Escape($hf) + '["\x27\]]{0,3}\s*\)?\s*\.\s*(?:value|val)\s*(?:=|\(\s*)\s*["\x27]([^"\x27]{1,40})["\x27]')
-      foreach ($vm in [regex]::Matches($html, $pat)) {
-        $hv = $vm.Groups[1].Value
-        if (-not $hv -or $seen.ContainsKey($hv)) { continue }
-        $seen[$hv] = $true
+      $hiddens += $hf
+      $vals = Find-ActionValues $html $hf
+      $i2 = 0
+      foreach ($hv in $vals) {
+        $i2++
         $submits += [pscustomobject]@{
-          Name = $hf; Value = $hv; Label = ("hidden {0}" -f $hf); Pos = 100000 + $vm.Index
+          Name = $hf; Value = $hv; Label = ("hidden {0}" -f $hf); Pos = 100000 + $i2
         }
       }
-      if ($seen.Count -gt 0) {
+      if ($vals.Count -gt 0) {
         # 値は画面操作の識別子 (next / confirm 等) で受診者の情報ではない。診断に出してよい。
-        $shape += ("      hidden {0} に JS が入れる値 = [{1}]" -f $hf, (($seen.Keys | Sort-Object) -join ' | '))
+        $shape += ("      hidden {0} に JS が入れる値 = [{1}]" -f $hf, ($vals -join ' | '))
       }
     }
 
@@ -342,7 +410,7 @@ function Get-Forms([string]$html, [string]$pageUrl) {
 
     $out += [pscustomobject]@{
       Action = $action; Method = $method; Fields = $fields; Types = $types
-      Submits = $submits; Radios = $radios; Shape = $shape; Page = $pageUrl
+      Submits = $submits; Radios = $radios; Hiddens = $hiddens; Shape = $shape; Page = $pageUrl
     }
   }
   return $out
@@ -373,6 +441,9 @@ function Resolve-Url([string]$action, [string]$pageUrl) {
 }
 
 $csvBytes = $null
+$script:JsSeen = @{}
+$pageHtml = ''
+$u2raw = ''
 $MaxHops  = 14   # 候補を 1 つずつ試すぶん、段数でなく試行回数の上限
 # 「この指紋の画面では、次にどの実行ボタンを試すか」。同じ画面が返ったら次の候補へ進む。
 $tried = @{}
@@ -380,7 +451,8 @@ $tried = @{}
 try {
   $startUrl = "$BaseUrl/hanyou/start"
   $page = Invoke-WebRequest -Uri $startUrl -Certificate $cert -WebSession $session -UseBasicParsing -TimeoutSec 60
-  $forms = Get-Forms $page.Content $startUrl
+  $pageHtml = [string]$page.Content
+  $forms = Get-Forms $pageHtml $startUrl
   if ($forms.Count -eq 0) { Finish 1 'fail' '汎用CSV画面に form がありません (画面が変わった可能性)' }
   $cur = Select-Form $forms
 
@@ -392,6 +464,41 @@ try {
     #   (止まったのは entry から先)。押す側へ全面的に切り替えると、
     #   その通っていた 1 段目を壊しかねない。まず従来どおり送り、
     #   同じ画面が返ったときだけ押す候補へ移る。
+    # 【v1.3 の実測 2026-09-02】entry / 確認画面で候補が **1 通り (押さないだけ)** になった
+    #   = ボタンに name が無く、submitType に入る値も**ページ本文には書かれていない**。
+    #   ASP.NET MVC は JS をバンドルした外部ファイルへ出すので、そこまで見に行く。
+    #   **値はやはり埋めない。読みに行く先を増やしただけ。**
+    if (@($cur.Submits).Count -eq 0 -and @($cur.Hiddens).Count -gt 0) {
+      foreach ($sm in [regex]::Matches($pageHtml, '(?i)<script[^>]*\bsrc="([^"]+\.js[^"]*)"')) {
+        $src = $sm.Groups[1].Value
+        if ($src -match '(?i)jquery|bootstrap|popper|modernizr|respond|validat') { continue }  # 定番ライブラリは見ない
+        $u2 = Resolve-Url $src $cur.Page
+        if ($script:JsSeen.ContainsKey($u2)) { continue }
+        $script:JsSeen[$u2] = $true
+        if ($script:JsSeen.Count -gt 6) { break }   # 無制限に取りに行かない
+        $js = ''
+        try {
+          $jr = Invoke-WebRequest -Uri $u2 -Certificate $cert -WebSession $session -UseBasicParsing -TimeoutSec 30
+          $js = [string]$jr.Content
+        } catch { Diag ("      js 取得不可: {0}" -f $u2); continue }
+        foreach ($hf in @($cur.Hiddens)) {
+          $vals = Find-ActionValues $js $hf
+          if ($vals.Count -eq 0) { continue }
+          Diag ("      {0} から {1} の値 = [{2}]" -f ($u2 -replace '^.*/', ''), $hf, ($vals -join ' | '))
+          $i3 = 0
+          foreach ($hv in $vals) {
+            $i3++
+            $cur.Submits += [pscustomobject]@{
+              Name = $hf; Value = $hv; Label = ("hidden {0} (js)" -f $hf); Pos = 200000 + $i3
+            }
+          }
+        }
+      }
+      if (@($cur.Submits).Count -eq 0) {
+        Diag '      外部 js を見ても実行指示の値が見つかりません'
+      }
+    }
+
     $cands = @([pscustomobject]@{ Name = ''; Value = ''; Label = '(押さない)' }) + @($cur.Submits)
     # **成功しても失敗しても、送る直前の form の形を残す。**
     # ここが残っていれば、次の一手を決めるのに現地でもう一度回してもらう必要が無い。
@@ -401,6 +508,9 @@ try {
     # 黙って回り続けずに落とす (v1.0 は同じ body を 4 回送って上限で終わっていた)。
     if ($idx -ge $cands.Count) {
       Diag ("  [{0}段目] 候補 {1} 通りを全て試しましたが画面が変わりません" -f $hop, $cands.Count)
+      # **ここで骨格を回収する。** 押し方が分からない = 手元の情報が足りない、ということなので、
+      # もう一度現地で回してもらう前に、判断に要るものを 1 回で持ち帰る。
+      Send-Skeleton $pageHtml ("進めなくなった画面 ({0}段目 / {1})" -f $hop, $u2raw)
       Finish 1 'fail' ("同じ画面から進めません (候補 {0} 通りを全て試行)" -f $cands.Count)
     }
 
@@ -436,6 +546,7 @@ try {
     $tried[$sig] = $idx + 1
 
     $u = Resolve-Url $cur.Action $cur.Page
+    $u2raw = $u
     $mth = if ($cur.Method -match '(?i)post') { 'Post' } else { 'Get' }
     $r = Invoke-WebRequest -Uri $u -Method $mth -Certificate $cert -WebSession $session `
            -Body $body -UseBasicParsing -TimeoutSec 120
@@ -449,13 +560,15 @@ try {
     # **CSV は content-type だけで判定しない。** 添付として返るなら中身が何であれ CSV。
     if ($ct -notmatch '(?i)text/html' -or $cd -match '(?i)attachment') { $csvBytes = $r.Content; break }
 
-    $forms = Get-Forms $r.Content $u
+    $pageHtml = [string]$r.Content
+    $forms = Get-Forms $pageHtml $u
     if ($forms.Count -eq 0) { Finish 1 'fail' ("{0} 段目の応答に form が無く CSV も返りません" -f $hop) }
     $cur = Select-Form $forms
   }
 } catch { Finish 1 'fail' ("CSV 取得中に失敗: {0}" -f $_.Exception.Message) }
 
 if (-not $csvBytes) {
+  Send-Skeleton $pageHtml ("{0} 段まで辿って届かなかった最後の画面" -f $MaxHops)
   Diag ("  {0} 段まで辿っても CSV に届きませんでした" -f $MaxHops)
   Finish 1 'fail' ("画面を {0} 段辿りましたが CSV が返りませんでした" -f $MaxHops)
 }
