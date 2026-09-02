@@ -92,6 +92,8 @@ const VERIFY_KINDS = ['static', 'behavioral'];
 
 /** ISO8601 UTC (Z 終端) のみ。Date.parse の広い許容に頼らない。 */
 const ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+/** ISO_UTC_RE と同じ形を「秒まで」と「小数秒」に割る。実在検査で桁を揃えるために使う。 */
+const ISO_FRACTION_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?Z$/;
 
 const errors = [];
 const notes = [];
@@ -333,7 +335,12 @@ function parsePorcelainLine(line) {
   };
   const first = readPathToken(rest, 0);
   if (!first) { fail('PATH-005', `porcelain 行の引用が閉じていない: ${JSON.stringify(line)}`); return []; }
-  if (xy[0] === 'R' || xy[0] === 'C') {
+  // rename/copy は index 側 (X) だけでなく **working tree 側 (Y) にも出る**
+  // (`git-status(1)` の短縮形式表に `[ R] R` / `[ C] C` がある。`git add -N` した
+  // 移動先があると ` R old -> new` が実際に出る)。X だけを見ると**行き先パスが
+  // どの検査にも掛からず**、Scope 外へファイルを作っても PASS してしまう。
+  const isRC = (c) => c === 'R' || c === 'C';
+  if (isRC(xy[0]) || isRC(xy[1])) {
     if (!rest.slice(first.next).startsWith(' -> ')) {
       fail('PATH-005', `rename/copy 行に " -> " が無い: ${JSON.stringify(line)}`); return [];
     }
@@ -343,7 +350,7 @@ function parsePorcelainLine(line) {
     const newP = decode(second.raw);
     const out = [];
     // rename は「旧を消して新を作る」。copy は旧に触らないので新だけ。
-    if (xy[0] === 'R' && oldP !== null) out.push({ xy, kind: 'delete', path: oldP });
+    if ((xy[0] === 'R' || xy[1] === 'R') && oldP !== null) out.push({ xy, kind: 'delete', path: oldP });
     if (newP !== null) out.push({ xy, kind: xy[1] === 'D' ? 'delete' : 'create', path: newP });
     return out;
   }
@@ -528,9 +535,12 @@ function modeValidate(specPath) {
         if (Number.isNaN(t)) {
           fail('EE-006', `${id}: collected_at が実在しない日時: ${kv.collected_at}`);
         } else {
-          const back = new Date(t).toISOString().replace(/\.000Z$/, 'Z');
-          const norm = kv.collected_at.replace(/\.000Z$/, 'Z');
-          if (back !== norm) fail('EE-006', `${id}: collected_at が実在しない日時: ${kv.collected_at} (正規化すると ${back})`);
+          // `toISOString()` は小数秒を**必ず 3 桁**で返すが、ISO_UTC_RE は 1〜3 桁を許す。
+          // 桁を揃えずに比べると `.1Z` / `.12Z` が「実在しない日時」として**誤 FAIL** する。
+          const f = ISO_FRACTION_RE.exec(kv.collected_at);
+          const canon = `${f[1]}.${(f[2] ?? '').padEnd(3, '0')}Z`;
+          const back = new Date(t).toISOString();
+          if (back !== canon) fail('EE-006', `${id}: collected_at が実在しない日時: ${kv.collected_at} (正規化すると ${back})`);
           // 未来に採取された証拠は存在しない。**許容ゼロ** (時計ずれの猶予を置かない)。
           else if (t > Date.now()) {
             fail('EE-007', `${id}: collected_at が未来: ${kv.collected_at}`);
