@@ -19,6 +19,15 @@ depends_on: []
 `spec-guard.mjs` は汎用 YAML パーサを持たない。**曖昧な記法を「たぶんこういう意味」と解釈させないため**、
 metadata の構文を以下に限定する。**逸脱は validate エラー**。
 
+**全ブロック共通の規則**（`spec-guard.mjs` が機械で見る）:
+
+- 使えるフェンスタグは `direct_fact` / `derived_fact` / `external_evidence` / `scope` /
+  `do_not_touch` / `acceptance` / `verification` と、**言語タグ無しの ```** だけ。
+  打ち間違い（`verifcation` 等）は**そのブロックが存在しないことになる**ので FAIL にする
+- 各ブロックは**対応する § の中**に置く（`scope`→§6, `acceptance`→§10, `verification`→§11 …）
+- **必須キーは値も非空**であること
+- **§ 見出しはコードフェンスの外**に書くこと。フェンス内の `## ...` は見出しとして数えない
+
 - front matter は **1 行目の `---`** で始まり、**次の `---`** で終わる
 - 各行は **`key: value`**。**コロンの後は半角スペース 1 個**
 - **入れ子・引用符・コメント・複数行値は不可**
@@ -154,9 +163,11 @@ criterion: <満たすべき条件>
 verified_by: V-01
 ```
 
-- `criterion` / `verified_by` は**必須**
+- `criterion` / `verified_by` は**必須**。**値が空の行は FAIL**（`criterion: ` だけでは通らない）
 - `verified_by` は **§11 に実在する Verification id** を指すこと（不明な id は validate FAIL）
 - id の重複は禁止
+- **1 件以上必須**。0 件だと「全 Acceptance が PASS」というゲートが空になるので FAIL
+- ```acceptance ブロックは **§10 の中**に置くこと（他の § に置くと FAIL）
 
 ---
 
@@ -175,6 +186,9 @@ expected_after: 0 errors
 ```
 
 - `id` / `kind` / `command` / `expected_baseline` / `expected_after` はすべて**必須**。id の重複は禁止
+- **値が空の行は FAIL**（`command: ` だけでは通らない）
+- **1 件以上必須**。0 件だと「全 Verification を実行」というゲートが空になるので FAIL
+- ```verification ブロックは **§11 の中**に置くこと（他の § に置くと FAIL）
 - Scan-Chat-AI には正式な `check` script と `@astrojs/check` があるので **`npm run check`** を使う
   （`npx astro check` は依存が無い repository で**対話プロンプトを出し package.json を書き換える**）
 

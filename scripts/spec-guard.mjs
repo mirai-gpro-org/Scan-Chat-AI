@@ -70,6 +70,20 @@ const REQUIRED_SECTIONS = [
   '## 13. Sources / Evidence',
 ];
 
+/**
+ * 各ブロックが置かれるべき § (`_TEMPLATE.md` の構成が正本)。
+ * どこに書いてもよいことにすると、§ 見出しは飾りになり構造が固定できない。
+ */
+const BLOCK_SECTION = {
+  direct_fact: '## 2. Direct Confirmed Facts',
+  derived_fact: '## 3. Derived Confirmed Facts',
+  external_evidence: '## 5. External Evidence Required',
+  scope: '## 6. Scope',
+  do_not_touch: '## 7. Do Not Touch',
+  acceptance: '## 10. Acceptance Criteria',
+  verification: '## 11. Verification Commands',
+};
+
 const EE_REQUIRED = ['required_fact', 'source', 'status', 'collected_by', 'collected_at', 'max_age_hours', 'evidence'];
 const EE_STATUS = ['resolved', 'unresolved'];
 const EE_COLLECTED_BY = ['human', 'trusted-readonly-connector'];
@@ -219,8 +233,17 @@ function blockKV(block, tag) {
   return kv;
 }
 
+/**
+ * 必須キーの**存在**と**非空**を両方見る。
+ * `blockKV` の正規表現は "key: " まで一致すれば通るので、`command: ` のような
+ * **空の必須値**が素通りする。許すと「全 Verification を実行」「全 Acceptance が
+ * PASS」というゲートが**中身のないまま満たされる** (fail-open)。
+ */
 function requireKeys(kv, keys, code, label) {
-  for (const k of keys) if (kv[k] === undefined) fail(code, `${label}: ${k} が無い`);
+  for (const k of keys) {
+    if (kv[k] === undefined) { fail(code, `${label}: ${k} が無い`); continue; }
+    if (kv[k].trim() === '') fail('BLK-009', `${label}: ${k} の値が空`);
+  }
 }
 
 // ── git ───────────────────────────────────────────────────────────────
@@ -247,6 +270,105 @@ function gitOk(args) {
  */
 const porcelain = () => (gitRaw(['status', '--porcelain', '-uall']) ?? '')
   .split('\n').filter((l) => l.trim() !== '').map((l) => l.replace(/\r$/, ''));
+
+// ══════════════════════════════════════════════════════════════════════
+// porcelain 1 行 → 触られたパスの集合 (rename 分解 / C-quote 復号)
+// ══════════════════════════════════════════════════════════════════════
+const C_ESCAPES = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92 };
+/**
+ * git の C-style quote を復号する。`core.quotePath` は既定 true なので、
+ * **日本語などを含むパスは `"..."` + 8 進エスケープ**で出る。外側の引用符を
+ * 外すだけだと `\346\227\245` のようなバイト列がそのままパスになり、scope 宣言と
+ * 一致せず**正当な変更が誤って SCOPE-010** になる。
+ * 復号できない入力は**推測せず null** (fail-closed)。
+ */
+function unquotePath(raw) {
+  if (!raw.startsWith('"')) return raw;
+  if (raw.length < 2 || !raw.endsWith('"')) return null;
+  const body = raw.slice(1, -1);
+  const bytes = [];
+  for (let i = 0; i < body.length; i += 1) {
+    const c = body[i];
+    if (c !== '\\') { for (const v of Buffer.from(c, 'utf8')) bytes.push(v); continue; }
+    const n = body[i + 1];
+    if (n === undefined) return null;
+    if (C_ESCAPES[n] !== undefined) { bytes.push(C_ESCAPES[n]); i += 1; continue; }
+    const oct = /^[0-7]{3}/.exec(body.slice(i + 1));
+    if (!oct) return null;
+    bytes.push(parseInt(oct[0], 8));
+    i += 3;
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
+/** `old -> new` の片側を 1 トークンとして読む。**引用の中の ` -> ` に騙されない**。 */
+function readPathToken(s, from) {
+  if (s[from] === '"') {
+    let j = from + 1;
+    while (j < s.length) {
+      if (s[j] === '\\') { j += 2; continue; }
+      if (s[j] === '"') break;
+      j += 1;
+    }
+    if (j >= s.length) return null;
+    return { raw: s.slice(from, j + 1), next: j + 1 };
+  }
+  const k = s.indexOf(' -> ', from);
+  return k === -1 ? { raw: s.slice(from), next: s.length } : { raw: s.slice(from, k), next: k };
+}
+
+/**
+ * porcelain 1 行を**触られたパスの配列**へ展開する。
+ * `R  old -> new` / `C  old -> new` は **1 行で 2 パス**。単一パス扱いだと
+ * old 側が誰の検査にもかからず、**Do Not Touch からの rename を見逃す**。
+ */
+function parsePorcelainLine(line) {
+  if (line.length < 4) { fail('PATH-005', `porcelain 行を解釈できない: ${JSON.stringify(line)}`); return []; }
+  const xy = line.slice(0, 2);
+  const rest = line.slice(3);
+  const decode = (raw) => {
+    const p = unquotePath(raw);
+    if (p === null) fail('PATH-005', `porcelain のパスを復号できない: ${JSON.stringify(raw)}`);
+    return p;
+  };
+  const first = readPathToken(rest, 0);
+  if (!first) { fail('PATH-005', `porcelain 行の引用が閉じていない: ${JSON.stringify(line)}`); return []; }
+  if (xy[0] === 'R' || xy[0] === 'C') {
+    if (!rest.slice(first.next).startsWith(' -> ')) {
+      fail('PATH-005', `rename/copy 行に " -> " が無い: ${JSON.stringify(line)}`); return [];
+    }
+    const second = readPathToken(rest, first.next + 4);
+    if (!second) { fail('PATH-005', `porcelain 行の引用が閉じていない: ${JSON.stringify(line)}`); return []; }
+    const oldP = decode(first.raw);
+    const newP = decode(second.raw);
+    const out = [];
+    // rename は「旧を消して新を作る」。copy は旧に触らないので新だけ。
+    if (xy[0] === 'R' && oldP !== null) out.push({ xy, kind: 'delete', path: oldP });
+    if (newP !== null) out.push({ xy, kind: xy[1] === 'D' ? 'delete' : 'create', path: newP });
+    return out;
+  }
+  const p = decode(first.raw);
+  if (p === null) return [];
+  let kind;
+  if (xy.includes('D')) kind = 'delete';
+  else if (xy.includes('?') || xy.includes('A')) kind = 'create';
+  else kind = 'modify';
+  return [{ xy, kind, path: p }];
+}
+
+const porcelainEntries = () => porcelain().flatMap(parsePorcelainLine);
+
+/** working tree の実体ハッシュ。存在しなければ `-`。 */
+function worktreeHash(p) {
+  const h = git(['hash-object', '--', p]);
+  return h && /^[0-9a-f]{40}$/.test(h) ? h : '-';
+}
+/** index (ステージ済み) の blob ハッシュ。無ければ `-`。 */
+function indexHash(p) {
+  const raw = git(['ls-files', '--stage', '--', p]);
+  const m = raw ? /^\d{6} ([0-9a-f]{40}) /.exec(raw.split('\n')[0]) : null;
+  return m ? m[1] : '-';
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // scope / do_not_touch
@@ -300,9 +422,16 @@ function modeValidate(specPath) {
   const blocks = parseFenced(text);
 
   // ── 必須 13 セクション: 存在 / 重複なし / 順序 1→13 ──
+  // **コードフェンスの中の見出しは数えない**。数えると、フェンス内に 13 行
+  // 並べるだけで存在・順序検査を満たせてしまう (fail-open)。
   const lines = text.split('\n');
+  const fenced = new Set();
+  for (const b of blocks) {
+    for (let l = b.startLine + 1; l < (b.endLine ?? b.startLine); l += 1) fenced.add(l);
+  }
   const seenAt = new Map();
   for (let i = 0; i < lines.length; i += 1) {
+    if (fenced.has(i + 1)) continue;
     const h = lines[i].replace(/\s+$/, '');
     if (!/^## /.test(h)) continue;
     if (!REQUIRED_SECTIONS.includes(h)) continue;
@@ -313,6 +442,23 @@ function modeValidate(specPath) {
   const order = REQUIRED_SECTIONS.filter((h) => seenAt.has(h)).map((h) => seenAt.get(h));
   for (let i = 1; i < order.length; i += 1) {
     if (order[i] < order[i - 1]) { fail('SEC-003', '必須セクションの順序が 1→13 になっていない'); break; }
+  }
+
+  // ── ブロックが対応する § の中にあるか ──
+  // (13 セクションが揃っているときだけ見る。欠けていれば SEC-001/003 で既に FAIL)
+  if (seenAt.size === REQUIRED_SECTIONS.length) {
+    const heads = [...seenAt.entries()]
+      .map(([h, i]) => ({ h, line: i + 1 }))
+      .sort((x, y) => x.line - y.line);
+    for (const b of blocks) {
+      const want = BLOCK_SECTION[b.tag];
+      if (!want) continue;
+      let cur = null;
+      for (const x of heads) { if (x.line < b.startLine) cur = x.h; else break; }
+      if (cur !== want) {
+        fail('SEC-004', `\`\`\`${b.tag} ブロック (${b.startLine} 行目) が ${want} の中に無い (現在: ${cur ?? '最初の見出しより前'})`);
+      }
+    }
   }
 
   if (!meta) return;
@@ -385,8 +531,8 @@ function modeValidate(specPath) {
           const back = new Date(t).toISOString().replace(/\.000Z$/, 'Z');
           const norm = kv.collected_at.replace(/\.000Z$/, 'Z');
           if (back !== norm) fail('EE-006', `${id}: collected_at が実在しない日時: ${kv.collected_at} (正規化すると ${back})`);
-          // 未来に採取された証拠は存在しない。時計ずれの余地として 5 分だけ許容する。
-          else if (t - Date.now() > 5 * 60_000) {
+          // 未来に採取された証拠は存在しない。**許容ゼロ** (時計ずれの猶予を置かない)。
+          else if (t > Date.now()) {
             fail('EE-007', `${id}: collected_at が未来: ${kv.collected_at}`);
           }
         }
@@ -415,7 +561,10 @@ function modeValidate(specPath) {
 
   // ── Verification ──
   const verifyIds = new Set();
-  for (const b of blocksOfTag(blocks, 'verification')) {
+  const verifyBlocks = blocksOfTag(blocks, 'verification');
+  // **0 件を通さない**。無いと「全 Verification を実行」というゲートが空になる。
+  if (verifyBlocks.length === 0) fail('VER-011', '```verification ブロックが 1 つも無い — 検証手段の無い spec で実装開始は禁止');
+  for (const b of verifyBlocks) {
     const id = b.id ?? '(id無し)';
     if (b.id) verifyIds.add(b.id);
     const kv = blockKV(b, 'verification');
@@ -423,7 +572,10 @@ function modeValidate(specPath) {
     if (kv.kind !== undefined && !VERIFY_KINDS.includes(kv.kind)) fail('VER-001', `${id}: kind が不正: ${kv.kind} — ${VERIFY_KINDS.join(' | ')}`);
   }
   // ── Acceptance ──
-  for (const b of blocksOfTag(blocks, 'acceptance')) {
+  const acceptBlocks = blocksOfTag(blocks, 'acceptance');
+  // **0 件を通さない**。無いと「全 Acceptance が PASS」というゲートが空になる。
+  if (acceptBlocks.length === 0) fail('AC-012', '```acceptance ブロックが 1 つも無い — 受入基準の無い spec で実装開始は禁止');
+  for (const b of acceptBlocks) {
     const id = b.id ?? '(id無し)';
     const kv = blockKV(b, 'acceptance');
     requireKeys(kv, ['criterion', 'verified_by'], 'AC-010', id);
@@ -466,16 +618,6 @@ function checkSources(text, baselineSha, baseRef) {
 // ══════════════════════════════════════════════════════════════════════
 // scope (実装後)
 // ══════════════════════════════════════════════════════════════════════
-function classify(line) {
-  const x = line.slice(0, 2);
-  const p = line.slice(3).trim().replace(/^"|"$/g, '');
-  let kind;
-  if (x.includes('D')) kind = 'delete';
-  else if (x.includes('?') || x.includes('A')) kind = 'create';
-  else kind = 'modify';
-  return { kind, path: p };
-}
-
 function modeScope(specPath) {
   const text = readFileSync(specPath, 'utf8');
   const blocks = parseFenced(text);
@@ -483,16 +625,20 @@ function modeScope(specPath) {
   if (scope === null) return;
   const dnt = [...PERMANENT_DO_NOT_TOUCH, ...parseExtraDoNotTouch(blocks)];
 
-  const cur = new Set(porcelain());
+  const cur = new Map();
+  for (const e of porcelainEntries()) cur.set(`${e.kind} ${e.path}`, e);
   const baseFile = process.env.SPEC_GUARD_BASELINE;
   if (baseFile && existsSync(baseFile)) {
-    for (const l of readFileSync(baseFile, 'utf8').split('\n')) if (l.trim() !== '') cur.delete(l.replace(/\r$/, ''));
+    for (const l of readFileSync(baseFile, 'utf8').split('\n')) {
+      const t = l.replace(/\r$/, '');
+      if (t.trim() === '') continue;
+      for (const e of parsePorcelainLine(t)) cur.delete(`${e.kind} ${e.path}`);
+    }
     note(`SPEC_GUARD_BASELINE を適用 (${baseFile})`);
   }
   if (cur.size === 0) note('実装差分なし (working tree に変更が無い)');
 
-  for (const line of cur) {
-    const c = classify(line);
+  for (const c of cur.values()) {
     // path 安全性を最初に見る (Do Not Touch 判定より前)
     const unsafe = pathSafetyError(c.path);
     if (unsafe) { fail('PATH-004', `変更されたパスが安全でない: ${c.path} — ${unsafe}`); continue; }
@@ -506,22 +652,69 @@ function modeScope(specPath) {
 // ══════════════════════════════════════════════════════════════════════
 // snapshot / verify-clean — Verification 自身が tree を汚していないかを機械比較
 // ══════════════════════════════════════════════════════════════════════
+const SNAPSHOT_VERSION = '# spec-guard-snapshot v2';
+const SNAPSHOT_ENTRY_RE = /^entry (..) ([0-9a-f]{40}|-) ([0-9a-f]{40}|-) (".*")$/;
+
+/**
+ * working tree の状態を**内容ハッシュ付き**で書き出す。
+ * porcelain の行だけを比べると、同じファイルが前後とも ` M path` のまま
+ * **中身だけ書き換わった場合に差分ゼロ**と判定され、「Verification は
+ * repository を書き換えていない」を保証できない (PoC-2 レビュー指摘)。
+ * そこで HEAD / index blob / working tree 実体の 3 つを記録する。
+ */
 function modeSnapshot() {
-  process.stdout.write(`${porcelain().join('\n')}\n`);
+  const lines = [SNAPSHOT_VERSION, `head ${git(['rev-parse', 'HEAD']) ?? '-'}`];
+  for (const e of porcelainEntries()) {
+    lines.push(`entry ${e.xy} ${worktreeHash(e.path)} ${indexHash(e.path)} ${JSON.stringify(e.path)}`);
+  }
+  process.stdout.write(`${lines.join('\n')}\n`);
 }
 
 function modeVerifyClean(snapFile) {
   if (!snapFile) { fail('VC-000', 'snapshot ファイルが指定されていない'); return; }
   if (!existsSync(snapFile)) { fail('VC-001', `snapshot ファイルが存在しない: ${snapFile}`); return; }
-  const before = readFileSync(snapFile, 'utf8').split('\n').filter((l) => l.trim() !== '').map((l) => l.replace(/\r$/, ''));
-  const after = porcelain();
-  const b = new Set(before);
-  const a = new Set(after);
-  const added = after.filter((l) => !b.has(l));
-  const removed = before.filter((l) => !a.has(l));
-  if (added.length === 0 && removed.length === 0) { note('Verification は working tree を変更していない'); return; }
-  for (const l of added) fail('VC-010', `Verification 後に増えた変更: ${l}`);
-  for (const l of removed) fail('VC-011', `Verification 後に消えた変更: ${l}`);
+  const raw = readFileSync(snapFile, 'utf8').split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l !== '');
+  // **旧形式を新しい規則で比較すると素通りする**ので、版が違えば解釈せず FAIL。
+  if (raw[0] !== SNAPSHOT_VERSION) {
+    fail('VC-002', `snapshot の形式が古い/不明 — 先頭行が "${SNAPSHOT_VERSION}" でない: ${JSON.stringify(raw[0] ?? '')}`);
+    return;
+  }
+  const before = new Map();
+  let beforeHead = null;
+  let parseErr = false;
+  for (let i = 1; i < raw.length; i += 1) {
+    const l = raw[i];
+    if (l.startsWith('head ')) { beforeHead = l.slice(5); continue; }
+    const m = SNAPSHOT_ENTRY_RE.exec(l);
+    if (!m) { fail('VC-003', `snapshot の行を解釈できない (${i + 1} 行目): ${JSON.stringify(l)}`); parseErr = true; continue; }
+    let path;
+    try { path = JSON.parse(m[4]); }
+    catch { fail('VC-003', `snapshot のパスを復号できない (${i + 1} 行目): ${m[4]}`); parseErr = true; continue; }
+    before.set(path, { xy: m[1], wt: m[2], idx: m[3] });
+  }
+  if (parseErr) return;
+
+  const nowHead = git(['rev-parse', 'HEAD']) ?? '-';
+  if (beforeHead !== null && beforeHead !== nowHead) {
+    fail('VC-012', `Verification が HEAD を動かした: ${beforeHead} → ${nowHead}`);
+  }
+
+  const after = new Map();
+  for (const e of porcelainEntries()) {
+    after.set(e.path, { xy: e.xy, wt: worktreeHash(e.path), idx: indexHash(e.path) });
+  }
+  let dirty = beforeHead !== null && beforeHead !== nowHead;
+  for (const [path, a] of after) {
+    const b = before.get(path);
+    if (!b) { fail('VC-010', `Verification 後に増えた変更: ${a.xy} ${path}`); dirty = true; continue; }
+    if (b.xy !== a.xy) { fail('VC-013', `Verification 後に git の状態が変わった: ${path} (${b.xy} → ${a.xy})`); dirty = true; }
+    if (b.wt !== a.wt) { fail('VC-014', `Verification 後に working tree の内容が変わった: ${path}`); dirty = true; }
+    if (b.idx !== a.idx) { fail('VC-015', `Verification 後に index の内容が変わった: ${path}`); dirty = true; }
+  }
+  for (const [path, b] of before) {
+    if (!after.has(path)) { fail('VC-011', `Verification 後に消えた変更: ${b.xy} ${path}`); dirty = true; }
+  }
+  if (!dirty) note('Verification は working tree を変更していない');
 }
 
 // ── entry ─────────────────────────────────────────────────────────────
