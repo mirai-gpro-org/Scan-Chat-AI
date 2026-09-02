@@ -33,7 +33,7 @@ $IntakeKey = '__LAB_INTAKE_KEY__'
 # 成功時は何も送らない。送るのは form 内のタグと script だけで、本文テキストは含めない
 # (= 受診者一覧のような表は構造上入らない)。**ここを最初からやっておくべきだった。**
 $ProbeToken = '__PROBE_TOKEN__'
-$Version   = 'daily-1.5'
+$Version   = 'daily-1.6'
 
 # 初回の安全弁。last_to がまだ無いとき、いきなり全期間を引かない。
 # 失敗しても last_to は動かないので取り漏れは起きないが、初回から広く取ると
@@ -193,7 +193,7 @@ try {
   $g = Invoke-WebRequest -Uri $LoginUrl -Certificate $cert -SessionVariable session -UseBasicParsing -TimeoutSec 30
   $tok = ''
   $m = [regex]::Match($g.Content, 'name="__RequestVerificationToken"[^>]*value="([^"]+)"')
-  if ($m.Success) { $tok = $m.Groups[1].Value }
+  if ($m.Success) { $tok = Html-Decode $m.Groups[1].Value }
   $body = @{
     UserID   = $cred.UserName
     Password = $cred.GetNetworkCredential().Password
@@ -239,6 +239,23 @@ $script:Stage = 'download'
 #   結果、選択欄と実行ボタンを**送らないまま**同じ画面を POST し続け、
 #   `/hanyou/entry` が 4 回連続で返って CSV に到達しなかった。
 #   ブラウザは「押したボタン 1 個だけ」を送るので、submit 系は fields と分けて持つ。
+# **HTML の属性値は実体参照で書かれている。デコードしてから送る。**
+#
+# 【実障害 2026-09-02・骨格で確定】これをやっていなかったため、
+#   `DairitenName` が 1 回 POST するごとに 1 段ずつ多重エスケープされ、
+#   3 段目には `&amp;amp;amp;#x682A;…` (4 重) になっていた。
+#   = **こちらが値を壊しながら送り続け、サーバに 1 段目へ突き返されていた。**
+#   「押し方が分からない」のではなく「送っている中身が壊れていた」のが真因。
+#
+# ブラウザと同じ**1 回だけ**デコードする (2 回やると別の壊し方になる)。
+function Html-Decode([string]$v) {
+  if (-not $v) { return $v }
+  try { return [System.Net.WebUtility]::HtmlDecode($v) } catch {}
+  # 古い環境向けの保険。順序は &amp; を最後にする (先に戻すと二重に解ける)。
+  $v = $v -replace '&lt;', '<' -replace '&gt;', '>' -replace '&quot;', '"' -replace '&#39;', "'"
+  return ($v -replace '&amp;', '&')
+}
+
 # hidden へ JS が入れる値を、与えられたテキスト (ページ本文でも .js でも) から拾う。
 #   X.value='v' / X.value = "v" / ["X"].value='v' / $('#X').val('v')
 # **値をコードに埋めないための唯一の手段**なので、探す場所だけを増やしていく。
@@ -275,7 +292,7 @@ function Get-Forms([string]$html, [string]$pageUrl) {
       $n = [regex]::Match($tag, '(?i)name="([^"]*)"')
       $v = [regex]::Match($tag, '(?i)value="([^"]*)"')
       $name = if ($n.Success) { $n.Groups[1].Value } else { '' }
-      $val  = if ($v.Success) { $v.Groups[1].Value } else { '' }
+      $val  = if ($v.Success) { Html-Decode $v.Groups[1].Value } else { '' }
       if ($type -eq 'reset') { continue }
       if ($type -match '^(submit|image|button)$') {
         # value はボタンの見出し (「次へ」等) で受診者の情報ではない。診断に出してよい。
@@ -323,7 +340,7 @@ function Get-Forms([string]$html, [string]$pageUrl) {
       foreach ($o in [regex]::Matches($sm.Groups['b'].Value, '(?is)<option\b(?<oa>[^>]*)>')) {
         $ov = [regex]::Match($o.Groups['oa'].Value, '(?i)value="([^"]*)"')
         $opts += [pscustomobject]@{
-          Value = if ($ov.Success) { $ov.Groups[1].Value } else { '' }
+          Value = if ($ov.Success) { Html-Decode $ov.Groups[1].Value } else { '' }
           Sel   = ($o.Groups['oa'].Value -match '(?i)\bselected\b')
         }
       }
@@ -338,7 +355,7 @@ function Get-Forms([string]$html, [string]$pageUrl) {
     foreach ($tm in [regex]::Matches($f, '(?is)<textarea\b(?<a>[^>]*)>(?<b>.*?)</textarea>')) {
       $n = [regex]::Match($tm.Groups['a'].Value, '(?i)name="([^"]*)"')
       if (-not $n.Success) { continue }
-      $fields[$n.Groups[1].Value] = $tm.Groups['b'].Value
+      $fields[$n.Groups[1].Value] = Html-Decode $tm.Groups['b'].Value
       $types[$n.Groups[1].Value]  = 'textarea'
       $shape += ("      textarea name={0}" -f $n.Groups[1].Value)
     }
@@ -355,7 +372,7 @@ function Get-Forms([string]$html, [string]$pageUrl) {
       if ($n.Success) {
         $submits += [pscustomobject]@{
           Name = $n.Groups[1].Value
-          Value = if ($v.Success) { $v.Groups[1].Value } else { '' }
+          Value = if ($v.Success) { Html-Decode $v.Groups[1].Value } else { '' }
           Label = $label
           Pos = $bm.Index
         }
@@ -507,10 +524,10 @@ try {
     # **同じ画面が返り続けたら、押すボタンを変えて試す。** 候補を使い切ったら
     # 黙って回り続けずに落とす (v1.0 は同じ body を 4 回送って上限で終わっていた)。
     if ($idx -ge $cands.Count) {
-      Diag ("  [{0}段目] 候補 {1} 通りを全て試しましたが画面が変わりません" -f $hop, $cands.Count)
+      Diag ("  [{0}段目] 候補 {1} 通りを全て試しましたが画面が変わりません (form action={2})" -f $hop, $cands.Count, $cur.Action)
       # **ここで骨格を回収する。** 押し方が分からない = 手元の情報が足りない、ということなので、
       # もう一度現地で回してもらう前に、判断に要るものを 1 回で持ち帰る。
-      Send-Skeleton $pageHtml ("進めなくなった画面 ({0}段目 / {1})" -f $hop, $u2raw)
+      Send-Skeleton $pageHtml ("進めなくなった画面 ({0}段目 / 直前POST={1} / この画面の form action={2})" -f $hop, $u2raw, $cur.Action)
       Finish 1 'fail' ("同じ画面から進めません (候補 {0} 通りを全て試行)" -f $cands.Count)
     }
 
