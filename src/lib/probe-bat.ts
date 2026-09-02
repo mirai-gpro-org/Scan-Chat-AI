@@ -72,10 +72,18 @@ export function buildProbeBat(
 ): ProbeBatResult {
   let ps = ps1.replace(READ_HOST_LINE, '');
 
-  if (token) {
-    if (!ps.includes(PROBE_TOKEN_PLACEHOLDER)) {
-      throw new Error(`プレースホルダ ${PROBE_TOKEN_PLACEHOLDER} が .ps1 に見つかりません`);
-    }
+  /*
+   * 調査用トークンの差し込み。
+   *
+   * **プレースホルダを持たない .ps1 もある**ので「無ければ落とす」にしない。
+   * ①(probe/recon) は結果を `probe-upload` へ送るのでトークンが要るが、
+   * ②(daily) は**取り込み専用キーで実行ログAPIへ報告する**ので使わない
+   * (`demecal_unattended_spec §3.1`)。ここで必須にすると②が配れない (実測 2026-09-02)。
+   * 逆に「プレースホルダはあるのに値が無い」ときは、送信できない bat を配ることに
+   * なるので**落とす** — 資格情報と同じ扱い。
+   */
+  if (ps.includes(PROBE_TOKEN_PLACEHOLDER)) {
+    if (!token) throw new Error(`${PROBE_TOKEN_PLACEHOLDER} を持つ .ps1 ですがトークンが渡されていません`);
     // PowerShell のシングルクォート文字列に入れるので ' だけは通せない。
     if (token.includes("'")) throw new Error("トークンに ' は使えません");
     ps = ps.split(PROBE_TOKEN_PLACEHOLDER).join(token);
