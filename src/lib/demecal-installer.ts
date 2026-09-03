@@ -38,6 +38,7 @@
 
 import { createHash } from 'node:crypto';
 import { INTAKE_KEY_PLACEHOLDER, PROBE_TOKEN_PLACEHOLDER } from './probe-bat';
+import { psQuote, readPs1Version, wrapPs1AsBat } from './demecal-bat';
 
 /** 配置先。**固定**。`C:\demecal\` 直下に置く運用ルールに合わせる (spec §4.4)。 */
 export const INSTALL_ROOT = 'C:\\demecal\\production';
@@ -74,26 +75,6 @@ export interface InstallerResult {
 
 function sha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
-}
-
-/** PowerShell のシングルクォート文字列へ安全に入れる。 */
-function psQuote(v: string): string {
-  return v.split("'").join("''");
-}
-
-/** cmd の `title` に置ける形へ落とす (ASCII のみ)。 */
-function asciiTitle(v: string): string {
-  const s = v.replace(/[^\x20-\x7E]/g, '').replace(/[&|<>^%"]/g, '').trim();
-  return s || 'demecal-install';
-}
-
-/** `$Version = 'production-1.0'` を読む。読めなければ落とす (版なしを黙って配らない)。 */
-export function readPs1Version(ps1: string): string {
-  const m = ps1.match(/^\s*\$Version\s*=\s*'([^']+)'/m);
-  if (!m) throw new Error('$Version が .ps1 に見つかりません');
-  const v = m[1].trim();
-  if (!/^[A-Za-z0-9._-]+$/.test(v)) throw new Error(`$Version の書式が不正: ${v}`);
-  return v;
 }
 
 /** base64 を読みやすい幅で折る (bat の差分と表示のため。復号側は空白を捨てる)。 */
@@ -345,42 +326,12 @@ export function buildDemecalProductionInstaller(input: InstallerInput): Installe
   P("Write-Host '  自動実行の登録 (タスクスケジューラ) は次の手順で行います。'");
   P('exit 0');
 
-  const psText = ps.join('\r\n') + '\r\n';
-
-  // ── 5. cmd 部 (ASCII のみ) ────────────────────────────────────────
-  //    **終了コードを握りつぶさない。** インストーラが 1 でも、bat が 0 を返すと
-  //    「失敗したのに成功に見える」= 混成セットを黙って許すのと同じことになる。
-  const head = [
-    '@echo off',
-    'chcp 65001 >nul',
-    `title ${asciiTitle(`demecal-install v${version.split('-').pop()}`)}`,
-    'set "ERRLOG=%TEMP%\\demecal_install_error.txt"',
-    'powershell -NoProfile -ExecutionPolicy Bypass -Command '
-      + '"$s=Get-Content -LiteralPath \'%~f0\' -Encoding UTF8; '
-      + 'Invoke-Expression (($s[{SKIP}..($s.Count-1)]) -join [Environment]::NewLine)" 2> "%ERRLOG%"',
-    'set "RC=%ERRORLEVEL%"',
-    'echo.',
-    'echo ---- error log (empty is normal): %ERRLOG%',
-    'type "%ERRLOG%"',
-    'echo.',
-    'pause',
-    'exit /b %RC%',
-  ];
-  const skip = head.length;
-  const psLine = head.findIndex((l) => l.startsWith('powershell '));
-  if (psLine < 0) throw new Error('powershell 行が見つかりません');
-  head[psLine] = head[psLine].replace('{SKIP}', String(skip));
-
-  const content = head.join('\r\n') + '\r\n' + psText;
-  const bytes = new TextEncoder().encode(content);
-
-  // 壊れた bat を配らないための自己検証 (`buildProbeBat` と同じ規律)。
-  const lines = content.split('\r\n');
-  // eslint-disable-next-line no-control-regex
-  if (!lines.slice(0, skip).every((l) => /^[\x00-\x7F]*$/.test(l))) {
-    throw new Error('cmd 部に非 ASCII が混ざった');
-  }
-  if (!lines[skip]?.startsWith('#')) throw new Error('PowerShell 部の開始位置がずれている');
+  // ── 5. cmd 部は配布共通 (`demecal-bat.ts`)。終了コードを返す形が要る ──
+  const { bytes } = wrapPs1AsBat(
+    ps.join('\r\n') + '\r\n',
+    `demecal-install v${version.split('-').pop()}`,
+    'demecal_install_error.txt',
+  );
 
   return { bytes, version, entries };
 }

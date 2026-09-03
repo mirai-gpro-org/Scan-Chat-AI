@@ -605,7 +605,7 @@ C-2 retry / catch-up
 C-3 zero rows
 C-4 production acquisition runner
 C-4.1 distribution / install   (3 本を専用PC へ配置する)
-C-5 scheduler
+C-5 scheduler                  (無効のまま登録するところまで)
 C-6 monitoring
 ```
 
@@ -1213,11 +1213,141 @@ JST の local fallback（C-4）と同じ構図。
 - 1 回の指定範囲の上限（変わらず**未確定**）。
 - `rows>0` の受け渡し先（**scope 外**）。
 
-### C-5. scheduler
+### C-5. scheduler（2026-09-03・実装済み）
 
-Windows Task Scheduler。ユーザー `info` / 「ログオン中のみ実行」/
-ログオン時＋毎日 / 「開始時刻を過ぎたらすぐ開始」ON（`demecal_unattended_spec §4.3`）。
-**実行時刻は業務判断。コードで勝手に決めない。**
+Windows Task Scheduler へ**登録するだけ**。`demecal-production.ps1` は変更していない。
+
+#### 最大の安全条件 = 登録するタスクは最初から無効
+
+```xml
+<Settings>
+  <Enabled>false</Enabled>
+</Settings>
+```
+
+**C-6 monitoring と最終の controlled validation が終わるまで自動取得を始めない。**
+登録 → 設定の確認 → **無効のまま終了**。ここまで。
+
+登録の実行そのものが取得を 1 回も始めないこと (`schtasks /Run` / `Enable-ScheduledTask` /
+production runner の起動 / デメカルへの接続 / state API) は、**実測 0 回**で固定してある
+(検査 C07〜C11。スタブに数えさせる)。
+
+#### タスク契約
+
+| | |
+|---|---|
+| タスク名 | `Wellfort-Demecal-Acquisition` |
+| action | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\demecal\production\demecal-production.ps1"` |
+| principal | **setup を実行した今のユーザー**。`UserId` は名前でなく**解決した SID** |
+| logon type | `InteractiveToken`（**Windows のパスワードを保存しない**） |
+| run level | `LeastPrivilege` |
+| triggers | ①当該ユーザーの `LogonTrigger` ②`CalendarTrigger` 日次 `HH:MM` |
+| その他 | `StartWhenAvailable=true` / `MultipleInstancesPolicy=IgnoreNew` / `ExecutionTimeLimit=PT30M` |
+
+**「ユーザーがログオンしているかどうかにかかわらず実行する」は採らない**
+(`demecal_unattended_spec §4.3` の確定どおり)。理由は**証明書**で、mTLS の
+クライアント証明書は `Cert:\CurrentUser\My` にしか無い。別ユーザー / SYSTEM で走らせると
+証明書が見えず必ず失敗する。**だから `info` のようなアカウント名をベタ書きせず、
+実行中の SID を解決して principal に入れる** — 「証明書と DPAPI 資格情報を持っている今の
+ユーザー」と task principal を一致させるのが要件だから。
+
+#### 実行時刻 `DEMECAL_DAILY_AT`
+
+**repo 側で未確定なので既定値を作らない。** 配布生成時の env で与える。
+`^(?:[01]\d|2[0-3]):[0-5]\d$` の完全一致だけ受理し、**未設定・不正なら bat を配らない**
+(`?script=production-scheduler` が 500)。`.ps1` 側にも同じ検査を置いてある
+(配布口を通らずに届いた場合の最後の砦 = `DAILY_AT_INVALID`)。
+
+前後の空白・改行だけは落として受ける — env は貼り付けで付きやすく、
+**空白を落としても不正な時刻が正しい時刻に化けることはない**ため。
+焼き込むのは trim 後の値であることを検査で固定している (A05b)。
+
+検査の fixture は `09:30`。**production の既定値ではない。**
+
+#### 登録前 preflight — 揃っていなければ 1 つも登録しない
+
+```
+C:\demecal\production\ に 3 本 + install-manifest.json が在るか
+手控えの 3 つの SHA-256 と実ファイルを再照合    ← 混成セットの上へ登録しない
+Cert:\CurrentUser\My に 発行者=demecal.net CA かつ 秘密鍵あり の証明書が在るか
+① recon が作った DPAPI 資格情報ファイルが在るか
+```
+
+**値もパスワードも拇印も表示しない。在るか無いかだけ。**
+どれか 1 つでも欠ければ `SCHEDULER_INSTALL_FAILED <コード>` / exit != 0 /
+**タスク登録 0 回**で止め、C-4.1 installer や ① recon を先に実行すべき状態として返す。
+
+#### 登録したら読み戻して照合する
+
+`schtasks /Create /XML` が通ったこと自体を成功の証拠にしない。
+`schtasks /Query /TN <name> /XML` で読み戻し、**task name / user SID / InteractiveToken /
+LeastPrivilege / Enabled=false / daily time / LogonTrigger / StartWhenAvailable /
+IgnoreNew / PT30M / action path** を照合する。1 つでも違えば
+`REGISTERED_MISMATCH` で失敗にする。タスクスケジューラの画面は開かせない。
+
+#### 配布 — Reality Check の結論は「`buildProbeBat()` を再利用しない」
+
+.ps1 は 1 本なので形の上では載るが、実際に読んで確かめると 2 点で載らない:
+
+1. **`__DAILY_AT__` を知らない。** `buildProbeBat()` が扱うのは
+   `__PROBE_TOKEN__` / `__LAB_INTAKE_KEY__` / `__DEMECAL_USER__` / `__DEMECAL_PASS__` の 4 つだけ。
+   実行時刻を差し込み「未設定・不正なら配らない」を持たせるには**あちらへ分岐を足す**ことになる。
+2. **終了コードを握りつぶす。** cmd 部が `exit /b` で終わり `%ERRORLEVEL%` を返さない。
+   C-5 は `SCHEDULER_INSTALL_FAILED` → exit != 0 が契約なので成立しない。
+
+→ 別 builder `src/lib/demecal-scheduler.ts`。cmd 部は C-4.1 と共通化して
+**`src/lib/demecal-bat.ts` の `wrapPs1AsBat()`** に置いた (終了コードを返す形は 1 か所)。
+**`buildProbeBat()` は 1 行も変えていない**。`daily` の 409 凍結も維持。
+
+配布口 = `GET /api/ops/probe-bat?k=<PROBE_UPLOAD_TOKEN>&script=production-scheduler`。
+
+#### 検証 `npm run verify:demecal-scheduler`（119 件）
+
+C-4.1 と同じく node（組み立て・配布口）と PowerShell（実際の登録）を 1 本で跨ぐ。
+**bat の cmd 部と同じ形で起動し、skip 行数も bat 自身から読む。**
+preflight の入力は **C-4.1 installer が実際に置いた 3 本 + 手控え**を使う (捏造しない)。
+
+Windows にしか無いもの (SID / 証明書ストア / `schtasks`) だけをドライバ側で差し替える。
+**preflight も XML 生成も照合も本物のコードが走る。**
+
+> **`$GetUserSid` / `$GetUserName` を関数でなく scriptblock 変数にしてある理由 (実測)**:
+> 関数だと `Invoke-Expression` された本体側の定義が**後から勝って**スタブが効かない。
+> `$InstallRoot` と同じ「呼び出し元が先に定義していればそれを使う」形にした。
+> 専用PC では `-NoProfile` 起動なので未定義 = 本物が使われる。
+
+#### 退行を注入して落ちることを確認（7 通り）
+
+| 注入した退行 | 落ちた検査 |
+|---|---|
+| 有効な状態で登録する (`Enabled=true`) | C02 / C04 / C16 |
+| 登録後にタスクを起動する (`schtasks /Run`) | A20 / C10 / **C11 (外部操作 1 回)** |
+| Windows パスワードで登録 (`LogonType=Password`) | A17×2 / A18 / C02 / C04 / C14 / C25 |
+| 実行時刻に既定値を作る | A04 / A05 / **B12 (未設定でも 200 になる)** |
+| 読み戻しの照合をやめる | C34〜C37 |
+| preflight の SHA 再照合をやめる | **C28 のみ** |
+| 証明書チェックをやめる | **C30 のみ** |
+
+**検査自身の誤検出も 2 件出た (どちらも検査側を直した)**:
+`.ps1` の冒頭コメントが「`schtasks /Run` しない」と宣言しているため素のテキストでは
+自分の説明文に当たる → **ブロックコメントを先に落としてから grep**
+(行コメントを先に消すと `#>` が消えて対応が壊れる。C-4.1 と同じ穴)。
+`/Run` は `<RunLevel>` `<RunOnlyIfIdle>` に部分一致するので**語として**見る。
+
+#### 未確認（実機で 1 回通すまで確定しない）
+
+- **Task Scheduler の XML スキーマ**と `schtasks /Query /XML` の出力エンコーディング。
+  手元に Windows が無いので実測できていない。
+  ただし**間違っていても害は出ない** — `/Create` が失敗すれば読み戻しも失敗し、
+  `SCHEDULER_INSTALL_FAILED` / 登録 0 で止まる (fail-closed)。しかも登録できても**無効**。
+- `CalendarTrigger` の `StartBoundary` は**固定日付** (`2026-01-01T<HH:MM>:00`)。
+  実行日を入れると生成のたびに XML が変わり検査で固定できないため。
+  日次トリガは開始日以降の毎日なので過去日付でよい、という理解は**未検証**。
+
+#### C-5 で決めていないもの
+
+- **有効化 (`Enabled=true` にする操作) は C-6 の後**。ここでは手順も自動化も作らない。
+- 実行時刻の値そのもの (業務判断)。
+- 1 回の指定範囲の上限 / `rows>0` の受け渡し先 (変わらず **scope 外**)。
 
 ### C-6. monitoring
 
@@ -1236,7 +1366,8 @@ to = 当日を使わない
 0 件を正常に扱う
 production runner の 3 本が 1 回の操作で専用PC へ揃って入る (混成セットにしない)
 production runner が無人で走る
-scheduler が登録され、走ったことがサーバ側に残る
+scheduler が **無効のまま**登録され、設定が意図どおりであることを機械で確認できる
+scheduler を有効化したあと、走ったことがサーバ側に残る
 失敗が人に届く
 PII を不要に保存しない
 ```

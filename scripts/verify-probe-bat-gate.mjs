@@ -68,6 +68,7 @@ process.env.PROBE_UPLOAD_TOKEN = TOKEN;
 process.env.DEMECAL_USER_ID = 'verify-user';
 process.env.DEMECAL_PASSWORD = 'verify-pass';
 process.env.LAB_INTAKE_API_KEY = 'verify-intake-key';
+process.env.DEMECAL_DAILY_AT = '09:30';   // fixture。**production の既定値ではない**
 
 const { GET } = await import(`${pathToFileURL(OUT).href}?t=${Date.now()}`);
 
@@ -82,7 +83,7 @@ async function call(query) {
  * 「script なし → 400」を消すと Phase B の事故が再発するので、必ず残す。
  */
 const CASES = [
-  { name: 'script なし',            query: '',                 status: 400, body: 'script is required (probe | recon | daily | verify | production-install)' },
+  { name: 'script なし',            query: '',                 status: 400, body: 'script is required (probe | recon | daily | verify | production-install | production-scheduler)' },
   { name: 'script= (空)',           query: '&script=',         status: 400, body: 'script is required' },
   { name: 'script=   (空白のみ)',   query: '&script=%20%20',   status: 400, body: 'script is required' },
   { name: 'script=probe',           query: '&script=probe',    status: 200 },
@@ -91,6 +92,8 @@ const CASES = [
   // C-4.1 の本番 runner インストーラ。**組み立て方が違う**ので `SCRIPTS` には無い
   // (3 本をディスクへ配置する。中身の検査は `npm run verify:demecal-installer`)。
   { name: 'script=production-install', query: '&script=production-install', status: 200 },
+  // C-5 のタスクスケジューラ登録。これも `SCRIPTS` には無い (別 builder・実行時刻を焼き込む)。
+  { name: 'script=production-scheduler', query: '&script=production-scheduler', status: 200 },
   { name: 'script=daily (凍結)',    query: '&script=daily',    status: 409, body: '凍結中' },
   { name: 'script=unknown',         query: '&script=nope',     status: 400, body: 'unknown script' },
   { name: 'script=constructor',     query: '&script=constructor', status: 400, body: 'unknown script' },

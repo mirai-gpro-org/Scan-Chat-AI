@@ -42,6 +42,8 @@ const TARGETS = [
   // C-1 の範囲プランナ。手続き部を持たない lib だが、C-4 の本番 runner が dot-source する。
   'scripts/demecal-range.ps1',
   'scripts/demecal-production.ps1',
+  // C-5 のタスクスケジューラ登録。手続き部を持つので順序を見る対象。
+  'scripts/demecal-scheduler.ps1',
 ];
 
 interface Fn { name: string; defLine: number; startLine: number; endLine: number }

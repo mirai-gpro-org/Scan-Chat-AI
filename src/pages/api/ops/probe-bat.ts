@@ -26,8 +26,10 @@ import DAILY_PS1 from '../../../../scripts/demecal-daily.ps1?raw';
 import VERIFY_PS1 from '../../../../scripts/demecal-verify.ps1?raw';
 import PRODUCTION_PS1 from '../../../../scripts/demecal-production.ps1?raw';
 import RANGE_PS1 from '../../../../scripts/demecal-range.ps1?raw';
+import SCHEDULER_PS1 from '../../../../scripts/demecal-scheduler.ps1?raw';
 import { buildProbeBat } from '../../../lib/probe-bat';
 import { buildDemecalProductionInstaller } from '../../../lib/demecal-installer';
+import { buildDemecalSchedulerBat } from '../../../lib/demecal-scheduler';
 
 export const prerender = false;
 
@@ -71,6 +73,19 @@ type ScriptKey = keyof typeof SCRIPTS;
 const INSTALLER_KEY = 'production-install';
 const INSTALLER_JA = 'デメカル自動取得_インストール';
 const INSTALLER_ASCII = 'demecal-install';
+
+/**
+ * **タスクスケジューラ登録 (C-5)。** これも `SCRIPTS` に載せない。
+ *
+ * .ps1 は 1 本だが、`buildProbeBat()` は `__DAILY_AT__` を知らず、cmd 部が
+ * 終了コードを返さない (`exit /b`)。あちらへ production 向けの分岐を足さない、
+ * という方針なので別 builder を通す (`src/lib/demecal-scheduler.ts` 冒頭に Reality Check)。
+ *
+ * **実行時刻 `DEMECAL_DAILY_AT` が未設定・不正なら配らない** (既定値を作らない)。
+ */
+const SCHEDULER_KEY = 'production-scheduler';
+const SCHEDULER_JA = 'デメカル自動取得_自動実行の登録';
+const SCHEDULER_ASCII = 'demecal-scheduler';
 
 /**
  * **配布を止めているスクリプト。**
@@ -156,7 +171,10 @@ export const GET: APIRoute = async ({ url }) => {
   // 黙って別のものを配るくらいなら、**落ちて気づける方がよい**。
   const rawKey = url.searchParams.get('script');
   if (rawKey === null || rawKey.trim() === '') {
-    return text('script is required (probe | recon | daily | verify | production-install)', 400);
+    return text(
+      'script is required (probe | recon | daily | verify | production-install | production-scheduler)',
+      400,
+    );
   }
 
   // 本番 runner のインストーラだけは組み立て方が違う (3 本を配置する)。
@@ -178,11 +196,28 @@ export const GET: APIRoute = async ({ url }) => {
     }
   }
 
+  if (rawKey.trim() === SCHEDULER_KEY) {
+    try {
+      const built = buildDemecalSchedulerBat({
+        ps1: SCHEDULER_PS1,
+        // **秘密ではない**ので env に置く (時刻は業務判断・既定値をコードで決めない)。
+        dailyAt: env('DEMECAL_DAILY_AT') ?? '',
+      });
+      const num = built.version.split('-').pop() as string;
+      return download(built.bytes, `${SCHEDULER_JA}_v${num}.bat`, `${SCHEDULER_ASCII}-v${num}.bat`);
+    } catch (err) {
+      return text(`build_failed: ${err instanceof Error ? err.message : String(err)}`, 500);
+    }
+  }
+
   const key = rawKey.trim() as ScriptKey;
   // `SCRIPTS[key]` だけだと `constructor` 等の prototype 由来のキーが
   // truthy になり 500 まで進んでしまうので、自前の所有キーだけを見る。
   if (!Object.prototype.hasOwnProperty.call(SCRIPTS, key)) {
-    return text(`unknown script: ${key} (probe | recon | daily | verify | production-install)`, 400);
+    return text(
+      `unknown script: ${key} (probe | recon | daily | verify | production-install | production-scheduler)`,
+      400,
+    );
   }
   const spec = SCRIPTS[key];
   const frozen = FROZEN[key];
