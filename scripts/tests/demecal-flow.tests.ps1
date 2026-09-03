@@ -416,8 +416,52 @@ $c2 = Test-CsvResponse (Read-Bytes 'sample-noheader.csv') 'text/csv' $cd
 Check 'T28 見出し行が無ければ CSV_HEADER_INVALID' `
   ((-not $c2.Ok) -and $c2.Code -eq 'CSV_HEADER_INVALID') ("code={0}" -f $c2.Code)
 
-$c3 = Test-CsvResponse (Read-Bytes 'sample-empty.csv') 'text/csv' 'attachment; filename="Q05-0010-000000result_20260701_0.csv"'
+$cd0 = 'attachment; filename="Q05-0010-000000result_20260701_0.csv"'
+$c3 = Test-CsvResponse (Read-Bytes 'sample-empty.csv') 'text/csv' $cd0
 Check 'T29 データ 0 件でヘッダが正しければ成功・rows=0' ($c3.Ok -and $c3.Rows -eq 0) ("ok={0} rows={1}" -f $c3.Ok, $c3.Rows)
+
+# ── C-3: 0 件成功と「失敗」を混同しない ────────────────────────
+# 正本: docs/lab/demecal_recovery_plan_20260902.md §7.2 C-3
+#
+# **なぜここを固定するか。** C-4 の runner は「valid CSV + rows=0 → 取得成功 →
+# last_to を要求 range の to まで前進」とする。つまり **rows の値が watermark を動かす**。
+# もし失敗経路が rows=0 を返すようになると、**失敗が「正常に 0 件だった」に化けて
+# watermark が前進し、その範囲は二度と取りに行かれない**（無人運用の唯一の土台が壊れる）。
+# → 失敗時は rows を**数えていない ($null)** ことをここで固定する。
+
+Check 'T29a 0 件成功は bytes > 0 (rows=0 と bytes=0 を混同しない)' `
+  ($c3.Bytes -gt 0) ("bytes={0}" -f $c3.Bytes)
+Check 'T29b 0 件成功はヘッダを確認した結果 (HeaderOk)' `
+  ($c3.HeaderOk -and $c3.MissingHeaders.Count -eq 0) ("headerOk={0}" -f $c3.HeaderOk)
+
+# 失敗 3 種。**どれも Rows を 0 と報告しない** (数えていないので $null のまま)。
+$zeroConfusion = @()
+foreach ($case in @(
+  @{ n = 'bytes=0';   b = (New-Object byte[] 0);                          ct = 'text/csv';  d = $cd0 },
+  @{ n = 'header無し'; b = (Read-Bytes 'sample-noheader.csv');              ct = 'text/csv';  d = $cd0 },
+  @{ n = 'HTML';      b = ([Text.Encoding]::UTF8.GetBytes('<html>x</html>')); ct = 'text/html'; d = '' }
+)) {
+  $r = Test-CsvResponse $case.b $case.ct $case.d
+  if ($r.Ok -or $r.Rows -eq 0) { $zeroConfusion += ('{0}: ok={1} rows={2}' -f $case.n, $r.Ok, $r.Rows) }
+}
+Check 'T29c 失敗時に rows=0 と報告しない (失敗が 0 件成功に化けない)' `
+  ($zeroConfusion.Count -eq 0) ($zeroConfusion -join ' / ')
+
+# Shift_JIS でないバイト列。GetString は例外を投げず化けた文字を返すので
+# 「decode 失敗」では止まらないが、**必須ヘッダが一致せず CSV_HEADER_INVALID** になる。
+# ここが実際の防波堤なので、そこを固定する (`-not $txt` の枝は実質到達しない)。
+$c3u = Test-CsvResponse ([Text.Encoding]::UTF8.GetBytes("指図番号,結果承認日,結果項目数`r`n")) 'text/csv' $cd0
+Check 'T29d Shift_JIS でないバイト列は成功にしない (CSV_HEADER_INVALID)' `
+  ((-not $c3u.Ok) -and $c3u.Code -eq 'CSV_HEADER_INVALID') ("ok={0} code={1}" -f $c3u.Ok, $c3u.Code)
+
+# 末尾の空行で件数が水増しされない (0 件のままであること)。
+$c3n = Test-CsvResponse ((Read-Bytes 'sample-empty.csv') + [Text.Encoding]::ASCII.GetBytes("`r`n`r`n")) 'text/csv' $cd0
+Check 'T29e 末尾の空行を行として数えない (0 件のまま)' `
+  ($c3n.Ok -and $c3n.Rows -eq 0) ("ok={0} rows={1}" -f $c3n.Ok, $c3n.Rows)
+
+# 0 件と 1 件がきちんと分かれる (境界)。
+$c3one = Test-CsvResponse ((Read-Bytes 'sample-empty.csv') + [Text.Encoding]::GetEncoding('shift_jis').GetBytes("100000000000001,2026/07/03,25,1,1970/01/01,2026/07/01`r`n")) 'text/csv' $cd0
+Check 'T29f 0 件と 1 件を取り違えない' ($c3one.Ok -and $c3one.Rows -eq 1) ("rows={0}" -f $c3one.Rows)
 
 $c4 = Test-CsvResponse ([Text.Encoding]::UTF8.GetBytes('<html>error</html>')) 'text/html; charset=utf-8' ''
 Check 'T30 HTML が返ったら CSV_RESPONSE_INVALID' `

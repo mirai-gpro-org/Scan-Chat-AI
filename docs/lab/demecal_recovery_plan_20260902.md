@@ -729,6 +729,11 @@ C-1 で **`from = last_to + 1日` / overlap しない**と確定したので、
 overlap はしない
 ```
 
+> **用語の補足（2026-09-03）**: ここでいう **「no overlap」は、成功済み coverage に
+> 意図的な overlap を作らない**という意味。**failure で `last_to` を据え置いた場合に、
+> 次回 run が同じ未取得 range を再要求するのは retry 契約どおり**であって overlap ではない
+> （その range はまだ一度も取得できていない）。
+
 **取り漏れは overlap でなく「連続 range ＋ 失敗時 `last_to` 据置」で防ぐ。**
 成功した回だけ watermark が前進するので（`demecal-state.ts:74` の単調前進）、
 走らなかった日・失敗した日の範囲は**次の成功回がそのまま続きから拾う**。
@@ -819,6 +824,92 @@ network call / state POST / sleep / backoff / デメカルへのアクセスは 
 
 正しいヘッダがありデータ行 0 件なら**正常**。`rows=0` / `result=ok` とし、
 watermark だけ安全に前進させる。**0 件を error にしない。**
+
+#### C-3 確定仕様（2026-09-03）
+
+**0 件とは「CSV レスポンス自体が有効で、必須ヘッダが存在し、データ行が 0 件」のときだけ。**
+
+```text
+result = ok_zero
+rows   = 0
+```
+
+**0 件成功にしてはいけないもの（すべて failure）**:
+
+```text
+empty HTTP body
+HTML response
+header 無し
+Shift_JIS decode failure
+malformed CSV response
+```
+
+**`DataCount` を推測しない。** STATE C の hidden `DataCount` は実測で存在するが、
+`verify-1.4` は**意味を推測せずそのまま持ち回る**契約（§6 STATE C）。したがって
+**「`DataCount=0` だから CSV を取得せず成功」という近道は作らない**。
+0 件成功は**実際に返った valid CSV を検証した結果だけ**で判定する。
+実サイトが 0 件のとき CSV を返すのかどうかは**未確認**なので、推測で仕様化しない。
+
+**watermark 契約（C-4 で実装）**:
+
+```text
+valid CSV + rows=0 → acquisition success → last_to = 要求 range の to まで前進可
+```
+
+理由 = クエリ条件は結果承認日の range であり、**「その range について正常に 0 件だった」**
+ことを確認できたため。**C-3 では state POST を実装しない。**
+
+#### C-3 の Reality Check → 既存実装は変更不要・不足していた 1 点だけテストを足した
+
+`verify-1.4` の `Test-CsvResponse()`（`demecal-verify.ps1:690-747`）は既に契約どおり:
+
+| 入力 | 結果 |
+|---|---|
+| valid header + data rows ≥ 1 | `Ok=true` / `Rows=N` |
+| valid header + data rows = 0 | `Ok=true` / `Rows=0` |
+| zero bytes | `CSV_BYTES_INVALID` |
+| header 無し | `CSV_HEADER_INVALID` |
+| HTML response | `CSV_RESPONSE_INVALID` |
+
+**`verify-1.4` は 1 バイトも変更していない**（Phase B の成功証跡）。
+production 用 validator の共通化・parity は **C-4 runner 構築時**に行う。
+
+既存テストの棚卸しで **4 つは固定済み**だった（T29 header-only 成功 / T31 空 bytes 失敗 /
+T28 header 無し失敗 / T30 HTML 失敗）。**足りなかったのは「rows=0 と bytes=0 を混同しない」**で、
+これが**いちばん危ない穴**だった:
+
+> C-4 の watermark 規則は「valid CSV + rows=0 → 前進」なので、**rows の値が watermark を動かす**。
+> 失敗経路が `rows=0` を返すようになると、**失敗が「正常に 0 件だった」に化けて watermark が前進し、
+> その範囲は二度と取りに行かれない**（無人運用の唯一の土台が壊れる）。
+
+実測で、失敗 3 種はいずれも `Rows` を**数えていない（`$null`）**まま返すことを確認し、
+それをテストで固定した（`demecal-flow.tests.ps1` 129 → **135 件**）:
+
+| 追加 | 内容 |
+|---|---|
+| T29a | 0 件成功は `bytes > 0`（rows=0 と bytes=0 を混同しない） |
+| T29b | 0 件成功はヘッダを確認した結果（`HeaderOk`） |
+| **T29c** | **失敗時に `rows=0` と報告しない**（bytes=0 / header 無し / HTML の 3 種） |
+| T29d | Shift_JIS でないバイト列は成功にしない（`CSV_HEADER_INVALID`） |
+| T29e | 末尾の空行を行として数えない（0 件のまま） |
+| T29f | 0 件と 1 件を取り違えない |
+
+**T29d の補足（実測）**: `GetString` は不正なバイト列でも例外を投げず化けた文字を返すので、
+`Test-CsvResponse` の「Shift_JIS として読めません」の枝は**実質到達しない**。
+実際の防波堤は**必須ヘッダが一致せず `CSV_HEADER_INVALID` になること**なので、そちらを固定した。
+
+**退行を注入して落ちることを実測**（注入後は `verify-1.4` を復元。diff ゼロ）:
+
+| 注入した退行 | 結果 |
+|---|---|
+| `Rows` の初期値を `$null` → `0` | **T29c だけが落ちる（1 件）** |
+| 空応答を「0 件成功」として通す | 2 件（T29c / T31） |
+| 空行も 1 行として数える | 4 件（T24 / T29 / T29e / T29f） |
+| 必須ヘッダの検査をやめる | 3 件（T28 / T29c / T29d） |
+| ヘッダ行しか無い CSV を失敗にする | 3 件（T29 / T29b / T29e） |
+
+**1 行目が C-3 の核心** — `Rows = $null` を `0` に「整理」する変更は、
+**追加前の 129 件では 1 件も落ちなかった**。T29c だけが捕まえる。
 
 ### C-4. production acquisition runner
 
