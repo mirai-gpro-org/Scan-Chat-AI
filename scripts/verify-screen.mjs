@@ -21,7 +21,7 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { chromium } from 'playwright';
+import { chromium, devices } from 'playwright';
 
 const BASE = process.env.VERIFY_URL ?? 'http://localhost:4321';
 const EXEC = process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium';
@@ -130,6 +130,68 @@ const shellWidth = async (page, path) => {
   const waOk = wa.nums === 2 && wa.gauge;
   console.log(`${waOk ? '✓' : '✗'} 画面の冒頭にウェルネス年齢 (大数字 ${wa.nums} 枚 / 数直線 ${wa.gauge ? '有' : '無'})`);
   if (!waOk) fails.push('画面の冒頭にウェルネス年齢のセクションが無い (裁定 D-C2′)');
+
+  /*
+   * **詳細への導線** (発注者裁定 2026-09-01・案 03「カード下端の淡色バー」)。
+   * ここは 3 つとも落ちうる: ①画面に出ない ②飛び先が実在しない ③印刷に出てしまう。
+   * 特に③は「紙に押せないボタンが印字される」ので、名指しで見張る。
+   */
+  await page.goto(`${BASE}/report?preview=1`, { waitUntil: 'domcontentloaded' });
+  const jump = await page.evaluate(() => {
+    const bars = [...document.querySelectorAll('.rp-jump')];
+    const cards = document.querySelectorAll('article.rp-card').length;
+    const dead = bars.filter((a) => !document.querySelector(a.getAttribute('href') ?? '#'));
+    const minH = Math.min(...bars.map((a) => a.getBoundingClientRect().height));
+    return { bars: bars.length, cards, dead: dead.length, minH: Math.round(minH) };
+  });
+  const jumpOk = jump.bars > 0 && jump.dead === 0 && jump.minH >= 44;
+  console.log(`${jumpOk ? '✓' : '✗'} 詳細への導線 ${jump.bars} 本 / カード ${jump.cards} 枚 / 飛び先なし ${jump.dead} / 最小高 ${jump.minH}px`);
+  if (!jumpOk) fails.push(`詳細への導線: ${jump.bars} 本・飛び先なし ${jump.dead}・最小高 ${jump.minH}px`);
+
+  await page.goto(`${BASE}/report?preview=1&print=1`, { waitUntil: 'domcontentloaded' });
+  const inPrint = await page.evaluate(() => document.querySelectorAll('.rp-jump').length);
+  console.log(`${inPrint === 0 ? '✓' : '✗'} 印刷ビューに導線を出さない (${inPrint} 本)`);
+  if (inPrint !== 0) fails.push(`印刷ビューに導線が ${inPrint} 本出ている (押せないボタンが紙に載る)`);
+
+  /*
+   * **「手元に残す」は端末別** (裁定 2026-09-02・案 1＋案 3)。ここも 3 つとも落ちうる:
+   * ①手順が 1 端末ぶんしか描かれていない (以前の iPhone 決め打ちに戻る)
+   * ②判定できない環境で画面が空になる (fail-safe が壊れる)
+   * ③手順が印刷ビューに出る = **保存した PDF に操作説明が載る** (spec §4.4)。
+   * Linux の Chromium は Windows/Mac/iOS/Android のどれでもないので、
+   * **この検証はいつも「判定できない」経路を通る** = fail-safe をそのまま見張ることになる。
+   */
+  await page.goto(`${BASE}/report?preview=1`, { waitUntil: 'domcontentloaded' });
+  const save = await page.evaluate(() => {
+    const sec = document.getElementById('save-section');
+    if (!sec) return null;
+    const guides = [...sec.querySelectorAll('[data-save-guide]')];
+    const go = sec.querySelector('[data-save-go]');
+    const picker = sec.querySelector('[data-save-picker]');
+    return {
+      guides: guides.length,
+      visible: guides.filter((g) => g.getBoundingClientRect().height > 0).length,
+      steps: sec.querySelectorAll('.rp-steps > li').length,
+      go: go ? go.getAttribute('href') : null,
+      goH: go ? Math.round(go.getBoundingClientRect().height) : 0,
+      pickerOpen: picker ? !picker.hidden : false,
+    };
+  });
+  const saveOk = !!save && save.guides === 4 && save.visible === 4
+    && save.pickerOpen && !!save.go?.includes('print=1') && save.goH >= 44;
+  console.log(save
+    ? `${saveOk ? '✓' : '✗'} 手元に残す: 端末 ${save.guides} 種 / 見えている ${save.visible} / 手順 ${save.steps} 行 / 4択 ${save.pickerOpen ? '有' : '無'} / ボタン ${save.goH}px → ${save.go}`
+    : '✗ 手元に残す: セクションが無い');
+  if (!saveOk) fails.push(`手元に残す: ${save ? JSON.stringify(save) : 'セクションが無い'}`);
+
+  await page.goto(`${BASE}/report?preview=1&print=1`, { waitUntil: 'domcontentloaded' });
+  const saveInPrint = await page.evaluate(() => ({
+    sec: document.querySelectorAll('#save-section').length,
+    steps: document.querySelectorAll('.rp-steps > li').length,
+  }));
+  const sipOk = saveInPrint.sec === 0 && saveInPrint.steps === 0;
+  console.log(`${sipOk ? '✓' : '✗'} 印刷ビューに保存手順を出さない (節 ${saveInPrint.sec} / 手順 ${saveInPrint.steps} 行)`);
+  if (!sipOk) fails.push(`印刷ビューに保存手順が出ている (節 ${saveInPrint.sec} / 手順 ${saveInPrint.steps} 行) = 保存した PDF に操作説明が載る`);
   await page.goto(`${BASE}/report?preview=2`, { waitUntil: 'domcontentloaded' });
 
   // **A 軸のカードが在ること。** ここが実際に落ちていた箇所なので名指しで見る。
@@ -214,6 +276,57 @@ for (const [width, height, label] of SIZES) {
   }
   await ctx.close();
 }
+
+// ── ⑤ 手元に残す: 端末の判定 ────────────────────────────────────
+/*
+ * **端末を取り違えると手順そのものが的外れになる** (PC に「共有ボタン」は無い) ので、
+ * 判定の分岐を UA ごとに固定する。特に **iPad は Mac の UA を名乗る** — ここは
+ * `maxTouchPoints > 1` だと Mac 判定に落ちることを実測で踏んだ箇所。
+ * `autoprint` が付くのは PC だけ (スマホの公式手順は印刷ダイアログを通らない)。
+ */
+{
+  const MAC_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15'
+    + ' (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
+  const cases = [
+    ['Windows', { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      + ' (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36' }, 'windows', true],
+    ['Mac', { userAgent: MAC_UA }, 'mac', true],
+    ['iPhone', devices['iPhone 13'], 'iphone', false],
+    // iPadOS 13+ は Macintosh を名乗る。分けるものはタッチ点の数しかない。
+    ['iPad', { userAgent: MAC_UA, hasTouch: true, isMobile: true, viewport: { width: 820, height: 1180 } },
+      'iphone', false],
+    ['Android', devices['Pixel 5'], 'android', false],
+  ];
+  for (const [label, opt, want, wantAutoPrint] of cases) {
+    const ctx = await browser.newContext(opt);
+    const page = await ctx.newPage();
+    await page.goto(`${BASE}/report?preview=1`, { waitUntil: 'domcontentloaded' });
+    const got = await page.evaluate(() => {
+      const sec = document.getElementById('save-section');
+      if (!sec) return null;
+      const vis = [...sec.querySelectorAll('[data-save-guide]')]
+        .filter((g) => g.getBoundingClientRect().height > 0);
+      return {
+        shown: vis.map((g) => g.dataset.saveGuide),
+        // 「ボタンが開いてくれる操作」の行が残っていないか (PC では出さない)。
+        // **スマホ側の手順にはこの印の行がそもそも無い** (公式手順が印刷ダイアログを通らない)
+        // ので、0 行であることを問えるのは PC だけ。
+        opens: [...sec.querySelectorAll('[data-opens-dialog]')]
+          .filter((li) => li.getBoundingClientRect().height > 0).length,
+        steps: [...sec.querySelectorAll('.rp-steps > li')]
+          .filter((li) => li.getBoundingClientRect().height > 0).length,
+        href: sec.querySelector('[data-save-go]')?.getAttribute('href') ?? '',
+      };
+    });
+    const auto = !!got?.href.includes('autoprint=1');
+    const ok = !!got && got.shown.length === 1 && got.shown[0] === want
+      && auto === wantAutoPrint && got.steps > 0 && (!wantAutoPrint || got.opens === 0);
+    console.log(`${ok ? '✓' : '✗'} 手元に残す ${label.padEnd(8)} → ${got ? got.shown.join(',') || '(なし)' : '節なし'} / autoprint=${auto} / 手順 ${got?.steps ?? '-'} 行 (うち自分で開く ${got?.opens ?? '-'})`);
+    if (!ok) fails.push(`手元に残す ${label}: ${want} を期待 → ${JSON.stringify(got)} (autoprint=${auto})`);
+    await ctx.close();
+  }
+}
+
 await browser.close();
 
 if (fails.length) {

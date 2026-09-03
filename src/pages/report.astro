@@ -4,6 +4,8 @@ import AppNav from '../components/AppNav.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { loadReportVM, previewVM } from '../lib/elith-report-queries';
 import { renderReportMarkdown } from '../lib/report-view';
+import { chapterAnchor } from '../lib/report-sections';
+import { applySaveStepOverrides } from '../lib/save-steps';
 import { countUnreadImportant } from '../lib/notice-queries';
 import { refreshConfig, cfg } from '../lib/app-config';
 import { loadDashboard, getHealthAge, withHonorific, formatJpDate } from '../lib/dashboard-queries';
@@ -45,8 +47,14 @@ const viewer = await resolveViewer(Astro);
 const u = viewer.uid;
 /** 印刷/PDF 用ビュー。全展開・UI なし。 */
 const isPrint = url.searchParams.get('print') === '1';
-/** 端末に保存する手順を出すモード。**印刷ビューには置かない** (手順が PDF に載るため・spec §4.4)。 */
-const showSave = url.searchParams.get('save') === '1';
+/*
+ * `?print=1&autoprint=1` … **印刷ダイアログを自動で開く**紙面 (spec §4.4 案 3)。
+ * PC で「PDF にして保存する」を押したときだけこの URL へ送り、手順を読ませずに
+ * 1 クリックで保存へ入れる。スマホには付けない — Apple/Google が案内している経路は
+ * ブラウザのメニュー側で、印刷ダイアログを通らないため。
+ * **紙面の中身は `?print=1` と 1 文字も変わらない** (開くのはブラウザの仕事)ので、
+ * ここでは分岐を持たず、下の `<script>` が `location.search` を見て `print()` を呼ぶ。
+ */
 /*
  * **紙面のタイプを切り替えて確認するモード** (テストフェーズ限定・発注者指示 2026-09-01)。
  * `?preview=1` / `?preview=2` で、受領 JSON から組んだ紙面をタイプ別に見る。
@@ -73,6 +81,11 @@ const data = !result || 'error' in result ? null : result;
 const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) : 0;
 
 const supportContact = cfg('ui.support_contact');
+/**
+ * 「手元に残す」の端末別 手順 (spec §4.4)。
+ * **OS の更新でメニュー名が変わる**ので、語だけなら `ui.save_steps` で admin から直せる。
+ */
+const saveGuides = applySaveStepOverrides(cfg('ui.save_steps') ?? '');
 
 const healthAge = data ? await getHealthAge(data.diagnosticUserId) : null;
 
@@ -388,7 +401,28 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
               </>
             ))}
 
-            <p class="mt-0.5 font-mono text-[11px] text-slate-500">{card.source}</p>
+            {/* ══════════ 詳細への導線 ══════════
+                【発注者裁定 2026-09-01・案 03「カード下端の淡色バー」】
+                出典と操作を 1 つにまとめ、**カード幅いっぱいの押せる面**にする。
+                主要利用者は 50〜65 代なので、下線だけの弱い導線にしない。
+                地 `#F0FAFB` と枠 `#A8DCD8` は**どちらも見本にある色**(表紙のパネルと円)。
+
+                **`?print=1` では出さない。** 紙に押せないボタンが印字されるため
+                (保存手順を印刷ビューに置かないのと同じ理屈・spec §4.4)。
+                **章が無い回は出さない** (`detailAnchor` が null)。押しても何も起きない
+                リンクを置かない。そのときは従来どおり出典だけを出す。 */}
+            {!isPrint && card.detailAnchor ? (
+              <a class="rp-jump" href={`#${card.detailAnchor}`} data-jump>
+                <span class="rp-jump-lbl">
+                  <span>詳しい説明を読む</span>
+                  <small class="font-mono">{card.source}</small>
+                </span>
+                <AppIcon name="next" size={18} class="shrink-0 text-brand-600" />
+              </a>
+            ) : (
+              /* 13px 以上にする。11px は禁止事項「12px 以下を作らない」に触れていた。 */
+              <p class="mt-0.5 font-mono text-[13px] text-slate-600">{card.source}</p>
+            )}
           </article>
         ))}
 
@@ -424,7 +458,7 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
       <section class="mt-4 flex flex-col gap-3">
         <h2 class="border-t border-slate-200 pt-5 text-lg font-bold text-navy-800">全編</h2>
         {(['a', 'b'] as const).flatMap((ax) => chaptersByAxis(ax)).map((ch) => (
-          <details class="rp-card card" open={isPrint || !ch.collapsed}>
+          <details class="rp-card card" id={chapterAnchor(ch.key)} open={isPrint || !ch.collapsed}>
             <summary class={`cursor-pointer text-base font-bold text-navy-800 ${isPrint ? 'list-none' : ''}`}>
               {ch.title}
             </summary>
@@ -486,43 +520,204 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
       <span class="float-right">{formatJpDate(vm.cover.issuedOn) || vm.cover.issuedOn}</span>
     </div>
 
-    {/* ══════════ 端末に残す (spec §4.4) ══════════
-        主要利用者は 50〜65 代。共有シートを自力で辿らせない。
+    {/* ══════════ 手元に残す (spec §4.4 手段 A) ══════════
+        **端末別に手順を出す** (発注者裁定 2026-09-02・案 1＋案 3)。
+        以前は iPhone 1 機種ぶんの手順しか無く、PC にも同じ文が出ていた
+        (PC に「共有ボタン」は無いので読んでも実行できない = テストユーザーの「分かり難い」)。
+
         **印刷ビューには置かない** — 手順そのものが保存された PDF に載るため。 */}
     {!isPrint && (
-      <section class="mt-4 flex flex-col gap-2 border-t border-slate-200 pt-5">
+      <section class="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-5" id="save-section">
         <h2 class="text-base font-bold text-navy-800">手元に残す</h2>
-        <div class="flex flex-wrap gap-2">
-          <a class="btn-pair btn-data" href={q({ print: '1' })}>
-            <AppIcon name="report" size={16} />印刷用の紙面をひらく
+
+        {/* 押すもの (案 3)。**ボタンは 1 つ** — 以前は 2 つ並んでいてどちらを押すのか読めず、
+            しかも「端末に保存する」を押しても保存されなかった (手順が出るだけ)。
+            既定の飛び先は `?print=1` = **JavaScript が無くても成立する**。
+            PC では下の script が `&autoprint=1` を足し、押した瞬間に印刷ダイアログが開く。 */}
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <a class="btn-pair border-brand-600 bg-brand-600 px-4 text-white hover:bg-brand-700"
+             href={q({ print: '1' })} data-save-go>
+            <AppIcon name="download" size={16} />PDF にして保存する
           </a>
-          <a class="btn-pair btn-graph" href={q({ save: '1' })}>
-            <AppIcon name="download" size={16} />端末に保存する
+          {/* 紙面だけ見たい人のために残す。ただし主役ではないので文字リンクに落とす。 */}
+          <a class="text-[13px] text-brand-700 underline underline-offset-2" href={q({ print: '1' })}>
+            印刷用の紙面をひらく
           </a>
         </div>
 
-        {showSave && (
-          <div class="card mt-1 flex flex-col gap-2 text-base leading-relaxed">
-            <p class="text-sm text-slate-700">
-              印刷用の紙面をひらいてから、次の手順で保存します。
-            </p>
-            <ol class="ml-5 flex list-decimal flex-col gap-1 text-base">
-              <li>画面下（または上）の<b>共有ボタン（□に↑の形）</b>を押します。</li>
-              <li>一覧から <b>プリント</b> を選びます。</li>
-              <li>出てきた紙面を <b>指 2 本で広げる</b> と PDF になります。</li>
-              <li>もう一度 共有ボタン → <b>「ファイル」に保存</b> を選びます。</li>
+        {/* 端末別の手順。**サーバは 4 端末ぶんを全部描く** — 端末はブラウザでしか判定できず、
+            JavaScript が動かない環境では 4 つとも見えているのが正しい (行き止まりにしない)。 */}
+        {saveGuides.map((g) => (
+          <div class="flex flex-col gap-2" data-save-guide={g.key}>
+            <div class="rp-devhead">
+              <span>{g.heading}</span>
+              {/* 判定を外したとき・別の端末で残したいときの逃げ道。JS が無いと働かないので既定は隠す。 */}
+              <button type="button" class="rp-devsw" data-save-switch hidden>別の端末</button>
+            </div>
+            <ol class="rp-steps">
+              {g.steps.map((step) => (
+                <li data-opens-dialog={step.opensDialog ? '1' : undefined}>
+                  <span>
+                    {step.parts.map((part) =>
+                      typeof part === 'string' ? <Fragment>{part}</Fragment>
+                      : 'b' in part ? <b>{part.b}</b>
+                      : <kbd class="rp-kbd">{part.kbd}</kbd>,
+                    )}
+                  </span>
+                </li>
+              ))}
             </ol>
-            <p class="text-sm text-slate-600">
-              端末や OS の版によってメニューの名前が変わることがあります。
-              保存した紙面は、この画面を開かなくても読めます。
-            </p>
+            {g.note && <p class="text-[13px] text-slate-600">{g.note}</p>}
           </div>
-        )}
+        ))}
+
+        {/* 端末を選び直す。**判定できなかった回は最初から開く** (当てずっぽうで 1 つ選ばない)。 */}
+        <div class="rp-picker" data-save-picker hidden>
+          {saveGuides.map((g) => (
+            <button type="button" class="rp-pick" data-save-pick={g.key} aria-pressed="false">
+              {g.label}
+            </button>
+          ))}
+        </div>
+
+        <p class="text-[13px] text-slate-600">
+          端末や OS の版によって、メニューの名前が変わることがあります。
+          保存した紙面は、この画面を開かなくても読めます。
+        </p>
       </section>
     )}
     </div>{/* /.rp-inner */}
   </main>
 </BaseLayout>
+
+<script>
+  /*
+   * ダイジェストの「詳しい説明を読む」から全編の章へ飛ぶとき、**先に章を開く**。
+   * 全編は既定で畳んである (`report.sections.collapsed`) ので、開かずに飛ぶと
+   * 見出しの位置で止まって中身が見えない。
+   *
+   * **リンク自体は素の `<a href="#...">`** なので、この script が動かなくても
+   * 移動はする (開くのは上乗せ)。`?print=1` にはこの導線を出していない。
+   */
+  function openTarget(hash: string): void {
+    if (!hash || hash === '#') return;
+    let el: Element | null = null;
+    try { el = document.querySelector(hash); } catch { return; }
+    const details = el?.closest('details');
+    if (details && !details.open) details.open = true;
+  }
+  document.addEventListener('click', (e) => {
+    const a = (e.target as Element | null)?.closest?.('a[data-jump]');
+    if (a) openTarget(a.getAttribute('href') ?? '');
+  });
+  /*
+   * 同一ページ内でハッシュだけが変わる場合 (戻る/進む・保存したリンクを踏み直す)。
+   * `<script>` は再実行されないので、ここで拾わないと**その回だけ開かない**
+   * (実測で取りこぼした)。
+   */
+  addEventListener('hashchange', () => openTarget(location.hash));
+  // 直接 `/report#ch-...` で開かれた場合。位置合わせのため開いてから scroll し直す。
+  if (location.hash) {
+    openTarget(location.hash);
+    requestAnimationFrame(() => {
+      try { document.querySelector(location.hash)?.scrollIntoView(); } catch { /* 不正な hash */ }
+    });
+  }
+
+  /* ────────────────────────────────────────────────────────────
+   * 「手元に残す」— 端末を見分けて 1 本だけ出す (spec §4.4・裁定 2026-09-02)。
+   *
+   * **fail-safe が要件**: 判定できない / この script が動かないときは、サーバが描いた
+   * 4 端末ぶんがそのまま見えている状態に留める。**空にしない・当てずっぽうで 1 つ選ばない。**
+   * ボタンの既定の飛び先も `?print=1` なので、JS 無しでも保存の入口は塞がらない。
+   * ──────────────────────────────────────────────────────────── */
+  type Plat = 'windows' | 'mac' | 'iphone' | 'android';
+  const PLAT_KEY = 'welltect.report.platform';
+
+  /**
+   * **iPadOS 13+ は Mac の UA を名乗る**ので、タッチ点の数で分ける。
+   * 判定はブラウザでしかできない (同じ HTML が別の端末で開かれるため、サーバでは決めない)。
+   */
+  function detectPlatform(): Plat | null {
+    const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+    const hinted = (nav.userAgentData?.platform ?? '').toLowerCase();
+    const ua = navigator.userAgent;
+    if (hinted === 'android' || /Android/.test(ua)) return 'android';
+    if (hinted === 'ios' || /iPhone|iPad|iPod/.test(ua)) return 'iphone';
+    // iPad は Macintosh を名乗る。**デスクトップの Mac にタッチ画面は無い**ので、
+    // タッチ点が 1 つでもあれば iPad。`> 1` にすると取りこぼす (実測: 閾値 1 で Mac 判定になった)。
+    if (/Mac/.test(ua) && navigator.maxTouchPoints > 0) return 'iphone';
+    if (hinted === 'macos' || /Mac/.test(ua)) return 'mac';
+    if (hinted === 'windows' || /Windows/.test(ua)) return 'windows';
+    return null;
+  }
+
+  const saveSection = document.getElementById('save-section');
+  if (saveSection) {
+    const guides = [...saveSection.querySelectorAll<HTMLElement>('[data-save-guide]')];
+    const picker = saveSection.querySelector<HTMLElement>('[data-save-picker]');
+    const goBtn = saveSection.querySelector<HTMLAnchorElement>('[data-save-go]');
+
+    const applyPlatform = (plat: Plat): void => {
+      for (const g of guides) g.hidden = g.dataset.saveGuide !== plat;
+      for (const sw of saveSection.querySelectorAll<HTMLElement>('[data-save-switch]')) sw.hidden = false;
+      for (const b of saveSection.querySelectorAll('[data-save-pick]')) {
+        b.setAttribute('aria-pressed', String((b as HTMLElement).dataset.savePick === plat));
+      }
+      /*
+       * PC ではボタンが印刷ダイアログを開くので、「Ctrl+P を押す」の行は出さない
+       * (押した後にすることだけが残る)。`hidden` の行は描かれないため採番も飛ばない。
+       */
+      const desktop = plat === 'windows' || plat === 'mac';
+      for (const li of saveSection.querySelectorAll<HTMLElement>('[data-opens-dialog]')) li.hidden = desktop;
+      if (goBtn) {
+        const u = new URL(goBtn.getAttribute('href') ?? '/report', location.href);
+        if (desktop) u.searchParams.set('autoprint', '1');
+        else u.searchParams.delete('autoprint');
+        goBtn.setAttribute('href', u.pathname + u.search);
+      }
+    };
+
+    let stored: string | null = null;
+    try { stored = localStorage.getItem(PLAT_KEY); } catch { /* プライベートモード等 */ }
+    const isPlat = (v: string | null): v is Plat =>
+      v === 'windows' || v === 'mac' || v === 'iphone' || v === 'android';
+    const initial = isPlat(stored) ? stored : detectPlatform();
+    if (initial) applyPlatform(initial);
+    // **判定できなかった回だけ最初から 4 択を出す。** 手順は 4 つとも見えたまま。
+    else if (picker) picker.hidden = false;
+
+    saveSection.addEventListener('click', (e) => {
+      const target = e.target as Element | null;
+      if (target?.closest('[data-save-switch]')) {
+        if (picker) picker.hidden = !picker.hidden;
+        return;
+      }
+      const pick = target?.closest<HTMLElement>('[data-save-pick]');
+      if (pick && isPlat(pick.dataset.savePick ?? null)) {
+        const plat = pick.dataset.savePick as Plat;
+        applyPlatform(plat);
+        if (picker) picker.hidden = true;
+        // 表示の好みなので DB に入れない (推移グラフの表示項目と同じ扱い)。
+        try { localStorage.setItem(PLAT_KEY, plat); } catch { /* 保存できなくても表示は効く */ }
+      }
+    });
+  }
+
+  /*
+   * `?print=1&autoprint=1` … 印刷ダイアログを自分で開く。**PC からしか来ない**
+   * (モバイルの導線は `&autoprint=1` を付けない)。画像やフォントが載る前に開くと
+   * 途中の紙面が刷られるので `load` を待つ。
+   */
+  {
+    const sp = new URLSearchParams(location.search);
+    if (sp.get('print') === '1' && sp.get('autoprint') === '1') {
+      addEventListener('load', () => {
+        try { window.print(); } catch { /* 印刷できない環境では紙面がそのまま残る */ }
+      });
+    }
+  }
+</script>
 
 <style is:global>
   /*

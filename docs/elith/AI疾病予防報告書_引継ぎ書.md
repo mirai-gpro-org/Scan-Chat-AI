@@ -64,6 +64,9 @@ Elith から受領した JSON を**可読化**して本人に見せる報告書�
                      ▲                              2 本柱 REPORT_AXES / app_config 上書き)
         api/admin/elith-report/upload.ts (取込・Bearer ADMIN_API_KEY)
         api/admin/elith-report/audit.ts  (抽出監査)
+
+        save-steps.ts (「手元に残す」の端末別 手順。手順は公式の一次資料から起こす。
+                       app_config `ui.save_steps` で語だけ差し替え可)
 ```
 
 **3 層を壊さない。** Elith の形式は世代ごとに変わる（実際に `判定区分` と `[pN]` が消えた）ので、
@@ -84,9 +87,9 @@ Elith から受領した JSON を**可読化**して本人に見せる報告書�
 
 | コマンド | 何を見るか |
 |---|---|
-| `npm run verify:report-model` | 表示モデルの回帰 **77 件**。逐語性（受領 JSON の部分文字列）・削減率 80% 未満で落ちる |
+| `npm run verify:report-model` | 表示モデルの回帰 **92 件**。逐語性（受領 JSON の部分文字列）・削減率 80% 未満で落ちる |
 | `npm run verify:sheet-contract` | **モックから抽出した紙面契約 ↔ 表示モデル**（サーバ不要） |
-| `npm run verify:screen` | **契約 ↔ 実際の画面** ＋ 幅・行長・紙面の実測（要 `npm run dev`） |
+| `npm run verify:screen` | **契約 ↔ 実際の画面** ＋ 幅・行長・紙面の実測 ＋ **端末別の保存手順**（UA ごとの分岐・印刷ビューに出ていないこと）。要 `npm run dev` |
 | `npm run verify:demo-gate` | 誰にダミーが出るか **12 ケース**＋デモの経路に admin が混ざっていないこと |
 | `npm run verify:report` | 上記のうちサーバ不要な 3 つをまとめて |
 | `npx astro check` | 0 errors であること |

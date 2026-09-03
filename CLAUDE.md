@@ -54,8 +54,9 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
   GET でカタログ+現在値、POST で upsert。**UI は wellfort-site admin 側** (この作業ツリーには
   未取得のため実装状況は未確認)。
 
-**app_config の現行キー (23 件)**: `ui.support_contact` / `ui.health_age_followup` /
-`ui.cancer_screening_not_included` / `report.sections.order` / `report.sections.hidden` /
+**app_config の現行キー (28 件・`CONFIG_SPECS` の実測)**: `ui.support_contact` / `ui.health_age_followup` /
+`demo.account_emails` / `demo.account_uids` / `demo.account_denied_uids` / `demo.seeded_from_admins` /
+`ui.cancer_screening_not_included` / `ui.save_steps` / `report.sections.order` / `report.sections.hidden` /
 `report.sections.labels` / `report.sections.collapsed` /
 `scan.model` / `live.model` / `scan.output_format` / `scan.boundary_recheck` / `scan.obs_dedup` /
 `scan.scramble_fix` / `scan.eye_resolve` / `scan.lipid_fix` / `scan.canonicalize` /
@@ -618,7 +619,7 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
         `match(/[^。]+。|[^。]+$/g)` に修正。
       - **判定は Elith が名指しした項目にだけ当てる**。「クレアチニンについても基準値との関係において…」
         のように判定句を伴わない言及には付けない (実測でクレアチニンの判定は空のまま)。
-      - **app_config に 5 キー追加 → 現行 23 件**: `ui.cancer_screening_not_included` /
+      - **app_config に 5 キー追加 → 当時 23 件** (現行 24 件・上記): `ui.cancer_screening_not_included` /
         `report.sections.{order,hidden,labels,collapsed}`。**既定は全て空**=コード既定。
         **未知キー・空白だけの値でコード既定へ落ちる** (打ち間違いで報告書を真っ白にしない)。
       - **【v0.1.1 で修正 2026-08-29】主軸 B が実データで白紙になった** (正本 spec §9.3.1)。
@@ -762,6 +763,48 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
         - **【裁定 D-C2′ 2026-09-01・発注者指示】画面にも出す。** 当初は `?print=1` のみ
           (ダッシュボードで表示済みだから) としていたが、**画面と PDF で表示が違う違和感**の方が
           大きい、という判断。②の 2 連大数字と数直線は**画面・PDF 共通**になった。
+      - **【ダイジェストから全編へ送る導線 2026-09-01・発注者裁定】正本 spec §4.9。**
+        5 案をモックで比較し **案 03「カード下端の淡色バー」**を採用。カード末尾に出典と操作を
+        1 つにまとめた**幅いっぱいの押せる面**を置く (文言=「詳しい説明を読む」+ 小さく出典)。
+        - **色は見本にあるものだけ** — 地 `--rp-teal-panel` / 枠 `--rp-teal-circle`。
+          **淡赤は救急サイン専用**なので使わない (裁定 D-C3 の波及)。タップ領域 44px 以上 (実測 71px)。
+        - **`?print=1` には出さない** (紙に押せないボタンが印字されるため)。
+        - **押しても何も起きないリンクを置かない** — 飛び先は `ChapterSpec.detailKeys` を順に見て
+          **最初に紙面へ出ている章**。`report.sections.hidden` で隠した回は導線ごと消える。
+        - **畳んだ章は先に開く** — クリック / `hashchange` / 直接ハッシュ の 3 経路すべて。
+          `hashchange` を最初に取りこぼした (同一ページ内のハッシュ変更では script が再実行されない)。
+        - あわせて**出典行 11px → 13px** (禁止事項「12px 以下を作らない」に触れていた)。
+        - **紙面契約はこの変更を検証しない** (本文の文字しか見ない) ので `verify:screen` 側で見る。
+          印刷ガードを外すと落ちることを実測で確認済み。
+      - **【「手元に残す」を端末別に作り直した 2026-09-02・発注者裁定】正本 spec §4.4。**
+        テストユーザーから「分かり難い」。**iPhone 1 機種ぶんの手順しか無く**、Windows・Mac・
+        Android にも同じ文が出ていた (**PC に「共有ボタン」は無い**ので読んでも実行できない)。
+        5 案をモックで比較し **案 1 (端末を見分けて 1 本だけ) ＋ 案 3 (ボタンを 1 つにして PC は
+        押すだけ)** を採用。実装 = `src/lib/save-steps.ts` + `report.astro`。
+        - **押すものは 1 つ**「PDF にして保存する」。以前は 2 つ並び、しかも
+          **「端末に保存する」を押しても保存されなかった** (手順が出るだけ)。
+          **PC は押すと `?print=1&autoprint=1` へ送られ印刷ダイアログが直接開く**ので、
+          読む手順は「PDF に保存」を選ぶ 1〜2 行だけ。**スマホには付けない**
+          (Apple/Google の公式経路はブラウザのメニュー側で印刷ダイアログを通らない)。
+        - **手順は公式の一次資料から起こす (R3)**。旧手順の「**指 2 本で広げる**」は公式に無い。
+          Apple は 共有 →「マークアップ」→「完了」→「ファイルを保存」= **旧より 1 手少なく
+          ジェスチャも不要**。4 端末の出典 URL は `save-steps.ts` の各 `source` と spec §4.4 の表。
+        - **fail-safe が要件**: **サーバは 4 端末ぶんを全部描く** (端末はブラウザでしか判定できない
+          = サーバ側で判定しない)。JS が動かなければ 4 つとも見えている・ボタンの既定の飛び先も
+          `?print=1`。**判定できなかった回だけ 4 択を出す** (当てずっぽうで 1 つ選ばない)。
+        - **iPadOS 13+ は Mac の UA を名乗る**。閾値は **`maxTouchPoints > 0`** —
+          `> 1` だと実測で Mac 判定に落ちた (デスクトップの Mac にタッチ画面は無い)。
+          取り違えると**手順そのものが的外れになる**ので `verify:screen` が UA 別に見張る。
+        - **文言は app_config `ui.save_steps` で差し替え可** (OS 更新でメニュー名が変わるため)。
+          書式 `端末キー=手順1｜手順2｜手順3` をカンマ区切り。**上書きは素の文**になる。
+          解釈できないキー・空の手順は無視 = **手順が 1 行も無い状態を作らない**。
+          → **app_config 現行 28 件**。
+        - **検証**: `verify:screen` に ①端末 4 種が描かれ判定不能なら 4 つとも見える
+          ②**印刷ビューに保存手順が出ていない** ③UA 別 (Windows/Mac/iPhone/**iPad**/Android) の
+          分岐と `autoprint` の有無 を追加。**3 つとも壊して落ちることを確認済み**。
+        - **`?save=1` の開閉は廃止** (手順が 3 行になったので常時表示)。
+        - **実機確認は未実施のまま**。マークアップ経由の PDF が `?print=1` の紙面をそのまま写すかは
+          手元の Chromium で再現できない。**iPhone・Android の実機で 1 回ずつ通す**のが完了条件。
       - **【紙面の色を印刷でも必ず出す 2026-08-30・発注者指示】正本 spec §4.4。**
         ブラウザの印刷ダイアログの**「背景のグラフィック」は既定がオフ**で、そのままだと
         `background` の色が全部落ちる。実測 (Chromium `printBackground:false` で同じ
@@ -851,7 +894,7 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
       - **削除したもの**: `report-adapter.ts` / `report-model.ts` / `report-sections.ts` /
         `api/admin/elith-report/audit.ts` / `scripts/verify-report-model.ts`。
         app_config の 5 キー (`ui.cancer_screening_not_included` / `report.sections.*` 4 本) も消えた
-        (**2 回目の実装で同じキーを入れ直した** → 現行 23 件)。
+        (**2 回目の実装で同じキーを入れ直した** → 当時 23 件)。
       - **残したもの**: `src/data/elith/report_text_20260826.json` /
         `health_checkup_20260826.json` (2026-08-26 受領分・合成検体)。**参照コードは無くなったが、
         HANDOVER §2.3 が素材の在処として名指ししているデータなので消さない。**

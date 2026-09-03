@@ -417,6 +417,32 @@ const t1Bad = t1Sentences.filter((x) => {
 check('タイプ1 でもダイジェストの段落は受領本文の逐語 (暫定文を除く)',
   t1Bad.length === 0, `${t1Bad.length} 文が一致しない: ${t1Bad[0]?.slice(0, 40) ?? ''}`);
 
+// ── 14) 詳細への導線 (発注者裁定 2026-09-01・案 03) ───────────────────
+{
+  const withLink = t1.digest.filter((c) => c.detailAnchor);
+  check('ダイジェストのカードに詳細への導線が付く', withLink.length === t1.digest.length,
+    `${withLink.length} / ${t1.digest.length} 枚`);
+  const keys = new Set(t1.chapters.map((c) => c.key));
+  check('導線の飛び先は実在する章', t1.digest.every((c) =>
+    !c.detailAnchor || keys.has(c.detailAnchor.replace(/^ch-/, ''))));
+  /*
+   * **章を隠したら導線も消えること。** 押しても何も起きないリンクを置かない
+   * (主軸 A のリンクで遷移先の無い 404 を出した反省・spec §1.3.10 の④)。
+   * `cancer_finding` は abstract → summary の順で探すので、両方隠して確かめる。
+   */
+  const hidden = buildReportVM({
+    reportText: T1_TEXT,
+    checkup: { health_checkup: T1_CHECKUP, blood_test: T1_BLOOD, cancer_risk: T1_CANCER } as never,
+    name: '', issuedOn: '2026-08-24', isSample: true, hasCancerRisk: false, cycleSeq: null,
+    chronologicalAge: 56, ourWellnessAge: 52.3,
+    readConfig: (k) => (k === 'report.sections.hidden' ? 'abstract,summary,medical_visit' : ''),
+  });
+  const dead = hidden.digest.filter((c) => c.detailAnchor
+    && !hidden.chapters.some((ch) => `ch-${ch.key}` === c.detailAnchor));
+  check('隠した章への導線は残さない', dead.length === 0,
+    dead.map((c) => `${c.key}→${c.detailAnchor}`).join(' / '));
+}
+
 // ── 結果 ──────────────────────────────────────────────────────────
 console.log(`\n受領本文 ${CORPUS.length} 字 / ダイジェスト ${digestChars} 字 (削減率 ${reduction.toFixed(1)}%)`);
 console.log(`検査値 ${vm.audit.measurementCount} 行・基準値 ${vm.audit.referenceCount} 件・トピック ${vm.audit.topicCount} 件`);
