@@ -151,13 +151,31 @@ export const GET: APIRoute = async ({ request }) => {
     ? Math.floor((Date.now() - Date.parse(lastOk.received_at)) / 86_400_000)
     : null;
 
+  /**
+   * 証明書の残日数は **「直近の run」ではなく「最後に証明書を見た run」** から取る。
+   *
+   * 【なぜ (2026-09-03 レビュー指摘・ソースで確認)】本番 runner は watermark が
+   * 追いついている回 (noop) では **ポータルに 1 回も触らない** —
+   * `demecal-production.ps1:264-268` が証明書の段 (`:276-285`) より**手前で終わる**ので、
+   * その run は `cert_days_left` を持たない。
+   * C-5 のタスクは「ログオン時 + 毎日」の 2 トリガなので、同じ日に
+   *   ready (cert=59) → noop (cert なし)
+   * という並びは**正常に起きる**。`runs[0]` から取ると、直前に取れていた「残り 59 日」が
+   * noop に隠されて `null` になり、**期限が迫っているのに監視が黙る**。
+   *
+   * `stale` / `last_success_at` / `days_since_success` の契約は変えない。変えるのはここだけ。
+   */
+  const lastCertRun = runs.find(
+    (r) => typeof r.cert_days_left === 'number' && Number.isFinite(r.cert_days_left),
+  );
+
   return json({
     ok: true,
     runs,
     health: {
       last_success_at: lastOk?.received_at ?? null,
       days_since_success: days,
-      cert_days_left: runs[0]?.cert_days_left ?? null,
+      cert_days_left: lastCertRun?.cert_days_left ?? null,
       // **一度も走っていない場合も stale** (「記録が無い」を「正常」に見せない)。
       stale: days === null || days > STALE_DAYS,
     },

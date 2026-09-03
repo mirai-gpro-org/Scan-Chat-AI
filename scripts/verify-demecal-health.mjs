@@ -50,7 +50,29 @@ check('D2 stale は「一度も成功なし OR days > STALE_DAYS」',
 check('D3 days_since_success は最後の ok の received_at から',
   /const lastOk = runs\.find\(\(r\) => r\.result === 'ok'\)/.test(api)
   && /Date\.parse\(lastOk\.received_at\)\)\s*\/\s*86_400_000/.test(api));
-check('D4 cert_days_left は直近 run から', /cert_days_left:\s*runs\[0\]\?\.cert_days_left \?\? null/.test(api));
+// **直近 run ではなく「最後に証明書を見た run」から取る** (2026-09-03 レビュー指摘)。
+// noop の回は `demecal-production.ps1:264-268` が証明書の段より手前で終わるため
+// `cert_days_left` を持たない。`runs[0]` から取ると直前の残日数が noop に隠れて
+// **期限が迫っているのに監視が黙る**。
+check('D4 cert_days_left は「最後に証明書を見た run」から',
+  /const lastCertRun = runs\.find\(/.test(api)
+  && /typeof r\.cert_days_left === 'number' && Number\.isFinite\(r\.cert_days_left\)/.test(api)
+  && /cert_days_left:\s*lastCertRun\?\.cert_days_left \?\? null/.test(api),
+  'runs[0] へ戻すと noop が証明書の残日数を隠す');
+check('D4b runs[0] から cert を取っていない', !/cert_days_left:\s*runs\[0\]/.test(api));
+// **証明書以外の契約は変えない** (`stale` / `last_success_at` / `days_since_success`)。
+check('D4c last_success_at は最後の ok のまま',
+  /last_success_at:\s*lastOk\?\.received_at \?\? null/.test(api));
+// `lastCertRun` が出てよいのは **宣言と cert_days_left の 2 行だけ**
+// (stale / days_since_success の計算に混ぜたらそれは契約変更)。
+{
+  const lines = api.split('\n').filter((l) => !l.trim().startsWith('*') && l.includes('lastCertRun'));
+  check('D4d lastCertRun は宣言と cert_days_left の 2 行だけ',
+    lines.length === 2
+    && lines.some((l) => /const lastCertRun = runs\.find\(/.test(l))
+    && lines.some((l) => /cert_days_left:\s*lastCertRun/.test(l)),
+    lines.join(' / '));
+}
 check('D5 health が返す 4 つのキーが揃っている',
   ['last_success_at', 'days_since_success', 'cert_days_left', 'stale'].every((k) => api.includes(`${k}:`)));
 // C-6 は API を増築しない (`§9`)。GET に新しい集計を足していないことを見る。
@@ -133,23 +155,36 @@ function run(o = {}) {
   };
 }
 
-/** `api/admin/demecal-run.ts` GET と同じ形・同じ計算で応答を組む。 */
+/**
+ * `api/admin/demecal-run.ts` GET と同じ形・同じ計算で応答を組む。
+ * **証明書は「最後に証明書を見た run」から** (noop の回は持たない)。
+ */
 function apiResponse(runs) {
   const lastOk = runs.find((r) => r.result === 'ok');
   const days = lastOk?.received_at
     ? Math.floor((NOW.getTime() - Date.parse(lastOk.received_at)) / DAY)
     : null;
+  const lastCertRun = runs.find(
+    (r) => typeof r.cert_days_left === 'number' && Number.isFinite(r.cert_days_left),
+  );
   return {
     ok: true,
     runs,
     health: {
       last_success_at: lastOk?.received_at ?? null,
       days_since_success: days,
-      cert_days_left: runs[0]?.cert_days_left ?? null,
+      cert_days_left: lastCertRun?.cert_days_left ?? null,
       stale: days === null || days > 8,
     },
   };
 }
+
+/**
+ * 追いついている回 = **ポータルに触らないので証明書を見ない**。
+ * `demecal-production.ps1` の noop 経路をそのまま写した run
+ * (result=ok / stage=noop / rows=0 / range なし / **cert なし**)。
+ */
+const noopRun = (daysAgo) => run({ daysAgo, result: 'ok', stage: 'noop', rows: 0 });
 
 /* ══ B. fixture を判定に通す ══════════════════════════════════════ */
 
@@ -240,6 +275,48 @@ const codes = (v) => v.alerts.map((a) => a.code);
   check('B30 cert=null → それだけでは異常にしない', cNull.ok === true, JSON.stringify(codes(cNull)));
   check('B31 cert=null → cert_state=unknown', cNull.cert_state === 'unknown');
   check('B32 cert=null → summary に cert=unknown', cNull.summary.includes('cert=unknown'));
+}
+
+// B-noop. **noop が証明書の残日数を隠さない** (2026-09-03 レビュー指摘の本体)。
+//   C-5 のタスクは「ログオン時 + 毎日」の 2 トリガなので、同じ日に
+//   ready(cert=59) → noop(cert なし) は正常に起きる。
+{
+  const hides59 = apiResponse([noopRun(0), run({ daysAgo: 0, result: 'ok', certDays: 59 })]);
+  const v59 = ev(hides59);
+  check('BN1 noop の裏の cert=59 を拾う', hides59.health.cert_days_left === 59,
+    String(hides59.health.cert_days_left));
+  check('BN2 → CERT_EXPIRING', codes(v59).includes('CERT_EXPIRING') && v59.ok === false);
+  check('BN3 → summary に cert=59', v59.summary.includes('cert=59'));
+
+  const v60 = ev(apiResponse([noopRun(0), run({ daysAgo: 0, result: 'ok', certDays: 60 })]));
+  check('BN4 noop の裏が cert=60 なら鳴らさない', !codes(v60).includes('CERT_EXPIRING'));
+  check('BN5 → 正常', v60.ok === true, JSON.stringify(codes(v60)));
+
+  // 証明書を見た run が **1 件も無い** = 本当に未知。ここは鳴らさない。
+  const vNone = ev(apiResponse([noopRun(0), noopRun(1), noopRun(2)]));
+  check('BN6 証明書を見た run が無い → null', vNone.cert_days_left === null);
+  check('BN7 → cert_state=unknown / 正常', vNone.cert_state === 'unknown' && vNone.ok === true);
+  check('BN8 → summary に cert=unknown', vNone.summary.includes('cert=unknown'));
+
+  // noop を何回挟んでも**最後に見た値**が出る (直近の 1 件だけを見ない)。
+  const deep = apiResponse([noopRun(0), noopRun(1), noopRun(2), run({ daysAgo: 3, result: 'ok', certDays: 45 })]);
+  check('BN9 noop が続いても最後に見た cert を拾う', deep.health.cert_days_left === 45);
+  check('BN10 → CERT_EXPIRING', codes(ev(deep)).includes('CERT_EXPIRING'));
+
+  // **より新しい証明書の値が勝つ** (古い値に引きずられない)。
+  const newer = apiResponse([
+    run({ daysAgo: 0, result: 'ok', certDays: 500 }),
+    run({ daysAgo: 30, result: 'ok', certDays: 59 }),
+  ]);
+  check('BN11 新しい cert が勝つ', newer.health.cert_days_left === 500);
+  check('BN12 → 証明書のアラートは出ない', !codes(ev(newer)).includes('CERT_EXPIRING'));
+
+  // fail した run が証明書を見ていれば、その値も使う (result では絞らない)。
+  const failCert = apiResponse([
+    run({ daysAgo: 0, result: 'fail', stage: 'login', certDays: 59 }),
+    run({ daysAgo: 1, result: 'ok', certDays: 60 }),
+  ]);
+  check('BN13 fail した run の cert も使う', failCert.health.cert_days_left === 59);
 }
 
 // B33. 同時成立
@@ -384,6 +461,22 @@ const NOWARG = ['--now', NOW.toISOString()];
   check('C14 cert=60 → exit 0', b.code === 0, `exit=${b.code} ${b.out}`);
   check('C15 cert=null → exit 0', c.code === 0, `exit=${c.code} ${c.out}`);
   check('C16 cert=null → cert=unknown と出る', c.out.includes('cert=unknown'));
+}
+// **noop が証明書を隠さないことを CLI の終了コードでも見る。**
+{
+  const hide59 = fixture('noop-hides-59',
+    apiResponse([noopRun(0), run({ daysAgo: 0, result: 'ok', certDays: 59 })]));
+  const hide60 = fixture('noop-hides-60',
+    apiResponse([noopRun(0), run({ daysAgo: 0, result: 'ok', certDays: 60 })]));
+  const noCert = fixture('noop-only', apiResponse([noopRun(0), noopRun(1)]));
+  const a = await runCli(['--fixture', hide59, ...NOWARG]);
+  const b = await runCli(['--fixture', hide60, ...NOWARG]);
+  const c = await runCli(['--fixture', noCert, ...NOWARG]);
+  check('CN1 noop の裏の cert=59 → exit 1 / CERT_EXPIRING',
+    a.code === 1 && a.out.includes('CERT_EXPIRING'), `exit=${a.code} ${a.out}`);
+  check('CN2 noop の裏の cert=60 → exit 0', b.code === 0, `exit=${b.code} ${b.out}`);
+  check('CN3 証明書を見た run が無い → exit 0 / cert=unknown',
+    c.code === 0 && c.out.includes('cert=unknown'), `exit=${c.code} ${c.out}`);
 }
 {
   const r = await runCli(['--fixture', FX_BAD, ...NOWARG]);

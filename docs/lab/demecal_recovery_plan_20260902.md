@@ -1443,12 +1443,46 @@ Stop-Setup 'X' (
 |---|---|
 | `src/lib/demecal-health.ts` | **判定 (pure)**。`evaluateDemecalHealth(payload, now, getError)` |
 | `scripts/check-demecal-health.mjs` | **監視口 (CLI)**。取ってくる / 渡す / 出す / 終了コードを返す だけ |
-| `scripts/verify-demecal-health.mjs` | 回帰チェック（`npm run verify:demecal-health`・**114 件**） |
+| `scripts/verify-demecal-health.mjs` | 回帰チェック（`npm run verify:demecal-health`・**133 件**） |
 
-**サーバ API は 1 行も変えていない。** Reality Check の結論どおり、
+**サーバ API はほぼそのまま。** Reality Check の結論どおり、
 `runs[]` / `health.last_success_at` / `health.days_since_success` /
 `health.cert_days_left` / `health.stale` で監視に必要な材料は揃っていた（`§9`）。
 **別の run-state も作らない** —判断材料はこの API の応答だけ。
+唯一の例外が下記の証明書 1 行（2026-09-03 レビュー指摘）。
+
+#### 証明書の残日数は「最後に証明書を見た run」から取る（2026-09-03・API を 1 行修正）
+
+**元の `cert_days_left: runs[0]?.cert_days_left ?? null` には穴があった。**
+
+本番 runner は watermark が追いついている回（noop）では**ポータルに 1 回も触らない** —
+`demecal-production.ps1:264-268` が証明書の段（`:276-285`）より**手前で終わる**ので、
+その run は `cert_days_left` を持たない（ソースで確認）。
+C-5 のタスクは **ログオン時 + 毎日** の 2 トリガなので、同じ日に
+
+```text
+ready (cert=59)  → noop (cert なし)
+```
+
+という並びは**正常に起きる**。`runs[0]` から取ると、直前に取れていた「残り 59 日」が
+noop に隠れて `null` になり、**期限が迫っているのに監視が黙る**。
+
+```ts
+const lastCertRun = runs.find(
+  (r) => typeof r.cert_days_left === 'number' && Number.isFinite(r.cert_days_left),
+);
+// health.cert_days_left = lastCertRun?.cert_days_left ?? null
+```
+
+- **`stale` / `last_success_at` / `days_since_success` の契約は変えない。**
+  `lastCertRun` が出てよいのは宣言と `cert_days_left` の**2 行だけ**で、D4d がそれを固定する
+  （日数や stale の計算に混ぜたらそれは契約変更）。
+- **監視側にしきい値も日数計算も足していない**（60 日は元から `CERT_MIN_DAYS`）。
+- **`result` では絞らない** — fail した run でも証明書を見ていればその値は本物（BN13）。
+- **新しい値が勝つ**（`runs` は新しい順なので `find` が最初に当たる = BN11）。
+- 証明書を見た run が**1 件も無ければ従来どおり `null` → `cert=unknown` で鳴らさない**（BN6-8）。
+- **`demecal-production.ps1` は変えていない。** noop で証明書を見ないのは
+  「ポータルに触らない」という C-4 の設計そのもので、正しい挙動。直すのは読む側。
 
 #### 検知する状態（複数同時に立つ）
 
@@ -1511,16 +1545,16 @@ node scripts/check-demecal-health.mjs --url https://… --key <鍵>     # 実運
 exit 0 = 異常なし / 1 = 異常あり / 2 = 使い方の誤り
 ```
 
-#### 検証 `npm run verify:demecal-health`（114 件）
+#### 検証 `npm run verify:demecal-health`（133 件）
 
 | 層 | 見るもの |
 |---|---|
 | **A**（22 件） | 判定モジュールと CLI の**ソース**（時計依存ゼロ / しきい値を作り直していない / PII を読まない / 自動取得側に触っていない） |
-| **B**（53 件） | fixture を判定に通す（状態の出し分け・8 日 / 9 日・cert 59 / 60 / null・壊れた応答 10 通り・`now` 非依存・PII 非混入） |
-| **C**（33 件） | **CLI を実際に起動する**（終了コード・`--json`・**ローカル HTTP サーバ相手の実通信** 200 / 401 / 500 / 非 JSON / 到達不能 / 鍵の送り方） |
-| **D**（6 件） | **API 契約の固定**。この検査の fixture は `demecal-run.ts` GET の health 計算を**写して**作るので、本物が変わったら写しは黙って古くなる。`STALE_DAYS = 8` / `stale` の式 / `cert_days_left` の出どころ を押さえ、変わったら落ちて**人が写しを直しに来る**ようにした |
+| **B**（66 件） | fixture を判定に通す（状態の出し分け・8 日 / 9 日・cert 59 / 60 / null・**noop が cert を隠さない 13 件**・壊れた応答 10 通り・`now` 非依存・PII 非混入） |
+| **C**（36 件） | **CLI を実際に起動する**（終了コード・`--json`・**ローカル HTTP サーバ相手の実通信** 200 / 401 / 500 / 非 JSON / 到達不能 / 鍵の送り方） |
+| **D**（9 件） | **API 契約の固定**。この検査の fixture は `demecal-run.ts` GET の health 計算を**写して**作るので、本物が変わったら写しは黙って古くなる。`STALE_DAYS = 8` / `stale` の式 / `cert_days_left` の出どころ を押さえ、変わったら落ちて**人が写しを直しに来る**ようにした |
 
-#### 退行を注入して落ちることを確認（8 通り）
+#### 退行を注入して落ちることを確認（10 通り）
 
 | 入れた退行 | 落ちた検査 |
 |---|---|
@@ -1532,6 +1566,8 @@ exit 0 = 異常なし / 1 = 異常あり / 2 = 使い方の誤り
 | F CLI が生の応答を出す | A14 / C8（PII マーカーが実際に標準出力へ出た） |
 | G 鍵を URL に載せる | A12 / C21 / C22 / C23 |
 | H API のしきい値が 8 → 14 に変わる | D1（fixture の drift 検知） |
+| **I API の cert を `runs[0]` へ戻す**（元のブロッカーそのもの） | D4 / D4b / D4d |
+| **J 検査側の写しだけを `runs[0]` へ戻す** | BN1-3 / BN9-10 / **CN1**。CN1 の出力が失敗の形をそのまま見せる — `exit=0 OK demecal: … cert=unknown` で、cert=59 の run が noop の裏に在るのに**監視が黙る** |
 
 #### 検査を書いていて踏んだもの 2 件（どちらも実測）
 
