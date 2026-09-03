@@ -49,7 +49,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 # Shift_JIS は .NET Core で既定登録されていない。5.1 では型が無いので catch される。
 try { [Text.Encoding]::RegisterProvider([Text.CodePagesEncodingProvider]::Instance) } catch {}
 
-$Version    = 'verify-1.3'
+$Version    = 'verify-1.4'
 $BaseUrl    = 'https://dl.demecal.net'
 $LoginUrl   = "$BaseUrl/account/login"
 $StartUrl   = "$BaseUrl/hanyou/start"
@@ -746,6 +746,39 @@ function Test-CsvResponse([byte[]]$bytes, [string]$contentType, [string]$disposi
   return $res
 }
 
+# ── STATE C の応答が HTML だったときだけ骨格に回す ───────────
+#
+# 【レビュー指摘 2026-09-03】STATE C の POST が HTML を返して
+#   `CSV_RESPONSE_INVALID` で止まったとき、**骨格が上がらなかった**。
+#   4 つ目の画面が在るのかどうかは**そのときの HTML でしか分からない**ので、
+#   ここで回収できないと現地の 1 回を無駄にする。
+#
+# **最優先は「CSV を probe へ絶対に渡さないこと」**。判定は fail-closed で、
+# 「HTML だと積極的に確認できたときだけ」中身を返す (それ以外は '' = 送らない):
+#   ① `attachment` が付いていたら無条件で送らない — **CSV はこれで返る**
+#   ② content-type が text/html、または CSV 検査が CSV_RESPONSE_INVALID
+#   ③ かつ、本文の先頭が **HTML の形をしている** こと
+#      (Shift_JIS の CSV は UTF-8 で読んでも例外にならず化けるだけなので、
+#       「読めたか」ではなく「HTML に見えるか」で判定する)
+function Get-StateCHtmlForSkeleton([byte[]]$bytes, [string]$contentType, [string]$disposition, [string]$csvCode) {
+  # ① ダウンロード応答は問答無用で対象外。
+  if ($disposition -match '(?i)attachment') { return '' }
+  if (-not $bytes -or $bytes.Length -eq 0) { return '' }
+
+  # ② HTML と疑う理由があるか。
+  $isHtmlCt = ($contentType -match '(?i)text/html')
+  if ((-not $isHtmlCt) -and ($csvCode -ne 'CSV_RESPONSE_INVALID')) { return '' }
+
+  $text = ''
+  try { $text = [Text.Encoding]::UTF8.GetString($bytes) } catch { return '' }
+  if (-not $text) { return '' }
+
+  # ③ 先頭が HTML の形をしていること。**ct が html でもここを外れたら送らない。**
+  $head = $text.Substring(0, [Math]::Min($text.Length, 4096))
+  if ($head -notmatch '(?is)<!doctype\s+html|<html\b|<head\b|<form\b') { return '' }
+  return $text
+}
+
 # ── 骨格の回収 (失敗したときだけ・本文テキストは載せない) ─────
 function Get-Skeleton([string]$html) {
   $o = New-Object System.Collections.Generic.List[string]
@@ -1011,7 +1044,14 @@ Diag ("  csv bytes={0} rows={1} header={2} filename={3} sha256={4}" -f `
 Say ("[6] CSV 検査: bytes={0} / rows={1} / 必須ヘッダ={2} / filename={3}" -f `
      $chk.Bytes, $chk.Rows, $chk.HeaderOk, $chk.Filename)
 Say ("    SHA-256 : {0}" -f $chk.Sha256)
-if (-not $chk.Ok) { Finish 1 'fail' $chk.Code $chk.Detail }
+if (-not $chk.Ok) {
+  # HTML が返った (= 画面がまだ続いている) ときだけ骨格を回収してから落ちる。
+  # **CSV は `Get-StateCHtmlForSkeleton` が '' を返すので probe へ渡らない。**
+  $skHtml = Get-StateCHtmlForSkeleton $csvBytes $respCt $respCd $chk.Code
+  if (-not $skHtml) { Finish 1 'fail' $chk.Code $chk.Detail }
+  Send-Skeleton $skHtml ("csv: {0}" -f $chk.Detail)
+  Finish 1 'fail' $chk.Code $chk.Detail
+}
 
 $script:Stage = 'done'
 Finish 0 'ok' '' ''

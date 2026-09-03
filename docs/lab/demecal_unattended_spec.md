@@ -1085,6 +1085,58 @@ rows / 必須ヘッダの結果**だけ。**CSV 本文・先頭バイトは出�
 - `/js/site.min.js` に `btnDownload` を触る別のハンドラが在るか。未取得。
 - `DataType` のラベル↔value 対応（上記）。
 
+### ②-5 STATE C 応答が HTML だったときの骨格回収（2026-09-03・`verify-1.4`）
+
+**レビューで指摘された blocker 1 件の修正。実機は未実行。**
+
+②-4 の報告に「HTML が返れば `CSV_RESPONSE_INVALID` で止まって骨格が上がってくる」と書いたが、
+**現実装と一致していなかった** — CSV 検査で落ちる経路に `Send-Skeleton` が無く、
+**そのときの HTML が回収されないまま終わっていた**。
+`POST /hanyou/confirm` の応答が未観測である以上、4 つ目の画面が在るかどうかは
+**そのときの HTML でしか分からない**ので、ここで取れないと現地の 1 回を無駄にする。
+
+#### 直し方
+
+`Get-StateCHtmlForSkeleton($bytes, $contentType, $disposition, $csvCode)` を新設し、
+**「HTML だと積極的に確認できたときだけ」本文を返す**（それ以外は `''` = 送らない）。
+`''` なら従来どおり `Finish` だけで落ち、非空なら `Send-Skeleton` してから落ちる。
+
+判定は **CSV を probe へ渡さないことを最優先**にした fail-closed:
+
+1. **`attachment` が付いていたら無条件で対象外** — CSV はこれで返る。
+2. `content-type` が `text/html`、**または** CSV 検査が `CSV_RESPONSE_INVALID`。
+3. **かつ本文の先頭が HTML の形をしている**（`<!doctype html` / `<html` / `<head` / `<form`）。
+   Shift_JIS の CSV を UTF-8 で読んでも例外にはならず化けるだけなので、
+   **「読めたか」ではなく「HTML に見えるか」で判定する**。`content-type` が html でも
+   ここを外れたら送らない。
+
+**ログに出すものは変えていない**（status / content-type / content-disposition / filename /
+byte count / SHA-256 / rows / 必須ヘッダ結果）。**CSV 本文・先頭バイトは出さない。
+保存・S3・`last_to` 更新も禁止のまま。**
+
+#### 検証
+
+`npm run verify:demecal-flow` = **129 件 PASS**（この回で T42〜T45a の 13 件を追加）。
+退行注入で**5 件とも落ちることを確認済み**:
+
+| 注入 | 落ちるテスト |
+|---|---|
+| `attachment` ガードを外す | T43d |
+| 「HTML に見えるか」の確認を外す | T43b / T43c |
+| 骨格回収を丸ごと元へ戻す | T44b / T44c |
+| CSV のバイト列を `Diag` に出す | T44a / T44c |
+| 骨格の `[REDACTED]` を外す | T41 / T41a / **T45** |
+
+**`attachment` ガードは最初 1 度も落ちなかった**（実データの CSV は Shift_JIS で
+「HTML に見えない」側でも弾かれるため、ガードが load-bearing か分からなかった）。
+→ **添付なのに本文が HTML の形をしている**という取り合わせの fixture を足して、
+**ガード単体**を試す形にした（T43d）。**退行注入で落ちることも確認済み。**
+
+`verify:ps1-order` OK ／ `verify:intake-scope` OK ／ `verify:probe-bat-gate` 10 ケース OK ／
+`ParseFile` 構文エラー 0 ／ `astro check` 0 errors ／ bat 生成 OK（`verify-1.4`・placeholder 残り無し）。
+
+**Wellfort への再実行は依頼していない。** Phase C にも進んでいない。
+
 ### ② 本番の自動実行（`demecal-fetch.ps1` ＋ セットアップ bat・未実装）
 
 **①の結果を見てから作る**（form の `action`/`name` が確定するため）。

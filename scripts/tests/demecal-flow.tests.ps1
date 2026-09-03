@@ -489,6 +489,63 @@ Check 'T40 骨格の送信は失敗経路だけ (直後が必ず Finish 1)' `
 
 
 Write-Host ''
+Write-Host '── STATE C 応答の骨格回収 (CSV を probe へ出さない) ─'
+
+# 【レビュー指摘 2026-09-03】STATE C の POST が HTML を返して CSV 検査で止まったとき、
+#   骨格が上がっていなかった。HTML のときだけ回収する / CSV は絶対に渡さない。
+$csvOk    = Read-Bytes 'sample.csv'
+$csvCd    = 'attachment; filename="Q05-0010-000000result_20260701_18.csv"'
+$htmlResp = $htmlC                     # 4 つ目の画面が返った、という想定 (実測 DOM)
+$htmlBytes = [Text.Encoding]::UTF8.GetBytes($htmlResp)
+
+# ① HTML 応答 → 送信対象
+$g1 = Get-StateCHtmlForSkeleton $htmlBytes 'text/html; charset=utf-8' '' 'CSV_RESPONSE_INVALID'
+Check 'T42 STATE C 応答が HTML なら骨格の送信対象になる' `
+  ($g1 -ne '' -and $g1 -match '(?i)<form\b') ("len={0}" -f $g1.Length)
+# content-type が csv でも、CSV 検査が INVALID で本文が HTML なら対象
+$g1b = Get-StateCHtmlForSkeleton $htmlBytes 'text/plain' '' 'CSV_RESPONSE_INVALID'
+Check 'T42a ct が html でなくても CSV_RESPONSE_INVALID + HTML本文 なら対象' ($g1b -ne '') ''
+
+# ② CSV 応答 → 送信対象にならない
+$g2 = Get-StateCHtmlForSkeleton $csvOk 'text/csv' $csvCd ''
+Check 'T43 正常な CSV 応答は骨格の送信対象にならない' ($g2 -eq '') ("len={0}" -f $g2.Length)
+# ファイル名が規則外で CSV_RESPONSE_INVALID になっても、attachment なら送らない
+$g2b = Get-StateCHtmlForSkeleton $csvOk 'text/csv' 'attachment; filename="other.csv"' 'CSV_RESPONSE_INVALID'
+Check 'T43a CSV_RESPONSE_INVALID でも attachment なら送らない (中身は CSV)' ($g2b -eq '') ''
+# attachment が付いていない CSV でも、HTML に見えなければ送らない
+$g2c = Get-StateCHtmlForSkeleton $csvOk 'text/csv' '' 'CSV_RESPONSE_INVALID'
+Check 'T43b attachment 無しの CSV でも HTML に見えなければ送らない' ($g2c -eq '') ''
+$g2d = Get-StateCHtmlForSkeleton $csvOk 'text/html' '' 'CSV_RESPONSE_INVALID'
+Check 'T43c ct が html でも本文が HTML に見えなければ送らない (fail-closed)' ($g2d -eq '') ''
+# **attachment ガード単体**の確認。ここを外すと落ちる形にしておく —
+# 実データ (Shift_JIS の CSV) は「HTML に見えない」側でも弾かれるので、
+# それだけだと attachment ガードが load-bearing か分からない (実測 2026-09-03)。
+# 添付なのに本文が HTML の形をしている、という取り合わせで**ガードだけ**を試す。
+$dlLooksHtml = [Text.Encoding]::UTF8.GetBytes('col1,col2' + "`r`n" + '<form action="/x">,2')
+$g2e = Get-StateCHtmlForSkeleton $dlLooksHtml 'text/html' $csvCd 'CSV_RESPONSE_INVALID'
+Check 'T43d attachment が付いていれば HTML に見えても送らない (ダウンロード応答)' ($g2e -eq '') ("len={0}" -f $g2e.Length)
+
+# ③ CSV 本文 / 先頭バイトが probe にもログにも出ない
+$skFromCsv = @()
+if ($g2) { $skFromCsv = Get-Skeleton $g2 }
+Check 'T44 CSV からは骨格が 1 行も作られない' (@($skFromCsv).Count -eq 0) ''
+# 手続き部で CSV のバイト列を表示/送信していないこと (静的検査)
+$csvStage = $proc.Substring($proc.IndexOf('[6] CSV'))
+Check 'T44a 手続き部が CSV のバイト列を Say / Diag / Send-Skeleton へ渡していない' `
+  ($csvStage -notmatch '(?m)^\s*(Say|Diag|Send-Skeleton)\b.*\$csvBytes') ''
+Check 'T44b Send-Skeleton へ渡すのは Get-StateCHtmlForSkeleton の戻り値だけ' `
+  ($csvStage -match 'Send-Skeleton \$skHtml' -and $csvStage -match '\$skHtml = Get-StateCHtmlForSkeleton') ''
+Check 'T44c HTML でなければ Send-Skeleton の前に Finish している' `
+  ($csvStage -match '(?s)if \(-not \$skHtml\) \{ Finish 1 .*?\}\s*\r?\n\s*Send-Skeleton') ''
+
+# ④ token redaction はこの HTML skeleton にも効く
+$skFromHtml = (Get-Skeleton $g1) -join "`n"
+Check 'T45 STATE C 応答の骨格でもトークンが伏せられる' `
+  ($skFromHtml -notmatch 'DUMMY-ANTIFORGERY-TOKEN' -and $skFromHtml -match '\[REDACTED\]') ''
+Check 'T45a それでも form の構造は読める (回収の意味が残る)' `
+  ($skFromHtml -match 'btnDownload' -and $skFromHtml -match 'name="DataCount"') ''
+
+Write-Host ''
 Write-Host '── 骨格の回収に載せないもの ────────────────────────'
 
 # **antiforgery トークンの値は S3 へ上げない** (レビュー指摘 2026-09-03)。
