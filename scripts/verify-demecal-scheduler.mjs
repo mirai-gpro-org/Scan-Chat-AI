@@ -314,6 +314,7 @@ function runScheduler(opts = {}) {
   const touched = join(dir, 'touched.txt');
   const called = join(dir, 'schtasks.txt');
   const registered = join(dir, 'registered.xml');
+  const deleted = join(dir, 'deleted.txt');
   const cert = opts.cert === false
     ? '@()'
     : "@([pscustomobject]@{ Issuer='CN=demecal.net CA, O=Demecal'; HasPrivateKey=$true })";
@@ -335,11 +336,23 @@ function runScheduler(opts = {}) {
     `    Copy-Item -LiteralPath $args[$i+1] -Destination '${registered}' -Force`,
     "    return 'SUCCESS: The scheduled task has been created.'",
     '  }',
+    // **`/Delete` は「取得を始める操作」ではない**ので touched には数えない。
+    // 別に数えて「失敗したら 1 回・成功したら 0 回」を見る。
+    "  if ($args -contains '/Delete') {",
+    `    '/Delete' | Add-Content -LiteralPath '${deleted}'`,
+    ...(opts.deleteFails
+      ? ["    return 'ERROR: cannot delete'"]
+      : [`    Remove-Item -LiteralPath '${registered}' -Force -ErrorAction SilentlyContinue`,
+         "    return 'SUCCESS: The scheduled task was successfully deleted.'"]),
+    '  }',
     `  if ($args -contains '/Query') {`,
-    `    if (-not (Test-Path -LiteralPath '${registered}')) { return 'ERROR: task not found' }`,
-    `    $x = Get-Content -LiteralPath '${registered}' -Raw`,
-    ...(opts.tamperReadback ? [`    $x = $x -replace '${opts.tamperReadback[0]}', '${opts.tamperReadback[1]}'`] : []),
-    '    return $x',
+    ...(opts.readbackGarbage
+      ? [`    if (-not (Test-Path -LiteralPath '${registered}')) { return 'ERROR: task not found' }`,
+         `    return '${opts.readbackGarbage}'`]
+      : [`    if (-not (Test-Path -LiteralPath '${registered}')) { return 'ERROR: task not found' }`,
+         `    $x = Get-Content -LiteralPath '${registered}' -Raw`,
+         ...(opts.tamperReadback ? [`    $x = $x -replace '${opts.tamperReadback[0]}', '${opts.tamperReadback[1]}'`] : []),
+         '    return $x']),
     '  }',
     "  return ''",
     '}',
@@ -359,6 +372,9 @@ function runScheduler(opts = {}) {
     out: `${r.stdout ?? ''}${r.stderr ?? ''}`,
     touched: existsSync(touched) ? readFileSync(touched, 'utf8').trim().split('\n').filter(Boolean) : [],
     calls: existsSync(called) ? readFileSync(called, 'utf8').trim().split('\n').filter(Boolean) : [],
+    deletes: existsSync(deleted) ? readFileSync(deleted, 'utf8').trim().split('\n').filter(Boolean).length : 0,
+    // **スタブの実体**。mismatch のあと本当に消えたかは、これで見る。
+    stillRegistered: existsSync(registered),
     xml: existsSync(registered) ? readFileSync(registered, 'utf16le') : '',
   };
 }
@@ -379,6 +395,9 @@ check('C10 タスクを起動・有効化していない',
   !ok.touched.includes('/Run') && !ok.touched.includes('Enable-ScheduledTask')
   && !ok.touched.includes('Start-ScheduledTask'));
 check('C11 触れた外部操作は 0 件', ok.touched.length === 0, ok.touched.join(',') || '0 回');
+// **正常に登録できたときはタスクを消さない。**
+check('C11b 正常登録では削除 0 回', ok.deletes === 0, `${ok.deletes} 回`);
+check('C11c 正常登録ではタスクが残る', ok.stillRegistered);
 
 // ── 登録された XML を実測で見る ────────────────────────────────────
 const X = ok.xml;
@@ -404,11 +423,12 @@ check('C25 XML に Windows のパスワードを書かない',
 // ── preflight で止まること ────────────────────────────────────────
 function failCase(name, code, opts) {
   const r = runScheduler(opts);
+  // 登録前に止まる形なので **schtasks は 1 回も呼ばない** = 削除するものも無い。
   const okNow = r.out.includes('SCHEDULER_INSTALL_FAILED') && r.out.includes(code)
     && r.code !== 0 && r.code !== 99
-    && r.calls.length === 0 && r.touched.length === 0;
+    && r.calls.length === 0 && r.touched.length === 0 && r.deletes === 0;
   check(name, okNow,
-    `exit=${r.code} / schtasks ${r.calls.length} 回 / 外部 ${r.touched.length} 回`);
+    `exit=${r.code} / schtasks ${r.calls.length} 回 / 削除 ${r.deletes} 回 / 外部 ${r.touched.length} 回`);
 }
 failCase('C26 配置先が無ければ登録 0', 'INSTALL_ROOT_MISSING', { installRoot: join(work, 'nope') });
 
@@ -445,17 +465,62 @@ failCase('C32 SID を解決できなければ登録 0', 'SID_UNRESOLVED', { sid:
   failCase('C33 実行時刻が不正なら登録 0', 'DAILY_AT_INVALID', { bat: p });
 }
 
-// ── 読み戻しが意図と違えば成功にしない ────────────────────────────
-for (const [name, from, to] of [
-  ['C34 読み戻しで Enabled が true なら失敗', '<Enabled>false</Enabled>', '<Enabled>true</Enabled>'],
-  ['C35 読み戻しで LogonType が違えば失敗', 'InteractiveToken', 'Password'],
-  ['C36 読み戻しで ExecutionTimeLimit が違えば失敗', 'PT30M', 'PT8H'],
-  ['C37 読み戻しで日次トリガが消えていれば失敗', '<ScheduleByDay>', '<ScheduleByWeek>'],
-]) {
-  const r = runScheduler({ tamperReadback: [from, to] });
-  check(name,
-    r.out.includes('REGISTERED_MISMATCH') && r.code !== 0 && r.code !== 99 && r.touched.length === 0,
+// ── 読み戻しが意図と違えば、**登録したタスクごと引き取る** ────────
+/*
+ * 【2026-09-03 レビュー裁定】`/Create` の後で失敗したとき、登録を残してはいけない。
+ * とくに読み戻しが `Enabled=true` だった場合、**失敗を報告しながら有効なタスクが残る**
+ * — 「C-6 まで自動取得を開始しない」に正面から反する。
+ * → Query 失敗 / 解析不能 / 照合不一致 のどれでも `/Delete` して失敗で終わる。
+ */
+function afterCreateCase(name, code, opts) {
+  const r = runScheduler(opts);
+  const okNow = r.out.includes('SCHEDULER_INSTALL_FAILED') && r.out.includes(code)
+    && r.code !== 0 && r.code !== 99
+    && r.deletes === 1              // **1 回だけ消す**
+    && !r.stillRegistered           // **本当に残っていない**
+    && r.touched.length === 0;      // /Run も有効化もしていない
+  check(name, okNow,
+    `exit=${r.code} / 削除 ${r.deletes} 回 / 残存 ${r.stillRegistered} / 外部 ${r.touched.length} 回`);
+  return r;
+}
+
+afterCreateCase('C34 読み戻しが Enabled=true → 失敗 + 削除 1 回 + 残さない',
+  'REGISTERED_MISMATCH', { tamperReadback: ['<Enabled>false</Enabled>', '<Enabled>true</Enabled>'] });
+afterCreateCase('C35 LogonType 不一致 → 失敗 + 削除 1 回 + 残さない',
+  'REGISTERED_MISMATCH', { tamperReadback: ['InteractiveToken', 'Password'] });
+afterCreateCase('C36 ExecutionTimeLimit 不一致 → 失敗 + 削除 1 回 + 残さない',
+  'REGISTERED_MISMATCH', { tamperReadback: ['PT30M', 'PT8H'] });
+// タグ名だけを置換する (開始・終了の両方が変わるので **XML は壊れない**)。
+// `<ScheduleByDay>` だけを潰すと閉じタグが残って解析不能になり、
+// 「日次が消えた」ではなく「壊れた XML」の検査になってしまう (実測)。
+afterCreateCase('C37 日次トリガが消えている → 失敗 + 削除 1 回 + 残さない',
+  'REGISTERED_MISMATCH', { tamperReadback: ['ScheduleByDay', 'ScheduleByWeek'] });
+afterCreateCase('C38 読み戻しが XML でない → 失敗 + 削除 1 回 + 残さない',
+  'READBACK_FAILED', { readbackGarbage: 'ERROR: access denied' });
+afterCreateCase('C39 読み戻しが壊れた XML → 失敗 + 削除 1 回 + 残さない',
+  'READBACK_UNPARSABLE', { readbackGarbage: '<Task><unclosed>' });
+
+// **消せなかったときは黙らない。** 成功扱いにもしない。
+{
+  const r = runScheduler({
+    tamperReadback: ['<Enabled>false</Enabled>', '<Enabled>true</Enabled>'],
+    deleteFails: true,
+  });
+  check('C40 削除できなければ REGISTERED_CLEANUP_FAILED',
+    r.out.includes('REGISTERED_CLEANUP_FAILED') && r.code !== 0 && r.code !== 99,
     `exit=${r.code}`);
+  check('C41 削除できなくても手動削除を促し、有効化しないよう明示',
+    r.out.includes('手動で削除') && r.out.includes('有効化しないでください'));
+  check('C42 削除できなくても /Run も有効化もしない', r.touched.length === 0,
+    r.touched.join(',') || '0 回');
+}
+
+// 後始末そのものが取得を始めないこと (Delete しか呼ばない)。
+{
+  const r = runScheduler({ tamperReadback: ['<Enabled>false</Enabled>', '<Enabled>true</Enabled>'] });
+  check('C43 後始末で呼ぶのは /Create /Query /Delete だけ',
+    r.calls.every((l) => /\/(Create|Query|Delete)\b/.test(l)) && r.calls.some((l) => l.includes('/Delete')),
+    r.calls.map((l) => l.split(' ')[0]).join(' '));
 }
 
 // ══ D. 凍結の維持 ═════════════════════════════════════════════════

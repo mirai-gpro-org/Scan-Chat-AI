@@ -59,6 +59,53 @@ function Stop-Setup([string]$code, [string]$msg) {
   exit 1
 }
 
+<#
+.SYNOPSIS
+  登録したタスクを消す。**消すだけ。/Run も有効化も絶対にしない。**
+.DESCRIPTION
+  戻り値 = 「消えたことを確かめられた」か。
+  確かめ方は読み戻しと同じで、`/Query /XML` に `<Task` が返らないこと。
+  **`/Delete` の出力の文言では判定しない** — 表示は環境で変わり得るので、
+  「引けなくなったか」という観測できる事実で見る。
+#>
+function Remove-RegisteredTask {
+  try { & schtasks /Delete /TN $TaskName /F 2>&1 | Out-Null } catch {}
+  try {
+    $q = (& schtasks /Query /TN $TaskName /XML 2>&1 | Out-String)
+    return ($q.IndexOf('<Task') -lt 0)
+  } catch {
+    # 引けなかった = 消えたとは言い切れない。**確認できないものを成功にしない。**
+    return $false
+  }
+}
+
+<#
+.SYNOPSIS
+  `/Create` の**後**に失敗したとき用の終了処理。登録を残さない。
+.DESCRIPTION
+  【なぜ要るか — 2026-09-03 レビュー裁定】読み戻しの結果がどうであれ、
+  そこへ来た時点でタスクは**もう登録されている**。とくに読み戻しが
+  `Enabled=true` だった場合、失敗を報告しながら**有効なタスクが残る**。
+  「C-6 monitoring と最終検証が終わるまで自動取得を開始しない」に反するので、
+  **失敗するなら登録ごと引き取る**。
+
+  消せなかったときは `REGISTERED_CLEANUP_FAILED` で明示する。
+  **どちらも exit != 0。成功扱いにはしない。**
+#>
+function Stop-AfterCreate([string]$code, [string]$msg) {
+  Write-Host ''
+  Write-Host '  ※ 確認に失敗したので、いま登録したタスクを削除します (有効なまま残さないため)。'
+  if (Remove-RegisteredTask) {
+    Write-Host '  ※ 削除しました。'
+    Stop-Setup $code $msg
+  }
+  # **1 行で組む。** 閉じ括弧のあとで改行して `+` を続けると、そこで式が切れて
+  # 構文エラーになる (実測 2026-09-03。丸ごと parse できず手続き部が動かなくなった)。
+  $why = ('{0} ({1}) のあと、登録したタスク {2} を削除できませんでした。' -f $code, $msg, $TaskName)
+  $why = $why + ' タスクスケジューラから手動で削除してください。**有効化しないでください。**'
+  Stop-Setup 'REGISTERED_CLEANUP_FAILED' $why
+}
+
 # ── 環境に触る部分は入口を分けておく ───────────────────────────
 #    SID / 証明書ストア / schtasks は **Windows にしか無い**。入口を分けてあると、
 #    検査が**その入口だけ**を差し替えて手続き部 (preflight・XML 生成・照合) を
@@ -329,15 +376,26 @@ $created = & schtasks /Create /TN $TaskName /XML $XmlPath /F 2>&1
 Say ("[7] 登録 {0}" -f (($created | Out-String).Trim()))
 
 # [9] 読み戻して照合する。**登録できたこと自体を成功の証拠にしない。**
+#
+#     ここから先の失敗では **登録したタスクを残さない** (下記 Stop-AfterCreate)。
+#     残すと「失敗を報告しながら、有効なタスクが残る」ことが起こり得る
+#     — 読み戻しが `Enabled=true` だった場合がまさにそれで、
+#     「C-6 まで自動取得を開始しない」に正面から反する。
 $queried = & schtasks /Query /TN $TaskName /XML 2>&1
 $text = ($queried | Out-String)
 $cut = $text.IndexOf('<')
 if ($cut -lt 0) {
-  Stop-Setup 'READBACK_FAILED' ("登録したタスクの定義を読み戻せません: {0}" -f $text.Trim())
+  Stop-AfterCreate 'READBACK_FAILED' ("登録したタスクの定義を読み戻せません: {0}" -f $text.Trim())
 }
-$bad = Test-RegisteredXml $text.Substring($cut) $sid $DailyAt $InstallRoot
+$xmlText = $text.Substring($cut)
+try {
+  $null = [xml]$xmlText
+} catch {
+  Stop-AfterCreate 'READBACK_UNPARSABLE' ("読み戻した定義を解析できません: {0}" -f $_.Exception.Message)
+}
+$bad = Test-RegisteredXml $xmlText $sid $DailyAt $InstallRoot
 if ($bad.Count -gt 0) {
-  Stop-Setup 'REGISTERED_MISMATCH' ("登録内容が意図と違います: " + ($bad -join ' / '))
+  Stop-AfterCreate 'REGISTERED_MISMATCH' ("登録内容が意図と違います: " + ($bad -join ' / '))
 }
 
 Say '[8] 読み戻して照合 OK'
