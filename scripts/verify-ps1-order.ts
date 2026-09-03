@@ -39,6 +39,8 @@ const TARGETS = [
   'scripts/demecal-daily.ps1',
   'scripts/demecal-recon.ps1',
   'scripts/demecal-verify.ps1',
+  // C-1 の範囲プランナ。手続き部を持たない lib だが、C-4 の本番 runner が dot-source する。
+  'scripts/demecal-range.ps1',
 ];
 
 interface Fn { name: string; defLine: number; startLine: number; endLine: number }

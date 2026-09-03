@@ -617,6 +617,86 @@ coverage high-watermark として確定する。
 - **失敗時に `last_to` を前進させない**（この性質が無人運用の根拠。§1）。
 - **`last_to` は CSV 内の最大採血日・最大 test_date ではない。**
 
+#### C-1 確定仕様（2026-09-03・実装済み）
+
+| | |
+|---|---|
+| 実装 | `scripts/demecal-range.ps1` の **`Resolve-DemecalAcquisitionRange -LastTo <s> -TodayJst <s>`** |
+| 検査 | `scripts/tests/demecal-range.tests.ps1`（`npm run verify:demecal-range`・**68 件**） |
+| 範囲 | `to = TodayJst - 1日`（**JST の昨日**） / `from = last_to + 1日` |
+
+**`today_jst` は呼び出し側（C-4 の本番 runner）が渡す。プランナ内部で現在時刻を取らない。**
+そうしないと日付をまたぐ瞬間もうるう年も**テストで固定できない**（実行日で結果が変わるテストは
+通っても何も保証しない）。ネットワーク / S3 / デメカル / state POST からも独立した純粋関数。
+
+返り値（`Status` / `Code`）と、それぞれで**次に何をしてよいか**:
+
+| Status | Code | From/To | 次の動作 |
+|---|---|---|---|
+| `ready` | — | **入る** | この範囲で取得してよい |
+| `noop` | `OK_NOOP` | **空** | 追いついている。**login / download を実行しない**。実行結果は `ok_noop` |
+| `not_initialized` | `STATE_NOT_INITIALIZED` | **空** | **停止**。直近 N 日などを自動設定しない |
+| `invalid_state` | `TODAY_JST_INVALID` / `STATE_LAST_TO_INVALID` / `DATE_OUT_OF_RANGE` | **空** | fail-closed で停止 |
+
+**`From`/`To` は `ready` のときだけ入れる**（`noop` などでは空文字）。呼び出し側が `Status` を
+見ずに `.From`/`.To` を読んでも、**壊れた範囲でダウンロードへ進めない**ようにするため。
+
+**日付は完全一致 `YYYY-MM-DD` のみ**（`2026/09/01` / `2026-9-1` / 前後の空白 / 末尾改行 /
+`2026-09-01T00:00:00` は `invalid_state`）。暦日の妥当性は `[datetime]::TryParseExact` に委ねる
+（4 年・100 年・400 年規則を .NET が持っている＝こちらで日数表を書かない）。
+
+**`daily-1.7` からコピーしなかったもの**（仕様と食い違うため。`demecal-daily.ps1` は凍結・参照のみ）:
+
+| `daily-1.7` | C-1 |
+|---|---|
+| `$to = (Get-Date).Date`（`:235`） | **JST の昨日**。今日を含めない |
+| `$FirstRunDays = 7` の初回 fallback（`:41,236`） | **`STATE_NOT_INITIALIZED` で停止** |
+| `$MaxRangeDays = 60` の clamp（`:43,243`） | **実装しない**（下記） |
+
+#### C-1 Reality Check: 1 回の指定範囲の上限は**未確定**（推測で固定しない）
+
+repo 内の `MaxRangeDays = 60` は **`demecal-daily.ps1:43`** と、それを説明した
+**`demecal_daily_HANDOVER_20260902.md:160`** / **`demecal_phase_c_spec_20260903.md §6.4`** の
+3 か所にしか無く、**デメカル側の制限としての出典が 1 件も無い**（実測でも先方回答でもない）。
+
+逆向きの材料もある: **`demecal_auto_download_overview_spec.md:84`** のダウンロード履歴に
+`2025/12/01〜2026/06/11`（**193 日**）が実際に残っている＝**60 日で切られてはいない**。
+ただしこれは過去の手作業の記録であって、「上限が無い」ことの証明にもならない。
+
+→ **C-1 では clamp を実装しない。C-4 runner 設計時の確認事項**（デメカルへの確認・
+`demecal_auto_download_overview_spec.md §6`「アクセス制限」と同じ枠）。
+テスト `C41`/`C42` が「245 日・数年の backlog を切らない」を固定しているので、
+**上限が確定したときに黙って 60 を足すと落ちる**（意図的な差し替えを強制する）。
+
+#### C-1 の機械確認（何を見張り、壊すと落ちることを確認済み）
+
+実行時（`Invoke-WebRequest` / `Invoke-RestMethod` / **`Get-Date`** を投げる関数で覆って全ケース走破）
+とソース検査の**両方**で見る。片方だけだとすり抜ける（ソース検査は別名の呼び出しに弱く、
+実行時検査は「呼ばれない経路」に弱い）。
+
+network call 0 / state write 0 / `force` 0 / 現在時刻 0 / overlap 0 / 隙間 0 /
+`FirstRunDays` fallback 0 / `MaxRangeDays` clamp 0 / ファイル書き込み 0。
+
+退行を注入して落ちることを実測（`✓ 68 件` → ）:
+
+| 注入した退行 | 結果 |
+|---|---|
+| `to = today`（昨日でなく今日） | **19 件失敗** |
+| 日付を部分一致 + 任意の `\D` 区切りへ緩める | **10 件失敗** |
+| `FirstRunDays = 7` の初回 fallback を復活 | **落ちる**（ソース検査） |
+| 同上を**変数名を使わず**に書く | **6 件失敗**（振る舞いで捕まる＝grep 回避されない） |
+| `MaxRangeDays = 60` の clamp を追加 | **落ちる** |
+| 内部で `Get-Date` を呼ぶ | **その場で throw** |
+
+#### C-1 で触っていないもの
+
+- **`src/pages/api/admin/demecal-state.ts` は Reality Check のみ・無変更**。
+  `last_to` の単調前進（`:74` 過去日付は据置）と `YYYY-MM-DD` 検証（`:41,67`）は既にあり、
+  C-1 に必要な変更が無かった。**`force`（`:74`）はプランナから触らない。**
+- `demecal-daily.ps1`（`daily-1.7`）は**凍結のまま無変更**。`demecal-verify.ps1`（`verify-1.4`・
+  Phase B の成功証跡）も無変更（`verify:demecal-flow` 129 件 PASS で確認）。
+- STATE A/B/C・CSV download・scheduler・後段連携は C-1 の対象外。
+
 ### C-2. overlap / retry
 
 直近 N 日を毎回取り直す（設計値は ChatGPT が確定）。
