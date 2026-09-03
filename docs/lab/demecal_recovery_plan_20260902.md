@@ -1426,12 +1426,135 @@ Stop-Setup 'X' (
 - 実行時刻の値そのもの (業務判断)。
 - 1 回の指定範囲の上限 / `rows>0` の受け渡し先 (変わらず **scope 外**)。
 
-### C-6. monitoring
+### C-6. monitoring（2026-09-03・実装済み）
 
 `/api/admin/demecal-run` の実行ログ ＋ GitHub Actions の日次ワークフローを見張りにする
 （**新しい通知基盤は作らない** = 既存の確定事項どおり）。
 送るのは**非 PII の取得結果だけ**（範囲 / 行数 / 結果 / エラーコード）。
 **CSV 本文・臨床値・PII は送らない。**
+
+#### 「health JSON が在る」では完成にしない
+
+無人運用の見張りは**誰も見ていない**前提なので、`health` を返すだけでは
+「誰も見ない健康情報」が増えるだけで、止まっていることに気づけない。
+**機械が 0 / 非 0 で答えられる口**を作って初めて見張りになる。
+
+| ファイル | 役割 |
+|---|---|
+| `src/lib/demecal-health.ts` | **判定 (pure)**。`evaluateDemecalHealth(payload, now, getError)` |
+| `scripts/check-demecal-health.mjs` | **監視口 (CLI)**。取ってくる / 渡す / 出す / 終了コードを返す だけ |
+| `scripts/verify-demecal-health.mjs` | 回帰チェック（`npm run verify:demecal-health`・**114 件**） |
+
+**サーバ API は 1 行も変えていない。** Reality Check の結論どおり、
+`runs[]` / `health.last_success_at` / `health.days_since_success` /
+`health.cert_days_left` / `health.stale` で監視に必要な材料は揃っていた（`§9`）。
+**別の run-state も作らない** —判断材料はこの API の応答だけ。
+
+#### 検知する状態（複数同時に立つ）
+
+| コード | 条件 | exit |
+|---|---|---|
+| `MONITOR_SOURCE_ERROR` | GET 自体の失敗 / 応答が壊れている / `ok:false` | ≠0 |
+| `NO_RUN_HISTORY` | `runs.length === 0` | ≠0 |
+| `LAST_RUN_FAILED` | `runs[0].result === 'fail'` | ≠0 |
+| `STALE` | `health.stale === true` | ≠0 |
+| `CERT_EXPIRING` | `cert_days_left < 60` | ≠0 |
+| （なし） | 直近 ok / stale=false / cert ≥ 60 または未知 | 0 |
+
+- **「直近 run 失敗」と「長期間成功なし」を混同しない。**
+  直近 fail・最後の成功が 1 日前なら `LAST_RUN_FAILED` だけが立ち、`STALE` は立たない
+  （B13 / C7 が固定。混同する退行を入れると落ちる）。
+- **`cert_days_left == null` は異常にしない。** 古い run や証明書を見ない run で
+  値が無いことがあり、「未知」と「期限切迫」を同じ扱いにすると**毎日鳴り続けて
+  誰も見なくなる**。ただし summary には必ず `cert=unknown` と出す。
+- **記録ゼロでは `NO_RUN_HISTORY` と `STALE` が両方立つ。** API が `runs=[]` でも
+  `stale=true` を返す fail-closed 設計だから（`demecal-run.ts:162`）。
+  片方を握り潰すのは**こちら側でサーバの判定を書き換えること**になるので、
+  そのまま両方出して `NO_RUN_HISTORY` を先に並べる。
+
+#### しきい値を作り直さない（この設計の要）
+
+`STALE_DAYS = 8` は `api/admin/demecal-run.ts:30` の契約で、**監視の持ち物ではない**。
+判定は `health.stale` をそのまま使う。ここで日数を数え直すと
+**サーバとクライアントに別々の「止まっている」が生まれ、片方だけ直して黙ってずれる**。
+`verify` の A3 / A4 / A5 が「自前で日数を計算していない」ことをソースで固定する。
+
+**`now` は判定に使わない。** それでも引数で受けるのは、判定モジュールから
+**時計への依存を完全に無くす**ため（`§3 client側でDate.now依存を隠さない`）。
+`Date.now()` を内部で呼ぶと境界の検査が実行時刻任せになり「たまたま通る」状態になる。
+出力の `evaluated_at` にだけ使い、**別の `now` を渡しても結論が変わらない**ことを
+B40 が固定する。**この点はレビューで潰してほしい** — 「時刻境界を injected NOW で
+検査する」という指示に対し、こちらは *fixture を固定 NOW から組み立てる* 形で応え、
+*判定そのものは時刻を見ない* 設計にした。意図と違えば直す。
+
+#### PII — `error` / `diag` は監視に出さない
+
+`§4` は「API で sanitize 済みなら表示してよい」だが、**出さない方に振った**。
+監視の出力は GitHub Actions のログや通知メールに載って**行き先が広い**ので、
+通す情報を最小に固定しておく（原因を追うのは admin の実行ログの仕事）。
+
+- 判定が読むのは `result` / `stage` / `health.*` **だけ**。
+  `rows` / `range` / `host` / `error` / `diag` は読まない（A6 / A7 / A8）。
+- CLI は**生の応答を出す口を持たない**（`--raw` を作らない・A14）。
+  HTTP エラー時も**本文を出さず状態だけ**（C28）。
+- 鍵は `x-intake-key` ヘッダで送り **URL に載せない**（URL はプロキシ・履歴・ログに残る。
+  A12 / C22 / C23）。既定の鍵は **`LAB_INTAKE_API_KEY`** で、
+  `ADMIN_API_KEY` はフル権限なので監視には渡さない（`demecal_unattended_spec §3.1` と同じ理由）。
+
+#### 使い方
+
+```text
+node scripts/check-demecal-health.mjs --fixture <path.json>          # 完全ローカル
+node scripts/check-demecal-health.mjs --url https://… --key <鍵>     # 実運用
+  --now <ISO>   判定に使わない基準時刻 (evaluated_at を固定する)
+  --json        verdict を JSON で出す (生の応答は出さない)
+exit 0 = 異常なし / 1 = 異常あり / 2 = 使い方の誤り
+```
+
+#### 検証 `npm run verify:demecal-health`（114 件）
+
+| 層 | 見るもの |
+|---|---|
+| **A**（22 件） | 判定モジュールと CLI の**ソース**（時計依存ゼロ / しきい値を作り直していない / PII を読まない / 自動取得側に触っていない） |
+| **B**（53 件） | fixture を判定に通す（状態の出し分け・8 日 / 9 日・cert 59 / 60 / null・壊れた応答 10 通り・`now` 非依存・PII 非混入） |
+| **C**（33 件） | **CLI を実際に起動する**（終了コード・`--json`・**ローカル HTTP サーバ相手の実通信** 200 / 401 / 500 / 非 JSON / 到達不能 / 鍵の送り方） |
+| **D**（6 件） | **API 契約の固定**。この検査の fixture は `demecal-run.ts` GET の health 計算を**写して**作るので、本物が変わったら写しは黙って古くなる。`STALE_DAYS = 8` / `stale` の式 / `cert_days_left` の出どころ を押さえ、変わったら落ちて**人が写しを直しに来る**ようにした |
+
+#### 退行を注入して落ちることを確認（8 通り）
+
+| 入れた退行 | 落ちた検査 |
+|---|---|
+| A 判定が日数を自前で数え直す | A3 / A4 / B3 |
+| B `cert=unknown` を異常にする | B30 / C15 |
+| C 直近 fail を STALE と混同する | A4 / B13 / C7 |
+| D 壊れた応答を素通しする | B36（`stale` が文字列 / `result` が未知） |
+| E CLI が常に exit 0 | A16 / C3 / C5 / C11 / C13 / C17 / C25 / C27 / C29 / C33（10 件） |
+| F CLI が生の応答を出す | A14 / C8（PII マーカーが実際に標準出力へ出た） |
+| G 鍵を URL に載せる | A12 / C21 / C22 / C23 |
+| H API のしきい値が 8 → 14 に変わる | D1（fixture の drift 検知） |
+
+#### 検査を書いていて踏んだもの 2 件（どちらも実測）
+
+- **`spawnSync` で自作 HTTP サーバを叩くとデッドロックする。** C 層は同じプロセスに
+  サーバを立てて `--url` 経路を通すが、`spawnSync` は**親の event loop を止める**ので
+  サーバが子の要求に永久に応答できず、子が固まって timeout まで待ち続ける
+  （最初の版が 120 秒沈黙したのがこれ）。→ 非同期 `spawn` + `await` に変更。
+- **ソース検査が自分の解説文で誤爆した。** `Date.now()` や `STALE_DAYS = 8` を
+  コメントに書いているだけで A1 / A5 が落ちた。C-5 と同じ穴なので、
+  **コメントを落としてから grep する** `stripComments()` を通した。
+
+#### C-6 で決めていないもの / やっていないもの
+
+- **GitHub Actions の日次ワークフローはまだ足していない。** いま足すと、タスクは
+  無効のまま＝ run が 1 件も無いので **`NO_RUN_HISTORY` で毎日失敗メールが飛ぶ**。
+  「壊れていないのに毎日鳴る見張り」は真っ先に無視されるようになるので、
+  **タスクを有効化する回に同時に入れる**（既存 `charge-subscriptions-cron.yml` と同型・
+  `LAB_INTAKE_API_KEY` は GitHub Secrets へ）。
+- **タスクは無効のまま。** 監視の完成は有効化ではない。
+  `schtasks` / `Enable-ScheduledTask` / production runner / デメカル接続 /
+  `demecal-state` POST には**一切触れていない**（A17 / A18 がソースで固定）。
+- 実運用での通知先・鳴らす頻度・沈黙時間（同じ異常を何日続けて鳴らすか）。
+- `cert_days_left` の閾値 60 日が業務に合うか（更新手続きのリードタイム次第）。
 
 ## 7.3 このセクションの完成条件
 
