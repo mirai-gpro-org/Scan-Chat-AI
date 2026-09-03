@@ -112,10 +112,25 @@ export const GET: APIRoute = async ({ url }) => {
   const given = (url.searchParams.get('k') || '').trim();
   if (given !== expected) return text('unauthorized', 401);
 
-  // 既定は従来どおり接続チェック (既存の配布 URL を壊さない)。
-  const key = ((url.searchParams.get('script') || 'probe').trim() as ScriptKey);
+  // **`script` は必須。既定値を持たせない (fail-closed)。**
+  //
+  // 【実障害 2026-09-02 — Phase B が実行されなかった真因】
+  // 案内メールの中でリンクが `...?k=<token>` までで切れ、`&script=verify` が
+  // **リンクの外へ落ちた**。旧実装は script 省略時に既定 `probe` を返したので、
+  // 押した人には**正常にダウンロードできたように見えたまま**、
+  // 意図と違う旧 `demecal-check v1.0` が配られた。
+  // 黙って別のものを配るくらいなら、**落ちて気づける方がよい**。
+  const rawKey = url.searchParams.get('script');
+  if (rawKey === null || rawKey.trim() === '') {
+    return text('script is required (probe | recon | daily | verify)', 400);
+  }
+  const key = rawKey.trim() as ScriptKey;
+  // `SCRIPTS[key]` だけだと `constructor` 等の prototype 由来のキーが
+  // truthy になり 500 まで進んでしまうので、自前の所有キーだけを見る。
+  if (!Object.prototype.hasOwnProperty.call(SCRIPTS, key)) {
+    return text(`unknown script: ${key} (probe | recon | daily | verify)`, 400);
+  }
   const spec = SCRIPTS[key];
-  if (!spec) return text(`unknown script: ${key} (probe | recon | daily | verify)`, 400);
   const frozen = FROZEN[key];
   if (frozen) return text(frozen, 409);
 
