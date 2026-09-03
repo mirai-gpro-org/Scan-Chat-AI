@@ -82,12 +82,15 @@ async function call(query) {
  * 「script なし → 400」を消すと Phase B の事故が再発するので、必ず残す。
  */
 const CASES = [
-  { name: 'script なし',            query: '',                 status: 400, body: 'script is required (probe | recon | daily | verify)' },
+  { name: 'script なし',            query: '',                 status: 400, body: 'script is required (probe | recon | daily | verify | production-install)' },
   { name: 'script= (空)',           query: '&script=',         status: 400, body: 'script is required' },
   { name: 'script=   (空白のみ)',   query: '&script=%20%20',   status: 400, body: 'script is required' },
   { name: 'script=probe',           query: '&script=probe',    status: 200 },
   { name: 'script=verify',          query: '&script=verify',   status: 200 },
   { name: 'script=recon',           query: '&script=recon',    status: 200 },
+  // C-4.1 の本番 runner インストーラ。**組み立て方が違う**ので `SCRIPTS` には無い
+  // (3 本をディスクへ配置する。中身の検査は `npm run verify:demecal-installer`)。
+  { name: 'script=production-install', query: '&script=production-install', status: 200 },
   { name: 'script=daily (凍結)',    query: '&script=daily',    status: 409, body: '凍結中' },
   { name: 'script=unknown',         query: '&script=nope',     status: 400, body: 'unknown script' },
   { name: 'script=constructor',     query: '&script=constructor', status: 400, body: 'unknown script' },

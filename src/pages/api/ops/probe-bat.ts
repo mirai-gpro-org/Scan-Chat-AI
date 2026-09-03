@@ -24,7 +24,10 @@ import PROBE_PS1 from '../../../../scripts/demecal-probe.ps1?raw';
 import RECON_PS1 from '../../../../scripts/demecal-recon.ps1?raw';
 import DAILY_PS1 from '../../../../scripts/demecal-daily.ps1?raw';
 import VERIFY_PS1 from '../../../../scripts/demecal-verify.ps1?raw';
+import PRODUCTION_PS1 from '../../../../scripts/demecal-production.ps1?raw';
+import RANGE_PS1 from '../../../../scripts/demecal-range.ps1?raw';
 import { buildProbeBat } from '../../../lib/probe-bat';
+import { buildDemecalProductionInstaller } from '../../../lib/demecal-installer';
 
 export const prerender = false;
 
@@ -53,6 +56,21 @@ const SCRIPTS = {
   verify: { ps1: VERIFY_PS1, ja: 'デメカル疎通確認', ascii: 'demecal-verify' },
 } as const;
 type ScriptKey = keyof typeof SCRIPTS;
+
+/**
+ * **本番 runner のインストーラ (C-4.1)。`SCRIPTS` とは組み立て方が違う。**
+ *
+ * `SCRIPTS` は「.ps1 を 1 本、bat の中で `Invoke-Expression` する」= ディスクに何も残さない方式。
+ * 本番 runner は `demecal-verify.ps1` / `demecal-range.ps1` を **dot-source** するので、
+ * その方式では `$PSScriptRoot` の隣に置くべき 2 本が存在せず**成立しない**。
+ * → **3 本を `C:\demecal\production` へ配置する別物**として扱う
+ *   (`src/lib/demecal-installer.ts` の冒頭にこの前提を書いてある)。
+ *
+ * **`buildProbeBat()` は触らない。** recon / verify / 接続チェックの配布は現行のまま。
+ */
+const INSTALLER_KEY = 'production-install';
+const INSTALLER_JA = 'デメカル自動取得_インストール';
+const INSTALLER_ASCII = 'demecal-install';
 
 /**
  * **配布を止めているスクリプト。**
@@ -105,6 +123,22 @@ function text(body: string, status: number): Response {
   });
 }
 
+/** .bat をダウンロードさせる (ファイル名は日本語と ASCII の両方を出す)。 */
+function download(bat: Uint8Array, nameJa: string, nameAscii: string): Response {
+  return new Response(bat as unknown as BodyInit, {
+    status: 200,
+    headers: {
+      'content-type': 'application/octet-stream',
+      'content-length': String(bat.byteLength),
+      'content-disposition':
+        `attachment; filename="${nameAscii}"; `
+        + `filename*=UTF-8''${encodeURIComponent(nameJa)}`,
+      'cache-control': 'no-store',
+      'x-robots-tag': 'noindex',
+    },
+  });
+}
+
 export const GET: APIRoute = async ({ url }) => {
   const expected = env('PROBE_UPLOAD_TOKEN');
   if (!expected) return text('disabled (PROBE_UPLOAD_TOKEN 未設定)', 503);
@@ -122,13 +156,33 @@ export const GET: APIRoute = async ({ url }) => {
   // 黙って別のものを配るくらいなら、**落ちて気づける方がよい**。
   const rawKey = url.searchParams.get('script');
   if (rawKey === null || rawKey.trim() === '') {
-    return text('script is required (probe | recon | daily | verify)', 400);
+    return text('script is required (probe | recon | daily | verify | production-install)', 400);
   }
+
+  // 本番 runner のインストーラだけは組み立て方が違う (3 本を配置する)。
+  if (rawKey.trim() === INSTALLER_KEY) {
+    try {
+      const built = buildDemecalProductionInstaller({
+        files: {
+          'demecal-production.ps1': PRODUCTION_PS1,
+          'demecal-verify.ps1': VERIFY_PS1,
+          'demecal-range.ps1': RANGE_PS1,
+        },
+        // **`ADMIN_API_KEY` は渡さない。** 引数にも無いので通り道が存在しない。
+        intakeKey: env('LAB_INTAKE_API_KEY') ?? '',
+      });
+      const num = built.version.split('-').pop() as string;
+      return download(built.bytes, `${INSTALLER_JA}_v${num}.bat`, `${INSTALLER_ASCII}-v${num}.bat`);
+    } catch (err) {
+      return text(`build_failed: ${err instanceof Error ? err.message : String(err)}`, 500);
+    }
+  }
+
   const key = rawKey.trim() as ScriptKey;
   // `SCRIPTS[key]` だけだと `constructor` 等の prototype 由来のキーが
   // truthy になり 500 まで進んでしまうので、自前の所有キーだけを見る。
   if (!Object.prototype.hasOwnProperty.call(SCRIPTS, key)) {
-    return text(`unknown script: ${key} (probe | recon | daily | verify)`, 400);
+    return text(`unknown script: ${key} (probe | recon | daily | verify | production-install)`, 400);
   }
   const spec = SCRIPTS[key];
   const frozen = FROZEN[key];
@@ -154,16 +208,5 @@ export const GET: APIRoute = async ({ url }) => {
     return text(`build_failed: ${err instanceof Error ? err.message : String(err)}`, 500);
   }
 
-  return new Response(bat as unknown as BodyInit, {
-    status: 200,
-    headers: {
-      'content-type': 'application/octet-stream',
-      'content-length': String(bat.byteLength),
-      'content-disposition':
-        `attachment; filename="${nameAscii}"; `
-        + `filename*=UTF-8''${encodeURIComponent(nameJa)}`,
-      'cache-control': 'no-store',
-      'x-robots-tag': 'noindex',
-    },
-  });
+  return download(bat, nameJa, nameAscii);
 };

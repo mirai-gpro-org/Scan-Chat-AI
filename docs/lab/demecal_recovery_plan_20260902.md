@@ -604,6 +604,7 @@ C-1 date range / watermark
 C-2 retry / catch-up
 C-3 zero rows
 C-4 production acquisition runner
+C-4.1 distribution / install   (3 本を専用PC へ配置する)
 C-5 scheduler
 C-6 monitoring
 ```
@@ -1056,13 +1057,127 @@ UTC の瞬間 → +09:00 へ寄せる → その暦日
    併せて **`Start-Process` は空文字の引数を落とす**（`-LastTo ''` が後ろへずれる）ので、
    子プロセスへの受け渡しは環境変数にした。
 
-#### C-4 Foundation で決めていないもの（C-5 以降）
+#### C-4 Foundation で決めていないもの（C-4.1 以降）
 
-- **配布の形**。production は `demecal-verify.ps1` と `demecal-range.ps1` を dot-source するので、
-  専用PC には **.ps1 が 3 本要る**。既存の bat 生成（`api/ops/probe-bat`）は 1 本を埋め込む形なので、
-  **3 本をどう配るかは C-5 で決める**（ここで発明しない）。
+- **配布の形** → **C-4.1 で確定した（下記）**。
 - 1 回の指定範囲の上限（C-1 Reality Check のとおり**未確定**）。
 - `rows>0` の受け渡し先（**このセクションの scope 外**）。
+
+### C-4.1. 配布とインストール（2026-09-03・実装済み）
+
+**Wellfort に渡すものは 1 ファイルのまま。ダブルクリック 1 回で 3 本が置かれる。**
+
+```
+デメカル自動取得_インストール_v1.0.bat
+  ↓ 1 回実行
+C:\demecal\production\
+  demecal-production.ps1   ← 取り込み専用キーを注入済み
+  demecal-verify.ps1       ← Phase B の実証済みロジック（そのまま）
+  demecal-range.ps1        ← C-1 の範囲プランナ（そのまま）
+  install-manifest.json    ← 版と 3 本の SHA-256（非 PII）
+```
+
+#### なぜ既存の `buildProbeBat()` を使えないのか
+
+`buildProbeBat()` は **.ps1 を 1 本だけ** bat の中へ置き、bat が自分自身を読み直して
+`Invoke-Expression` する方式で、**ディスクにファイルを 1 つも残さない**。
+ところが本番 runner は C-4 の設計どおり
+
+```powershell
+. (Join-Path $PSScriptRoot 'demecal-verify.ps1') -LibOnly
+. (Join-Path $PSScriptRoot 'demecal-range.ps1')
+```
+
+を **dot-source** する（「書き写さない = parity を構造で保証する」）。
+`Invoke-Expression` された文字列に `$PSScriptRoot` は無く、隣に置くべき 2 本も存在しないので、
+**production.ps1 だけを自己実行 bat へ包んでも成立しない**。
+
+→ **新しい builder `src/lib/demecal-installer.ts` を分けた。**
+`buildProbeBat()` は 1 行も変えていない（recon / verify / 接続チェックの配布は現行のまま。
+`verify:probe-bat-gate` が 3 つとも 200 のままであることを見ている）。
+
+#### 確定仕様
+
+| | |
+|---|---|
+| 配布口 | `GET /api/ops/probe-bat?k=<PROBE_UPLOAD_TOKEN>&script=production-install` |
+| 配置先 | `C:\demecal\production`（**固定**。無ければ作る） |
+| 埋め込み | 3 本を **base64** で bat の中へ |
+| 秘密 | `__LAB_INTAKE_KEY__` を **production 1 本だけ**に注入（Vercel env `LAB_INTAKE_API_KEY`） |
+| 埋め込まないもの | **`ADMIN_API_KEY`**（builder の引数にも無い）/ デメカル ID・PW（①recon の DPAPI 資格情報を再利用）/ `PROBE_UPLOAD_TOKEN` |
+| 失敗 | `INSTALL_FAILED <コード>` ＋ **exit != 0** |
+| インストール後 | **取得しない**。デメカルに接続しない・state を読み書きしない・runner を起動しない・タスク登録もしない |
+
+`daily` の凍結は解除していない（`?script=daily` は 409 のまま）。
+`script` 省略時の fail-closed（400）も維持。
+
+**`demecal-verify.ps1` の `__PROBE_TOKEN__` は未注入のまま置く。** Phase B 用の診断トークンを
+本番 PC へ再導入しない、という判断で、`Send-Skeleton` が no-op になる現行契約
+（`demecal-verify.ps1:846`）をそのまま使う。必要になったら C-6 で別途判断する。
+verify 側の `$IntakeKey` も未注入でよい — production は dot-source の**後**に自分の
+`$IntakeKey` を代入するので（`demecal-production.ps1:61`）、`Report-Run` が見るのは
+production の値になる。**結果として秘密が載るファイルは 1 本に閉じる。**
+
+#### base64 で埋めた理由（2 つとも実利）
+
+1. 中身が日本語なので、bat の読み直し（`Get-Content -Encoding UTF8`）を通しても
+   **バイト単位で同一**であることを保証したい。ここが崩れると SHA-256 照合が意味を失う。
+2. **インストーラ自身のコードに `Invoke-WebRequest` / `demecal-state` / `schtasks` 等が
+   1 つも無いことを grep で言い切れる**（3 本の中身は base64 の中なので混ざらない）。
+   「install だけでは何も取りに行かない」を、実行時の計数**と**ソースの両方で固定できる。
+
+#### 混成セットを作らない — temp → 全数照合 → 入れ替え
+
+**一部だけ新しく、一部だけ古い状態を正常扱いしない。**
+
+```
+①作業フォルダ (production.new) へ 3 本を書き、1 本ずつ SHA-256 を照合
+②本数と名前が期待どおりかを見る（欠損・余剰の検出）
+③ここで初めて target を入れ替える（旧セットは .old へ退避 → 失敗したら戻す）
+④入れ替えた**後**の実物をもう一度照合する
+```
+
+target へ直接書かないので、**途中で落ちても既に入っている正常セットは 1 バイトも変わらない**。
+
+#### 検証 `npm run verify:demecal-installer`（71 件）
+
+node（組み立て・配布口）と PowerShell（実際の展開）を **1 本で跨ぐ**。
+境界を跨いだところに事故が出る（ハッシュの取り方 / 改行 / 文字コード / 終了コードの伝わり方）ので、
+片側だけでは「配って初めて壊れている」が残る。
+
+**実機と同じ形で走らせる。** bat の cmd 部が呼ぶのと同じ
+`Get-Content <bat>` → `skip` → `Invoke-Expression` の形で起動し、**skip 行数も bat 自身から読む**。
+
+> **実測 2026-09-03**: PowerShell 部だけを取り出して dot-source する形で試したところ、
+> インストーラが `exit 1` してもドライバは走り続け、**終了コードが 0 のまま通った**。
+> C-4 で踏んだ「`exit` が `&` を越えない」と同じ穴。**実機と同じ呼び方でしか検査にならない。**
+
+Wellfort 実機は使わない（配置先だけテンポラリへ差し替えて Linux で走らせる）。
+
+#### 退行を注入して落ちることを確認（7 通り）
+
+| 注入した退行 | 落ちた検査 |
+|---|---|
+| temp を経由せず target へ直接書く | **C22 のみ**（旧セットが `GONE` になる） |
+| 診断トークンも verify へ注入する | A08 / A13 / C13 |
+| 3 本すべてに取り込み専用キーを注入 | A11 |
+| bat が終了コードを握りつぶす（`exit /b`） | **A21 のみ** |
+| OneDrive ガードを外す | C24 / C25 |
+| 作成直後のハッシュ照合を外す | **C16 のみ** |
+| 入れ替え**後**の再照合を外す | **A23 のみ**（当初は 0 件 → 下記） |
+
+**「ソース検査と実行時検査は両方要る」がまた出た。**
+`exit /b %RC%` の退行は実行時の層に映らない（C 層は PowerShell 部を直接動かすので cmd 部を見ない）。
+逆に、入れ替え**後**の再照合を外す退行は、手元の Linux では「移動が半端に終わる」状況を作れず
+**実行時では 71 件すべて通ってしまった** → 照合が 2 回あることをソースで固定する A23 / A24 を足した。
+JST の local fallback（C-4）と同じ構図。
+
+#### C-4.1 で決めていないもの
+
+- **タスクスケジューラへの登録は C-5**。インストールと本番取得・自動実行を
+  同じ実機操作にしない（1 回の実行で全部やると、失敗したときにどこで失敗したか分からなくなる）。
+- 1 回の指定範囲の上限（変わらず**未確定**）。
+- `rows>0` の受け渡し先（**scope 外**）。
 
 ### C-5. scheduler
 
@@ -1085,6 +1200,7 @@ to = 当日を使わない
 連続 range + 失敗時 last_to 据置で取り漏らさない
 失敗時に watermark を前進させない
 0 件を正常に扱う
+production runner の 3 本が 1 回の操作で専用PC へ揃って入る (混成セットにしない)
 production runner が無人で走る
 scheduler が登録され、走ったことがサーバ側に残る
 失敗が人に届く
