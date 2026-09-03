@@ -1,12 +1,24 @@
 # デメカル自動取得 Phase C — 本番連携・冪等化・無人化 詳細仕様
 
+**版:** **v0.2 (2026-09-03 改訂)**  
 **作成日:** 2026-09-03  
 **対象:** Scan-Chat-AI / デメカル血液CSV自動取得  
-**前提:** Phase A PASS / Phase B `verify-1.4` PASS  
+**前提:** Phase A PASS / Phase B `verify-1.4` PASS / **C0 Reality Check 実施済（PASS ではない）**  
 **基準:** `claude/awesome-carson-UeyUZ` / `7c54c79`  
 **位置づけ:** `docs/lab/demecal_recovery_plan_20260902.md` §7 を具体化する実装仕様  
 **実装担当:** Claude Code  
 **設計・Phase移行判定:** ChatGPT / GPT-5.6 Sol
+
+## 改訂履歴
+
+| 版 | 日付 | 内容 |
+|---|---|---|
+| v0.1 | 2026-09-03 | 初版 |
+| **v0.2** | 2026-09-03 | **C0 Reality Check の結果を受けた ChatGPT 裁定を反映。** ①本人紐付けを `customer.lab_tests` から **`diagnosis.lab_external_id_map`** へ変更 ②ledger を `customer` → **`diagnosis`** へ ③`customer.lab_tests` 更新を必須条件から除外 ④**取込と最終納品を分離**し `C0_ELITH_CYCLE_DATE_UNRESOLVED` を「Elith final handoff の blocker」へ移動 ⑤デメカル/リージャーの法人関係を technical blocker から外す ⑥C0 結果を **§16**、Wellfort 確認事項を **§17** に追記 |
+
+> **v0.2 で変わったのは「どこに置くか」だけ。**
+> §1.1（PII で本人を決めない）・§5.3（semantic hash）・§5.8（preflight all → write later）・
+> §6（watermark）・§12（write 順序）・§13（Stop Conditions）は**変更していない**。
 
 ---
 
@@ -51,12 +63,32 @@ CSVには氏名・生年月日・住所・電話・メール等が含まれる�
 ```text
 CSV 指図番号
   ↓ exact match
-customer.lab_tests.external_test_id
+diagnosis.lab_external_id_map (source_system, external_test_id)   ← v0.2 で変更
   ↓
 diagnostic_user_id
 ```
 
 氏名・生年月日等による自動照合で `diagnostic_user_id` を決めることは禁止。
+
+> **【v0.2 変更】** v0.1 は `customer.lab_tests.external_test_id` を主経路にしていたが、
+> **本番 architecture で成立しない**ことが C0 で確定した（§16-A）:
+> 本番の顧客データは `app_bridge`（**read-only**・`customer_account`/`subscription`/`kit_shipment`
+> の 3 テーブルのみ）で、**`lab_tests` は含まれない**。血液用の `external_test_id` writer も repo に無い。
+> → **Scan-Chat-AI が本番で write できる `diagnosis` スキーマ側に、非PII の対応表を持つ。**
+>
+> ```text
+> diagnosis.lab_external_id_map
+>   source_system        text    -- 技術的な連携元 namespace。法人 UUID ではない
+>   external_test_id     text    -- デメカル CSV の「指図番号」
+>   diagnostic_user_id   uuid
+>   test_type            text
+>   created_at           timestamptz
+>   UNIQUE (source_system, external_test_id)
+> ```
+>
+> **`source_system` は法人 UUID ではなく技術的な namespace。** デメカルは仮称 **`demecal_portal`**。
+> **「デメカルとリージャーが同一法人か」に本人紐付けロジックを依存させない**（§6・§17-Q1）。
+> **回答前に法人 UUID を作らない。**
 
 ## 1.2 専用PCへ管理鍵を置かない
 
@@ -87,7 +119,9 @@ DB照合・冪等性・S3 writeはScan-Chat-AIサーバ側で行う。
 # 2. Phase C の段階
 
 ```text
-C0 Reality Check / 前提確定
+C0 Reality Check / 前提確定          ← 実施済 (§16)。PASS ではなく設計補正で v0.2 へ
+ ↓
+C0.5 仕様補正 (本 v0.2) + mapping発生源の確定   ← いまここ。C0.5 が閉じるまで C1 へ行かない
  ↓
 C1 production parser + 本人解決（writeなし）
  ↓
@@ -104,6 +138,28 @@ C6 scheduler / monitoring
 
 各段階のExit Criteriaを満たすまで次へ進まない。
 
+## 2.1 【v0.2】取込と最終納品を分離する
+
+**Demecal CSV の取込時に、未確定の AI 診断回日を推測して
+`/user/{client_id}/date/{YYYY_MM_DD}/` へ本番 write してはいけない。**
+
+```text
+Demecal ingestion
+   ↓
+本人特定済み BloodTestData を内部成果物として確定
+   ↓
+diagnosis 側で保持 (test_artifacts / test_artifact_files)
+   ↓
+診断回 (bundleDate) が確定
+   ↓
+Elith assemble / final S3 handoff
+```
+
+- **Demecal import 時には最終 Elith date folder を作らない。**
+- したがって **`C0_ELITH_CYCLE_DATE_UNRESOLVED` は「Demecal CSV 取込の blocker」ではなく
+  「Elith final handoff 開始の blocker」**へ位置づけを変更する（§3 C0-2）。
+- これにより **C1〜C4 は診断回日の確定を待たずに進められる。**
+
 ---
 
 # 3. C0 — Reality Check
@@ -112,36 +168,33 @@ C6 scheduler / monitoring
 
 ## C0-1. 指図番号マッピングの実在確認
 
-正本の受け皿:
+**【v0.2】実施済。結果は §16。以下は v0.1 の確認項目（記録として残す）。**
 
-```text
-customer.lab_tests.external_test_id
-customer.lab_tests.diagnostic_user_id
-customer.lab_tests.lab_company_id
-customer.lab_tests.test_type
-```
+~~正本の受け皿: `customer.lab_tests.external_test_id` / `.diagnostic_user_id` /
+`.lab_company_id` / `.test_type`（`(lab_company_id, external_test_id)` unique）~~
 
-DBには `(lab_company_id, external_test_id)` のunique制約がある。
+→ **この受け皿は本番で使えない**（§16-A）。**v0.2 の受け皿は
+`diagnosis.lab_external_id_map`**（§1.1）。
 
-Claude Codeは以下を機械確認する。
+v0.1 の確認 5 項目と実測（詳細 §16-A）:
 
-1. `lab_tests.external_test_id` を作成・更新する既存コード。
-2. デメカル/リージャー血液検査で、指図番号を結果取得前に登録する業務イベント。
-3. productionでbloodの `external_test_id` を持つ `lab_tests` 行が成立する既存経路。
-4. Demecal/Riegerを指す `lab_company_id` を安定して確定する方法。
-5. Scan-Chat-AIサーバからproductionの `customer.lab_tests` を読める既存権限・接続経路。
+| # | 確認項目 | 結果 |
+|---|---|---|
+| 1 | `lab_tests.external_test_id` の writer | **血液には無い**（実 writer は Genoplan 1 本） |
+| 2 | 指図番号を結果取得前に登録する業務イベント | **無い** |
+| 3 | production で blood の `lab_tests` 行が成立する経路 | **無い** |
+| 4 | `lab_company_id` の確定方法 | **不可**（§6 で technical blocker から除外） |
+| 5 | server から production `customer.lab_tests` を読める経路 | **無い**（`app_bridge` に含まれない） |
 
-### C0 blocker
+### C0 blocker（**v0.2 で意味を限定**）
 
-結果取得前に指図番号をDBへ登録する経路が無ければ:
+**`C0_MAPPING_SOURCE_MISSING` は「受け皿テーブルが無いこと」ではなく
+「mapping の発生源（指図番号が判明する時点で `diagnostic_user_id` を持っている処理）が無いこと」を指す。**
 
-```text
-C0_MAPPING_SOURCE_MISSING
-```
+受け皿は §1.1 の新テーブルで解決するが、**表を作るだけでは 1 行も埋まらない。**
+発生源が確定するまで **C1 の本人解決は実装しない**（§16-B / §17-Q2〜Q4）。
 
-として停止。
-
-**CSVの氏名・DOB等で穴埋めしない。**
+**CSVの氏名・DOB等で穴埋めしない。** **PII から mapping を後付けする案は禁止。**
 
 ---
 
@@ -170,15 +223,27 @@ Claude Codeは以下を確認する。
 3. `lab_tests → shipment → subscription/year/seq` 等からAI診断回の日付を確定できるか。
 4. Elith側と現在運用している実パスについてrepo内の最新合意・実測。
 
-### C0 blocker
+### C0 blocker（**v0.2 で適用範囲を変更**）
 
-診断回日を確定できない状態で採血日を代用して本番writeしてはならない。
+診断回日を確定できない状態で採血日を代用して**最終納品**を write してはならない。
 
 ```text
 C0_ELITH_CYCLE_DATE_UNRESOLVED
 ```
 
-として停止する。
+**適用先を「Demecal CSV 取込」から「Elith final handoff 開始」へ移す**（§2.1）。
+取込は診断回日を必要としない（内部成果物として `diagnosis` 側に保持するだけ）ので、
+**この blocker は C1〜C4 を止めない。**
+
+> **【v0.2 重要な訂正】この「正本との差」は単純な実装バグではない。**
+> **当社ドキュメントどうしが食い違っている**ことが C0 で判明した（§16-C）:
+> - `elith_s3_data_handoff_spec.md:47,153` … `date/` = **AI診断回の単位日**
+> - `elith_assembly_wrapping_spec.md:79,254-255` … **検査日毎（時系列）に納品**。
+>   「date フォルダごとに存在し得る」。**Elith へ読み取り更新を依頼済**（2026-08・発注者判断）
+>
+> **実装は後者（新しい方）に一致している。** どちらを正とするかは
+> **Elith への確認（`elith_s3_data_handoff_spec.md:159` が自ら未決と書いている）を含む裁定事項**であり、
+> **実装で答えを出さない。**
 
 ---
 
@@ -268,14 +333,18 @@ DUPLICATE_EXTERNAL_TEST_ID_IN_CSV
 
 サーバ側で全orderNoをまとめてDB照合。
 
-条件:
+条件（**v0.2**）:
 
 ```text
-external_test_id = CSV.orderNo 完全一致
-test_type = blood
-lab_company_id = C0で確定したDemecal/Rieger
-diagnostic_user_id valid
+diagnosis.lab_external_id_map を引く
+  source_system      = 'demecal_portal'      ← 法人 UUID ではなく namespace
+  external_test_id   = CSV.orderNo 完全一致
+  test_type          = 'blood'
+  diagnostic_user_id valid
 ```
+
+~~`lab_company_id = C0で確定したDemecal/Rieger`~~ → **撤回**（§6・§16-A-4）。
+**法人の同定を本人紐付けの条件にしない。**
 
 exactly one のみ成功。
 
@@ -286,13 +355,17 @@ exactly one のみ成功。
 
 **1行でも未解決ならS3 writeを1件も開始しない。**
 
-## 4.5 追加日付整合
+## 4.5 追加日付整合（**v0.2 で保留**）
 
-DBの `lab_tests.sampled_at` が既にあればCSV採血日と一致必須。
+~~DBの `lab_tests.sampled_at` / `.reported_at` が既にあれば CSV と一致必須~~
 
-DBの `lab_tests.reported_at` が既にあればCSV結果承認日と一致必須。
+→ **本番で `lab_tests` を読めない**ので**この照合は成立しない**（§16-A-5）。**v0.2 では要件から外す。**
 
-不一致ならFAIL。DB側nullを理由にPII照合へフォールバックしない。
+`diagnosis.lab_external_id_map` に採血日・結果承認日を持たせるかは、
+**mapping の発生源（§17-Q2〜Q4）が決まってから判断する** — 発生源が
+「指図番号だけを渡す」形なら日付は持てないため、**先に列を決めない**。
+
+**DB 側 null を理由に PII 照合へフォールバックしない**（この原則は変更なし）。
 
 ## C1 Exit Criteria
 
@@ -339,11 +412,15 @@ request bodyをログへ出さない。
 
 S3とDBは同一transactionにできないので、retry可能な非PII ledgerを持つ。
 
-推奨新テーブル:
+推奨新テーブル（**v0.2 で `customer` → `diagnosis` へ変更**）:
 
 ```text
-customer.lab_result_imports
+diagnosis.lab_result_imports
 ```
+
+> **理由**: ①**Scan-Chat-AI が本番で write 可能な領域**（`customer` は `app_bridge` 経由の
+> read-only。§16-A-5） ②中身は external ID / `diagnostic_user_id` / hash / status 等の**非PII**
+> ③**顧客 PII DB へ置く必要が無い**。
 
 最低カラム案:
 
@@ -461,17 +538,28 @@ targetあり:
 
 S3成功後、DB側はtransaction/RPCで一括確定。
 
-最低:
+最低（**v0.2**）:
 
 ```text
 diagnosis.test_artifacts INSERT/UPSERT
 diagnosis.test_artifact_files INSERT/UPSERT
-customer.lab_tests.status = imported
-customer.lab_tests.assigned_at
-customer.lab_tests.assigned_by = auto_lookup
-ledger.status = committed
-ledger.s3_sha256
+diagnosis.lab_result_imports.status = committed
+diagnosis.lab_result_imports.s3_sha256
 ```
+
+~~`customer.lab_tests.status = imported` / `.assigned_at` / `.assigned_by = auto_lookup`~~
+→ **v0.2 で必須条件から外す**（本番で write できないため。§16-A-5）。
+
+**本人割当・import 状態の正本は `diagnosis` 側で完結させる**:
+
+```text
+diagnosis.lab_external_id_map     ← 誰の検査か
+diagnosis.lab_result_imports      ← 取り込んだか / 冪等性
+diagnosis.test_artifacts          ← 成果物メタ
+diagnosis.test_artifact_files     ← 実体ファイル
+```
+
+`customer` 側への進捗同期が要るなら**別 Phase / 別 API** として扱う（Phase C の範囲外）。
 
 `test_artifacts`:
 
@@ -912,3 +1000,232 @@ monitoring / alert
 verify-1.4保持
 daily-1.7は新runner完成まで凍結
 ```
+
+---
+
+# 16. 【v0.2 追記】C0 Reality Check の結果
+
+**基準:** `claude/awesome-carson-UeyUZ` / `e2b2428`。**コードは 1 行も変更していない。**
+表記は **Confirmed（repo/schema の実測）/ Derived（実測からの論理的帰結）/ Unknown（repo からは決まらない）**。
+
+## 16-A. 本人紐付け
+
+| # | 事項 | 区分 | 出典 |
+|---|---|---|---|
+| A-1 | `lab_tests.external_test_id` の**実 writer は Genoplan の 1 本だけ** | **Confirmed** | `src/pages/api/admin/genoplan-fetch.ts:274-275`（`external_test_id = kit.serialNumber` / `external_barcode = kit.boxNumber`） |
+| A-2 | **血液には writer が無い** | **Confirmed** | `src/lib/elith-blood-csv.ts:171`「**将来** lab_tests への割当に使用」／`src/pages/api/admin/elith-blood-csv.ts:107` |
+| A-3 | **デメカル取込 API は DB を 1 行も触らない**（CSV → S3 のみ） | **Confirmed** | `elith-blood-csv.ts` に `supabase` / `test_artifacts` / `persistMeasurements` いずれも grep 0 件 |
+| A-4 | **`lab_companies` に「デメカル」の行は無い**。血液は「リージャーラボラトリー」（`1a000001-…`・`{blood}`・`workflow_default 1`） | **Confirmed** | `supabase/seed.sql:20`。しかも**これは dev seed で UUID も手書き固定値** |
+| A-5 | **本番の Scan-Chat-AI から `customer.lab_tests` は読めない** | **Confirmed** | `app_bridge` は `customer_account` / `subscription` / `kit_shipment` の**3 テーブルのみ**・`Insert: never` / `Update: never`（`src/types/supabase-bridge.ts`）。`customer` スキーマ経由は**dev モック**（`src/lib/dashboard-queries.ts:205`「dev フォールバック: モック `customer` スキーマ」） |
+| A-6 | `wellfort-site` にも `lab_tests` の実装は無い | **Confirmed** | `grep -l lab_tests` = 0 件 |
+| A-7 | 現行の `client_id` は **`test-<時刻>-<連番>` の仮 ID** | **Confirmed** | `src/pages/api/admin/elith-blood-csv.ts:92` |
+
+**Derived**: 上記より、**指図番号 → `diagnostic_user_id` の対応表は「本番に受け皿が無い」だけでなく
+「発生源も無い」**。→ v0.2 §1.1 で受け皿を `diagnosis` へ移す。**発生源は §16-B。**
+
+## 16-B. mapping の「発生源」— **repo には無い**
+
+### B-1. 指図番号は業務上いつ判明するか
+
+| 事項 | 区分 | 出典 |
+|---|---|---|
+| **出荷指示 CSV に検査 ID / キット ID の列は無い** | **Confirmed** | `wellfort-site` `supabase/functions/generate-shipping-csv/index.ts:219` のヘッダは `JAN,出荷数,発送先氏名,郵便番号,都道府県,市区町村,地番,建物名,電話番号,order_number` の **10 列**。指図番号もバーコードも無い |
+| **`external_test_id` / `external_barcode` を人が入力する admin 画面は両 repo に無い** | **Confirmed** | `wellfort-site` で `external_test_id` / `external_barcode` / 「検査ID」/「バーコード」の grep = **0 件** |
+| **指図番号はデメカル CSV に載って初めて現れる**（15 桁前後の数値） | **Confirmed** | `docs/lab/demecal_unattended_spec.md:557,562`。CSV 列は `レイアウトID`/**`指図番号`**/姓/名/…/`商品CD`/`代理店番号`/`二次店番号`/`検査グループ`/`採血日`/`結果承認日`/`備考半角`/… |
+| **設計上も「検査会社が採番」= 将来の話** | **Confirmed** | `docs/architecture/id_management_and_correlation_spec.md:135`「**想定フロー（将来）**: 出荷時に `external_barcode` をキットへ印字/貼付→ユーザー受取/返送時にスキャン→**検査会社が `external_test_id` を採番**→結果受領時に両IDを `lab_tests` に確定」 |
+| **同 spec 自身が「未確定」と明記** | **Confirmed** | 同 `:145`「**将来の外部ID運用**: `external_test_id`/`external_barcode` の**採番タイミング・スキャン工程・突合ルール**」 |
+
+**Derived（B-1 の結論）**:
+**指図番号を採番するのはデメカル側で、Wellfort が結果受領より前にそれを知る経路は現状 1 つも無い。**
+
+### B-2. その時点で `diagnostic_user_id` を持っている処理はあるか
+
+**Confirmed: ある。ただし「その時点」が来ない。**
+
+出荷・キット進捗の各処理は `diagnostic_user_id` を持っている
+（`app_bridge.kit_shipment.diagnostic_user_id` / `supabase/functions/kit-self-report` /
+`src/pages/api/kit/[id]/self-report.ts`）。**足りないのは相手側の ID（指図番号）だけ。**
+
+### B-3. 既存処理へ「非PII mapping 登録 API 呼出」を追加できる地点
+
+**Derived: 技術的な差し込み口は 3 つある。どれも「指図番号を誰かが入れてくれる」ことが前提。**
+
+| 候補 | 地点 | 前提（= Wellfort/デメカル への確認事項） |
+|---|---|---|
+| ① 出荷時 | `generate-shipping-csv`（CSV 生成時に `order_number` と対にして登録） | **出荷時点で指図番号が決まるか** → 現状の CSV に無いので **Q2** |
+| ② 検体返送/受取時 | `kit-self-report` / `api/kit/[id]/self-report.ts`（ユーザーがキット番号を入力） | **キットに指図番号が印字されているか** → **Q3** |
+| ③ 受領後の admin 手動 | 新規 admin 画面（`wellfort-site`）で 指図番号 ↔ 顧客 を人が確定 | **PII を見て人が判断する**ので §1.1 の禁止（**自動**照合の禁止）には抵触しないが、**無人運用にならない** → **Q4** |
+
+**Unknown**: ①②③ のどれが業務として成立するか。**repo からは決まらない。**
+**PII から後付けする案は禁止**なので、**Q2〜Q4 の回答が来るまで C1 の本人解決は実装しない。**
+
+> **補足（未確認の仮説・実装しない）**: CSV には **`備考半角`** という自由記入欄が実在する
+> （`demecal_unattended_spec.md:558`）。ここに Wellfort 側の ID を入れられるなら
+> ①の経路が成立し得るが、**入力できるか・誰が入れるかは未確認**。**Q5 として出す。**
+
+## 16-C. Elith folder date — **当社ドキュメントどうしの食い違い**
+
+| # | 事項 | 区分 | 出典 |
+|---|---|---|---|
+| C-1 | **直書き経路は `test_date` を folder date にしている**（血液・スキャン とも） | **Confirmed** | `src/lib/elith-blood-csv.ts:316` / `src/lib/elith-export.ts:1397` = `dateFolder = testDate.replace(/-/g,'_')` |
+| C-2 | **`bundleDate` の既定は UTC**（正本は JST 基準） | **Confirmed** | `src/lib/elith-assemble.ts:210`「本日 (UTC) を YYYY_MM_DD で返す」／`elith_s3_data_handoff_spec.md:47`「JST 基準」→ **JST 09:00 まで 1 日ずれる** |
+| C-3 | **`bundleDate` は時系列 format には効いていない** | **Confirmed** | `elith-assemble.ts:495` `const bd = /^\d{4}_\d{2}_\d{2}$/.test(s.date) ? s.date : bundleDate;` — **`s.date`（= 取込時に付いた `test_date`）が優先**され、`bundleDate` は**パースできない時のフォールバック**。`bundleDate` が実際に効くのは**単発 format（遺伝子・問診）だけ**（同 `:504`） |
+| C-4 | `bundleDate` は **caller から明示指定できる** | **Confirmed** | `src/pages/api/admin/elith-assemble.ts:54,124,138`（`body.bundleDate`）→ wellfort-site `admin/elith-batch.astro:1747` |
+| C-5 | **`elith_assembly_wrapping_spec` は「検査日毎（時系列）」を明示的に選んでいる** | **Confirmed** | 同 `:79`「検査日毎（時系列）に納品します」／`:254-255`「`HealthAgeData` は…**date フォルダごとに存在し得る**」／`:263`「**Elith 側の読み取りを各 `date/` 走査へ更新をお願いします**」（2026-08・発注者判断） |
+| C-6 | **正本 `elith_s3_data_handoff_spec` 自身が未決を抱えている** | **Confirmed** | 同 `:159`「**要確認(Elith)**: フォルダ日付は『診断実行日』基準でよいか、それとも『検体採取日』基準が望ましいか」 |
+
+**Derived（C の結論・重要）**:
+**実装は「古い正本」に違反しているのではなく、「新しい方の決定（時系列＝検査日毎）」に一致している。**
+**単純な実装バグとして直してはいけない。** どちらを正とするかは
+**Elith への確認（C-6）を含む裁定事項**で、**実装で答えを出さない**。
+
+## 16-D. §5 elith-assemble Reality Check（5 問への回答）
+
+| # | 問い | 回答 | 区分 |
+|---|---|---|---|
+| 1 | 既存 BloodTestData をどう受け取るか | **S3 を走査して拾う**。`inventoryElithSource(sourcePrefix)` が `listObjects` → `parseElithKey` でキー名から `{formatId, clientId, date}` を復元（`elith-assemble.ts:107-135,48`）。**DB は見ない** | **Confirmed** |
+| 2 | `bundleDate` を caller が明示指定できるか | **できる**（C-4）。ただし **C-3 のとおり時系列 format には効かない** | **Confirmed** |
+| 3 | 取込結果を `test_artifacts` 等へ一旦保存し、後から assemble へ渡せるか | **いまはできない。** assemble の入力は **S3 のキー名**であって DB ではない（回答 1）。`test_artifacts` へ保存しても assemble は拾わない | **Confirmed** |
+| 4 | 最終 `/user/{client}/date/{bundleDate}/` write を assemble 側へ一本化できるか | **できるが、C-3 の 1 行を変える必要がある。** 現状は時系列 format が `s.date` を採るので、一本化しても**フォルダ日は取込時の `test_date` のまま**になる | **Confirmed**（挙動）／**Unknown**（変えてよいかは C の裁定次第） |
+| 5 | `bundleDate` 未指定時の UTC today fallback を production で禁止できるか | **できる**（`AssembleOptions.bundleDate` は optional なので**必須化するだけ**）。ただし **§2.1 の分離を採るなら、そもそも取込側は folder date を作らない**ので、禁止すべき場所は **assemble の入口 1 箇所**に集約される | **Derived** |
+
+**Derived（D の結論）**: §2.1 の「取込と最終納品を分離」を実現するには、
+**assemble の入力を「S3 キー名」から「`diagnosis` の成果物」へ変える**必要がある。
+これは v0.1 が想定していたより**大きい変更**なので、**C2 の設計時に明示的に扱う。**
+
+## 16-E. その他の Confirmed（v0.1 の記述の裏取り）
+
+| 事項 | 区分 | 出典 |
+|---|---|---|
+| §4.2 の today fallback は**実在する** | **Confirmed** | `elith-blood-csv.ts:241` `const testDate = drawn ?? approved ?? new Date()…` / `:242` `date_source: 'today'` / 型は `:150` |
+| §6.2 の `to = 昨日` は**既に一致** | **Confirmed** | `scripts/demecal-verify.ps1:954` `(Get-Date).Date.AddDays(-1)`。**ただし `Get-Date` はローカル時刻で JST を保証していない**（C-2 と同種） |
+| §5.6 の `file_kind = extracted_json` / `imported_by = wellfort_batch` は**許可値に実在** | **Confirmed** | `supabase/migrations/20260601000010_schemas_and_tables.sql:218` / `:204` |
+| §5.1 の新口追加は **`verify:intake-scope` の allowlist 変更が必須** | **Confirmed** | `scripts/verify-intake-scope.ts:31` の `ALLOWED` は 3 口固定。4 つ目を足すと**回帰チェックが落ちる**（意図した設計） |
+| §11 の run log 13 項目のうち **8 項目が現行 `RunRecord` に無い** | **Confirmed** | `src/pages/api/admin/demecal-run.ts:32-57`。不足＝`mapped`/`new_imported`/`already_imported`/`unresolved`/`conflicts`/`last_to_before`/`last_to_after`/`error_code` |
+| §8 の監視方針は**既存確定事項と一致** | **Confirmed** | `demecal_unattended_spec.md:269,291`「通知基盤は無い。作らずに済ませる」「**GitHub Actions を見張り役にする**」 |
+
+---
+
+# 17. 【v0.2 追記】Wellfort への確認事項
+
+**回答が来るまで実装しない。推測で埋めない。**
+
+## Q1. 検査会社の名称（法人関係）
+
+> デメカルの管理画面（`dl.demecal.net`）から取得している血液検査について、
+> **検査実施会社として管理すべき名称は「リージャーラボラトリー」でよいでしょうか。
+> それともデメカルを別の検査会社／サービスとして管理すべきでしょうか。**
+
+- **背景**: 当社のマスタ（dev seed）には「リージャーラボラトリー」の行はありますが、
+  「デメカル」という行はありません（§16-A-4）。
+- **影響範囲**: **本人紐付けには影響しません**（v0.2 で `source_system = 'demecal_portal'` という
+  技術的 namespace に切り替えたため。§1.1・§6）。**回答前に法人 UUID は作りません。**
+
+## Q2. 指図番号が判明するタイミング【最重要・C1 の前提】
+
+> 血液検査の **「指図番号」（デメカルの CSV に入っている 15 桁前後の番号）** は、
+> **どの時点で・誰が決めていますか。**
+> **Wellfort 側で、検査結果を受け取る前に「この指図番号はどのお客様のものか」を知る方法はありますか。**
+
+- **背景**: 現在、出荷指示 CSV には注文番号（`order_number`）と配送先の情報しか入っておらず、
+  指図番号の欄がありません（§16-B-1）。当社の設計書も「**検査会社が採番**する」「採番タイミングは
+  **未確定**」と書いています（`id_management_and_correlation_spec.md:135,145`）。
+- **なぜ要るか**: **お客様の氏名・生年月日で自動的に突き合わせることを禁止している**ためです
+  （取り違えが起きたときに検知できないため）。**番号どうしで確実に一致させる**必要があります。
+
+## Q3. 検査キットに番号は印字されていますか
+
+> お客様へお送りする血液検査キットに、**個体を識別する番号やバーコードは印字されていますか。**
+> ある場合、その番号は **デメカルの「指図番号」と同じもの**ですか、別のものですか。
+
+- **背景**: 当社 DB には `external_barcode`（キット物理 ID）の受け皿だけ用意してあります
+  （`id_management_and_correlation_spec.md:132`）が、**実際に印字されているかは未確認**です。
+- **これがあれば**: キット発送時または返送時に番号を控えることで Q2 が解決します。
+
+## Q4. 手作業での突き合わせは許容できますか
+
+> Q2・Q3 のどちらも「無い」場合、**検査結果を受け取ったあとに、
+> 管理画面で「この指図番号はこのお客様」と人が確認して確定する**運用は可能ですか。
+> その場合、**月あたり何件くらい**になりますか。
+
+- **背景**: この場合、**完全な無人運用にはなりません**（人の確認が 1 手挟まります）。
+  件数が少なければ実用的です。
+
+## Q5. CSV の「備考」欄は使えますか（**未確認の仮説**）
+
+> デメカルの CSV には **`備考半角`** という自由記入欄があります。
+> **ここに Wellfort 側の注文番号などを入れておくことは可能ですか**（誰がいつ入力する欄でしょうか）。
+
+- **背景**: 当社が実測した CSV の列に `備考半角` が実在します（`demecal_unattended_spec.md:558`）。
+  ただし **誰が入力する欄なのかは分かっていません**。使えるなら Q2 が解決します。
+  **使えると決めつけて実装はしません。**
+
+## Q6. Elith のフォルダ日付【C-6 の再掲・Elith への確認】
+
+> Elith へ渡す S3 のフォルダ `date/{YYYY_MM_DD}/` は、
+> **「AI 診断を実行する回の日付」と「検査を実施した日付」のどちらを基準にすべきでしょうか。**
+
+- **背景**: 当社の仕様書 2 本で記述が食い違っており（§16-C）、**現在の実装は「検査日ごと」**です。
+  2026-08 に **Elith へ「各 `date/` を走査する形へ更新をお願いします」と依頼済**
+  （`elith_assembly_wrapping_spec.md:263`）なので、**その回答と合わせて確定させたい**論点です。
+
+---
+
+# 18. 【v0.2 追記】Phase C の新しい構成案と変更予定ファイル
+
+## 18.1 構成案
+
+```text
+[A] 取込 (Demecal ingestion)          ← Q2〜Q5 の回答が要る
+    demecal-production.ps1 (新規)
+      → POST /api/admin/demecal-import (新規・x-intake-key)
+          parse → resolve (lab_external_id_map) → idempotency plan
+          → diagnosis.test_artifacts / test_artifact_files
+          → diagnosis.lab_result_imports
+      ※ Elith の date フォルダは作らない
+    → last_to 前進 (最後)
+
+[B] 最終納品 (Elith final handoff)     ← Q6 の回答が要る
+    assemble (bundleDate 明示必須)
+      → /user/{client_id}/date/{bundleDate}/
+```
+
+**A と B は別 Phase として進める。** A は Q6 を待たない / B は Q2〜Q5 を待たない。
+
+## 18.2 変更予定ファイル（**まだ 1 行も変更していない**）
+
+### 新規（migration は Q2〜Q5 の回答後）
+
+| 予定 | 内容 |
+|---|---|
+| `supabase/migrations/*_lab_external_id_map.sql` | §1.1 の対応表。**発生源が決まるまで作らない**（列が決まらないため。§4.5） |
+| `supabase/migrations/*_lab_result_imports.sql` | §5.2 の ledger（`diagnosis` 側） |
+| `src/pages/api/admin/demecal-import.ts` | §5.1 の新口 |
+| `scripts/demecal-production.ps1` | §8 の runner（**`demecal-verify.ps1` は変更しない**） |
+
+### 変更
+
+| ファイル | 変更内容 | 依存 |
+|---|---|---|
+| `src/lib/elith-blood-csv.ts` | §4.1 純粋 parse の分離 / §4.2 today fallback 禁止 | なし（先行可） |
+| `src/pages/api/admin/elith-blood-csv.ts` | 直書き経路の位置づけ整理（attended 運用が使用中） | §2.1 |
+| `src/lib/elith-assemble.ts` | §16-D-3/4: 入力を S3 キー名から `diagnosis` 成果物へ / `:495` の `s.date` 優先 / `:210` の UTC fallback | **Q6** |
+| `src/pages/api/admin/demecal-run.ts` | §11 の 8 フィールド追加 | なし（先行可） |
+| `src/lib/api-auth.ts` + `scripts/verify-intake-scope.ts` + `demecal_unattended_spec §3.1` | §7: 新口の allowlist 追加を**同一変更単位で** | §5.1 |
+| `scripts/tests/demecal-flow.tests.ps1` | runner 追加ぶんの回帰 | §8 |
+| `.github/workflows/` | §8 の見張り | C6 |
+
+### 変更しない
+
+`scripts/demecal-verify.ps1`（**Phase B 成功証跡**）/ `scripts/demecal-daily.ps1`（**凍結維持**）/
+`scripts/demecal-probe.ps1` / `scripts/demecal-recon.ps1`。
+
+## 18.3 いま着手してよいもの / いけないもの
+
+| | 内容 |
+|---|---|
+| **着手可（Q 回答不要）** | §4.1 parse 分離 ／ §4.2 today fallback 禁止 ／ §4.3 CSV 内部重複 ／ §11 run log のフィールド追加 |
+| **Q2〜Q5 待ち** | §4.4 本人解決 ／ `lab_external_id_map` の migration ／ §5 の import API 全体 |
+| **Q6 待ち** | §2.1 の [B]（assemble / 最終納品） |
+
+**ただし v0.2 の時点では上記いずれも未着手。ChatGPT の C0.5 レビューと GO を待つ。**
