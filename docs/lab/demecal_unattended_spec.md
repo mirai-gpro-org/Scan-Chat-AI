@@ -10,6 +10,26 @@
 
 ---
 
+## ⚠ 2026-09-03 scope correction（発注者指示）— この文書の有効範囲
+
+> この文書のうち Demecal acquisition の正本として現在有効なのは、
+> CSV取得・取得範囲・last_to・0件・scheduler・monitoring・fail-closed・PII取扱いのみ。
+>
+> 本人紐付け / diagnostic_user_id / mapping / DB / Elith JSON /
+> Elith S3 / 後段の冪等性は別セクションへ移管済み。
+>
+> 最新のPhase C定義は demecal_recovery_plan_20260902.md §7 を優先する。
+
+**この文書は「無人運用の正本」と冒頭に書いてあるため、旧スコープの active な指示が残っていると
+今後の実装者を誤誘導する。** そこで、移管済みの範囲を指している記述には以下の注記を入れてある
+（§2 / §3.1・§3.3 / ②-6 / §8）。
+
+**実測履歴・過去の調査記録は削除しない。** 移管された論点も「そのとき何を根拠にそう考えたか」の
+記録として価値があるので、消さずに注記だけを添える。ただし**それらを取得 Phase C の
+完成条件・ブロッカーとして読まないこと。**
+
+---
+
 ## 1. 前提（すべて実測で確定済み）
 
 | | 出典 |
@@ -68,6 +88,12 @@ CSV 側の識別子は **`指図番号`**（`scripts/blood-csv-fixtures/demecal_
 → **無人化の前に潰す（§9 の 8・9）。** 人が都度確認する attended 運用では見えていた問題が、
 無人化すると**気づかないまま仮 ID の重複納品が積み上がる**。
 
+> **【2026-09-03 scope correction】この ⚠ ブロックのうち、本人紐付け（`指図番号` → `diagnostic_user_id`）と
+> Elith への二重納品を「無人化の前に潰す」としている部分は、歴史的記録。取得 Phase C の blocker ではない。
+> 別セクションへ移管済み**（`demecal_recovery_plan_20260902.md` §7.0）。
+> ここで有効なのは **`last_to` の単調前進**（取り込み成功時にだけ前進・失敗時に前進させない）だけで、
+> それが取得 Phase C の C-1 になる。
+
 ---
 
 ## 3. サーバ側（Scan-Chat-AI）の仕様
@@ -100,6 +126,12 @@ CSV 側の識別子は **`指図番号`**（`scripts/blood-csv-fixtures/demecal_
 
 **回帰チェックを付ける**（`verify:intake-scope` 想定）: intake キーで通ってよい口の一覧を固定し、
 **他の admin API が intake キーで通ったら落とす**。ここは静かに壊れる（広がっても画面上は正常に見える）。
+
+> **【2026-09-03 scope correction】この表の「通る口」に挙がっている `/api/admin/elith-blood-csv`
+> （＝`elith-blood-csv.ts`）は、後段インターフェースの旧設計。新しい取得 runner の完成条件には含めない。**
+> `LAB_INTAKE_API_KEY` 自体は取得スコープで有効（専用PC に `ADMIN_API_KEY` を置かないため必須）だが、
+> **どの口に通すかは後段の設計が決まってから確定する**。取得スコープで確実に要るのは
+> `demecal-state`（`last_to`）と `demecal-run`（実行ログ）の 2 つ。
 
 ### 3.2 実行ログ API `/api/admin/demecal-run`【新規・要実装】
 
@@ -147,7 +179,11 @@ form の項目名と型 / **select の選択肢の「件数」** / ボタンの�
 
 **原本CSVはサーバにも S3 にも保存しない**（PII）。既存の挙動どおり。
 
----
+> **【2026-09-03 scope correction】この表の `POST /api/admin/elith-blood-csv`（CSV → `BloodTestData` JSON 群 → S3）は、
+> 後段インターフェースの旧設計。新しい取得 runner の完成条件には含めない**
+> （Elith JSON / Elith S3 は別セクションへ移管済み・`demecal_recovery_plan_20260902.md` §7.0）。
+> **取得スコープで有効なのは `GET/POST /api/admin/demecal-state`（`last_to` の単調前進）だけ。**
+> 「原本CSVはサーバにも S3 にも保存しない（PII）」は取得スコープでもそのまま有効。
 
 ## 4. 専用PC側の仕様
 
@@ -1157,9 +1193,15 @@ Exit Criteria と Confirmed の一覧は
 #### ここで「無人化が終わった」わけではない
 
 **取れたのは「CSV を 1 本、正しく取ってきてメモリ上で検証できる」ところまで。**
-§3 以降が求めている **本人紐付け / 冪等性 / `last_to` の前進 / 0 件の扱い / 本番 write の順序 /
-タスク登録と監視** は **1 行も実装していない**（Phase C）。
+§3 以降が求めている **`last_to` の前進 / 0 件の扱い / タスク登録と監視** は
+**1 行も実装していない**（Phase C）。
 **`last_to` の単調前進**（§1 の「無人にしてよい根拠」）も、**まだコードで担保されていない**。
+
+> **【2026-09-03 scope correction】初版はここに「本人紐付け / 冪等性 / 本番 write の順序」も
+> Phase C として並べていた。訂正する — この 3 つは別セクションへ移管済み**
+> （`demecal_recovery_plan_20260902.md` §7.0）。
+> **取得 Phase C = C-1 date range / watermark ・ C-2 overlap / retry ・ C-3 zero rows ・
+> C-4 production acquisition runner ・ C-5 scheduler ・ C-6 monitoring の 6 本**。
 
 #### 凍結と証跡
 
@@ -1210,6 +1252,13 @@ Exit Criteria と Confirmed の一覧は
 - したがって **①はブロッカーではない。§9 の 6（スクリプト本体）に着手してよい。**
 
 ### ②の扱いを訂正（2026-08-31・発注者指摘）
+
+> **【2026-09-03 scope correction】この項（§8 表の #7 と、以下の `external_test_id` / 本人突合の議論）は
+> 取得スコープ外。ここでは解決しない。** 別セクションへ移管済み
+> （`demecal_recovery_plan_20260902.md` §7.0 / 参照先は `lab_integration_workflow.md`・
+> `lab_data_pipeline_master_spec.md`・`id_management_and_correlation_spec.md`）。
+> **取得 Phase C の着手条件でも完成条件でもない**ので、ここが未決でも C-1〜C-6 は進められる。
+> 以下は 2026-08-31 時点の調査記録として残す。
 
 初版は「`指図番号` から本人を特定する経路」を**未確定＝Wellfort／デメカルへ確認**として書いた。**誤り。**
 **ID 連携の設計は既に存在する。**
