@@ -110,29 +110,91 @@ Check 'T05f 期待状態の form が複数件なら FAIL (どちらかを選ば�
 Write-Host ''
 Write-Host '── HTML 実体参照のデコード ─────────────────────────'
 
-Check 'T06 属性値は 1 回だけデコードされる' ($fa.Fields['DairitenName'] -eq '&#x682A;&#x5F0F;') ("値={0}" -f $fa.Fields['DairitenName'])
+# 実 STATE A の DairitenName は **1 重** の実体参照 (`&#x682A;…`)。
+# 1 回だけデコードすれば「株式会社」になる。2 回掛けても 1 重には戻らないので、
+# ここで「1 回だけ」を固定できるのは値が一致することそのもの。
+Check 'T06 1 重の実体参照が 1 回だけデコードされる' `
+  ($fa.Fields['DairitenName'] -eq '株式会社') ("値={0}" -f $fa.Fields['DairitenName'])
 Check 'T07 二重デコードしない (&amp;amp; → &amp;)' ((Html-Decode '&amp;amp;') -eq '&amp;') ("値={0}" -f (Html-Decode '&amp;amp;'))
 
 Write-Host ''
-Write-Host '── STATE A ─────────────────────────────────────────'
+Write-Host '── STATE A (実測構造・2026-09-03 Phase B) ──────────'
 
-$ra = New-StateARequest $fa
-Check 'T08 A で販売先 000000 を選べる' ($ra.Ok -and $ra.Body['HanbaitenCode'] -eq '000000') ("code={0}" -f $ra.Code)
-Check 'T09 A の押し方 = 何も押さずそのまま送る' ($ra.Ok -and $ra.Press.Kind -eq 'plain') ("kind={0}" -f $ra.Press.Kind)
+# fixture は実測どおり select/option/radio を 1 つも持たない。
+$faTags = ([regex]::Matches($htmlA, '(?i)<select|<option|type="radio"')).Count
+Check 'T08a fixture に select/option/radio が 0 個 (実測どおり)' ($faTags -eq 0) ("出現={0}" -f $faTags)
+Check 'T08b それでも A と判定できる' ((Get-StateOf $fa) -eq 'A') ("判定={0}" -f (Get-StateOf $fa))
+Check 'T08c HanbaitenCode / HanbaitenName は空の readonly text' `
+  ($fa.Fields['HanbaitenCode'] -eq '' -and $fa.Fields['HanbaitenName'] -eq '' `
+   -and $fa.Types['HanbaitenCode'] -eq 'text') ("type={0}" -f $fa.Types['HanbaitenCode'])
+Check 'T08d button は 3 個 (dropdown / clear / submit)' (@($fa.Buttons).Count -eq 3) ("button={0}" -f @($fa.Buttons).Count)
+
+$dealer = Test-DealerCode $fa
+Check 'T08e 代理店が契約値と一致' ($dealer.Ok -and $dealer.DealerCode -eq 'Q05-0010') ("code={0}" -f $dealer.Code)
+
+# ── 販売先一覧 (JSON) からの解決 ────────────────────────────
+$hb = @((Read-Html 'hanbaiten.json') | ConvertFrom-Json)
+$sel = Select-Hanbaiten $hb
+Check 'T08f JSON から 000000 を正確に 1 件選ぶ' `
+  ($sel.Ok -and $sel.SellerCode -eq '000000' -and $sel.Matched -eq 1) `
+  ("ok={0} code={1} matched={2}" -f $sel.Ok, $sel.SellerCode, $sel.Matched)
+# **name はコードに埋めない。** JSON が返した文字列がそのまま出ること。
+$expectName = (@($hb | Where-Object { $_.code -eq '000000' })[0]).name
+Check 'T08g name は JSON の値をそのまま使う (ハードコードしない)' `
+  ($sel.SellerName -eq $expectName -and $sel.SellerName -ne '') ("name={0}" -f $sel.SellerName)
+
+$ra = New-StateARequest $fa $sel.SellerCode $sel.SellerName
+Check 'T08 A で販売先 000000 を body へ入れる' ($ra.Ok -and $ra.Body['HanbaitenCode'] -eq '000000') ("code={0}" -f $ra.Code)
+Check 'T08h HanbaitenName も JSON 由来の値が入る' `
+  ($ra.Ok -and $ra.Body['HanbaitenName'] -eq $expectName) ("name={0}" -f $ra.Body['HanbaitenName'])
+Check 'T09 A の押し方 = 何も押さずそのまま送る (button 3 個でも)' `
+  ($ra.Ok -and $ra.Press.Kind -eq 'plain') ("kind={0}" -f $ra.Press.Kind)
 Check 'T10 A で送る body に押しボタン名が混ざらない' ($ra.Ok -and -not $ra.Body.ContainsKey('btnSubmit')) ''
+Check 'T10a dropdown / クリアを絶対に押さない' `
+  ($ra.Ok -and -not $ra.Body.ContainsKey('btnClearHanbaiten') `
+   -and $ra.Press.Label -notmatch 'クリア|選択') ("label={0}" -f $ra.Press.Label)
+$keys = (@($ra.Body.Keys) | Sort-Object) -join ','
+Check 'T10b POST する field は実測の 7 つだけ' `
+  ($keys -eq '__RequestVerificationToken,DairitenCode,DairitenName,HanbaitenCode,HanbaitenName,ID,OutputHeader') $keys
 
-# 000000 が選択肢に無ければ FAIL (代替値を選ばない)
-$htmlA2 = $htmlA -replace '<option value="000000">000000</option>', ''
-$ra2 = New-StateARequest (Form-Raw $htmlA2)
+# ── 販売先解決の負のケース (すべて fail-closed) ─────────────
+$r1 = Select-Hanbaiten @('[{"code":"111111","name":"架空サンプル商会"}]' | ConvertFrom-Json)
 Check 'T11 000000 が無ければ FAIL (別の販売先を選ばない)' `
-  ((-not $ra2.Ok) -and $ra2.Code -eq 'STATE_A_SELLER_000000_NOT_FOUND') ("code={0}" -f $ra2.Code)
+  ((-not $r1.Ok) -and $r1.Code -eq 'STATE_A_SELLER_000000_NOT_FOUND' -and $r1.SellerCode -eq '') ("code={0}" -f $r1.Code)
 
-$htmlA3 = $htmlA -replace 'value="Q05-0010"', 'value="Q99-9999"'
-$ra3 = New-StateARequest (Form-Raw $htmlA3)
+$r2 = Select-Hanbaiten @('[{"code":"000000","name":"架空A"},{"code":"000000","name":"架空B"}]' | ConvertFrom-Json)
+Check 'T11a 000000 が重複していたら FAIL (どちらも選ばない)' `
+  ((-not $r2.Ok) -and $r2.Matched -eq 2 -and $r2.SellerCode -eq '') ("matched={0}" -f $r2.Matched)
+
+$r3 = Select-Hanbaiten @('[{"code":"000000","name":""}]' | ConvertFrom-Json)
+Check 'T11b name が空なら FAIL' ((-not $r3.Ok) -and $r3.Code -eq 'STATE_A_SELLER_000000_NOT_FOUND') ("code={0}" -f $r3.Code)
+
+$r3b = Select-Hanbaiten @('[{"code":"000000"}]' | ConvertFrom-Json)
+Check 'T11c name が無ければ FAIL' (-not $r3b.Ok) ("ok={0}" -f $r3b.Ok)
+
+$r4 = Select-Hanbaiten @()
+Check 'T11d 空の一覧なら FAIL' ((-not $r4.Ok) -and $r4.Total -eq 0) ("total={0}" -f $r4.Total)
+
+$malformedThrew = $false
+try { $null = ('{"code":' | ConvertFrom-Json) } catch { $malformedThrew = $true }
+Check 'T11e 壊れた JSON は解析時点で落ちる (取得側で fail-closed)' $malformedThrew ''
+
+$r5 = Select-Hanbaiten @('[{"code":"0000001","name":"架空"},{"code":"00000","name":"架空"}]' | ConvertFrom-Json)
+Check 'T11f 部分一致 (0000001 / 00000) を拾わない' ((-not $r5.Ok) -and $r5.Matched -eq 0) ("matched={0}" -f $r5.Matched)
+
+$d3 = Test-DealerCode (Form-Raw ($htmlA -replace 'value="Q05-0010"', 'value="Q99-9999"'))
 Check 'T12 代理店が契約値と違えば FAIL' `
-  ((-not $ra3.Ok) -and $ra3.Code -eq 'STATE_A_EXPECTATION_FAILED') ("code={0}" -f $ra3.Code)
+  ((-not $d3.Ok) -and $d3.Code -eq 'STATE_A_EXPECTATION_FAILED') ("code={0}" -f $d3.Code)
 
-Write-Host ''
+# ── 「次へ」の plain 判定 ───────────────────────────────────
+# onclick から submit() を消すと、何をするボタンか読めないので STOP (plain 扱いしない)。
+$fa4 = Form-Raw ($htmlA.Replace('; submit();', ';'))
+Check 'T12a 次へ の onclick から submit() を消すと押し方を特定できない' `
+  ($null -eq (Resolve-Press $fa4 '次へ')) ("onclick={0}" -f $fa4.Buttons[2].Onclick)
+$r6 = New-StateARequest $fa4 '000000' '架空テスト販売先'
+Check 'T12b その改変で STATE A が FAIL する' `
+  ((-not $r6.Ok) -and $r6.Code -eq 'STATE_A_EXPECTATION_FAILED') ("code={0}" -f $r6.Code)
+
 Write-Host '── STATE B ─────────────────────────────────────────'
 
 $from = [datetime]'2026-07-01'

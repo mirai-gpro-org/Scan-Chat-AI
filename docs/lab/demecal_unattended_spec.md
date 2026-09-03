@@ -773,6 +773,88 @@ fixture は完全架空（`scripts/tests/fixtures/demecal/`・CSV は実 Shift_J
 
 **Phase B（現地 1 回・verify-only）は ChatGPT の GO を待つ。** それまで Wellfort に依頼しない。
 
+### ②-2 Phase B 1 回目の実測と STATE A の修正（2026-09-03・`verify-1.1`）
+
+**正本は `docs/lab/demecal_recovery_plan_20260902.md`。** ここは実測の記録。
+
+専用PC で `verify-1.0` を **1 回だけ**実行。結果:
+
+```
+cert OK / credentials OK / login OK
+STATE_A_SELLER_000000_NOT_FOUND
+```
+
+**Elith/S3 への書き込み・`last_to` の更新・CSV の保存は 1 件も発生していない**（verify-only）。
+失敗時の骨格（タグと script のみ）を自動回収できたので、**現地で 2 回目を回さずに原因を確定できた**。
+
+#### 実測した STATE A の構造（骨格 `2026-09-03` / `truncated:false` / form 1 個）
+
+```html
+<form class="form-horizontal" action="/hanyou/start" method="post">
+<input type="hidden" id="ID" name="ID" value="0" />
+<input type="hidden" id="OutputHeader" name="OutputHeader" value="False" />
+<input readonly type="text" id="DairitenCode"   name="DairitenCode"   value="Q05-0010" />
+<input readonly type="text" id="DairitenName"   name="DairitenName"   value="&#x682A;…" />  <!-- 1 重 -->
+<input readonly type="text" id="HanbaitenCode"  name="HanbaitenCode"  value="" />           <!-- 空 -->
+<input readonly type="text" id="HanbaitenName"  name="HanbaitenName"  value="" />           <!-- 空 -->
+<button type="button" class="dropdown-toggle" data-toggle="dropdown">
+<button type="button" id="btnClearHanbaiten">
+<button id="btnSubmit" type="button" onclick="dispLoading('処理中...'); submit();">
+<input name="__RequestVerificationToken" type="hidden" value="…" />
+```
+
+- **`<select>` 0 / `<option>` 0 / radio 0。** 販売先は標準の選択 UI ではない。
+- 販売先の選択肢は inline script が **`GET /hanbaiten?dairitenCode=<代理店>` の JSON
+  （`{code,name}` の配列）**から `<ul id="comboHanbaiten">` に生成し、
+  `fillHanbaiten()` が **readonly の 2 つの input へ `.val()` で書き込む**。
+  → **「人がプルダウンで選ぶ」の実体は input への値書き込み。**
+- POST されるのは name を持つ **7 つだけ**（`btnSubmit` は name 無しなので送られない）。
+  `readonly` は `disabled` と違い送信対象に**含まれる**。
+
+**`verify-1.0` の停止は実装どおりの正しい fail-closed だった**（判定の誤りではない）。
+select の option / radio / 現在値 の 3 経路しか見ておらず、**そのどれも実在しなかった**。
+
+#### `verify-1.1` の修正（3 点）
+
+1. **販売先の解決を JSON 由来にした。** select/radio 探索は本番経路から削除。
+   STATE A 確認後、**同じ証明書・同じセッションで `GET /hanbaiten?dairitenCode=…` を 1 回だけ**実行し、
+   `code == "000000"` が**ちょうど 1 件**かつ `name` が非空のときだけ
+   `HanbaitenCode` / `HanbaitenName` に入れる。
+   **代替販売先・先頭要素・部分一致は禁止。** 0 件 / 複数 / name 空 / JSON 不正 / 通信失敗はすべて fail-closed
+   （新コード `STATE_A_HANBAITEN_FETCH_FAILED` を追加）。
+   **一覧そのものは diag にも probe にも出さない** — 出すのは HTTP status / 件数 / `000000` の一致件数 だけ。
+2. **plain submit の判定からボタン総数を外した。** 実 STATE A はボタンが **3 個**あるため、
+   旧条件「押しどころが 1 個なら plain」は実サイトで永久に成立しない。
+   見るのは**見出しで 1 つに決まった、そのボタン自身**だけ:
+   name 無し ＋ hidden への値設定なし ＋ **onclick が実際に `submit()` を呼ぶ** → `plain`。
+   **`submit()` を呼ばない未知の onclick は plain 扱いせず STOP。**
+3. **`state-a.html` fixture を実測構造へ置換**（架空の select を廃止）＋ `hanbaiten.json`
+   （完全架空・`000000` と別コードを含む）を追加。
+
+#### 検証（実サイトは未実行）
+
+`npm run verify:demecal-flow` = **74 件 PASS**。退行注入で**3 件とも落ちることを確認済み**:
+
+| 注入 | 落ちるテスト |
+|---|---|
+| `Resolve-Press` を「ボタン 1 個なら plain」に戻す | T09 / T10 / T10a / T10b |
+| `Select-Hanbaiten` を「先頭要素を採る」に変える | T11 / T11f（＋連鎖で T09 系） |
+| 販売先名をコードに埋め込む | T08g / T08h |
+
+`verify:ps1-order` OK ／ `verify:intake-scope` OK ／ `ParseFile` OK ／ `astro check` 0 errors ／
+bat 生成 OK（`デメカル疎通確認_v1.1.bat`・placeholder 残り無し）。
+
+**Wellfort への再実行は依頼していない。** Phase C にも進んでいない。
+
+#### この回で残った未確認
+
+- `GET /hanbaiten` が返す JSON の実体（`000000` を含むか・`code` の書式）。**未取得**。
+- 初期ページの `<ul id="comboHanbaiten">` が空か、サーバ側で描画済みか
+  （骨格が `<ul>/<li>/<a>` を捕捉しないため判定不能。`demecal-verify.ps1` の `Get-Skeleton` の
+  捕捉対象は `input|select|option|button|label|textarea`）。
+- ページ読み込み時に `loadHanbaitens()` が呼ばれるか（捕捉した inline script には呼び出しが無い）。
+- `HanbaitenCode` を空のまま POST したときのサーバの挙動。**未試行**。
+
 ### ② 本番の自動実行（`demecal-fetch.ps1` ＋ セットアップ bat・未実装）
 
 **①の結果を見てから作る**（form の `action`/`name` が確定するため）。

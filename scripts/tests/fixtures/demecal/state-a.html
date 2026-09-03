@@ -1,20 +1,28 @@
-<!-- 完全架空の fixture。実サイトの HTML ではない。
-     形 (タグの種類・name・onclick の書かれ方) だけを、v1.5 が持ち帰った骨格に合わせてある。
-     販売先は「最初は空で、人がプルダウンから 000000 を選ぶ」(操作の録画) を写す。 -->
+<!-- 完全架空の fixture。ただし**構造は 2026-09-03 の実測 (Phase B 骨格) を再現**する。
+     旧版は架空の select(HanbaitenCode) を置いていたが、実サイトにそんな要素は無い。
+
+     実測の要点:
+       ・select / option / radio 要素は 1 つも無い
+       ・HanbaitenCode / HanbaitenName は **readonly の text input で初期値は空**
+       ・販売先は Bootstrap dropdown で、選択肢は inline script が
+         GET /hanbaiten?dairitenCode=<代理店> の JSON から生成する
+       ・button は 3 個 (dropdown-toggle / btnClearHanbaiten / btnSubmit)
+       ・btnSubmit は name 無し・type=button・onclick が submit() を呼ぶ
+     トークンの値だけは架空の文字列に置き換えてある。 -->
 <html><body>
-<form method="post" action="/hanyou/start">
-  <input name="__RequestVerificationToken" type="hidden" value="TOKEN&amp;amp;VALUE" />
-  <input type="hidden" id="ID" name="ID" value="1" />
-  <input readonly type="text" id="DairitenCode" name="DairitenCode" value="Q05-0010" />
-  <input readonly type="text" id="DairitenName" name="DairitenName" value="&amp;#x682A;&amp;#x5F0F;" />
-  <select id="HanbaitenCode" name="HanbaitenCode">
-    <option value="">選択してください</option>
-    <option value="000000">000000</option>
-    <option value="111111">111111</option>
-  </select>
-  <input type="hidden" id="HanbaitenName" name="HanbaitenName" value="" />
-  <input type="hidden" id="OutputHeader" name="OutputHeader" value="True" />
-  <button id="btnSubmit" type="button" onclick="dispLoading('処理中...'); submit();">次へ</button>
+<form class="form-horizontal" action="/hanyou/start" method="post">
+<input class="form-control" type="hidden" data-val="true" data-val-required="The ID field is required." id="ID" name="ID" value="0" />
+<input class="form-control" type="hidden" data-val="true" data-val-required="The OutputHeader field is required." id="OutputHeader" name="OutputHeader" value="False" />
+<label class="col-sm-2 control-label">代理店</label>
+<input class="form-control" readonly type="text" id="DairitenCode" name="DairitenCode" value="Q05-0010" />
+<input class="form-control" readonly type="text" id="DairitenName" name="DairitenName" value="&#x682A;&#x5F0F;&#x4F1A;&#x793E;" />
+<label class="col-sm-2 control-label">販売先</label>
+<input class="form-control" readonly type="text" id="HanbaitenCode" name="HanbaitenCode" value="" />
+<button type="button" class="btn btn-default dropdown-toggle" data-toggle="dropdown" aria-expanded="false">選択</button>
+<ul id="comboHanbaiten"></ul>
+<input class="form-control" readonly type="text" id="HanbaitenName" name="HanbaitenName" value="" />
+<button type="button" class="btn btn-default" id="btnClearHanbaiten">クリア</button>
+<button id="btnSubmit" type="button" class="btn btn-default" onclick="dispLoading('処理中...'); submit();">次へ</button>
+<input name="__RequestVerificationToken" type="hidden" value="DUMMY-ANTIFORGERY-TOKEN" />
 </form>
-<form method="post" action="/account/logout"><button type="submit">ログアウト</button></form>
 </body></html>

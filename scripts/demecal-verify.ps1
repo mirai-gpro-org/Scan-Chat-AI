@@ -49,10 +49,12 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 # Shift_JIS は .NET Core で既定登録されていない。5.1 では型が無いので catch される。
 try { [Text.Encoding]::RegisterProvider([Text.CodePagesEncodingProvider]::Instance) } catch {}
 
-$Version    = 'verify-1.0'
+$Version    = 'verify-1.1'
 $BaseUrl    = 'https://dl.demecal.net'
 $LoginUrl   = "$BaseUrl/account/login"
 $StartUrl   = "$BaseUrl/hanyou/start"
+# 販売先一覧。実 STATE A の inline script が叩いている口 (実測 2026-09-03)。
+$HanbaitenUrl = "$BaseUrl/hanbaiten"
 $ApiBase    = 'https://scan-chat-ai.vercel.app'
 $IntakeKey  = '__LAB_INTAKE_KEY__'
 $ProbeToken = '__PROBE_TOKEN__'
@@ -300,10 +302,27 @@ function Resolve-Press($form, [string]$labelPattern) {
       }
       if ($found.Count -gt 1) { return $null }
     }
-    # ③ 見出しが一致する押しどころが 1 つだけで、値を入れる先も無い
+    # ③ そのボタン自身が「name を持たず、hidden へ値も入れず、最後に submit() を呼ぶ」
     #    = ブラウザは form をそのまま送る (実測: /hanyou/start の btnSubmit)。
-    if (@($form.Buttons).Count -eq 1) {
-      return [pscustomobject]@{ Kind = 'plain'; Name = ''; Value = ''; Label = $b.Label }
+    #
+    # 【実測 2026-09-03・Phase B】判断材料に**ボタンの総数を使ってはいけない**。
+    #   実 STATE A には dropdown-toggle / btnClearHanbaiten / btnSubmit の **3 個**が在る。
+    #   「押しどころが 1 つなら」という条件だと実サイトで永久に成立しない。
+    #   見るのは**見出しで 1 つに決まった、そのボタン自身の属性だけ**。
+    if (-not $b.Name) {
+      if ($b.Onclick) {
+        # onclick が在るなら、**実際に submit() を呼ぶことを確認**してから plain にする。
+        # 呼ばない onclick は何をするか分からないので STOP (未知を plain 扱いしない)。
+        if ($b.Onclick -match '(?i)(^|[^.\w])submit\s*\(') {
+          return [pscustomobject]@{ Kind = 'plain'; Name = ''; Value = ''; Label = $b.Label }
+        }
+        return $null
+      }
+      # onclick が無い場合、type=submit なら素の送信。type=button は
+      # ハンドラが外部 js に在る = 何が起きるか読めないので STOP。
+      if ($b.Type -eq 'submit') {
+        return [pscustomobject]@{ Kind = 'plain'; Name = ''; Value = ''; Label = $b.Label }
+      }
     }
     return $null
   }
@@ -326,38 +345,89 @@ function New-Fail([string]$code, [string]$detail) {
 }
 
 # ── STATE A: 販売先を明示選択して「次へ」 ─────────────────────
-function New-StateARequest($form) {
-  $body = New-BaseBody $form
-
+function Test-DealerCode($form) {
   # 代理店の確認 (**契約値と違えば止める** = 別アカウントで走っている)。
+  # 販売先一覧の URL に使うので、販売先の解決より先に確定させる。
   if (-not $form.Fields.ContainsKey('DairitenCode')) {
-    return (New-Fail 'STATE_A_EXPECTATION_FAILED' 'DairitenCode がありません')
+    return [pscustomobject]@{ Ok = $false; Code = 'STATE_A_EXPECTATION_FAILED'; Detail = 'DairitenCode がありません'; DealerCode = '' }
   }
-  if ($form.Fields['DairitenCode'] -ne $ExpectedDealerCode) {
-    return (New-Fail 'STATE_A_EXPECTATION_FAILED' ("代理店が契約値と違います (期待 {0})" -f $ExpectedDealerCode))
+  $v = $form.Fields['DairitenCode']
+  if ($v -ne $ExpectedDealerCode) {
+    return [pscustomobject]@{
+      Ok = $false; Code = 'STATE_A_EXPECTATION_FAILED'
+      Detail = ("代理店が契約値と違います (期待 {0})" -f $ExpectedDealerCode); DealerCode = ''
+    }
+  }
+  return [pscustomobject]@{ Ok = $true; Code = ''; Detail = ''; DealerCode = $v }
+}
+
+# 販売先一覧 (JSON) から契約値 000000 の 1 件を選ぶ。**純粋関数**。
+#
+# 【実測 2026-09-03・Phase B】画面に `<select>`/`<option>`/radio は 1 つも無い。
+#   `HanbaitenCode`/`HanbaitenName` は **readonly の text input** で初期値は空。
+#   選択肢は inline script が `GET /hanbaiten?dairitenCode=<代理店>` の JSON
+#   (`{code,name}` の配列) から `<ul>` に生成し、`fillHanbaiten()` が
+#   その 2 つの input へ書き込む。**選ぶ = input へ値を入れること**。
+#
+# **代替販売先・先頭要素・部分一致は禁止。** 完全一致 1 件かつ name 非空のときだけ通す。
+function Select-Hanbaiten($items) {
+  $all = @($items)
+  $res = [pscustomobject]@{
+    Ok = $false; Code = 'STATE_A_SELLER_000000_NOT_FOUND'; Detail = ''
+    SellerCode = ''; SellerName = ''; Total = $all.Count; Matched = 0
+  }
+  $hit = @()
+  foreach ($it in $all) {
+    if ($null -eq $it) { continue }
+    $c = $null
+    try { $c = $it.code } catch {}
+    if ($null -eq $c) { continue }
+    # **完全一致のみ** (前後空白は許容しない = 書式が違えば止める)。
+    if ([string]$c -ne $ExpectedSellerCode) { continue }
+    $hit += $it
+  }
+  $res.Matched = $hit.Count
+  if ($hit.Count -eq 0) {
+    $res.Detail = ("販売先 {0} が一覧にありません (件数 {1})" -f $ExpectedSellerCode, $all.Count)
+    return $res
+  }
+  if ($hit.Count -gt 1) {
+    $res.Detail = ("販売先 {0} が {1} 件あり 1 つに絞れません" -f $ExpectedSellerCode, $hit.Count)
+    return $res
+  }
+  $n = $null
+  try { $n = $hit[0].name } catch {}
+  if ($null -eq $n -or ([string]$n).Trim() -eq '') {
+    $res.Detail = ("販売先 {0} の name が空です" -f $ExpectedSellerCode)
+    return $res
+  }
+  $res.Ok = $true
+  $res.Code = ''
+  $res.SellerCode = [string]$hit[0].code
+  # **name はコードに埋めない。** JSON が返した文字列をそのまま入れる。
+  $res.SellerName = [string]$n
+  return $res
+}
+
+# ── STATE A: 販売先を明示して「次へ」 ─────────────────────────
+# 販売先の 2 値は `Select-Hanbaiten` が検証したものだけを受け取る (ここでは探さない)。
+function New-StateARequest($form, [string]$sellerCode, [string]$sellerName) {
+  $dealer = Test-DealerCode $form
+  if (-not $dealer.Ok) { return (New-Fail $dealer.Code $dealer.Detail) }
+
+  if ($sellerCode -ne $ExpectedSellerCode) {
+    return (New-Fail 'STATE_A_SELLER_000000_NOT_FOUND' '販売先コードが契約値と違います')
+  }
+  if (-not $sellerName -or $sellerName.Trim() -eq '') {
+    return (New-Fail 'STATE_A_SELLER_000000_NOT_FOUND' '販売先名が空です')
+  }
+  if (-not $form.Fields.ContainsKey('HanbaitenCode') -or -not $form.Fields.ContainsKey('HanbaitenName')) {
+    return (New-Fail 'STATE_A_EXPECTATION_FAILED' 'HanbaitenCode / HanbaitenName がありません')
   }
 
-  # 販売先 000000 を**画面の選択肢から**選ぶ。無ければ FAIL (代替値を選ばない)。
-  $sellerOk = $false
-  if ($form.Options.ContainsKey('HanbaitenCode')) {
-    if (@($form.Options['HanbaitenCode'] | Where-Object { $_.Value -eq $ExpectedSellerCode }).Count -gt 0) {
-      $body['HanbaitenCode'] = $ExpectedSellerCode
-      $sellerOk = $true
-    }
-  }
-  if (-not $sellerOk) {
-    if (@($form.Radios | Where-Object { $_.Name -eq 'HanbaitenCode' -and $_.Value -eq $ExpectedSellerCode }).Count -gt 0) {
-      $body['HanbaitenCode'] = $ExpectedSellerCode
-      $sellerOk = $true
-    }
-  }
-  # 既にその値が入っているなら選び直す必要が無い (新しい値を作っていない)。
-  if (-not $sellerOk -and $form.Fields.ContainsKey('HanbaitenCode') -and $form.Fields['HanbaitenCode'] -eq $ExpectedSellerCode) {
-    $sellerOk = $true
-  }
-  if (-not $sellerOk) {
-    return (New-Fail 'STATE_A_SELLER_000000_NOT_FOUND' ("販売先 {0} が選択肢にありません" -f $ExpectedSellerCode))
-  }
+  $body = New-BaseBody $form
+  $body['HanbaitenCode'] = $sellerCode
+  $body['HanbaitenName'] = $sellerName
 
   $press = Resolve-Press $form '次へ'
   if (-not $press) { return (New-Fail 'STATE_A_EXPECTATION_FAILED' '「次へ」の押し方を特定できません') }
@@ -487,6 +557,36 @@ function Get-Skeleton([string]$html) {
     $o.Add($body) | Out-Null
   }
   return $o
+}
+
+# 販売先一覧を取る。**STATE A を確認したあと 1 回だけ**・同じ証明書と同じセッションで。
+#
+# **返ってきた一覧そのものは診断へ出さない** (販売先名・コードの一覧 = 業務情報)。
+# 出すのは HTTP status / 件数 / 000000 の一致件数 だけ (計画 §6.3 の非PII構造情報)。
+function Get-HanbaitenList($cert, $session, [string]$dealerCode) {
+  $res = [pscustomobject]@{ Ok = $false; Items = @(); Status = 0; Detail = '' }
+  $u = ("{0}?dairitenCode={1}" -f $HanbaitenUrl, [uri]::EscapeDataString($dealerCode))
+  $raw = ''
+  try {
+    $r = Invoke-WebRequest -Uri $u -Method Get -Certificate $cert -WebSession $session `
+           -UseBasicParsing -TimeoutSec 60
+    $res.Status = [int]$r.StatusCode
+    $raw = [string]$r.Content
+  } catch {
+    $res.Detail = ("販売先一覧を取得できません: {0}" -f $_.Exception.Message)
+    return $res
+  }
+  if (-not $raw -or $raw.Trim() -eq '') { $res.Detail = '販売先一覧が空応答です'; return $res }
+  $parsed = $null
+  try { $parsed = $raw | ConvertFrom-Json } catch {
+    $res.Detail = '販売先一覧が JSON として読めません'
+    return $res
+  }
+  if ($null -eq $parsed) { $res.Detail = '販売先一覧が null です'; return $res }
+  # 1 件のとき ConvertFrom-Json は配列でなく単体を返す。@() で揃える。
+  $res.Items = @($parsed)
+  $res.Ok = $true
+  return $res
 }
 
 function Send-Skeleton([string]$html, [string]$why) {
@@ -637,7 +737,23 @@ try {
     foreach ($s in $cur.Shape) { Diag $s }
 
     $req = $null
-    if ($st.Expect -eq 'A') { $req = New-StateARequest $cur }
+    if ($st.Expect -eq 'A') {
+      # 代理店を確定 → その代理店の販売先一覧を **1 回だけ** 取る → 000000 を選ぶ。
+      $dealer = Test-DealerCode $cur
+      if (-not $dealer.Ok) {
+        Send-Skeleton $pageHtml ("state_a: {0}" -f $dealer.Detail)
+        Finish 1 'fail' $dealer.Code $dealer.Detail
+      }
+      $list = Get-HanbaitenList $cert $session $dealer.DealerCode
+      Diag ("      販売先一覧 HTTP {0} / 件数 {1}" -f $list.Status, @($list.Items).Count)
+      if (-not $list.Ok) {
+        Finish 1 'fail' 'STATE_A_HANBAITEN_FETCH_FAILED' $list.Detail
+      }
+      $sel = Select-Hanbaiten $list.Items
+      Diag ("      {0} の一致件数 {1}" -f $ExpectedSellerCode, $sel.Matched)
+      if (-not $sel.Ok) { Finish 1 'fail' $sel.Code $sel.Detail }
+      $req = New-StateARequest $cur $sel.SellerCode $sel.SellerName
+    }
     elseif ($st.Expect -eq 'B') { $req = New-StateBRequest $cur $from $to }
     else { $req = New-StateCRequest $cur }
 
