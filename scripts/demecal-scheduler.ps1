@@ -69,7 +69,38 @@ function Stop-Setup([string]$code, [string]$msg) {
   「引けなくなったか」という観測できる事実で見る。
 #>
 function Remove-RegisteredTask {
-  try { & schtasks /Delete /TN $TaskName /F 2>&1 | Out-Null } catch {}
+  # ── ① /Delete そのものが成功したか ────────────────────────────
+  #
+  # **`try/catch` だけでは足りない (2026-09-03 レビュー指摘)。**
+  # `schtasks.exe` はネイティブ実行ファイルなので、**終了コードが 0 以外でも
+  # PowerShell の例外にならず catch に入らない**。それだけに頼ると
+  #   「/Delete が失敗 → /Query もエラー文字列 → `<Task` が無い → 消えた」
+  # と読み違え、**タスクが残ったまま「消せた」と報告する**ことになる。
+  # → 例外・`$?`・終了コードの 3 つで見る。
+  #
+  # `$LASTEXITCODE` を先に 0 へ置くのは、**直前にネイティブ実行が無いと
+  # 前回の値が残る (または未定義になる)** ため。exe を呼べば必ず上書きされる。
+  #
+  # **どちらが効くか**: 手元の検査 (Linux・schtasks を関数で差し替え、失敗は
+  # 本物のネイティブ失敗で起こす) で実際に落とすのは **`$LASTEXITCODE`** の方で、
+  # `$?` は関数呼び出しとしては成功なので $true のままだった (実測)。
+  # `$?` は**実機の exe に対する保険**として残す (実機での挙動は未確認)。
+  $deleteOk = $false
+  try {
+    $global:LASTEXITCODE = 0
+    $delOut = & schtasks /Delete /TN $TaskName /F 2>&1
+    $deleteOk = ($? -and ($LASTEXITCODE -eq 0))
+    if (-not $deleteOk) {
+      Write-Host ('    削除コマンドが失敗しました: {0}' -f (($delOut | Out-String).Trim()))
+    }
+  } catch {
+    $deleteOk = $false
+  }
+  if (-not $deleteOk) { return $false }
+
+  # ── ② 本当に引けなくなったか ──────────────────────────────────
+  #     ①だけでも足りない (成功を返しても残っていることがあり得る) ので、
+  #     観測できる事実で締める。**`/Delete` の出力の文言では判定しない。**
   try {
     $q = (& schtasks /Query /TN $TaskName /XML 2>&1 | Out-String)
     return ($q.IndexOf('<Task') -lt 0)

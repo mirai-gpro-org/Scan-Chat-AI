@@ -340,8 +340,17 @@ function runScheduler(opts = {}) {
     // 別に数えて「失敗したら 1 回・成功したら 0 回」を見る。
     "  if ($args -contains '/Delete') {",
     `    '/Delete' | Add-Content -LiteralPath '${deleted}'`,
+    /*
+     * 失敗のさせ方は **本物のネイティブ実行の失敗**にする。
+     * `schtasks.exe` は終了コードが 0 以外でも例外にならないので、
+     * スタブが文字列を返すだけだと「PowerShell から見て失敗」にならず、
+     * 検査が実機の失敗を模していないことになる (2026-09-03 レビュー指摘)。
+     * → `/bin/false` を実行して `$LASTEXITCODE` を 1 にする。
+     */
     ...(opts.deleteFails
-      ? ["    return 'ERROR: cannot delete'"]
+      ? ["    Write-Output 'ERROR: The system cannot delete the task.'",
+         '    & /bin/false',
+         '    return']
       : [`    Remove-Item -LiteralPath '${registered}' -Force -ErrorAction SilentlyContinue`,
          "    return 'SUCCESS: The scheduled task was successfully deleted.'"]),
     '  }',
@@ -500,7 +509,17 @@ afterCreateCase('C38 読み戻しが XML でない → 失敗 + 削除 1 回 + �
 afterCreateCase('C39 読み戻しが壊れた XML → 失敗 + 削除 1 回 + 残さない',
   'READBACK_UNPARSABLE', { readbackGarbage: '<Task><unclosed>' });
 
-// **消せなかったときは黙らない。** 成功扱いにもしない。
+/*
+ * **消せなかったときは黙らない。成功扱いにもしない。**
+ *
+ * 【2026-09-03 レビュー指摘】`schtasks.exe` はネイティブ実行ファイルで、
+ * **終了コードが 0 以外でも PowerShell の例外にならない**。
+ * `try/catch` だけで見ていると
+ *   「/Delete 失敗 → /Query もエラー文字列 → `<Task` が無い → 消えた」
+ * と読み違え、**タスクが残ったまま「消せた」と報告する**。
+ * → スタブの失敗も **本物のネイティブ失敗** (`/bin/false`) にして、
+ *   実機と同じ形 (例外は飛ばない・終了コードだけが 1) で検査する。
+ */
 {
   const r = runScheduler({
     tamperReadback: ['<Enabled>false</Enabled>', '<Enabled>true</Enabled>'],
@@ -512,6 +531,26 @@ afterCreateCase('C39 読み戻しが壊れた XML → 失敗 + 削除 1 回 + �
   check('C41 削除できなくても手動削除を促し、有効化しないよう明示',
     r.out.includes('手動で削除') && r.out.includes('有効化しないでください'));
   check('C42 削除できなくても /Run も有効化もしない', r.touched.length === 0,
+    r.touched.join(',') || '0 回');
+  // **残っていることを実体で見る。** 「消せた」と言い張っていないか。
+  check('C44 削除に失敗したらタスクは残ったまま = それを CLEANUP_FAILED として報告する',
+    r.stillRegistered && r.out.includes('REGISTERED_CLEANUP_FAILED'),
+    `残存 ${r.stillRegistered}`);
+  check('C45 削除コマンドの失敗を画面に出す', r.out.includes('削除コマンドが失敗しました'));
+  // 削除が失敗した時点で止める (確認の /Query へ進まない)。
+  check('C46 削除が失敗したら確認の /Query へ進まない',
+    r.calls.filter((l) => l.includes('/Query')).length === 1,
+    `/Query ${r.calls.filter((l) => l.includes('/Query')).length} 回`);
+}
+
+// **削除失敗 ＋ /Query も非 XML エラー** = 旧実装が「消せた」と誤判定していた形。
+{
+  const r = runScheduler({ deleteFails: true, readbackGarbage: 'ERROR: access denied' });
+  check('C47 削除失敗 + /Query も非 XML エラー → CLEANUP_FAILED',
+    r.out.includes('REGISTERED_CLEANUP_FAILED') && r.code !== 0 && r.code !== 99,
+    `exit=${r.code}`);
+  check('C48 その場合もタスクは残ったまま (消せたと言わない)', r.stillRegistered);
+  check('C49 その場合も /Run も有効化もしない', r.touched.length === 0,
     r.touched.join(',') || '0 回');
 }
 
