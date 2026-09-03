@@ -54,7 +54,8 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
   GET でカタログ+現在値、POST で upsert。**UI は wellfort-site admin 側** (この作業ツリーには
   未取得のため実装状況は未確認)。
 
-**app_config の現行キー (24 件)**: `ui.support_contact` / `ui.health_age_followup` /
+**app_config の現行キー (28 件・`CONFIG_SPECS` の実測)**: `ui.support_contact` / `ui.health_age_followup` /
+`demo.account_emails` / `demo.account_uids` / `demo.account_denied_uids` / `demo.seeded_from_admins` /
 `ui.cancer_screening_not_included` / `ui.save_steps` / `report.sections.order` / `report.sections.hidden` /
 `report.sections.labels` / `report.sections.collapsed` /
 `scan.model` / `live.model` / `scan.output_format` / `scan.boundary_recheck` / `scan.obs_dedup` /
@@ -325,6 +326,108 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
   **Wellfort が検査機関から手動取得 → admin バッチ (サーバ実行) で処理**
 - 血液 (`BloodTestData`) … デメカル (dl.demecal.net) から取得。自動DLは
   `docs/lab/demecal_auto_download_overview_spec.md` (クライアント証明書 mTLS)
+  - **【方式確定 2026-08-31・専用PC 実測】自動取得は PowerShell 方式。PAD は不要**
+    (ライセンス不要・ブラウザ要素を指さないので画面変更に強い)。根拠=
+    `docs/lab/demecal_powershell_probe_guide.md`「実測結果」: 証明書つき接続 **HTTP 200**
+    (`CN=Q05-0010`・発行者 `demecal.net CA`・**期限 2028-12-12**)、証明書なしは 400、
+    ログイン画面は `<form>`1/`<input>`4 の**通常の HTML フォーム**。
+  - **証明書は `Cert:\CurrentUser\My` にしか無い (ユーザー `info`)。`LocalMachine` には無い。**
+    → **SYSTEM/別ユーザーのタスク実行では証明書が見えず失敗・サービス化も不可**。
+    証明書の選択は **発行者CN=`demecal.net CA` かつ 秘密鍵あり**で絞る (CN ベタ書きにしない=更新で変わる)。
+  - **【運用形態 確定 2026-08-31・発注者判断】最初から無人で定期実行する。段階導入は採らない。**
+    正本 = **`docs/lab/demecal_unattended_spec.md`**。
+    **無人にしてよい根拠 = `last_to` の単調前進** (取り込み成功時だけ前進・
+    `demecal-state.ts` POST)。**走らない日があっても次の成功回がまとめて回収=取り漏れゼロ**。
+    → だから「ログオン中のみ実行」で足り、自動ログオンも LocalMachine 移設も要らない。
+    **失敗時に `last_to` を前進させてはならない** (この性質が壊れたら無人運用も壊れる)。
+    **最優先の未実装 = `LAB_INTAKE_API_KEY`** (設計文書に6か所あるが `grep src/` = 0)。
+    無人だと**PCが鍵を持ち続ける**が、現状 2 API とも `ADMIN_API_KEY`(フル権限=config/elith-delete/
+    demo-accounts 等が全部開く) を要求する。**専用PCに置いてよい鍵ではない**ので、
+    intake 専用キーを `api-auth.ts` に実装し**3つの口だけ**に通す (+スコープ回帰チェック)。
+    監視は**通知基盤を作らず GitHub Actions の日次ワークフローを見張りにする**
+    (失敗すると購読者へ自動メール。既存 `charge-subscriptions-cron.yml` と同型)。
+    - **【bat は 2 本立て 確定 2026-08-31・発注者指示】「何度も Wellfort に bat 実行を依頼するのは避けたい」**
+      → **①偵察・初回テスト / ②本番の自動実行** の 2 本。**Wellfort の操作はダブルクリック 2 回で終わり**。
+      **①で取り切るものを増やしてでも往復を増やさない**のが眼目。
+      **① = `scripts/demecal-recon.ps1` (実装済)**。配布は既存口を流用 =
+      `GET /api/ops/probe-bat?k=<PROBE_UPLOAD_TOKEN>&script=recon`、回収も既存 `probe-upload`
+      (**サーバ側の新規実装なしで渡せる**)。中身= 保存先作成(OneDrive なら中止)/証明書選定/
+      **ID・PWをDPAPI保存(②が再利用)**/ログイン/**DL画面の form 構造採取**/
+      **その form をその場で実行**(日付欄に2000年・確認画面が挟まれば辿る)/報告。
+      **PII を持ち出さない**: ページ本文は保存も送信もしない・hidden の値は出さない・
+      CSV はヘッダ行と行数だけ (データ行が返っても捨てる)。
+      **② は①の結果 (form の action/name) を見てから作る**。
+  - **【上記2制約の潰し方 確定 2026-08-31】詳細は上記正本 §4.3/§4.4
+    (旧 `demecal_rpa_operation_design.md §4.4` は取り込み済み)。
+    どちらも Wellfort の作業を増やさずに潰す (非エンジニアなので「ダブルクリック1回」に収める)。**
+    - **①: 証明書を動かさない。** タスクを **ユーザー`info` / 「ログオン中のみ実行」/
+      トリガー=ログオン時＋毎日 / 「開始時刻を過ぎたらすぐ開始」ON** で組む
+      → **自動ログオンもLocalMachine移設も不要**。設定は XML で流し込み**タスクスケジューラを開かせない**。
+      **登録直後に1回実行して○/×を表示**する(黙って失敗すると数週間気づけない)。
+      **【電源だけでは走らない・ログオンが要る】**(よく聞かれる) ログオン時に即実行され、
+      画面ロック中は走る。サインアウト/再起動放置で止まり、次のログオンで再開。
+      **`last_to` 単調前進があるので取り漏れにはならない**=運用条件は「普段ログオンしたまま」だけ。
+      「電源だけ」にするには B:「ログオン有無に関わらず実行」(Windowsパスワードを保存・
+      **CurrentUser 証明書が使えるか未確認**) か C:自動ログオン(セキュリティ判断) が要る。
+      **B は"たぶん動く"で採らない**。必要になったら②に検証を仕込んで1回で判定する。
+      **LocalMachine へのコピーはやらない** (管理者権限+秘密鍵入りpfx。**エクスポート可否も未確認**)。
+    - **②: OneDrive は PII の話**(利便性でない)。原本CSVは**個人情報を含み取込後に削除**する運用
+      (`demecal_attended_manual_guide.md:114,127`) だが、同期フォルダだと**MSクラウドへ同期され
+      ごみ箱/版履歴に残る**。→ 保存先 **`C:\demecal\`** 固定・不可なら `%LOCALAPPDATA%\demecal`
+      (OneDrive既知フォルダ移動の対象外)・**パスに `OneDrive` を含んだら書かず中止**・
+      送信成功後に削除・**使ったパスを必ず表示**。**接続チェックがデスクトップに出すのは意図どおり**
+      (メール返送用・PII非含有)。変えるのは本番CSV取得だけ。
+    - **OneDrive 側の設定は変えない (相手PCの設定に触らない)**。公式挙動で**停止すると既存ファイルが
+      デバイスのフォルダーから見えなくなる**(support.microsoft.com ja-jp/office/…d61a7930) ため
+      非エンジニアには「デスクトップが全部消えた」に見え、影響がPC業務全体に及ぶ。ポリシー強制なら操作も不可。
+      **書き先を変えれば済む。**
+    - **手動運用(attended)にも同じ危険**: 担当者がCSVを**デスクトップに保存**するとPIIがクラウドへ。
+      → `demecal_attended_manual_guide.md` ステップ②-6 に**保存先を `C:\demecal\` に固定**
+      (ブラウザ設定で明示変更) を明記済み。
+      **【確定 2026-09-02・操作の録画で実測】保存先は「ダウンロード」フォルダ**(ブラウザ既定)。
+      しかも **2026-02 以降の CSV が 15 本前後そのまま残置**されている(取込後に削除されていない)。
+      OneDrive は接続されているが**ダウンロードに雲アイコンは無い**=同期対象に見えない
+      (アイコンだけでは決定的でないので断定はしない)。②へ移れば `C:\demecal\` に落として
+      送信後に削除するので増えない。**既存の残置分の扱いは Wellfort の判断**。
+      (以下は確定前の記述) 手順書は「PCに保存される」としか
+      書いておらず**フォルダ未指定**=ブラウザ既定任せ。OneDrive のバックアップ対象は
+      **デスクトップ/ドキュメント/ミュージック/画像/ビデオ の5つでダウンロードは含まれない**(同出典)
+      が、**それは一般論でこのPCの保存先が変更されていない確認にはならない**
+      (「たぶん既定だから安全」と一度書いて撤回・2026-08-31)。確認は**エクスプローラーで
+      `Q05-0010` を検索し場所に `OneDrive` が含まれるか**。**削除済みでもOneDriveごみ箱/版履歴に
+      残り得る**。
+  - **【ログイン形式 確定 2026-08-31・`demecal_login_page.html` 実測】サーバは ASP.NET Core MVC**
+    (`DSS.Demecal.Web`)。`POST /account/login` に `UserID` / `Password` ＋
+    **hidden `__RequestVerificationToken` (antiforgery) が在る**
+    → **「GET でトークン取得 → 同一セッションで POST」が必須** (POST 1 回では通らない)。
+    antiforgery は **hidden と Cookie (`.AspNetCore.Antiforgery.*`) の対**で検証されるので
+    `-SessionVariable`/`-WebSession` を使い、**証明書は GET・POST の両方に付ける**。
+    **ログインを動かす JS は無い**(素の form POST)。プローブの「input 4/script 5」は
+    コメントアウト込みの素の出現数で、実体は input 3 (UserID/Password/token) + script 3。
+    失敗時も **200** が返る(`validation-summary-valid` にエラー)ので**302 かフォーム消失で判定**。
+    **`page.html` をリポジトリに入れない**(有効な antiforgery トークンの実値が入る)。構造は
+    `docs/lab/demecal_powershell_probe_guide.md`「ログインフォームの構造」が正。
+  - **未確定**: **ログイン後**の CSV 一覧 URL とダウンロードリンクの形 (プローブはログインしない設計)。
+    実装に要るのはこれだけ。**専用PCでの実行が要る**(証明書がその PC にしかない)。
+- 遺伝子 (`GeneticTestResultData`) … Genoplan。**【判定済み 2026-09-01・実測】RPA も PowerShell も専用PC も不要。
+  サーバ側 (Vercel) から API 取得で確定。** 正本=`docs/lab/lab_data_reception_overview.md §4`。
+  - **画面は Vue SPA だが背後は素の PHP REST API** (`https://bizapi.genoplan.com`)。
+    `POST /api/biz/login.php` (`lang`/`loginid`/`password`・form-urlencoded) → `accesskey`。
+    **以降は `accesskey` + `partner_seq` を body に載せるだけ**で、**Cookie セッション無し・
+    CSRF トークン無し・`Authorization` 無し・ログイン経路に MFA/CAPTCHA 無し**
+    (`sendAuthNumber`/`checkAuthNumber` はパスワード再設定・新規登録・電話番号認証にしか出ない)。
+    → **デメカル (ASP.NET Core antiforgery の GET→POST 往復) より簡単**。
+  - **PDF は直リンクで取れる** (`window.open(url)` のみ。`saveAs`/`createObjectURL`/`a.download` は 0 件)。
+    一覧=`POST /api/biz/getKitInfoList.php` → 本レポート=`GET {lambda}/gpj/{lang}/{serialnumber}` →
+    `{pdfUrl}` (S3 署名付き・1h) → GET。PCR=`.../pdfMaker5/dtc_pdf/php/download.php?qq={base64}`。
+  - **クライアント証明書が無い**ので血液の「専用PCが必須」の理由が成立しない。
+    **現地実行 bat は作らない** (PowerShell は「不可」でなく「不要」)。
+  - **着手前に潰す (§4.2)**: **(a) Genoplan の自動アクセス許諾が未取得** (血液は承認済だが
+    Genoplan は docs に記録 0 件。API 直叩きは RPA と別種の合意が要る) / (b) `multi=="Y"` の
+    partner 選択 / (c) `getKitInfoList` が **`signer_name`/`signer_mobile` を返す**=PII 分離の設計 /
+    (d) アカウント単位の IP 制限。
+  - **先方へ報告 (§4.3)**: **PDF の署名付き URL を返す Lambda が無認証**。実測でシリアル番号だけで
+    署名付き URL が返る (存在しないシリアルで確認・実在シリアルは試していない)。Wellfort 経由で伝える。
 - 生活習慣・問診 (`LifestyleQuestionnaireData`) … アプリの AI 問診
 
 ### 検査値と原本の保存 (2026-08-20 確定・発注者承認)
@@ -695,7 +798,7 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
         - **文言は app_config `ui.save_steps` で差し替え可** (OS 更新でメニュー名が変わるため)。
           書式 `端末キー=手順1｜手順2｜手順3` をカンマ区切り。**上書きは素の文**になる。
           解釈できないキー・空の手順は無視 = **手順が 1 行も無い状態を作らない**。
-          → **app_config 現行 24 件**。
+          → **app_config 現行 28 件**。
         - **検証**: `verify:screen` に ①端末 4 種が描かれ判定不能なら 4 つとも見える
           ②**印刷ビューに保存手順が出ていない** ③UA 別 (Windows/Mac/iPhone/**iPad**/Android) の
           分岐と `autoprint` の有無 を追加。**3 つとも壊して落ちることを確認済み**。
@@ -1024,8 +1127,17 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
     - 大きさ: 通常アイコン ratio 0.74 / maskable 0.60 (マークの対角 = 幅×1.268 ≦ 0.8 →
       幅 ≦ 0.63。実測 対角 0.760)。ロゴ全体に戻すなら
       `node scripts/build-pwa-icons.mjs "#FFFFFF" full`。
+    - **タブの favicon も同じマークを使う** (発注者指示 2026-08「ファビコンも小さいので
+      文字を削除してマークだけに」)。`public/favicon-mark.png` (64px・**背景は透過**) を
+      同じスクリプトが生成し、`BaseLayout.astro` の `rel="icon"` が指す。
+      **ロゴ全体 (`full`) を指定したときも favicon はマークだけ**にする — 16px では
+      ワードマークの線幅が 1px を切って潰れ、何のアイコンか分からなくなるため
+      (実測: 旧=かすれた染み / 新=円+W が判別できる)。透過にするのは、白で塗ると
+      ダークテーマのタブに白い四角が出るから。
+    - **ヘッダのロゴは高さ 66px** (`AppNav.astro`)。「小さい」の指摘で 44px から 50% 拡大
+      (発注者指示 2026-08)。実測 89x66px・ナビ高 83px でメニュー/お知らせと干渉しない。
     - **アイコンを作り直したら URL の `?v=` を必ず上げる** (manifest の icons と
-      `apple-touch-icon`。両リポジトリ)。**Chrome は manifest の `icons` が同じなら
+      `apple-touch-icon`、`favicon-mark.png`。両リポジトリ)。**Chrome は manifest の `icons` が同じなら
       アイコン URL を immutable 扱いして再ダウンロードしない**ので、中身だけ差し替えても
       インストール済みのホーム画面アイコンは永久に古いままになる (実機で発覚 2026-08)。
       URL を変えると WebAPK の更新がキューされる。ただし反映は即時ではない
@@ -1149,21 +1261,70 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
     `demoFallbackEnabled(uid)` は**引数 uid 1 つ**でこれに委譲する。
     ①env `PUBLIC_DEMO_FALLBACK=false` で全停止 → ②uid が一覧にあれば出す。**admin は見ない。**
   - **admin であることは資格にならない**。管理者を増やしてもダミーの閲覧者は増えない。
-    admin がダミーを見たいなら**その uid を登録する**(唯一の道)。
+    admin がダミーを見たいなら**その人を登録する**(唯一の道)。
+  - **【登録は Google アカウント (メール)・判定は uid】発注者指摘 2026-08-30**:
+    「**diagnostic_user_id をキーにしてたら、管理できないだろ！** マスコミ対応で、記者にデモ画面を
+    見てもらう場合、どうするの？」→ **uid を人が入力する設計が誤り**。記者やパートナーに
+    「サインインしてデバッグ欄の UUID を送ってください」とは言えない (人は自分の uid を知らない)。
+    - **登録**(人が年数回) = メールアドレス / **判定**(全リクエスト) = uid。**判定にメールを持ち込まない** —
+      ハッシュ計算が async なので「同期関数のまま」が崩れ ~30 箇所が await になり、DB 依存も増える。
+    - 橋渡し = `linkDemoEmail()` を **`api/auth/resolve.ts` で 1 回だけ**。サーバ検証済み email と
+      解決済み uid が同時にあるのはここだけ。**クライアント申告の email で登録できてはいけない**
+      (誰でもデモを有効化できてしまう)。突き合わせ成立で uid を `demo.account_uids` へ写す。
+    - **メールの現物は保存しない**。`demo.account_emails` に **sha256 / マスク(`r***@example.com`) /
+      uid / メモ** の 4 つだけ (1 行 = `<sha256> <マスク> <uid|-> # メモ`)。現物が通るのは
+      wellfort-site の中継→Scan-Chat-AI の受け口までで、**中継でもログに出さない**。
+    - **`demo.account_emails` は供給元でなく「予約」**。サインインするまで判定に効かない
+      (画面では「サインイン待ち」と出す。**これを異常に見せない**)。
+    - **メール登録由来の uid は uid 側から外せない** (外しても次のサインインで復活＝黙って効かない操作)。
+      **逆にメール行を外すときは uid も一緒に外す** (メールだけ外すと本人にデモが出続ける)。
+    - **サインイン済みかは記録した uid で判定**。ラベル一致で推測しない (ラベルは admin が
+      書き換えられるので黙って誤判定する。実装時に一度そうなっていた)。
   - **責務分界**: `demo-accounts.ts`=**誰に見せるか** / `demo-data.ts`=**何を見せるか**。
     混ぜていたために「admin なら見せる」という権限の話がデータ層に紛れ込んだ (2026-08-30)。
   - **一覧は 3 供給元の「和」**: `BUILTIN_DEMO_UIDS`(コード・消えない下限・現 4 件) ∪ env `DEMO_ALLOWED_UIDS`
     ∪ **app_config `demo.account_uids`(admin から即時・再デプロイ不要)**。**組み込みを名簿として育てない**。
     各ページは `refreshConfig()` を**データ取得より前**に呼ぶ。
+  - **【引き算が 1 段ある = 除外リスト】発注者指示 2026-08-30「削除のできるようにして」**:
+    `出す uid = (組み込み ∪ env ∪ app_config) − app_config demo.account_denied_uids`。
+    組み込み/env は供給元を画面から書き換えられない(コード/Vercel env)ので、**消すのでなく引き算で止める**
+    → **どの行でも画面から外せる / 「戻す」で元に戻る**(供給元は残っている)。
+    **引き算は和のあと**(逆にすると除外した uid を config 側で足し直せてしまう)。
+    §4「足せるが消せない方が事故が軽い」は供給元どうしが上書きし合わない意味であって、
+    **operator が意図して外すことを禁じるものではない**(除外は画面に「除外中」と出る=黙って消えない)。
+  - **【初期値は管理者リストから 1 度だけ】発注者指示 2026-08-30**: 一覧が空だと「誰も見られない」ので、
+    admin 画面の初回表示で `admin_users`(is_active) のメンバーをメールとして自動登録し、
+    目印 `demo.seeded_from_admins` を立てる。手動の「管理者リストから登録」ボタンもある。
+    **2 回目以降は自動で走らせない** — 走らせると**外した人が次のアクセスで黙って戻り「外す」が効かなくなる**
+    (「一覧が空なら」を条件にしないのも同じ理由)。登録後は普通の行=**1 件ずつ外せる**・メモは
+    固定文言(**氏名を入れない**=PII)。**admin であることが資格になる訳ではない** — 名簿を一度写して
+    初期値にする操作であって継続同期ではない(以後 admin を増やしても閲覧者は増えない)。
+    名簿を引くのは wellfort-site 側。**Scan-Chat-AI に名簿を渡さない**(渡すのはメール→即ハッシュ)。
   - **増減は admin の専用メニュー** = wellfort-site `/admin/demo-accounts` (サイドバー「設定」)。
     **管理者管理 (`/admin/users`) とは別メニュー** (同じ枠に置くと「デモを見せる」と
     「管理権限を渡す」が区別できなくなる)。UI=wellfort-site / 処理=Scan-Chat-AI
     `/api/admin/demo-accounts` (Bearer `ADMIN_API_KEY`)。組み込み/env は画面から外せない。
+    **上段=Google アカウントで登録 (人が使う入口) / 下段=uid を直接 (`<details>` で畳む)**。
+  - **【案内する URL】`https://scan-chat-ai.vercel.app/`** (→ `/dashboard` へ転送)。**マイページ経由不要**。
+    マイページのリンクは `?u=<uid>` を付けるが **`?u=` は admin 専用**なので**デモ用には付けない**
+    (素の URL でよい。サインイン後は HttpOnly Cookie で本人が決まる)。将来 `app.wellfort.co.jp`。
+  - **【EC の顧客でない人を通す 2026-08-31】記者・パートナーは顧客ではない**ので
+    `resolve-customer` で引けず、`api/auth/resolve.ts` の未連携 early return に落ちて
+    **「お客様情報が見つかりませんでした」で入口で弾かれる**(デモ登録が無意味になる)。
+    → `resolveDemoUidByEmail` で**デモ登録済みの人にだけ**デモ専用 uid を与えて通す。
+    **early return より前に置く**(後ろだと到達しない=検査で固定)。**登録の無い人は素通り**・
+    **1 度決めた uid は変えない**(毎回変わると `app_users` に行が増え履歴も繋がらない)・
+    **顧客レコードは作らない**(診断側の識別子だけ=PII は生まれない)。
   - **代理表示 (`?u=`) は「表示中の uid」で判定**。相手が登録済みなら出る / 一般顧客なら相手の実データ。
     `?u=` は admin 限定 (`viewer.ts:229`) なので**社外に渡すデモ用アカウントは他人を覗けない**。
     実測: 本人(登録済) `rp-h3`=45 / `?u=`登録済 45 / `?u=`未登録 **3**(emptyVM)。
-  - **検証 `npm run verify:demo-gate`** (12 ケース)。**デモの経路に admin が現れたら落とす**・
-    引数が uid 1 つであること・`?u=` が admin 限定であること も見る。**ここは静かに壊れる**。
+  - **検証 `npm run verify:demo-gate`** (14 ケース + メール登録/除外リスト/記者の導線の実挙動 32 件)。
+    **デモの経路に admin が現れたら落とす**・引数が uid 1 つであること・`?u=` が admin 限定であること
+    も見る。**ここは静かに壊れる**。メール登録だけは**テキスト検査でなく実際に動かす**
+    (`demo-accounts.ts` を transpile し app_config を差し替え = DB 不要)。とくに
+    **保存物のどこにも現物のアドレスが出ないこと**を固定 (目視では抜けるし、抜けても画面は正常に見える)。
+    退行を注入して落ちることも確認済み (`hashEmail` が現物を返すよう壊すと 12 件・
+    除外を和の前に動かすと 4 件・記者の導線を early return の後ろへ動かすと 1 件 落ちる)。
   - **admin 判定は完全に別件** (用途=管理画面 2 枚)。正は Wellfort 側 `admin_users`、経路は
     HP Edge `resolve-customer` の top-level `is_admin`。**このリポジトリに管理者名簿を持たない**。
     **未解決**: 本番で `edge.is_admin:false` (原因未特定)。**デモに影響しないのでブロッカーではない**。
@@ -1220,7 +1381,7 @@ Supabase database linter の指摘を棚卸しした結果。**テストフェ�
 | `docs/lab/lab_data_reception_overview.md` | **4検査のデータ受取 詳細**(血液=リージャー/RPA・がん=プリベント/専用ポータル+S3を提案中・AI疾病予測=LAiF/S3 URL・遺伝子=Genoplan/RPA。方式/経路/現状/課題/次アクション)。E2E全体像は上記 master_spec が上位 |
 | `docs/lab/questionnaire_to_lab_csv_spec.md` | **AI問診回答→各社CSV 変換仕様(実装用)**。共通設問No→各社必要行のマスターマッピング表+各社項目リスト+生成ルール(フリー/選択/範囲/複数)+PII確認事項。元=Wellfort問診項目マトリクスExcel |
 | `docs/lab/demecal_auto_download_overview_spec.md` | 血液検査データ自動DL (デメカル/mTLS) 概要 |
-| `docs/lab/demecal_inquiry_email_template.md` | 検査会社への自動DL可否 照会メール雛形 |
+| **`docs/lab/demecal_unattended_spec.md`** | **【無人定期取得の正本 2026-08-31】** 発注者判断「最初から無人」。無人にしてよい根拠(`last_to` 単調前進=走らない日があっても取り漏れゼロ)/取り込み専用キー `LAB_INTAKE_API_KEY`(**未実装・ADMIN_API_KEY を PC に置かないため必須**)/実行ログAPI/秘密の保管(DPAPI)/タスク設定/監視(GitHub Actions を見張りにして通知基盤を作らない)/失敗時の挙動表/未確定と実装TODO |
 | `docs/subscription/subscription_management_feature_requirements.md` | サブスク契約管理 拡張 機能要件 (要件1〜4・データモデル・付録Bマトリクス) |
 | `docs/subscription/subscription_management_implementation_guide.md` | 上記の実装手順書 |
 | `docs/subscription/kit_lifecycle_and_handoff_management_spec.md` | **検査キット 出荷・進捗・データ受渡 統合管理仕様(サブスク駆動)**。プラン×キット×発送タイミング/タカセ定期出荷/ライフサイクル状態機械+AI問診促し/進捗駆動の各社受渡・Elith作成指示。**§4.1.1=LAiF上りCSV(AI疾病発症予測 入力フォーム 約158項目)の写像仕様＋生成フロー**(健診スキャン+AI問診+基本情報を集約=スキャンフローに足さない別export・整理番号/生年月日は要確認) |
@@ -1282,6 +1443,33 @@ Supabase database linter の指摘を棚卸しした結果。**テストフェ�
     残っている。実例: 本リバート作業で wellfort-site の作業ブランチが `main` と完全一致
     (0/0) で、対象コミット `71e7936`/`680c73e` を含んでいなかった。
     **既存ブランチで作業を再開するときは、まず本番ブランチとの差分を確認すること。**
+
+- **【再発 2026-09-01・実測】上の注意が現実になった。デプロイ元が別ブランチに差し替わっていた。**
+  発端は「`https://www.wellfort.co.jp/partner-portal-preview` が 404」。
+  - **本番サイトのデプロイ元は `claude/hopeful-darwin-1vdsq0` だった** (2 つの独立した証拠で断定):
+    ① `/admin/notify-recipients` = **このブランチにしか無いページ**が HTTP 200 で
+    `<title>注文通知先 - Wellfort Admin` を返す ② `/company` が「本田大作 5 件 /
+    物部慶幸 **0 件**」= hopeful-darwin と一致 (本番ブランチ側は物部慶幸が
+    `company.astro` に 5・`news.astro` に 2 残っていた)。
+  - 同ブランチは **2026-07-30 分岐で本番ブランチの 144 コミットを欠いていた**。
+    結果、**11 本のページ・API が本番サイトから丸ごと消えていた**:
+    `partner-portal-preview` / `api/partner/upload` / `admin/payment-config` +
+    `api/admin/payment-config` / `api/payment-status` / `admin/demo-accounts` +
+    `api/admin/demo-accounts` / `admin/demecal-csv` / `api/admin/config` /
+    `api/admin/elith-verify` / `api/admin/elith-plan-timeseries`。
+    内容面でも 8/24〜8/31 の更新 (提携=BISEIDO・医師の声の写真・recruit 準備中・
+    アイコン `?v=3`・resolve-customer の admin 判定 等) が全部落ちていた。
+  - **切り戻す順序を間違えない**: 先に**稼働中のブランチの独自コミットを本番ブランチへマージ**
+    してから Vercel を戻す。逆にすると代表者名が物部慶幸へ戻る等の巻き戻りが起きる。
+    → マージ済み (`20169a3`・10 コミット。競合 3 件は config.toml=両方採用 /
+    AdminLayout=メニュー両方 / `gmo-return.ts`=**本番の `resolvePaymentEnv` を残し**
+    hopeful-darwin 側の `gmoEnvBrand`/`gmoApiBase` は**本番ブランチに存在しない**ので
+    解決経路だけ移植)。
+  - **404 は「どのページが 404 か」で分岐点が割り出せる**。ページの追加日を
+    `git log --diff-filter=A` で引き、200 と 404 の境界を挟めば分岐日が出る
+    (今回: `/admin/elith-batch` 7/16=200 ⇔ `/partner-portal-preview` 8/10=404 → 7/30 分岐)。
+  - **どのブランチが実際にデプロイされているかは、そのブランチにしか無いページを叩いて確かめる。**
+    設定画面を見られない側からでも、これで確定できる。
 
 ## 開発ブランチ / ブランチ管理 (2リポジトリ・ドメイン別・ペア運用・2026-08 定義)
 - **ドメイン別ブランチ**: wellfort-site は EC/FA/Elith 等 関心事が混在するため、関心事ごとにブランチを分ける

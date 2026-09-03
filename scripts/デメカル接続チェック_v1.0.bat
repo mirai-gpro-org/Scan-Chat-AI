@@ -1,7 +1,11 @@
 @echo off
 chcp 65001 >nul
-title Demecal connection check
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$s=Get-Content -LiteralPath '%~f0' -Encoding UTF8; Invoke-Expression (($s[7..($s.Count-1)]) -join [Environment]::NewLine)"
+title demecal-check v1.0
+set "ERRLOG=%TEMP%\demecal_error.txt"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$s=Get-Content -LiteralPath '%~f0' -Encoding UTF8; Invoke-Expression (($s[11..($s.Count-1)]) -join [Environment]::NewLine)" 2> "%ERRLOG%"
+echo.
+echo ---- error log (empty is normal): %ERRLOG%
+type "%ERRLOG%"
 echo.
 pause
 exit /b
@@ -34,6 +38,11 @@ $Desktop   = [Environment]::GetFolderPath('Desktop')
 $ReportPath = Join-Path $Desktop 'demecal_probe_report.txt'
 $HtmlPath   = Join-Path $Desktop 'demecal_login_page.html'
 
+# 配布ファイル名にも入る版番号 (`src/lib/probe-bat.ts` の readScriptVersion が読む)。
+# **中身を直したら必ず上げる。** 上げないと Wellfort 側は同名のファイルを受け取り、
+# 新旧どちらを実行したのか判別できなくなる (実測 2026-09-01)。
+$Version   = 'probe-1.0'
+
 $lines = New-Object System.Collections.ArrayList
 function Say($m) { [void]$lines.Add($m); Write-Host $m }
 
@@ -42,6 +51,7 @@ Say " デメカル PowerShell 接続チェック"
 Say " 実行日時 : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Say " PC名     : $env:COMPUTERNAME"
 Say " PSバージョン : $($PSVersionTable.PSVersion)"
+Say " 版       : $Version"
 Say "=================================================="
 
 # ---------------------------------------------------------------

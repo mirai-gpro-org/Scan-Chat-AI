@@ -47,13 +47,19 @@ const WIDTH = {
     <!-- Executive Navy。ダークモードは提供しないため単一値。 -->
     <meta name="theme-color" content="#102B3A" />
     {/*
-      Welltect ロゴ (public/welltect_logo.svg 等) が置かれていればそれを favicon に使う。
-      未配置のあいだは暫定の favicon.svg にフォールバックする。
+      タブの favicon。**ロゴ全体ではなくマーク (円+W) だけ**を使う
+      (発注者指摘 2026-08「ファビコンも小さいので文字を削除してマークだけに」)。
+      16px まで縮むとワードマーク "welltect" の線幅が 1px を切って潰れ、
+      何のアイコンか分からなくなるため (ホーム画面アイコンで先に確認済みの現象)。
+      画像は scripts/build-pwa-icons.mjs が原本から**切り出すだけ**で生成する
+      (色も形も変えない)。背景は透過なので明るいタブでも暗いタブでも浮かない。
+      ロゴ原本が未配置のあいだは暫定の favicon.svg にフォールバックする。
+      **作り直したら `?v=` を上げること** (ブラウザがタブのアイコンを握り続けるため)。
     */}
     <link
       rel="icon"
-      type={LOGO.pending ? 'image/svg+xml' : undefined}
-      href={LOGO.pending ? '/favicon.svg' : LOGO.src}
+      type={LOGO.pending ? 'image/svg+xml' : 'image/png'}
+      href={LOGO.pending ? '/favicon.svg' : '/favicon-mark.png?v=1'}
     />
 
     {/*

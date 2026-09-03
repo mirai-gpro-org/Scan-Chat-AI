@@ -14,7 +14,7 @@
  *     idPrefix?: string,      // 自動採番の接頭辞 (既定 "test")
  *   }
  * 出力:
- *   - S3 設定あり: { ok:true, configured:true, count, uploaded:[{client_id,test_date,item_count,json_key,uri}] }
+ *   - S3 設定あり: { ok:true, configured:true, count, uploaded:[{client_id,order_no,test_date,item_count,json_key,uri}] }
  *   - S3 未設定 : { ok:false, configured:false, count, rows:[...], preview:[...] }  ← ドライラン
  *
  * 認可: wellfort-site から `Authorization: Bearer <ADMIN_API_KEY>` (wellfort_admin_lab_upload_spec §6-1)。
@@ -24,13 +24,16 @@
 import type { APIRoute } from 'astro';
 import { buildBloodCsvBundles } from '../../../lib/elith-blood-csv';
 import { getS3Config, isS3Configured, putFiles, type S3PutFile } from '../../../lib/s3';
-import { isAdminAuthorized } from '../../../lib/api-auth';
+import { isLabIntakeEndpointAuthorized } from '../../../lib/api-auth';
 
 export const prerender = false;
 
 function authorized(request: Request): boolean {
   // 認可の実装は src/lib/api-auth.ts に集約 (キー未設定の本番は拒否＝fail-closed)。
-  return isAdminAuthorized(request);
+  // **取り込み 3 口のひとつ**。admin キー (wellfort-site の画面用) に加えて、
+  // 専用PC が持つ**取り込み専用キー** `x-intake-key` も通す。
+  // ADMIN_API_KEY を PC に置かないための分離 (`demecal_unattended_spec §3.1`)。用途=CSV 取り込み
+  return isLabIntakeEndpointAuthorized(request);
 }
 
 function str(v: unknown): string | null {
@@ -98,6 +101,14 @@ export const POST: APIRoute = async ({ request }) => {
 
   const rowSummary = parsed.rows.map((r) => ({
     client_id: r.clientId,
+    /**
+     * **CSV 側の識別子 `指図番号`**。応答に出すのは、いまの `client_id` が
+     * `test-<時刻>-<連番>` の**仮 ID** で、本人への対応づけが未実装だから
+     * (`demecal_unattended_spec.md:512`)。`lab_tests.external_test_id` へ格納して
+     * 逆引きする段 (`lab_integration_workflow §2 Workflow 2`) で必要になる。
+     * **PII ではない**ので応答に出してよい (氏名・生年月日は出さない)。
+     */
+    order_no: r.orderNo,
     test_date: r.testDate,
     item_count: r.itemCount,
     json_key: r.files[0]?.key ?? null,

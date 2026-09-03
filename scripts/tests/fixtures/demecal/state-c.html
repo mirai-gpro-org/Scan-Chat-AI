@@ -1,0 +1,17 @@
+<!-- 完全架空の fixture。確認画面。URL は state-b と同じ /hanyou/entry になり得るので、
+     **URL では判定しない**ことを確かめるために日付も持ち回らせてある
+     (DataType が radio でない = B ではない)。 -->
+<html><body>
+<form method="post" action="/hanyou/entry">
+  <input name="__RequestVerificationToken" type="hidden" value="TOKEN3" />
+  <input type="hidden" id="ID" name="ID" value="1" />
+  <input type="hidden" id="DairitenCode" name="DairitenCode" value="Q05-0010" />
+  <input type="hidden" id="DateFrom" name="DateFrom" value="2026/07/01" />
+  <input type="hidden" id="DateTo" name="DateTo" value="2026/07/31" />
+  <input type="hidden" id="DataType" name="DataType" value="1" />
+  <input type="hidden" id="OutputHeader" name="OutputHeader" value="True" />
+  <input type="hidden" id="submitType" name="submitType" value="" />
+  <button id="btnDownload" type="button" onclick="submitType.value='download'; submit();">ダウンロード</button>
+  <button id="btnBack2" type="button" onclick="submitType.value='back'; submit();">戻る</button>
+</form>
+</body></html>

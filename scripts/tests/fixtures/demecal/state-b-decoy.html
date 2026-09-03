@@ -1,0 +1,31 @@
+<!-- 完全架空の fixture。**decoy が対象より項目数が多い**画面。
+     旧 Select-Form は「token 以外の項目がいちばん多い form」を採っていたので、
+     この検索 form (11 項目) を掴んで条件入力 form (9 項目) を取り逃した。
+     期待状態に一致する form を選ぶ方式なら正しく条件入力を採る。 -->
+<html><body>
+<form method="post" action="/search">
+  <input type="text" name="Keyword1" value="" /><input type="text" name="Keyword2" value="" />
+  <input type="text" name="Keyword3" value="" /><input type="text" name="Keyword4" value="" />
+  <input type="text" name="Keyword5" value="" /><input type="text" name="Keyword6" value="" />
+  <input type="text" name="Keyword7" value="" /><input type="text" name="Keyword8" value="" />
+  <input type="text" name="Keyword9" value="" /><input type="text" name="Keyword10" value="" />
+  <input type="text" name="Keyword11" value="" />
+  <button type="submit">検索</button>
+</form>
+<form method="post" action="/hanyou/entry">
+  <input name="__RequestVerificationToken" type="hidden" value="TOKEN2" />
+  <input type="hidden" id="ID" name="ID" value="1" />
+  <input readonly type="text" id="DairitenCode" name="DairitenCode" value="Q05-0010" />
+  <input type="hidden" id="HanbaitenCode" name="HanbaitenCode" value="000000" />
+  <input type="text" id="DateFrom" name="DateFrom" value="" />
+  <input type="text" id="DateTo" name="DateTo" value="" />
+  <input type="radio" id="DataType1" name="DataType" value="0" checked /><label for="DataType1">すべて</label>
+  <input type="radio" id="DataType2" name="DataType" value="1" /><label for="DataType2">正常終了のみ</label>
+  <input type="radio" id="OutputHeader1" name="OutputHeader" value="False" checked /><label for="OutputHeader1">出力しない</label>
+  <input type="radio" id="OutputHeader2" name="OutputHeader" value="True" /><label for="OutputHeader2">出力する</label>
+  <input type="hidden" id="submitType" name="submitType" value="" />
+  <button id="btnConfirm" type="button" onclick="submitType.value='confirm'; submit();">確認</button>
+  <button id="btnBack" type="button" onclick="submitType.value='back'; submit();">戻る</button>
+</form>
+<form method="post" action="/account/logout"><button type="submit">ログアウト</button></form>
+</body></html>

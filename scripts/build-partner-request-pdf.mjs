@@ -1,9 +1,16 @@
 /**
- * docs/lab/partner_demo_confirm_request.md → 送付用 PDF (宛先ごとに 1 通)
+ * ⚠️ 【失効 2026-08-31】このスクリプトが組版する下書きは 旧版・ボツ へ退避した。
+ *   現行の依頼文は **社別 2 本**:
+ *     docs/lab/partner_demo_confirmation_request_laif.md
+ *     docs/lab/partner_demo_confirmation_request_prevent.md
+ *   （提案書ハウススタイル準拠・送付用 PDF は scratchpad/pdf/ で生成する）。
+ *   本スクリプトは経緯として残す。走らせても出るのは旧版の紙面。
+ *
+ * docs/旧版・ボツ/partner_demo_confirm_request.md → 送付用 PDF (宛先ごとに 1 通)
  *
  * 実行: node scripts/build-partner-request-pdf.mjs
- * 出力: docs/lab/partner_demo_confirm_request_laif.pdf
- *       docs/lab/partner_demo_confirm_request_prevent.pdf
+ * 出力: docs/旧版・ボツ/partner_demo_confirm_request_laif.pdf
+ *       docs/旧版・ボツ/partner_demo_confirm_request_prevent.pdf
  *
  * 【なぜ md 全体を PDF にしないか】
  *   md には §3「【社内メモ】LAiF とのフォーマット齟齬」や §0/§4/§5 の作業メモが入っている。
@@ -25,7 +32,7 @@ import { chromium } from 'playwright';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
-const SOURCE = resolve(ROOT, 'docs/lab/partner_demo_confirm_request.md');
+const SOURCE = resolve(ROOT, 'docs/旧版・ボツ/partner_demo_confirm_request.md');
 
 const argDate = (() => {
   const i = process.argv.indexOf('--date');
@@ -146,7 +153,7 @@ const browser = await chromium.launch(executablePath ? { executablePath } : {});
 try {
   for (const def of LETTERS) {
     const letter = extract(def);
-    const out = resolve(ROOT, `docs/lab/partner_demo_confirm_request_${def.slug}.pdf`);
+    const out = resolve(ROOT, `docs/旧版・ボツ/partner_demo_confirm_request_${def.slug}.pdf`);
     const page = await browser.newPage();
     await page.setContent(renderHtml(letter, dateJa), { waitUntil: 'load' });
     await page.pdf({

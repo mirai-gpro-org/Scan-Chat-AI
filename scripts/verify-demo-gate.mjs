@@ -89,6 +89,13 @@ const cases = [
    */
   ['代理表示 (?u=) の相手がデモ用アカウント',    DEMO,     false, [],        true],
   ['代理表示 (?u=) の相手が一般顧客',            CUSTOMER, false, [],        false],
+  /*
+   * **メール登録は「予約」であって、資格そのものではない。**
+   * 本人がサインインするまで uid が分からないので出ない (これは正常)。
+   * サインインすると `linkDemoEmail` が uid を一覧へ写し、次の行の状態になる。
+   */
+  ['メール登録済み / 本人がまだサインインしていない', PARTNER, false, [],        false],
+  ['メール登録済み / サインインして uid が入った',    PARTNER, false, [PARTNER], true],
 ];
 
 // ══════════════════════════════════════════════════════════════════════
@@ -227,6 +234,332 @@ if (!/Array\.isArray\(row\.report\)\s*&&\s*demoFallbackEnabled\(/.test(read('src
 }
 
 // ══════════════════════════════════════════════════════════════════════
+// 6. Google アカウント (メール) で登録する経路
+// ══════════════════════════════════════════════════════════════════════
+//
+// 人が扱えるのはメールアドレスだけ。記者やパートナーに UUID は聞けない。
+// ただし**毎リクエストの判定は uid のまま**にする (同期・外部依存ゼロを崩さない)。
+{
+  const resolveSrc = read('src/pages/api/auth/resolve.ts');
+  const apiSrc = read('src/pages/api/admin/demo-accounts.ts');
+
+  for (const name of ['hashEmail', 'linkDemoEmail', 'parseEmailEntries', 'serializeEmailEntries']) {
+    if (!acct.includes(`export function ${name}`) && !acct.includes(`export async function ${name}`)) {
+      fails.push(`demo-accounts.ts: ${name} が無い — メールで登録する経路が消えている`);
+    }
+  }
+
+  /*
+   * **突き合わせはサインインの経路でしかできない。**
+   * サーバで検証済みの email と解決済みの uid が同時に存在するのはここだけ。
+   * クライアントの申告した email で登録できてしまうと、誰でもデモを有効化できる。
+   */
+  if (!/linkDemoEmail\(/.test(resolveSrc)) {
+    fails.push('api/auth/resolve.ts: linkDemoEmail を呼んでいない'
+      + ' — メールで登録しても uid が埋まらず、本人がサインインしてもデモが出ない');
+  }
+  /*
+   * **EC の顧客でない人に uid を与える処理が、未連携の早期 return より前にあること。**
+   * 後ろにあると記者・パートナーは「お客様情報が見つかりませんでした」で入口で弾かれ、
+   * デモ登録が何の役にも立たない (実測 2026-08-31)。
+   */
+  {
+    const iDemo = resolveSrc.indexOf('resolveDemoUidByEmail(email');
+    const iBail = resolveSrc.indexOf('return json({ linked: false }');
+    if (iDemo < 0) {
+      fails.push('api/auth/resolve.ts: resolveDemoUidByEmail を呼んでいない'
+        + ' — EC の顧客でないデモ用アカウント (記者・パートナー) が入口で弾かれる');
+    } else if (iBail >= 0 && iDemo > iBail) {
+      fails.push('api/auth/resolve.ts: resolveDemoUidByEmail が未連携の early return より後ろ'
+        + ' — そこまで到達しないので、デモ登録しても記者は入れない');
+    }
+    /*
+     * **既存の割り当てを渡すこと。** 渡さないと毎回新しい uid を作り、
+     * `app_users.auth_user_id` の UNIQUE 制約に衝突してサインインが 500 で止まる。
+     * しかも保存は後段の `linkDemoEmail` なので、**500 で止まると永久に直らない**
+     * (2026-08-31 に本番で実測)。
+     */
+    if (!/resolveDemoUidByEmail\(email,\s*linkedUid\)/.test(resolveSrc)) {
+      fails.push('api/auth/resolve.ts: resolveDemoUidByEmail に既存の割り当て (linkedUid) を渡していない'
+        + ' — 毎回新しい uid を作って app_users の UNIQUE 制約に衝突し、サインインが壊れる');
+    }
+    const iLinked = resolveSrc.indexOf('const linkedUid = await findLinkedUid(');
+    if (iLinked < 0) {
+      fails.push('api/auth/resolve.ts: findLinkedUid で既存の連携を引いていない');
+    } else if (iDemo >= 0 && iLinked > iDemo) {
+      fails.push('api/auth/resolve.ts: findLinkedUid が resolveDemoUidByEmail より後ろ — 渡せていない');
+    }
+    // **生の Postgres メッセージを画面に出さない** (実際にサインイン画面へ出た)
+    if (/app_users upsert: \$\{upErr\.message\}/.test(resolveSrc)) {
+      fails.push('api/auth/resolve.ts: DB の生エラーを利用者に返している — ログへ回すこと');
+    }
+  }
+  if (!/getUser|auth\/v1\/user/.test(resolveSrc)) {
+    fails.push('api/auth/resolve.ts: email をサーバで検証していない'
+      + ' — 申告された email で突き合わせると、誰でもデモを有効化できる');
+  }
+
+  /*
+   * **毎リクエストの判定に email を持ち込まない。**
+   * ハッシュ計算は async なので、ここに混ぜると判定が同期でなくなり
+   * (~30 箇所の呼び出し側が全部 await になる)、TTL 内のキャッシュだけで
+   * 済んでいた判定が DB 依存になる。
+   */
+  {
+    const fn = acct.slice(acct.indexOf('export function isDemoAccount'));
+    const body = fn.slice(fn.indexOf('{') + 1, fn.indexOf('\n}'));
+    if (/email|hash/i.test(body)) {
+      fails.push('isDemoAccount が email を見ている'
+        + ' — 毎リクエストの判定は uid のまま (同期・外部依存ゼロ) にする');
+    }
+  }
+
+  /*
+   * **メールアドレスの現物を保存しないこと。**
+   * PII は Wellfort 側にしか置かない取り決めがあり、`diagnosis` スキーマには置けない。
+   * 保存するのは ①sha256 ②表示用マスク ③uid ④用途のメモ の 4 つだけ。
+   */
+  if (!/SHA-256/.test(acct)) fails.push('demo-accounts.ts: hashEmail が SHA-256 を使っていない');
+  if (!/emails\.push\(\{\s*hash: h, masked: maskEmail\(addr\), uid: '', label\s*\}\)/.test(apiSrc)) {
+    fails.push('api/admin/demo-accounts.ts: メール登録の保存内容が変わっている'
+      + ' — 保存してよいのは hash / masked / uid / label だけ (現物のアドレスを残さない)');
+  }
+  if (/`\$\{[a-zA-Z]*[eE]mail\}`|email: (addr|email)\b/.test(code('src/lib/demo-accounts.ts'))) {
+    fails.push('demo-accounts.ts: メールアドレスの現物を保存形式に入れている');
+  }
+
+  /*
+   * **サインイン済みの状態は「記録」であって「推測」ではない。**
+   * 以前はラベルの一致で推測しており、ラベルを書き換えると黙って誤判定した。
+   */
+  if (!/linked: !!e\.uid && known\.has\(e\.uid\)/.test(acct)) {
+    fails.push('listDemoAccounts: linked をラベル等から推測している'
+      + ' — 突き合わせた uid そのものを見ること');
+  }
+
+  /*
+   * **メール登録から来た uid は uid 側だけで外せないこと。**
+   * 外しても次のサインインで `linkDemoEmail` が書き直すため、
+   * 外したつもりが数分後に復活する = 黙って効かない操作になる。
+   */
+  if (!/メール登録 \(\$\{src\.masked\}\) から来ている/.test(apiSrc)) {
+    fails.push('api/admin/demo-accounts.ts: メール登録由来の uid を uid 側から外せてしまう'
+      + ' — 次のサインインで復活するので、メール行の側で外させる');
+  }
+
+  for (const k of ['demo.account_emails', 'demo.account_denied_uids', 'demo.seeded_from_admins']) {
+    if (!read('src/lib/app-config.ts').includes(`key: '${k}'`)) {
+      fails.push(`app-config.ts に ${k} が無い — setConfig が未知キーとして弾く`);
+    }
+  }
+
+  /*
+   * **管理者リストからの登録は「初回だけ」であること。**
+   * 毎回走らせると、画面から外した人が次のアクセスで黙って戻り、「外す」が効かなくなる。
+   * 目印は `demo.seeded_from_admins`。**一度入ったら上書きしない。**
+   */
+  if (!/markSeeded && !cur\.seededFromAdmins/.test(apiSrc)) {
+    fails.push('api/admin/demo-accounts.ts: 初回登録の目印を上書きしている'
+      + ' — 管理者リストからの自動登録が繰り返され、外した人が黙って戻る');
+  }
+  const page = '../wellfort-site/src/pages/admin/demo-accounts.astro';
+  try {
+    const pg = readFileSync(resolve(ROOT, page), 'utf8');
+    if (!/!j\.seededFromAdmins/.test(pg)) {
+      fails.push(`${page}: 自動登録が目印を見ていない — 毎回走ると「外す」が効かなくなる`);
+    }
+    /*
+     * **管理者名簿は Wellfort 側にしかない。** この画面が `admin_users` を引いて
+     * メールとして送る。Scan-Chat-AI 側に名簿を持たせない (PII 境界)。
+     */
+    if (!/admin_users\?is_active=eq\.true/.test(pg)) {
+      fails.push(`${page}: 有効な管理者だけを引いていない (is_active=eq.true)`);
+    }
+    // **氏名を送らない。** ラベルは PII を含めない固定文言にする。
+    if (/label: *a\.name|name: *a\.name/.test(pg)) {
+      fails.push(`${page}: 管理者の氏名をデモ登録のメモに入れている — PII は載せない`);
+    }
+  } catch {
+    // wellfort-site を並べて clone していない環境ではスキップ (CI の片側実行を壊さない)
+    console.log('  (wellfort-site が隣に無いので admin 画面のチェックはスキップ)');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// 7. メール登録を**実際に動かして**確かめる
+// ══════════════════════════════════════════════════════════════════════
+//
+// 上の 1〜6 は「そう書いてあるか」を見るだけで、**動かしていない**。
+// ここは `demo-accounts.ts` の実物を transpile して呼ぶ。
+// app_config だけ差し替えるので DB は要らない (値の出入りを完全に握れる)。
+//
+// **とくに見たいのは「現物のアドレスが保存物のどこにも出てこないこと」。**
+// これは目視では抜けるし、抜けても画面は正常に見える。
+await (async () => {
+  const ts = (await import('typescript')).default;
+  const { writeFileSync, mkdirSync } = await import('node:fs');
+
+  let s = read('src/lib/demo-accounts.ts')
+    .replace(/import \{[^}]*\} from '\.\/app-config';/, `
+export const __store = { 'demo.account_uids': '', 'demo.account_emails': '' };
+export const __writes = [];
+export const __forced = [];   // refreshConfig(true) = DB 往復を強制した回数
+const cfg = (k) => __store[k] ?? '';
+const refreshConfig = async (force) => { if (force) __forced.push(1); };
+const setConfig = async (u) => { __writes.push(u); Object.assign(__store, u); return { ok: true }; };
+`)
+    .replace(/import\.meta\.env\.(\w+)/g, 'globalThis.__demoEnv.$1');
+  if (!s.includes('__store')) { fails.push('verify: app-config の差し替えに失敗 (import 文の形が変わった)'); return; }
+
+  globalThis.__demoEnv = {};
+  const out = resolve(ROOT, 'node_modules/.cache/verify-demo-accounts.mjs');
+  mkdirSync(resolve(ROOT, 'node_modules/.cache'), { recursive: true });
+  writeFileSync(out, ts.transpileModule(s, { compilerOptions: { target: 'ES2022', module: 'ESNext' } }).outputText);
+  const M = await import(`${out}?t=${Date.now()}`);
+
+  const eq = (label, got, want) => {
+    const ok = JSON.stringify(got) === JSON.stringify(want);
+    if (!ok) fails.push(`${label} — got ${JSON.stringify(got)} / want ${JSON.stringify(want)}`);
+    console.log(`  ${ok ? '✓' : '✗'} ${label}`);
+  };
+
+  const MAIL = 'reporter@example.com';
+  const UID = 'bbbbbbbb-1111-2222-3333-444444444444';
+
+  console.log('\nメール登録の実挙動\n');
+  const h = await M.hashEmail('  Reporter@Example.com ');
+  eq('大文字/空白の違いを吸収して同じ人と分かる', h, await M.hashEmail(MAIL));
+  eq('別アドレスは別ハッシュ', h === (await M.hashEmail('other@example.com')), false);
+  eq('マスクから現物は復元できない', M.maskEmail(MAIL), 'r*******@example.com');
+
+  const pending = [{ hash: h, masked: M.maskEmail(MAIL), uid: '', label: '○○新聞 取材' }];
+  const ser = M.serializeEmailEntries(pending);
+  eq('uid 未確定でも列がずれない', ser.split(/\s+/)[2], '-');
+  eq('保存形式の往復 (サインイン前)', M.parseEmailEntries(ser), pending);
+  eq('壊れた行があっても一覧が全滅しない', M.parseEmailEntries('ゴミ\n\n' + ser).length, 1);
+
+  M.__store['demo.account_emails'] = ser;
+  M.__store['demo.account_uids'] = '';
+  M.__writes.length = 0;
+
+  M.__forced.length = 0;
+  eq('登録の無い人は素通り', await M.linkDemoEmail('nobody@example.com', UID), false);
+  eq('  → 書き込みに行かない (全ユーザーが通る経路なので)', M.__writes.length, 0);
+  /*
+   * **登録の無い人＝ほぼ全員。** ここで `refreshConfig(true)` を呼ぶと
+   * サインインのたびに DB 往復が 1 回増える。TTL 尊重の `refreshConfig()` で足りる
+   * (登録直後の反映が最大 45 秒遅れるだけ = 他の app_config と同じ約束)。
+   */
+  eq('  → DB 往復を強制しない (サインインは全員が通る)', M.__forced.length, 0);
+
+  eq('登録済みの人がサインイン → 突き合わせ成立', await M.linkDemoEmail(MAIL, UID), true);
+  eq('  → その場でデモ対象になる', M.isDemoAccount(UID), true);
+  eq('  → uid 側の一覧に写る', M.parseEntries(M.__store['demo.account_uids']).map((e) => e.uid), [UID]);
+  // **落ちずに報告する。** ここで例外を投げると後続のチェックが走らず、
+  // 「1 件壊れている」のか「全部壊れている」のかが分からなくなる。
+  eq('  → メール行に uid が記録される', M.parseEmailEntries(M.__store['demo.account_emails'])[0]?.uid, UID);
+  // **これが一番大事。** 保存物のどこにも現物が無いこと。
+  eq('  → 現物のアドレスは保存物のどこにも無い', /reporter@example\.com/.test(JSON.stringify(M.__store)), false);
+
+  const n = M.__writes.length;
+  eq('2 回目以降のサインインは何も書かない', await M.linkDemoEmail(MAIL, UID), true);
+  eq('  → 書き込み回数が増えない', M.__writes.length, n);
+
+  const list = M.listDemoAccounts();
+  eq('admin 画面: 「サインイン済み」が立つ', list.emails.map((e) => e.linked), [true]);
+  eq('admin 画面: uid 行にメール由来の印が付く',
+    list.rows.filter((r) => r.uid === UID).map((r) => r.viaEmail), [true]);
+  eq('admin 画面: 組み込みの行には印が付かない',
+    list.rows.filter((r) => r.source === 'builtin').every((r) => !r.viaEmail), true);
+
+  // ラベルは admin が書き換えられる。**推測でなく記録**を見ていることの確認。
+  M.__store['demo.account_uids'] = `${UID}  # 別のメモに書き換えた`;
+  eq('ラベルを書き換えても状態を誤らない', M.listDemoAccounts().emails[0]?.linked, true);
+  M.__store['demo.account_uids'] = '';
+  eq('uid を外せば「サインイン待ち」に戻る', M.listDemoAccounts().emails[0]?.linked, false);
+
+  globalThis.__demoEnv.PUBLIC_DEMO_FALLBACK = 'false';
+  eq('全停止スイッチが効く', M.demoDisabledGlobally(), true);
+  globalThis.__demoEnv.PUBLIC_DEMO_FALLBACK = undefined;
+
+  /*
+   * ── 除外リスト ──────────────────────────────────────────────
+   *
+   * 発注者指示 2026-08-30「削除のできるようにして」。
+   * 組み込み / env は供給元を書き換えられないので、**引き算で止める**。
+   * 供給元は残るので「戻す」で元どおりになる。
+   */
+  console.log('\n除外リスト（どの行も外せること）\n');
+  const BUILT = BUILTIN[0];
+  M.__store['demo.account_uids'] = '';
+  M.__store['demo.account_emails'] = '';
+  M.__store['demo.account_denied_uids'] = '';
+
+  eq('組み込みは既定で出る', M.isDemoAccount(BUILT), true);
+  M.__store['demo.account_denied_uids'] = BUILT;
+  eq('**組み込みでも除外できる**（画面から外せる）', M.isDemoAccount(BUILT), false);
+  eq('  → 一覧には残り「除外中」と分かる',
+    M.listDemoAccounts().rows.filter((r) => r.uid === BUILT).map((r) => r.denied), [true]);
+  M.__store['demo.account_denied_uids'] = '';
+  eq('  → 戻せば元どおり（供給元を消していない）', M.isDemoAccount(BUILT), true);
+
+  // メール登録で入った uid も止められること
+  M.__store['demo.account_uids'] = UID;
+  M.__store['demo.account_denied_uids'] = `${UID}  # PR 終了`;
+  eq('メール登録から来た uid も止められる', M.isDemoAccount(UID), false);
+  eq('注釈つきでも除外が効く（`#` を uid と読まない）', M.isDemoAccount(UID), false);
+  M.__store['demo.account_denied_uids'] = '';
+
+  // 除外は**和のあと**。順序を逆にすると config で足し直せてしまう。
+  M.__store['demo.account_uids'] = BUILT;
+  M.__store['demo.account_denied_uids'] = BUILT;
+  eq('除外は和のあと（config で足し直しても復活しない）', M.isDemoAccount(BUILT), false);
+
+  /*
+   * ── EC の顧客でない人（記者・パートナー）─────────────────────
+   *
+   * `resolve-customer` では引けないので uid が決まらず、そのままだと
+   * 「お客様情報が見つかりませんでした」で入口で弾かれる（実測 2026-08-31）。
+   * デモ登録されている人にだけ uid を与えて通す。
+   */
+  console.log('\nEC の顧客でないデモ用アカウント（記者・パートナー）\n');
+  M.__store['demo.account_uids'] = '';
+  M.__store['demo.account_denied_uids'] = '';
+  M.__store['demo.account_emails'] = '';
+
+  eq('登録の無い人には uid を与えない（従来どおり未連携）',
+    await M.resolveDemoUidByEmail('stranger@example.com'), null);
+
+  M.__store['demo.account_emails'] =
+    M.serializeEmailEntries([{ hash: h, masked: M.maskEmail(MAIL), uid: '', label: '○○新聞 取材' }]);
+  const minted = await M.resolveDemoUidByEmail(MAIL);
+  eq('登録済みの人には uid を与える', /^[0-9a-f-]{36}$/.test(String(minted)), true);
+
+  /*
+   * **既にこの Google アカウントに uid が割り当てられていたら、それを使う。**
+   * ここで新しい uid を作ると `app_users.auth_user_id` の UNIQUE 制約に衝突し、
+   * サインインが 500 で止まる (2026-08-31 に本番で実測。しかも保存は後段なので
+   * 毎回新しい uid が作られて永久に直らなかった)。
+   */
+  const EXIST = 'cccccccc-1111-2222-3333-444444444444';
+  eq('既存の uid があればそれを使う (新しく作らない)',
+    await M.resolveDemoUidByEmail(MAIL, EXIST), EXIST);
+  eq('  → 登録の無い人には既存 uid があっても与えない',
+    await M.resolveDemoUidByEmail('stranger@example.com', EXIST), null);
+
+  // 与えた uid を linkDemoEmail が保存する（書き込み口を 2 つに増やさない）
+  await M.linkDemoEmail(MAIL, minted);
+  eq('  → その uid でデモが出る', M.isDemoAccount(minted), true);
+  /*
+   * **2 回目のサインインで uid が変わらないこと。** 変わると `app_users` に
+   * 行が増え続け、前回まで見えていたものと繋がらなくなる。
+   */
+  eq('  → 次のサインインでも同じ uid', await M.resolveDemoUidByEmail(MAIL), minted);
+  eq('  → 現物のアドレスは保存物のどこにも無い',
+    /reporter@example\.com/.test(JSON.stringify(M.__store)), false);
+})();
+
+// ══════════════════════════════════════════════════════════════════════
 console.log('\nダミーデータを出すか (◯=出す / ✗=出さない)\n');
 for (const [label, uid, envFalse, extra, want] of cases) {
   const got = expected(uid, envFalse, extra);
@@ -236,8 +569,9 @@ for (const [label, uid, envFalse, extra, want] of cases) {
 }
 
 console.log(`\n組み込みのデモ用アカウント: ${BUILTIN.length} 件`);
-console.log('  追加は wellfort-site admin → 設定「デモ」→「デモ用アカウントの uid」(再デプロイ不要)');
-console.log('  env DEMO_ALLOWED_UIDS でも足せる。全停止は env PUBLIC_DEMO_FALLBACK=false');
+console.log('  追加は wellfort-site admin →「デモ用アカウント」で相手の Google アカウントを登録 (再デプロイ不要)');
+console.log('  uid は本人のサインイン時に自動で埋まる。env DEMO_ALLOWED_UIDS でも足せる');
+console.log('  全停止は env PUBLIC_DEMO_FALLBACK=false');
 
 if (fails.length) {
   console.log(`\n✗ ${fails.length} 件`);

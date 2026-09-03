@@ -4,9 +4,9 @@
 |---|---|
 | 目的 | Wellfort が外部検査会社から受け取る **4 検査**のデータ受取方式・経路・現状・課題を一枚に集約する。各検査は最終的に **Elith 形式 JSON（`elith-handoff-v0.1`）へ変換し S3 経由で Elith へ受け渡す**（詳細=`docs/elith/elith_s3_data_handoff_spec.md` / `docs/elith/elith_assembly_wrapping_spec.md`）。 |
 | 対象 | ①血液検査（リージャー）②がんリスク検査・尿（プリベント）③AI疾病発症予測（LAiF）④遺伝子検査（Genoplan）。※健診・人間ドックは会員がアプリでAIスキャンするため本書対象外。 |
-| 版 | **2026-08-26（Draft・LAiF 実データ疎通の結果／ID 連携仕様／問診データの渡し方マトリクスを追記）** |
+| 版 | **2026-09-01c（遺伝子=Wellfort 提供の操作動画を確認。突合キー＝ボックスナンバー(`extchar03`)と判明・PDF は 208 頁で 2 頁目に認証キー/顧客名・§4.1.2 追加）**<br>2026-09-01b（遺伝子=実アカウントで疎通確認。許諾取得済・partner選択不要・`kit_status='600'`で72件・PDF実体21MBを確認。§4.1.1／§4.2／§4.4 を更新）<br>2026-09-01（遺伝子=Genoplan の受取方式を実測で判定。**RPA も PowerShell も不要でサーバ側完結**・§4 を全面改訂／§0.1 追随）<br>2026-08-31（血液=受取方式を RPA/PAD から **PowerShell 方式**へ変更・§1/§0.1/§7 を更新）<br>2026-08-26（Draft・LAiF 実データ疎通の結果／ID 連携仕様／問診データの渡し方マトリクスを追記） |
 | 上位文書 | **本書は「受取方式（各社別）」に特化した詳細。EC購入→キット→問診→受取→Elith→表示の E2E 全体像は `docs/lab/lab_data_pipeline_master_spec.md`（総合仕様書）が正本。** |
-| 関連 | `docs/lab/demecal_rpa_operation_design.md` / `docs/lab/demecal_auto_download_overview_spec.md`（血液RPA）、`docs/elith/elith_assembly_wrapping_spec.md`（LAiF/ウェルネス年齢のラップ）、`docs/lab/lab_integration_workflow.md`（割当・PII）、`docs/lab/kit_progress_management.md`（進捗）、`docs/lab/wellfort_admin_lab_upload_spec.md`（admin取込） |
+| 関連 | **`docs/lab/demecal_unattended_spec.md`（血液=無人定期取得の正本・PowerShell方式）** / `docs/lab/demecal_powershell_probe_guide.md`（方式決定の実測）/ `docs/lab/demecal_auto_download_overview_spec.md`（概要）、`docs/elith/elith_assembly_wrapping_spec.md`（LAiF/ウェルネス年齢のラップ）、`docs/lab/lab_integration_workflow.md`（割当・PII）、`docs/lab/kit_progress_management.md`（進捗）、`docs/lab/wellfort_admin_lab_upload_spec.md`（admin取込） |
 
 ---
 
@@ -16,10 +16,10 @@
 
 | # | 検査 | 検査会社 | 受取方式 | 取得データ | Elith format_id | 変換方法 | ステータス |
 |---|---|---|---|---|---|---|---|
-| 1 | 血液検査 | 株式会社リージャー（Leisure／デメカル DSS） | **デスクトップRPA**（Power Automate Desktop 本命 / UiPath / WinAutomation） | CSV | `BloodTestData` | **決定論パース**（CSV→JSON・LLM不使用） | 自動アクセス承認済・サーバ側実装済／PC側RPA(DL部)構築中 |
+| 1 | 血液検査 | 株式会社リージャー（Leisure／デメカル DSS） | **PowerShell 方式**（専用PC・mTLS＋無人定期実行。**RPA/PAD は不要**・2026-08-31 確定） | CSV | `BloodTestData` | **決定論パース**（CSV→JSON・LLM不使用） | 自動アクセス承認済・サーバ側実装済／**方式確定・PC側は未実装**（**外部からの回答待ちは無い**） |
 | 2 | がんリスク検査（尿） | プリベント社（ALA-PDS） | **専用ポータル＋AWS S3＋パスキー方式を提案中**（LAiF流用）／現状：メール＋フォルダ共有の手動 | PDF/報告書 | `CancerRiskAssessmentData` | **admin バッチ AIスキャン**（画像→JSON） | **方式を提案中（プレゼン段階）**。現状は手動 |
 | 3 | AI疾病発症予測 | LAiF社 | **AWS S3 専用バケット**（URLで受渡） | PDF | `Other`（`kind:"ai_prediction"`） | **admin バッチ AIスキャン**（多ページ・LLM構造化） | 受取方式確定・スキャン対応実装済／**2026-08-26 上り(弊社→LAiF)疎通OK・下り(返送)は未検証** |
-| 4 | 遺伝子検査 | Genoplan社（ジェノプランジャパン） | **デスクトップRPA**（Power Automate Desktop / UiPath / WinAutomation） | PDF | `GeneticTestResultData` | **admin バッチ AIスキャン**（多ページ・LLM構造化） | 受取方式=RPA方針／スキャン対応実装済 |
+| 4 | 遺伝子検査 | Genoplan社（ジェノプランジャパン） | **サーバ側（Vercel）から API 取得**（ID/PW のみ・**証明書不要＝専用PC不要**・2026-09-01 実測で確定） | PDF | `GeneticTestResultData` | **admin バッチ AIスキャン**（多ページ・LLM構造化） | **自動アクセス許諾 取得済／実アカウントで疎通済（login→一覧 255件→PDF 21MB・§4.1.1）／取得部は未実装**。**RPA・PowerShell はいずれも不要** |
 
 ### 0.2 問診データの渡し方（上り：Wellfort/ユーザー → 検査会社）— **確定 2026-08-26・発注者確認**
 
@@ -45,25 +45,59 @@
 ## 1. 血液検査（株式会社リージャー）
 
 - **検査会社/ポータル**: 株式会社リージャー（Leisure）＝デメカル `DSS Web System`（`https://dl.demecal.net`）。
-- **受取方式**: **デスクトップRPA**。本命は **Power Automate Desktop（PAD）**（実ブラウザが OS 証明書ストアの mTLS クライアント証明書をそのまま使えるため）。UiPath / WinAutomation も可。
-- **フロー**:
-  1. 専用PC（Pマーク準拠・クライアント証明書導入済）で RPA が `dl.demecal.net` にログイン。
-  2. **日付重複なく**新規分の血液CSVをダウンロード（状態は `/api/admin/demecal-state` で管理）。
-  3. admin 取込API `/api/admin/elith-blood-csv` へ投入 → **決定論パース**で `BloodTestData` JSON 化 → S3。
+- **受取方式**: **PowerShell 方式（2026-08-31 確定・専用PC 実測）。RPA / PAD は不要。**
+  正本 = **`docs/lab/demecal_unattended_spec.md`**（無人定期実行）。
+  - 根拠（`demecal_powershell_probe_guide.md`「実測結果」）: 証明書つき接続 **HTTP 200**
+    （`CN=Q05-0010`・発行者 `demecal.net CA`・**期限 2028-12-12**）／証明書なしは 400 ／
+    ログイン画面は **`<form>` 1・`<input>` 3 の素の HTML フォーム**（ログインを動かす JS は無い）。
+  - **PAD より優れる点**: ライセンス不要・**ブラウザ要素を指さないので画面デザイン変更に強い**・
+    セットアップが「ダブルクリック 1 回」。
+  - **旧案は不採用**: PAD ／ サーバ側 Playwright。どちらも `docs/旧版・ボツ/` へ移動済み
+    （`旧版・ボツ/demecal_pad_{flow_skeleton,operation_guide,setup_guide}.md`・`旧版・ボツ/demecal_server_playwright_design.md`）。
+- **フロー**（`demecal_unattended_spec.md §4.1`）:
+  1. 専用PC（Pマーク準拠・クライアント証明書導入済）の **タスクスケジューラが PowerShell を起動**。
+  2. 証明書を選ぶ（**発行者CN=`demecal.net CA` かつ秘密鍵あり**で絞る。CN のベタ書きはしない）。
+  3. `GET /account/login` で **antiforgery トークン（`__RequestVerificationToken`）**を取得し、
+     **同一セッション**で `POST /account/login`（**証明書は GET・POST の両方に付ける**）。
+  4. **日付重複なく**新規分の血液CSVをダウンロード（状態は `/api/admin/demecal-state` で管理）。
+     保存先は **`C:\demecal\`**（**デスクトップは OneDrive 同期対象＝PII がクラウドへ上がる**ため使わない）。
+  5. admin 取込API `/api/admin/elith-blood-csv` へ投入 → **決定論パース**で `BloodTestData` JSON 化 → S3。
+  6. 成功時のみ `last_to` を前進 → **原本CSVを削除** → 成否を実行ログAPIへ報告。
+- **無人化の要点**: 証明書が **`Cert:\CurrentUser\My` にしかない**ため、タスクは
+  **ユーザー `info` / 「ログオン中のみ実行」/ ログオン時＋毎日 / 「開始時刻を過ぎたらすぐ開始」**で組む。
+  **自動ログオンも LocalMachine への証明書移設も不要**（`last_to` が単調前進なので、
+  走らない日があっても次の成功回がまとめて回収する＝取り漏れゼロ）。
 - **鍵管理**: AWS/Gemini 等の鍵は **Vercel 本番 env のみ**。専用PCには据え置きの鍵を置かない（CLAUDE.md）。取込は専用キー `x-intake-key`。
 - **特記**: 血液のみ **CSV＝決定論パース**（画像AIスキャン不要）。ウェルネス年齢（CABA）の主要マーカー源。
 - **問診データ（上り）**: **ユーザーが専用用紙へ記入し、検体と共に郵送**（§0.2）。**弊社を経由しない＝実装対象外**。
   ※ 旧検討の「Wellfort→デメカルへ問診CSVを渡す」方向は**不要で確定**（`questionnaire_to_lab_csv_spec §7-7` を解消）。
 - **④ 構造照合（実装済）**: CSV↔JSON の**漏れゼロ/捏造ゼロ/コード解決/PII非混入**を固定検証する fixture。
   `scripts/verify-blood-csv-structure.ts`＋`scripts/blood-csv-fixtures/demecal_sample_v1.csv`。実行 `npm run verify:blood-csv`（決定論・鍵不要・26チェック全PASS）。
-- **DL画面手順（確定済）**: 動画・提供資料から `demecal_auto_download_overview_spec.md §2.1` と
-  `demecal_pad_operation_guide.md §2-3` に**確定手順を記載済**（ログイン→データDL→汎用CSV設定→確認→DL）。
+- **DL画面手順（確定済）**: `demecal_auto_download_overview_spec.md §2.1` と
+  `demecal_attended_manual_guide.md` ステップ② に**確定手順を記載済**（ログイン→データDL→汎用CSV設定→確認→DL）。
+  **HTML レベルの `action` / `name` だけが未取得**（接続チェックの bat は**設計上ログインしない**ので、
+  取れたのは `/account/login` のログイン**前**ページだけ）。**ただし人手で取り直す必要は無い** —
+  ログインはスクリプトが行うので、**初回実行の「偵察モード」が form 構造を実行ログAPIへ報告する**
+  （PII を含む CSV は取らない）。`demecal_unattended_spec.md §8`。
 - **ステータス**: 自動アクセス承認済／サーバ側（変換・S3・状態管理・取込UI）実装済／DL画面手順=仕様確定済／
-  ④構造照合fixture=実装済。**残＝PC側でPAD実フローを§2-3どおりに組む実装作業**（仕様不足ではない）＋先方確認（§6: 日付基準/レート制限/証明書移設）。
+  ④構造照合fixture=実装済。**残＝PC側の PowerShell 実装**（`demecal_unattended_spec.md §9` に TODO 9 件）。
+  **外部からの回答待ちは無い**（2026-08-31 訂正）。
+  ①ログイン後の一覧 URL／form は **スクリプトの初回実行が自分で報告する**（画面手順は既知＝下記「DL画面手順」）。
+  ②`指図番号`→本人の対応づけは **§5.1/§5.2 と `id_management_and_correlation_spec.md:131` に設計済**で、
+  **未実装なだけ**（§5.4 の #3）。残る決めは同 :145 の「採番タイミング・スキャン工程・突合ルール」の社内確定。
+  先方確認は `demecal_auto_download_overview_spec §6`（日付基準/レート制限）。**証明書のサーバ移設は不要になった**（下記）。
 - **進め方（技術者不在への対応・2案並行）**:
   - **案1（即運用・技術者不要）**: attended手動DL＋admin取込。スタッフ向けクリック手順書＝`docs/lab/demecal_attended_manual_guide.md`。
-  - **案2（本命・PC/人手を排す）**: サーバ側 Playwright(mTLS) 自動DL。設計＝`docs/lab/demecal_server_playwright_design.md`（要: 証明書サーバ移設承認・Leisureのアクセス許可/テスト証明書）。最善は案0=公式データ連携(SFTP/API)をLeisureへ打診。
-- **詳細**: `docs/lab/demecal_rpa_operation_design.md`・`docs/lab/demecal_auto_download_overview_spec.md`・`demecal_pad_{flow_skeleton,operation_guide,setup_guide}.md`・`demecal_attended_manual_guide.md`・`demecal_server_playwright_design.md`。
+  - **案2（確定・本命）**: **専用PC上の PowerShell を無人で定期実行**。正本＝`docs/lab/demecal_unattended_spec.md`。
+    **発注者判断（2026-08-31）で「最初から無人」**。段階導入（まず手動ダブルクリック）は採らない。
+    Wellfort 側の作業は**セットアップ bat のダブルクリック 1 回**。
+  - **不採用**: ~~サーバ側 Playwright(mTLS)~~（`旧版・ボツ/demecal_server_playwright_design.md`）。
+    **証明書をサーバへ移設する必要が無くなった**ため（専用PC上で完結）。
+    ~~PAD~~（`旧版・ボツ/demecal_pad_*.md`）も同様に不採用。**最善は案0=公式データ連携(SFTP/API)を Leisure へ打診**（変わらず）。
+- **詳細**: **`demecal_unattended_spec.md`（無人運用の正本）**・`demecal_powershell_probe_guide.md`（方式決定の実測＋ログインフォーム構造）・
+  `demecal_auto_download_overview_spec.md`（概要）・`demecal_attended_manual_guide.md`（手動運用・**現在稼働中**）・
+  `demecal_rpa_operation_design.md`（§1役割分担/§2API/§3attended は有効。**§4 unattended は上記正本が上書き**）。
+  **不採用案**（参照しない）: `docs/旧版・ボツ/demecal_pad_*.md`・`docs/旧版・ボツ/demecal_server_playwright_design.md`。
 
 ## 2. がんリスク検査（尿・プリベント社）
 
@@ -133,12 +167,421 @@
 ## 4. 遺伝子検査（Genoplan社）
 
 - **検査会社**: Genoplan社（ジェノプランジャパン／GenePlanet）。
-- **受取方式**: **デスクトップRPA**（Power Automate Desktop / UiPath / WinAutomation）。
-- **フロー**: RPAがGenoplanポータル等からレポートPDFを取得 → **admin バッチAIスキャン（多ページ・LLM構造化）** → `GeneticTestResultData` JSON → S3。
+- **受取方式**: **【判定済み 2026-09-01・実測】RPA も PowerShell も不要。サーバ側（Vercel）で完結できる。**
+  §4.1 に判定の根拠、§4.2 に着手前に潰す項目を書く。
+
+### 4.1 判定（2026-09-01・実測）
+
+判定の観点は血液で決め手になったのと同じ 2 点。**両方とも満たす。**
+
+| 観点 | 結果 | 根拠（実測） |
+|---|---|---|
+| ① ログインが機械で通せるか | **通せる** | 画面は Vue SPA だが、背後は素の PHP REST API |
+| ② レポート PDF が URL で直接取れるか | **取れる** | `window.open(url)` のみ。Blob/ブラウザ内描画を使っていない |
+| （追加）クライアント証明書 | **不要** | Wellfort 提供情報。ID/PW のみ |
+
+**測り方**: 配布中の SPA バンドルを静的解析した（`https://biz.genoplan.com/static/js/app.4a670d265dc496d6c712.js`
+＋遅延チャンク `466.301d1e7427cc6cc6d37d.js`）。**ログインは行っていない**（パスワード未受領）。
+
+#### ① 画面は SPA。ただし「素の HTML フォームか」は問う意味がない
+
+`https://biz.genoplan.com/` の HTML は `<div id="app"></div>` と JS 1 本だけ＝**Vue SPA**。
+`<form>` も antiforgery hidden も無い。**だが SPA の背後は普通の PHP REST API** で、
+デメカル（ASP.NET Core・antiforgery の GET→POST 往復が必須）**より簡単**。
+
+- **API ベース**: `https://bizapi.genoplan.com`（バンドル内の `RequestAPI.getBaseURL()`。
+  `biz.genoplan.com` から来たときのみ本番、他は `testbizapi` へ向く）
+- **ログイン**: `POST /api/biz/login.php` — 本文は `lang` / `loginid` / `password` の
+  **form-urlencoded**（axios ラッパ `Mt = (url, body) => xt.post(url, URLSearchParams(body))`）
+  → `{ success, data: { accesskey, seq, multi, accounts[] } }`
+- **以降の認証 = `accesskey` と `partner_seq` を毎回 body に載せるだけ**。
+  **Cookie セッションを使わない・CSRF トークン無し・`Authorization` ヘッダ無し**
+  （axios の request interceptor は `console.log` のみ）
+- **ログイン経路に MFA / CAPTCHA が無い**。`sendAuthNumber.php` / `checkAuthNumber.php` は
+  **パスワード再設定・新規登録・マイページの電話番号認証にしか出てこない**（バンドル内 grep）
+- **疎通確認（資格情報を送らずに 1 回だけ）**: `GET https://bizapi.genoplan.com/api/biz/login.php`
+  → **HTTP 200** `{"success":false,"code":"1002","message":"User ID/Password does not exist."}`。
+  403 でも 419 でもなくアプリ層のエラーが返る＝**前提となるトークンもセッションも要らない**ことの裏付け。
+
+#### ② PDF は URL で取れる（しかも 2 経路とも直リンク）
+
+- **一覧**: `POST /api/biz/getKitInfoList.php`（`accesskey` / `partner_seq` / `sn[]` / `lang`）
+  → `serialnumber` / `signer_name` / `publish_origin` / `statuscode` / `report_seq` /
+  `pdf_seq` / `serviceExpireYN` / `surveyStatus` などを返す
+- **本レポート（My Book）**:
+  `GET https://s3r5oxqcgwmyf4inuxdao64wae0yflhw.lambda-url.ap-northeast-1.on.aws/gpj/{lang}/{serialnumber}`
+  （カスタム版は `?custom-seq={pdf_seq}`）→ `{ pdfUrl }` = **S3 の署名付き URL（有効 1 時間）**
+  → その URL を GET すれば PDF。生成中は `{ code: 6020 }` が返るのでリトライ
+- **PCR レポート**:
+  `GET https://api.genoplan.com/pdfMaker5/dtc_pdf/php/download.php?qq={base64}`
+  — `qq` は `{"report_seq":N,"time":<ミリ秒>}` を UTF-8 base64 したもの（`getPDFPCR()`）
+- **ブラウザ内描画・Blob 生成は無い**（`saveAs` / `createObjectURL` / `a.download` の出現 **0 件**）。
+  UI は `window.open(url)` を呼ぶだけ＝**そのまま `Invoke-WebRequest` / `fetch` で落とせる**。
+
+#### ③ 結論：専用PC が要らない
+
+クライアント証明書が無く、Cookie セッションも使わないので、**血液で専用PC が必須だった理由が
+そもそも成立しない**（血液は証明書が `Cert:\CurrentUser\My` にしか無いのが制約）。
+→ **Vercel のサーバ側で完結**でき、PC の電源・ログオン状態に左右されない。
+PowerShell 方式も技術的には可能だが、**わざわざ PC を挟む理由が無い**。
+
+> **PowerShell 方式は「不可」ではなく「不要」。** 現地実行 bat（`demecal-recon.ps1` の流用）は
+> **作らない**。Wellfort の操作は 0 回で済む。
+
+### 4.1.1 実アカウントでの疎通結果（2026-09-01・実測・全ステップ成功）
+
+**許諾取得済（発注者確認 2026-09-01）**を受けて、サーバ側プローブ
+`GET /api/ops/genoplan-probe?k=<PROBE_UPLOAD_TOKEN>`（実装 `src/pages/api/ops/genoplan-probe.ts`）を
+Vercel から 1 回流した。**読み取りのみ**（login / 一覧 / PDF URL の 3 種。状態を変える API は呼んでいない）。
+所要 **21 秒**・7 ステップすべて成功。
+
+#### ① アカウント（§4.2(b) は解消）
+
+| 項目 | 値 |
+|---|---|
+| `multi` | **`"N"`** ＝ **partner 選択は発生しない** |
+| `accounts[]` | **1 件のみ** |
+| `partner_seq` | `1657` / `seq` `12773` |
+| `group_type` | **`M`** ＋ `auth_sales_kits=Y` → UI 区分は **manager** |
+| 一覧の口 | **`/api/biz/kitStatusAdmin.php`**（master/seller ではない） |
+| 権限 | `auth_report_view=Y` / **`auth_pdf_down=Y`** / `auth_kit_admin=Y` / `auth_analysis=Y` |
+| 持たない権限 | `auth_buy_mybook=N` / `auth_report_upgrade=N` / `auth_request_resend=N` / `auth_request_survey=N` |
+
+**PDF ダウンロード権限がある**ので、本件に必要な権限は揃っている。
+
+#### ② 一覧（`kitStatusAdmin.php`）
+
+- **総件数 `list_total_cnt` = 255**（`list_total_page` / `list_limit` / `list_first_num` / `list_last_num` も返る）
+- **ページングは素直に効く**: `page=2` は 55 件で **1 ページ目との重複 0**（`limit=200`）→ **全件走査できる**
+- 状態の分布（先頭 200 件）: **販売中 137（`statuscode` 220）/ レポート発行完了 62（600）/ 再検査キット発送中 1（440）**
+- `kit_type` は **全件 `g1`** → **PCR 経路（`getPDFPCR`）は現状の在庫では使わない**
+- `publish_origin` の範囲 **2024-02-13 〜 2026-08-27**
+- 主なキー: `serialnumber` / `report_seq` / `statuscode` / `publish_origin` / `expiry_date` /
+  `report_download_available` / `survey_status` / `pdf_seq`※ / `extchar03`（12 桁のキット番号らしき値）
+
+#### ③ 絞り込み — **`kit_status` は効く。`finaldate_*` は使えない**
+
+| 条件 | `list_total_cnt` | 判定 |
+|---|---|---|
+| 絞り込みなし | 255 | — |
+| `finaldate_start=20200101` / `end=20301231` | **255（変わらず）** | 広すぎて除外なし |
+| `finaldate_start=20260802` / `end=20260901`（直近 30 日） | **0 件** | — |
+| **`kit_status='600'`（レポート発行完了）** | **72** | **効く** |
+
+**`finaldate_*` は `final_update_date` を見ていない。** 直近 30 日で 0 件になった一方、
+同じ一覧の `final_update_date` の最大は **2026-08-27**（＝その窓の中）だったため。
+UI 上のラベルが「販売期間」なので**販売日（`selldate`）系を指している**と考えられるが、
+**これは推測なので実装の根拠にしない。**
+
+→ **差分取得の設計**: 血液の `last_to`（日付で前進）と同じ手は使えない。
+**`kit_status='600'` で発行済み 72 件を引き、こちら側で「未取込の `serialnumber`」を差集合で出す**。
+件数が小さく `serialnumber` が安定キーなので、これで十分。
+
+#### ④ PDF — 取れた（実体を確認）
+
+- `GET {lambda}/gpj/ja/{serialnumber}` → **HTTP 200** で `pdfUrl`（`s3.ap-northeast-1.amazonaws.com` /
+  `X-Amz-Expires=3600`）
+- その URL を **Range GET**（`bytes=0-1023`）→ **HTTP 206** / `content-type: application/pdf` /
+  先頭 5 バイト **`%PDF-`** / **全体 21,313,936 バイト（約 21 MB）**
+- **Range リクエストが通る**ので、分割取得・ストリーミングができる（60s 関数の中で扱いやすい）
+- **本文は保存も出力もしていない**（先頭 1KB を読んで magic を見ただけ）
+
+> **1 検体での実測**。21 MB が全件に共通かは未確認。**S3 へは受け取りながら流す**設計にしておく。
+
+#### ⑤ `getKitInfoList.php` は PDF URL を持っていない
+
+Mybook 画面が使う口だが、**`pdf_url` は `null`、`pdf_url_ko` / `pdf_url_ja` / `pdf_url_en` は空**だった。
+→ **PDF は Lambda 経由が必須**（この口では省略できない）。
+
+ただし一覧に無い有用なキーを返す: `pdf_seq` / `custom_require` / `serviceExpireYN` /
+`surveyStatus` / `report_code` / `report_price` / `product_name_ja`。
+**同時に `signer_mobile`（電話番号）も返す**＝一覧より PII が 1 つ増える（§4.2(c)）。
+
+**カスタム PDF（画面の「My Book 編集」）は使われていない** — 発行済み 20 件を問い合わせた実測で
+`custom_require=Y`（＝カスタマイズ**可能**なレポート）だが **`pdf_seq` は 20 件すべて空**
+（＝実際にカスタム版を作った実績が無い）。→ **標準版をそのまま取ればよく、`?custom-seq=` は付けない。**
+`surveyStatus` は 20/20 が完了、`serviceExpireYN` は 20/20 が有効。
+
+**画面の「レポート情報」チェックは別ファイルではない** — バンドルの i18n 実測で
+`"리포트 정보":"レポート情報"` ＝**選択リストの見出しラベル**（同じ表に「全て選択」もある）。
+ダウンロードされるのは My Book の PDF 1 本だけ。
+
+### 4.1.2 Wellfort 提供の操作動画から分かったこと（2026-09-01・3分28秒・1920x1080）
+
+**動画そのものはリポジトリに入れない**（顧客氏名が画面に映っている）。ここには**手順と画面項目だけ**を書く。
+
+#### 画面の「選択」は絞り込みではなく、目視の手選択だった
+
+1. `biz.genoplan.com/#/` でログイン → **`/kit/manager`**（API 側の `kitStatusAdmin.php` と一致）
+2. 「キット状態別リスト」の **`選択 ▼` ドロップダウン → 「My Book ダウンロード」** を選ぶ
+3. すると**各行にチェックボックスが出る**（発行前・期限切れの行は押せない）
+4. **1 件ずつ目で見てチェック**する。画面に **「PDFファイルのダウンロードは、一度に10個まで可能です。」**
+5. 下部の緑帯「My Book ダウンロード」→ **`/mybook/pdf`** へ遷移
+6. 「レポート情報」「My Book (Genoplan DNA)」にチェック → 「PDF ダウンロード」
+7. **「PDFファイルを作成中です…完了までに約 30〜60 秒」** の進捗モーダル
+8. 完了モーダルに **「認証キー ｜ 顧客名」のボタン**が出る → 押すと S3 の署名付き URL が開く
+
+> **手順として参考にはなるが、「どれを取るか」の判断材料は画面に無い。** 担当者が目視で選んでいる。
+> **10 件制限は UI の制約**で、API を直接叩く経路（§4.4）には掛からない
+> （ただし **生成 30〜60 秒は Lambda 側**なので、**1 リクエスト 1 件**で回す＝60s 関数タイムアウト対策）。
+
+#### 【重要】(e) の答え — **突合キーは「ボックスナンバー」＝ API の `extchar03`**
+
+一覧の列は **認証キー / ボックスナンバー / サービス名 / 販売者 / キット状態 / 情報更新日 / 利用期限 /
+アンケート / 顧客名 / 追加同意**。API の項目と並べるとこう対応する。
+
+| 画面の列 | API のキー | 実測値の例 |
+|---|---|---|
+| 認証キー | `serialnumber` | `CFBB-NFPC-GSLP` |
+| **ボックスナンバー** | **`extchar03`** | `5844-6059-9293` |
+| キット状態 | `status` / `statuscode` | レポート発行完了 / `600` |
+| 情報更新日 | `final_update_date` | 2026-08-27 |
+| 利用期限 | `expiry_date` | 2027-11-30 |
+| アンケート | `survey_status` | 完成 / 未回答 |
+| 顧客名 | `signer_name` | （PII・出力しない） |
+
+**`extchar03` は物理キットの箱に印字された番号**。Wellfort はキットを発送する側なので
+**「どの箱を誰に送ったか」を自社で持てる** → **これが内部 ID との突合キーの本命**。
+受け皿カラムは実在する（`lab_tests.external_barcode`）。**採用は Wellfort の確認後**。
+
+#### 「どれが Wellfort のものか」は問いの立て方が違った
+
+画面上部の **「キット販売現況」= 全体 **255** / 販売数 73 / 検査中 73 / 会員登録 73 / レポート発行完了 **72****。
+API 実測（`list_total_cnt=255` / `kit_status='600'` → 72）と**完全に一致**する。
+つまり **この partner アカウントに見えている 255 件は、すべて Wellfort が販売したキット**であり、
+他社のキットは混ざっていない。→ **「どれが Wellfort のものか」ではなく「どの顧客のものか」**が
+解くべき問題で、その答えが上記のボックスナンバー。
+
+#### PDF の中身（実物）
+
+- **208 ページ**（21 MB の内訳がこれ）。ファイル名は **`{認証キー}.pdf`**、
+  置き場は `pdf-resources.genoplan.com/{生成日}/`（例 `2026-09-01/CFBB-NFPC-GSLP.pdf`）
+- **2 ページ目に `認証キー` / `顧客名` / `発行日` が印字**されている
+  → **PDF 単体から認証キーが復元できる**（取り違え検知に使える）
+  → **同時に PDF は氏名を含む**＝原本は PII。S3 原本ストレージ（`ap-northeast-1`・Object Lock）へ置く前提は
+    従来どおりだが、**Elith へ渡す JSON には載せない**
+- 構成は「**主要分析レポート 100**（がん 25 ｜ 一般疾患 40 ｜ 体質 35）」
+
+> **208 ページは既存の admin バッチ AI スキャンにとって大きい**（現行はページ範囲指定で運用）。
+> **どのページを納品対象にするかは別途決める**。ここでは事実だけ記録する。
+
+### 4.2 着手前に潰すこと（更新 2026-09-01）
+
+- **(a) 【解消】Genoplan の自動アクセス許諾 — 取得済**（発注者確認 2026-09-01）。
+  ただし **公式の受渡手段（API / S3 / 定期メール）の有無は未確認**。あればそちらが正になるので、
+  次に先方とやり取りする機会に併せて訊く。
+- **(b) 【解消】partner 選択は不要**。`multi="N"` / `accounts[]` 1 件（§4.1.1①）。
+- **(c) 【要設計・当初想定より 1 つ多い】PII**。
+  一覧（`kitStatusAdmin.php`）が **`signer_name`（氏名）と `doctor_name`**、
+  `getKitInfoList.php` がさらに **`signer_mobile`（電話番号）** を返す。
+  → **取得直後に捨て、`serialnumber` と `report_seq` だけを持つ。** DB にも S3 にも載せない。
+  プローブは値を出力しない実装にしてある（`PII_KEYS` の `presence()`）。
+- **(d) 【解消・部分的】IP 制限**。Vercel（iad1 / US East）から**ログインも一覧も PDF も通った**ので、
+  少なくとも現時点でこのアカウントに IP 制限は掛かっていない。
+  **将来掛けられる可能性は残る**ので、失敗時に黙って止まらないようにする（§4.4）。
+- **(e) 【方式は既定・運用工程だけ未確定】顧客との突合**。
+  **新しい論点ではない。** 突合方式は `lab_integration_workflow.md §2 Workflow 2`（**Phase 1 の主軸**）で既定＝
+  「**発注時に `external_test_id ↔ diagnostic_user_id` を DB に保持 → 結果から検査 ID を読取って逆引き**」、
+  **二重照合＝検査ID一致＋検査日一致＋検査機関名一致の 3 つすべて**。
+  受け皿カラムも実在（`customer.lab_tests.external_test_id` / `external_barcode`・
+  `20260601000010_schemas_and_tables.sql:150`）。
+
+  今回の調査で**Genoplan 側の実体が確定した**（＝仕様の穴埋めができた）:
+
+  | 仕様の項目 | Genoplan での実体 | 取得元 |
+  |---|---|---|
+  | `external_test_id`（検査ID） | **認証キー** `serialnumber`（例 `CFBB-NFPC-GSLP`） | API の一覧／**PDF 2 ページ目にも印字** |
+  | `external_barcode`（キット物理ID） | **ボックスナンバー** `extchar03`（例 `5844-6059-9293`） | API の一覧（画面の「ボックスナンバー」列） |
+  | 検査日 | `publish_origin` | API の一覧 |
+  | 検査機関名 | Genoplan（固定） | — |
+
+  **Workflow 2 のデメリット「`external_test_id` の OCR が必要」は Genoplan では発生しない** —
+  **API が両 ID を構造化データで返す**ので OCR 不要。PDF 2 ページ目の印字は突合の裏取りに使える。
+
+  **残りは「当方の未実装」であって Wellfort への確認事項ではない**（発注者指摘 2026-09-01）。
+  **検査キットの出荷管理はこのシステムの機能**（`kit_lifecycle_and_handoff_management_spec.md`＝
+  タカセ出荷指示 → ライフサイクル管理 → 進捗駆動の受渡）なので、
+  **箱番号を控えて注文に結び付けるのは、こちらが実装すること**。
+
+  受け皿は揃っている:
+
+  ```
+  subscriptions → 出荷スケジュール → タカセ出荷指示CSV → customer.kit_shipments
+                                                            (order_id / customer_id / test_type / shipped_at)
+                                                                │ shipment_id
+  customer.lab_tests { diagnostic_user_id, external_test_id, external_barcode,
+                       workflow_used(1|2|3), assigned_by }
+  ```
+
+  `20260601000010_schemas_and_tables.sql` の `lab_tests` に
+  `external_test_id`（`unique (lab_company_id, external_test_id)` 付き）/ `external_barcode` /
+  `workflow_used` / `assigned_by` があり、**Workflow 2 はスキーマの段階で表現済み**。
+
+  **実際に欠けているもの（実測）**:
+
+  | 欠けているもの | 根拠 |
+  |---|---|
+  | `lab_tests` に行を作るコードが無い | `grep` で読み取り（`chat-context.ts:78` の `select`）のみ |
+  | Scan-Chat-AI から `customer` へ書けない | `supabase.ts:58` が `HP_BRIDGE_READONLY_KEY`＝読み取り専用。**書き込みは wellfort-site 側** |
+  | `kit_shipments` に個体 ID の列が無い | 同マイグレーションの列一覧（`tracking_no` はあるが物流用・個体IDではない） |
+  | タカセの**返送** CSV にボックスナンバー欄が無い | 伝票番号は返ってくる（`kit_progress_management §9.1`）。**1 列足すだけ**＝下記 |
+
+  **`id_management_and_correlation_spec.md §7-3`「採番タイミング・スキャン工程」がそのまま未実装。**
+  ただし §5 の想定フロー「出荷時に `external_barcode` を**印字/貼付**」は Genoplan では当てはまらない —
+  **ボックスナンバーは Genoplan が箱に印字済み**なので、こちらは**出荷時に読む**ことになる。
+
+  **実装の形**: ①wellfort-site が出荷実績登録でボックスナンバーを受け `kit_shipments`（列追加）と
+  `lab_tests` へ書く ②Scan-Chat-AI は取得済み PDF の manifest を引き当て API として出し、
+  `external_barcode` → `shipment_id` → `diagnostic_user_id`（**二重照合＝識別子＋検査日＋検査機関名**）
+  ③一致しない分は `workflow_used=3`（人手承認）。**氏名からの推測割当はしない。**
+
+  **ボックスナンバーをどこで捕まえるか（発注者指示 2026-09-01・2 経路を併用）**
+
+  - **主経路 = タカセ出荷時（返送 CSV に相乗り）。**
+    **伝票番号はタカセから CSV で返してもらう仕様が既にある**ので、**ボックスナンバーも同じ CSV に載せてもらう**。
+    現に `kit_shipments.tracking_no` / `carrier` はこの返送で埋まる想定
+    （`kit_progress_management.md §9.1`「2. タカセ倉庫から発送 → `tracking_no` = 伝票番号」）。
+    → **新しい経路を作る必要はない。既存の返送 CSV に 1 列足すだけ。**
+    （前版で「タカセ出荷指示 CSV に欄が無い」と書いたのは**出荷指示＝下り**の話で、
+    捕まえるべきは**実績＝上りの返送 CSV**。訂正。）
+    出荷時点で分かるので、**ユーザーの操作を待たずに紐付けが確定する**のが最大の利点。
+
+  - **補助経路 = ユーザーの受取確認時にスマホカメラで撮影（案・発注者提案 2026-09-01）。**
+    受取の自己申告 UI は既にある（`kit_progress_management.md §165`「タップ → `user_received_at = now()`」/
+    Edge Function `kit-self-report`）ので、**そこに「箱番号の部分を撮影」を足す**。
+    - 位置づけは**保険**。タカセの返送に載らなかった回・倉庫が取り違えた回を、
+      **本人の手元にある実物**で確定できる（出荷実績より強い証拠になる場面がある）。
+    - **読み取りは決定論で検証する**。ボックスナンバーは 12 桁 `NNNN-NNNN-NNNN` の固定書式なので、
+      **書式に合わない読み取りは採用しない**。さらに **Genoplan 側の一覧に実在する番号か**を照合する
+      （実在しなければ採用しない＝捏造ゼロ）。読めなければ**空のままにして人手へ回す**。
+    - **必須にしない**（受取確認自体を止めない。`kit_progress_management` の自己申告は任意）。
+    - 撮影画像の保管方針（保持期間・PII 判定）は別途決める。**箱番号だけが要る**ので、
+      **読み取り後に画像を破棄する**のが既定でよい。
+
+  どちらも**外部に新しい仕組みを頼まない**。要るのは
+  **タカセの返送 CSV に 1 列足す合意**（Wellfort ではなくタカセ側の運用調整）だけ。
+
+  なお **partner 配下の 255 件はすべて Wellfort のキット**（画面の「キット販売現況」と API の
+  `list_total_cnt` が一致）なので、他社分を除外する処理は要らない。
+
+### 4.3 先方へ報告すべき事項（当方の実装とは別件）
+
+**PDF の署名付き URL を返す Lambda に認証が無い。** 実測（2026-09-01）:
+存在しないシリアル `INVALID-TEST-0000` を指定した無認証の GET に対し、
+`https://s3.ap-northeast-1.amazonaws.com/pdf-resources.genoplan.com/2026-09-01/INVALID-TEST-0000.pdf?X-Amz-...`
+という**署名付き URL が返ってきた**（`X-Amz-Expires=3600`）。
+つまり **シリアル番号を知っていれば誰でも他人の遺伝子検査レポートの URL を取得できる**可能性がある。
+**実在するシリアルでの確認は行っていない**（他人のデータに触れないため）。
+Wellfort の顧客データの保護に関わるので、**Wellfort 経由で Genoplan へ伝える。**
+
+### 4.4 実装（疎通は済み・残りはこれだけ）
+
+疎通（§4.1.1）は全ステップ成功したので、**取得処理の設計は確定している**。
+
+```
+① POST /api/biz/login.php            (lang, loginid, password)      → accesskey
+② POST /api/biz/kitStatusAdmin.php   (accesskey, partner_seq=1657,
+                                      kit_status='600', page, limit) → 発行済み一覧 (72 件)
+③ 差集合                              既取込の serialnumber を除く
+④ GET  {lambda}/gpj/ja/{serialnumber}                               → { pdfUrl } (1h)
+⑤ GET  pdfUrl                                                       → PDF (約 21MB)
+⑥ putOriginal() で S3 へ → 既存の admin バッチ AI スキャン（実装済）
+```
+
+**実装するときの約束**:
+
+- **`serialnumber` と `report_seq` 以外は持ち越さない**（§4.2(c)）。氏名・電話は受け取った時点で捨てる。
+- **`accesskey` をログに出さない**。1 つで全 API が叩ける（プローブで一度出力してしまった。
+  `SECRET_KEYS` で潰し済み）。
+- **PDF は受け取りながら S3 へ流す**。Range が効くので分割もできる（§4.1.1④）。
+- **`{ code: 6020 }`（生成中）は失敗ではない**。次回に回す。
+- **失敗を黙って飲まない**。血液の `last_to` 単調前進と同じで、
+  **取り込み成功したものだけを「済み」に記録する**（失敗を済みにすると取り漏れる）。
+- 認証情報は **Vercel env `GENOPLAN_LOGIN_ID` / `GENOPLAN_PASSWORD`**。
+  **リポジトリにも bat にも置かない**（設定済み 2026-09-01）。
+
+#### 実装状況（2026-09-01）
+
+**①〜⑤ は実装済み。** `src/lib/genoplan.ts`（読み取り専用クライアント）＋
+`POST /api/admin/genoplan-fetch`（Bearer `ADMIN_API_KEY`）。UI は wellfort-site 側に作る。
+
+- **差分は「ボックスナンバー」で判定する**（発注者指示 2026-09-01）。
+  保存キーを **`genoplan/{ボックスナンバー}__{認証キー}.pdf`** にし、
+  **保存先を list して既にあるボックスナンバーを差し引く**。
+  **取得済みテーブルを別に持たない** — 保存に成功したのに台帳更新に失敗した回で
+  取り漏れ/二重取得が起きるため。**保存できたものだけが「取得済み」**（血液の
+  `last_to` 単調前進と同じ考え方）。
+- `GET` = 差分の確認のみ（副作用なし）／`POST` = 取得（**既定 1 件**・`?max=N` で最大 10）。
+  1 件ずつなのは **PDF 約 21MB・208 頁**＋**Lambda の生成 30〜60 秒**に対して関数が 60 秒だから。
+- `code 6020`（生成中）は**失敗として扱わない**。保存しないので次回また候補に上がる。
+- 保存前に**先頭 `%PDF-` を確認**する（エラーページを原本として残さない）。
+- 期限切れ（`serviceExpireYN=Y`）は取りに行かない（画面でも選べない行）。
+- **顧客への割り当てはしない。** 材料（認証キー・ボックスナンバー・発行日・sha256）を
+  同名の `.json` に残し、対応表の運用工程（§4.2(e)）が決まってから紐付ける。
+  **氏名から推測して割り当てるのは禁止**（PII 分離・捏造ゼロ）。
+- **原本は無加工で保存**（発注者判断 2026-09-01「暫定でそのまま保存」）。PDF 2 ページ目に氏名が
+  印字されているが、原本の保管方針は CLAUDE.md 案C′ のまま。
+
+#### 差分の実測（2026-09-01・dry-run）
+
+| 項目 | 値 |
+|---|---|
+| 発行済み（`kit_status='600'`） | **72** |
+| 保存済み | **0** |
+| 未取得 | **72** |
+| 期限切れでスキップ | 0 |
+| **ボックスナンバーが空の行** | **0** ＝ 全 72 件で箱番号がキーとして使える |
+| 発行日の範囲 | 2023-05-11 〜 2026-08-27 |
+
+#### テスト取得の保存先（発注者指示 2026-09-01）
+
+**`?dest=exchange`** で **`s3://wellfort-partner-exchange/genoplan/`**（`ap-northeast-1`）へ保存する。
+このバケットは LAiF/プリベントとの受渡用で 2026-08-27 作成済み
+（`laif_s3_secure_handoff_spec.md §7`）。**原本ストレージ（案C′）ではない**ので
+Object Lock の 10 年保管に掛からず、**テスト後に消せる**。
+
+- ファイルは 2 本ずつ: `{ボックスナンバー}__{認証キー}.pdf` と 同名 `.json`
+- `.json` に入れるのは **`external_test_id`（認証キー）/ `external_barcode`（ボックスナンバー）/
+  `published_on` / `report_seq` / `pdf_sha256` / `pdf_bytes` / `fetched_at`** だけ。
+  **氏名・電話は入れない**（対応表ができたときに、この JSON だけで紐付けられる）
+- 認可は、原本ストレージへの書き込みだけ `ADMIN_API_KEY`。
+  dry-run と `dest=exchange` は `PROBE_UPLOAD_TOKEN` でも通す（**トークンを消せば両方閉じる**）
+- **本番運用では `dest` を付けない**（既定＝原本ストレージ）
+
+#### 実装上のつまずき（wellfort-site の admin UI を作る人向け）
+
+- **POST は `content-type: application/json` を付けないと Astro に弾かれる**
+  （`Cross-site POST form submissions are forbidden`＝`security.checkOrigin`）。
+  `fetch` から呼ぶときは JSON で送ること。
+- **`max` は「試行回数」でなく「保存できた件数」で数える。** 生成中（`code 6020`）は保存されず、
+  `pending` は発行日の昇順なので、試行回数で数えると**次の呼び出しでも同じ行が先頭に来て足踏みする**。
+- **1 リクエスト 1 件が上限。** 実測で 1 件 **約 32 秒**（ログイン＋一覧＋PDF URL＋21MB DL＋21MB PUT）。
+  関数は 60 秒なので 2 件にすると超える。
+
+#### 【要対応】本番運用に移す前に — 原本の置き場が未設定
+
+dry-run の `storage_backend` が **`supabase`** だった。
+**`AWS_S3_ORIGINALS_BUCKET` が Vercel env に無い**ため、このまま実行すると
+原本が **Supabase Storage（US Central）** に落ちる。原本の置き場は
+**S3 `ap-northeast-1`・Versioning + Object Lock・10 年保管**が正（CLAUDE.md 案C′）。
+72 件 ≒ **約 1.5GB** を意図しない側へ書くと戻せない。
+
+→ **`docs/operations/S3原本ストレージ_構築手順書.md` の手順で
+`AWS_S3_ORIGINALS_BUCKET` を設定してから実行する。**（`AWS_REGION` は既存と共用で設定済み。
+同手順書 §env 表のとおり、このバケット名が切替スイッチ。設定後は再デプロイが必要。）
+**Object Lock は運用開始まで GOVERNANCE にすること**（Compliance はルートでも削除不可）。
+
+**未着手**: ⑥ の結線（取得した PDF を admin バッチ AI スキャンへ流す）、
+および §4.2(e) の運用工程（発送時に認証キー／ボックスナンバーを控える）。
+
+**後始末**: 調査が終わったら **`PROBE_UPLOAD_TOKEN` を消す**（プローブ口が閉じる）。
+本実装は admin 側の口に置き換えるので、プローブは残さない。
+- **フロー**: **サーバ側（Vercel）が Genoplan の API からレポートPDFを取得** → **admin バッチAIスキャン（多ページ・LLM構造化）** → `GeneticTestResultData` JSON → S3。
 - **問診データ（上り）**: **ユーザーが Genoplan 社の検査専用 Web へ直接入力**（§0.2）。**弊社は渡さない＝実装対象外**
   （`questionnaire_to_lab_csv_spec §4.4` の 70 項目マッピングは**対象外で確定**）。
 - **データ内容**: 疾患ごとの**発症リスク倍率**＋発症率（％/定性）。🎯倍率ゴールデン照合（220項目）対応済。
-- **ステータス**: 受取方式=RPA方針。スキャン→JSON化 実装済（admin「🧬 遺伝子検査」・ページ範囲指定）。
+- **ステータス**: **受取方式=サーバ側 API 取得で確定（2026-09-01・§4.1 実測）。RPA・PowerShell・専用PC はいずれも不要。**
+  取得部は**未実装**（着手は §4.2(a) の許諾取得後）。スキャン→JSON化 実装済（admin「🧬 遺伝子検査」・ページ範囲指定）。
 
 ---
 
@@ -227,15 +670,17 @@ LAiF の条件は「**英字を 1 文字以上含む／大小不問／文字は�
 
 | 検査 | 受取自動化 | 主な次アクション |
 |---|---|---|
-| 血液（リージャー） | RPA構築中／**attended 手動取込は運用可**（admin 独立メニュー `/admin/demecal-csv`・手順書 v1.1） | PC側 PAD の**DL画面部**を Wellfort 提供のスクショ/録画で作り込み（フェーズ2） |
+| 血液（リージャー） | **方式確定（PowerShell・無人定期実行）／PC側は未実装**。**attended 手動取込が現在の本番運用**（admin 独立メニュー `/admin/demecal-csv`・手順書 v1.1） | **外部待ちは無し**。①`LAB_INTAKE_API_KEY`・実行ログAPI・監視（`demecal_unattended_spec.md §9` の 1〜5）②スクリプト本体（初回は**偵察モード**で form 構造を自己報告）③`external_test_id` 受領時格納＝本人への対応づけ（設計は `id_management_and_correlation_spec.md:131`・**未実装**＝§5.4-#3） |
 | がんリスク（プリベント） | **専用ポータル＋S3方式を提案中**（現状は手動） | **デモ画面ご確認依頼の送付**（文面・PDF作成済／**デモURLが開けることの確認が前提**）＋固定IP有無・担当者/通知先・生年月日提供の同意前提を確認 |
 | AI疾病予測（LAiF） | S3 URL（確定）／**上り疎通OK・下り未検証** | ①**上りID採番規則の決定**（§5.3・英字必須）②**ダミーでの往復テスト**を再依頼（下り経路の検証）③今回分 `…0001W` の突合記録 ④Elith へ `Other`/`ai_prediction` の**受領仕様確認**（`elith_assembly_wrapping_spec §5.6`） |
-| 遺伝子（Genoplan） | RPA方針 | RPA(DL部)の構築（血液PADの枠組みを流用可） |
+| 遺伝子（Genoplan） | RPA方針**（要再検討＝PowerShell 化の可能性あり）** | **血液の PAD 枠組みを流用する前提が消えた**（血液は PowerShell 化）。→ **血液と同じ読み取り専用プローブを Genoplan ポータルへ 1 回流し**、①ログインが素の HTML フォームか ②PDF が URL で直接取れるか を判定。素のフォームなら **PowerShell 化**（ライセンス不要・画面変更に強い）。**証明書不要ならサーバ側で完結し専用PCも不要になり得る（未確認）** |
 
 ## 8. 確認事項
 1. **がんリスク（プリベント・提案中）**: 専用ポータル＋S3方式の合意可否。固定グローバルIPの有無（IP許可制の採否判断）。ご利用担当者／通知先。上りCSVに含める**生年月日の外部提供・同意前提**の可否。合意までの暫定手動運用の継続可否とアクセス権未設定リンクの是正。
 2. **AI疾病予測（LAiF）**: S3 専用バケットの命名/URL発行ルール、Elith の `Other`/`ai_prediction` 受領仕様。
    **2026-08-26 追加**: ① ID の**桁数上限**（採番規則の桁決めに必要）② **経年で同一人物として突合する必要があるか**（レポートの昨年比欄・§5.3 の単位決定に必要）③ **ダミーデータでの往復テスト**の可否 ④ 返送時のメール一報の可否 ⑤ 今回 LAiF 側で付与された `W` 付き ID の**返送時の表記**。
 3. **上りID（②）の採番規則の決定**（§5.3）: 書式（A-1/A-2/A-3）と単位（B-1/B-2/B-3）。**4 社共通の枠組みとして一度に決めるのが望ましい**（LAiF だけ個別対応しない）。
-4. **RPA（血液・遺伝子）**: 専用PC台数・保守主体（UNFIX構築/Wellfort運用）・Pマーク運用の最終確認。
+4. **専用PC運用（血液・遺伝子）**: 専用PC台数・保守主体（UNFIX構築/Wellfort運用）・Pマーク運用の最終確認。
+   血液は **PowerShell 方式**で確定（`demecal_unattended_spec.md`）。**RPA/PAD のライセンスは不要**。
+   遺伝子は方式が未定（上記のとおり要再検討）。
 5. **各社独自ID（③）の運用**: `external_test_id`/`external_barcode` の**採番タイミング・スキャン工程・突合ルール**（`id_management_and_correlation_spec §7-3` の未確定事項）。

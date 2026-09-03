@@ -21,7 +21,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getServerSupabase } from './supabase';
 
@@ -127,6 +127,46 @@ export async function putOriginal(input: PutOriginalInput): Promise<PutOriginalR
     .upload(input.key, input.body, { contentType: input.contentType, upsert: false });
   if (error) throw new Error(error.message);
   return { storageUrl: input.key, sha256, sizeBytes, backend: 'supabase' };
+}
+
+/**
+ * 保存済みの相対キーを列挙する (`putOriginal` の `key` と同じ体系で返す)。
+ *
+ * 【なぜ要るか】「もう取ったか」を**保存先そのものに聞く**ため。
+ * 別に取得済みテーブルを作ると、保存に成功したのに台帳の更新に失敗した回で
+ * **同じものを何度も取りに行く／逆に取り漏らす**。デメカルの `last_to` が
+ * 「取り込み成功時だけ前進」で取り漏れゼロを担保しているのと同じ考え方で、
+ * **実体が在ることだけを「取得済み」の根拠にする**。
+ *
+ * S3 / Supabase Storage のどちらでも動く。返すのは**プレフィックスを除いた相対キー**。
+ */
+export async function listOriginalKeys(relPrefix: string): Promise<string[]> {
+  const cfg = getOriginalsS3Config();
+  if (cfg) {
+    const full = `${cfg.prefix}${relPrefix}`.replace(/\/{2,}/g, '/');
+    const c = client(cfg);
+    const keys: string[] = [];
+    let token: string | undefined;
+    do {
+      const out = await c.send(new ListObjectsV2Command({
+        Bucket: cfg.bucket, Prefix: full, ContinuationToken: token, MaxKeys: 1000,
+      }));
+      for (const o of out.Contents ?? []) {
+        if (!o.Key) continue;
+        keys.push(o.Key.startsWith(cfg.prefix) ? o.Key.slice(cfg.prefix.length) : o.Key);
+      }
+      token = out.IsTruncated ? out.NextContinuationToken : undefined;
+    } while (token);
+    return keys;
+  }
+
+  const sb = getServerSupabase();
+  if (!sb) throw new Error('原本の保存先が未設定です (S3 も Supabase も使えません)');
+  // Supabase Storage の list は「1 階層ずつ」なので、フォルダ指定で引く。
+  const dir = relPrefix.replace(/\/*$/, '');
+  const { data, error } = await sb.storage.from(SUPABASE_BUCKET).list(dir, { limit: 1000 });
+  if (error) throw new Error(error.message);
+  return (data ?? []).filter((f) => f.name).map((f) => `${dir}/${f.name}`);
 }
 
 /** storage_url を s3://bucket/key として解釈する。S3 でなければ null。 */

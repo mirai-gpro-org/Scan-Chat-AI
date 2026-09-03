@@ -1,5 +1,6 @@
 /**
- * ops: 現地実行スクリプト (`デメカル接続チェック.bat`) の配布口。
+ * ops: 現地実行スクリプト (`デメカル接続チェック_v*.bat` 等) の配布口。
+ * **ファイル名には .ps1 の `$Version` を入れる** (下記 readScriptVersion)。
  *
  * なぜ必要か: .bat はメール添付でも ChatWork でも
  * **セキュリティポリシーで弾かれる** (2026-08-28 実測)。URL なら渡せるので、
@@ -20,14 +21,75 @@
 import type { APIRoute } from 'astro';
 // scripts/ の .ps1 をビルド時に文字列として取り込む (実行時の fs 読みは Vercel で不可)。
 import PROBE_PS1 from '../../../../scripts/demecal-probe.ps1?raw';
+import RECON_PS1 from '../../../../scripts/demecal-recon.ps1?raw';
+import DAILY_PS1 from '../../../../scripts/demecal-daily.ps1?raw';
+import VERIFY_PS1 from '../../../../scripts/demecal-verify.ps1?raw';
 import { buildProbeBat } from '../../../lib/probe-bat';
 
 export const prerender = false;
 
-/** 保存されるファイル名。手順書と揃えること。 */
-const FILENAME_JA = 'デメカル接続チェック.bat';
-/** RFC 6266 の ASCII フォールバック (日本語を解釈しないクライアント用)。 */
-const FILENAME_ASCII = 'demecal-check.bat';
+/**
+ * 配布する bat は 2 本 (`docs/lab/demecal_unattended_spec.md §7`)。
+ *
+ * **Wellfort に何度も実行を頼まない**ため、①で必要な情報を全部取り切る設計にしてある。
+ *   ① `?script=recon` … 初回セットアップ＆偵察。資格情報の保存・ログイン・
+ *                        CSV ダウンロード画面の form 構造の採取まで 1 回で行う
+ *   ② `?script=probe` … 既存の接続チェック (ログインしない)。実行済みなので通常は使わない
+ *
+ * 本番の自動実行 bat は①の結果を見てから作る (別口で配布)。
+ */
+const SCRIPTS = {
+  probe: { ps1: PROBE_PS1, ja: 'デメカル接続チェック', ascii: 'demecal-check' },
+  recon: { ps1: RECON_PS1, ja: 'デメカル初回セットアップ', ascii: 'demecal-setup' },
+  // ② 本番の自動実行。①が保存した資格情報を再利用し、毎日 CSV を取り込む。
+  // **`ADMIN_API_KEY` は焼き込まない。** 取り込み専用キーだけ (spec §3.1)。
+  //
+  // **【凍結中 2026-09-02】`daily` は配らない** (下記 FROZEN)。
+  // 立て直し計画 `docs/lab/demecal_recovery_plan_20260902.md` により、
+  // daily-1.7 の汎用探索器は本番経路から外した。次に現地で走らせるのは
+  // `?script=verify` (verify-only) だけで、Phase B の GO が出てからになる。
+  daily: { ps1: DAILY_PS1, ja: 'デメカル自動取得', ascii: 'demecal-daily' },
+  // Phase B の疎通確認。**書き込みを一切しない** (計画 §6.3)。
+  verify: { ps1: VERIFY_PS1, ja: 'デメカル疎通確認', ascii: 'demecal-verify' },
+} as const;
+type ScriptKey = keyof typeof SCRIPTS;
+
+/**
+ * **配布を止めているスクリプト。**
+ *
+ * 【なぜ口を塞ぐか — 実障害 2026-09-02】daily は v1.0→v1.7 の間、
+ * 「失敗 → 診断を足す → 現地でもう一度実行してもらう」を繰り返した。
+ * **専用PC の実行は Wellfort 役員に依頼する高コストな本番相当テスト**で、
+ * デバッグ工程に使ってはいけない (計画 §0)。
+ * 意思だけでは同じことが起きるので、**配布口を閉じて機械で止める**。
+ */
+const FROZEN: Partial<Record<ScriptKey, string>> = {
+  daily:
+    'daily-1.7 は凍結中です (docs/lab/demecal_recovery_plan_20260902.md)。\n'
+    + '次に現地で実行するのは ?script=verify (verify-only) だけで、\n'
+    + 'Phase A のレビューが通ってからになります。',
+};
+
+/**
+ * `.ps1` の `$Version = 'recon-1.1'` を読む。**配布ファイル名に入れるため**。
+ *
+ * 【なぜ要るか — 実測 2026-09-01】ファイル名が版によらず同じだと、
+ * Wellfort 側は**手元の古い bat と新しい bat を見分けられない**。実際に
+ * 「初回セットアップ.bat を実行した」と連絡を受けたが実行ログに届いていたのは
+ * 接続チェックだけ、という切り分けの効かない状況になった。
+ * → **版をファイル名に出し、担当者が目で確認できるようにする。**
+ *
+ * 版が読めなければ**落とす**。無言で版なしのファイル名を配ると、
+ * 「版が付いていない＝古い」のか「付け忘れ」なのかが区別できなくなる。
+ */
+function readScriptVersion(ps1: string): string {
+  const m = ps1.match(/^\s*\$Version\s*=\s*'([^']+)'/m);
+  if (!m) throw new Error('$Version が .ps1 に見つかりません (配布ファイル名に版を入れるため必須)');
+  // ファイル名に使える範囲だけ通す (パス区切り・空白を混ぜない)。
+  const v = m[1].trim();
+  if (!/^[A-Za-z0-9._-]+$/.test(v)) throw new Error(`$Version の書式が不正: ${v}`);
+  return v;
+}
 
 function env(name: string): string | undefined {
   const m = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.[name];
@@ -50,9 +112,44 @@ export const GET: APIRoute = async ({ url }) => {
   const given = (url.searchParams.get('k') || '').trim();
   if (given !== expected) return text('unauthorized', 401);
 
+  // **`script` は必須。既定値を持たせない (fail-closed)。**
+  //
+  // 【実障害 2026-09-02 — Phase B が実行されなかった真因】
+  // 案内メールの中でリンクが `...?k=<token>` までで切れ、`&script=verify` が
+  // **リンクの外へ落ちた**。旧実装は script 省略時に既定 `probe` を返したので、
+  // 押した人には**正常にダウンロードできたように見えたまま**、
+  // 意図と違う旧 `demecal-check v1.0` が配られた。
+  // 黙って別のものを配るくらいなら、**落ちて気づける方がよい**。
+  const rawKey = url.searchParams.get('script');
+  if (rawKey === null || rawKey.trim() === '') {
+    return text('script is required (probe | recon | daily | verify)', 400);
+  }
+  const key = rawKey.trim() as ScriptKey;
+  // `SCRIPTS[key]` だけだと `constructor` 等の prototype 由来のキーが
+  // truthy になり 500 まで進んでしまうので、自前の所有キーだけを見る。
+  if (!Object.prototype.hasOwnProperty.call(SCRIPTS, key)) {
+    return text(`unknown script: ${key} (probe | recon | daily | verify)`, 400);
+  }
+  const spec = SCRIPTS[key];
+  const frozen = FROZEN[key];
+  if (frozen) return text(frozen, 409);
+
   let bat: Uint8Array;
+  let nameJa: string;
+  let nameAscii: string;
   try {
-    bat = buildProbeBat(PROBE_PS1, expected).bytes;
+    // デメカルの ID/PW は**リポジトリに置かず** Vercel env から注入する
+    // (発注者判断 2026-09-01「bat に平文で今回は構わない」)。
+    // 未設定なら buildProbeBat が落とすので、動かない bat を配ってしまうことはない。
+    // `recon-1.7` → `1.7`。担当者が見るのは「v1.7」の部分だけでよい。
+    const num = readScriptVersion(spec.ps1).split('-').pop() as string;
+    bat = buildProbeBat(spec.ps1, expected, {
+      user: env('DEMECAL_USER_ID') ?? '',
+      pass: env('DEMECAL_PASSWORD') ?? '',
+      intakeKey: env('LAB_INTAKE_API_KEY') ?? '',
+    }, `${spec.ascii} v${num}`).bytes;
+    nameJa = `${spec.ja}_v${num}.bat`;
+    nameAscii = `${spec.ascii}-v${num}.bat`;
   } catch (err) {
     return text(`build_failed: ${err instanceof Error ? err.message : String(err)}`, 500);
   }
@@ -63,8 +160,8 @@ export const GET: APIRoute = async ({ url }) => {
       'content-type': 'application/octet-stream',
       'content-length': String(bat.byteLength),
       'content-disposition':
-        `attachment; filename="${FILENAME_ASCII}"; `
-        + `filename*=UTF-8''${encodeURIComponent(FILENAME_JA)}`,
+        `attachment; filename="${nameAscii}"; `
+        + `filename*=UTF-8''${encodeURIComponent(nameJa)}`,
       'cache-control': 'no-store',
       'x-robots-tag': 'noindex',
     },

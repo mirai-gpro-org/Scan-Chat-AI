@@ -3,7 +3,7 @@
  *
  * 用途: 専用PC など**こちらから触れない端末**で実行した診断スクリプトの結果を、
  *       メール添付を待たずに回収する。第一の利用者は
- *       `scripts/デメカル接続チェック.bat` (docs/lab/demecal_powershell_probe_guide.md)。
+ *       `scripts/デメカル接続チェック_v*.bat` (docs/lab/demecal_powershell_probe_guide.md)。
  *
  * 設計方針 (2026-08-28・admin API が無認可で開いていた件を踏まえて):
  *   ・**既定 off の fail-closed**。env `PROBE_UPLOAD_TOKEN` が設定されているときだけ動く。
@@ -91,7 +91,15 @@ export const POST: APIRoute = async ({ request }) => {
   const id = uuid();
   const label = slug(body.label, 'probe', 24);
   const host = slug(body.host, 'unknown', 32);
-  const folder = `${prefix}ops/probe/${day}/${label}-${host}-${id}/`;
+  /*
+   * 区切りは `~`。**`-` にしない。**
+   *   `slug()` は `-` を通すので、PC名が `DESKTOP-S0J0000` のように `-` を含むと
+   *   一覧側 (`probe-list`) が label と host を割れず、実測 2026-09-01 で
+   *   label=`demecal-recon-DESKTOP` / host=`S0J0000` と誤表示した (2 回誤読の元になった)。
+   *   `~` は `slug()` が通さない文字なので、label にも host にも絶対に現れない。
+   *   旧 `-` 区切りのフォルダは probe-list 側が従来どおり解釈する。
+   */
+  const folder = `${prefix}ops/probe/${day}/${label}~${host}~${id}/`;
 
   const files = [
     {
