@@ -57,7 +57,23 @@ export interface SchedulerResult {
   dailyAt: string;
 }
 
-export function buildDemecalSchedulerBat(input: SchedulerInput): SchedulerResult {
+/**
+ * 登録 .ps1 の **PowerShell 本文だけ**を返す (bat に包まない)。
+ *
+ * 【なぜ分けたか — 2026-09-03 / 最終セットアップ BAT】
+ * 最終セットアップ BAT は登録の安全契約 (preflight → Disabled で登録 →
+ * 読み戻して照合 → 不一致なら登録を消す) を**書き写さない**。
+ * ここで本文を取り出して**そのまま**同梱する。
+ * → 登録のロジックは `scripts/demecal-scheduler.ps1` の 1 か所にしかない。
+ */
+export interface SchedulerPayload {
+  /** `__DAILY_AT__` を差し替えただけの .ps1 本文 (CRLF)。 */
+  ps: string;
+  version: string;
+  dailyAt: string;
+}
+
+export function buildSchedulerPayload(input: SchedulerInput): SchedulerPayload {
   const at = (input.dailyAt ?? '').trim();
   if (!at) {
     throw new Error('DEMECAL_DAILY_AT が未設定です (実行時刻は業務判断。既定値をコード側で作らない)');
@@ -78,13 +94,17 @@ export function buildDemecalSchedulerBat(input: SchedulerInput): SchedulerResult
   const ps = input.ps1.split(DAILY_AT_PLACEHOLDER).join(psQuote(at));
   if (ps.includes(DAILY_AT_PLACEHOLDER)) throw new Error('実行時刻の差し込みに漏れがあります');
 
-  const version = readPs1Version(ps);
+  return { ps: ps.replace(/\r?\n/g, '\r\n'), version: readPs1Version(ps), dailyAt: at };
+}
+
+export function buildDemecalSchedulerBat(input: SchedulerInput): SchedulerResult {
+  const { ps, version, dailyAt } = buildSchedulerPayload(input);
 
   const { bytes } = wrapPs1AsBat(
-    ps.replace(/\r?\n/g, '\r\n'),
+    ps,
     `demecal-scheduler v${version.split('-').pop()}`,
     'demecal_scheduler_error.txt',
   );
 
-  return { bytes, version, dailyAt: at };
+  return { bytes, version, dailyAt };
 }

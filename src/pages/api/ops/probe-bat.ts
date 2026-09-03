@@ -30,6 +30,7 @@ import SCHEDULER_PS1 from '../../../../scripts/demecal-scheduler.ps1?raw';
 import { buildProbeBat } from '../../../lib/probe-bat';
 import { buildDemecalProductionInstaller } from '../../../lib/demecal-installer';
 import { buildDemecalSchedulerBat } from '../../../lib/demecal-scheduler';
+import { buildDemecalFinalSetupBat } from '../../../lib/demecal-final-setup';
 
 export const prerender = false;
 
@@ -86,6 +87,22 @@ const INSTALLER_ASCII = 'demecal-install';
 const SCHEDULER_KEY = 'production-scheduler';
 const SCHEDULER_JA = 'デメカル自動取得_自動実行の登録';
 const SCHEDULER_ASCII = 'demecal-scheduler';
+
+/**
+ * **最終セットアップ (今回の案件専用・2026-09-03)。**
+ *
+ * 1 ファイルで「取得範囲の初期化 → 3 本の配置 → タスク登録 (無効)」まで行う。
+ * **C-4.1 / C-5 の安全ロジックは書き写さず、payload をそのまま同梱する**
+ * (`src/lib/demecal-final-setup.ts` 冒頭に設計の根拠)。
+ * `INITIAL_LAST_TO` / `DAILY_AT` は案件値として**コード側に固定**するので、
+ * `DEMECAL_DAILY_AT` env には依存しない = **env 未設定でも配れる**。
+ *
+ * 生成物は取り込み専用キーを平文で含む**機密ファイル**。
+ * `download()` が `cache-control: no-store` / `x-robots-tag: noindex` を付ける。
+ */
+const FINAL_SETUP_KEY = 'final-setup';
+const FINAL_SETUP_JA = 'デメカル自動取得_最終セットアップ';
+const FINAL_SETUP_ASCII = 'demecal-final-setup';
 
 /**
  * **配布を止めているスクリプト。**
@@ -172,7 +189,7 @@ export const GET: APIRoute = async ({ url }) => {
   const rawKey = url.searchParams.get('script');
   if (rawKey === null || rawKey.trim() === '') {
     return text(
-      'script is required (probe | recon | daily | verify | production-install | production-scheduler)',
+      'script is required (probe | recon | daily | verify | production-install | production-scheduler | final-setup)',
       400,
     );
   }
@@ -191,6 +208,24 @@ export const GET: APIRoute = async ({ url }) => {
       });
       const num = built.version.split('-').pop() as string;
       return download(built.bytes, `${INSTALLER_JA}_v${num}.bat`, `${INSTALLER_ASCII}-v${num}.bat`);
+    } catch (err) {
+      return text(`build_failed: ${err instanceof Error ? err.message : String(err)}`, 500);
+    }
+  }
+
+  // 最終セットアップ (今回の案件専用・1 ファイルで state 初期化 → 配置 → 登録)。
+  if (rawKey.trim() === FINAL_SETUP_KEY) {
+    try {
+      const built = buildDemecalFinalSetupBat({
+        productionPs1: PRODUCTION_PS1,
+        verifyPs1: VERIFY_PS1,
+        rangePs1: RANGE_PS1,
+        schedulerPs1: SCHEDULER_PS1,
+        // **`ADMIN_API_KEY` は渡さない。** 引数にも無いので通り道が存在しない。
+        intakeKey: env('LAB_INTAKE_API_KEY') ?? '',
+      });
+      const num = built.version.split('-').pop() as string;
+      return download(built.bytes, `${FINAL_SETUP_JA}_v${num}.bat`, `${FINAL_SETUP_ASCII}-v${num}.bat`);
     } catch (err) {
       return text(`build_failed: ${err instanceof Error ? err.message : String(err)}`, 500);
     }
@@ -215,7 +250,7 @@ export const GET: APIRoute = async ({ url }) => {
   // truthy になり 500 まで進んでしまうので、自前の所有キーだけを見る。
   if (!Object.prototype.hasOwnProperty.call(SCRIPTS, key)) {
     return text(
-      `unknown script: ${key} (probe | recon | daily | verify | production-install | production-scheduler)`,
+      `unknown script: ${key} (probe | recon | daily | verify | production-install | production-scheduler | final-setup)`,
       400,
     );
   }

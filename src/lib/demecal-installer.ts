@@ -89,7 +89,24 @@ function wrap(b64: string, width = 120): string {
  *
  * @throws 3 本が揃っていない / 版が読めない / 取り込み専用キーが無い / 注入し残しがある
  */
-export function buildDemecalProductionInstaller(input: InstallerInput): InstallerResult {
+/**
+ * インストーラの **PowerShell 本文だけ**を組む (bat に包まない)。
+ *
+ * 【なぜ分けたか — 2026-09-03 / 最終セットアップ BAT】
+ * 最終セットアップ BAT (`demecal-final-setup.ts`) は
+ * 「state 初期化 → 配置 → タスク登録」を 1 ファイルで行うが、
+ * **C-4.1 の安全契約 (temp → 全数照合 → 入れ替え → 再照合 → 旧セット破棄) を
+ * 書き写さない**。ここで本文を取り出して**そのまま**同梱する。
+ * → 配置のロジックは**この 1 か所にしかない**状態を保つ。
+ */
+export interface InstallerPayload {
+  /** PowerShell 本文 (CRLF・末尾改行つき・1 行目は `#`)。 */
+  ps: string;
+  version: string;
+  entries: InstallerEntry[];
+}
+
+export function buildInstallerPayload(input: InstallerInput): InstallerPayload {
   // ── 1. 入力の検算。**3 本ちょうど**でなければここで落とす ──────────
   //    「dependency 1 本欠損」は現地で気づく事故ではなく、配る前に止める事故。
   const given = Object.keys(input.files);
@@ -326,9 +343,15 @@ export function buildDemecalProductionInstaller(input: InstallerInput): Installe
   P("Write-Host '  自動実行の登録 (タスクスケジューラ) は次の手順で行います。'");
   P('exit 0');
 
+  return { ps: ps.join('\r\n') + '\r\n', version, entries };
+}
+
+export function buildDemecalProductionInstaller(input: InstallerInput): InstallerResult {
+  const { ps, version, entries } = buildInstallerPayload(input);
+
   // ── 5. cmd 部は配布共通 (`demecal-bat.ts`)。終了コードを返す形が要る ──
   const { bytes } = wrapPs1AsBat(
-    ps.join('\r\n') + '\r\n',
+    ps,
     `demecal-install v${version.split('-').pop()}`,
     'demecal_install_error.txt',
   );

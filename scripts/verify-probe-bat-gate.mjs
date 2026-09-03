@@ -83,7 +83,7 @@ async function call(query) {
  * 「script なし → 400」を消すと Phase B の事故が再発するので、必ず残す。
  */
 const CASES = [
-  { name: 'script なし',            query: '',                 status: 400, body: 'script is required (probe | recon | daily | verify | production-install | production-scheduler)' },
+  { name: 'script なし',            query: '',                 status: 400, body: 'script is required (probe | recon | daily | verify | production-install | production-scheduler | final-setup)' },
   { name: 'script= (空)',           query: '&script=',         status: 400, body: 'script is required' },
   { name: 'script=   (空白のみ)',   query: '&script=%20%20',   status: 400, body: 'script is required' },
   { name: 'script=probe',           query: '&script=probe',    status: 200 },
@@ -94,6 +94,9 @@ const CASES = [
   { name: 'script=production-install', query: '&script=production-install', status: 200 },
   // C-5 のタスクスケジューラ登録。これも `SCRIPTS` には無い (別 builder・実行時刻を焼き込む)。
   { name: 'script=production-scheduler', query: '&script=production-scheduler', status: 200 },
+  // 最終セットアップ (今回の案件専用)。**案件値をコード側に持つので DEMECAL_DAILY_AT に依存しない**
+  // (このテストは env を与えているが、未設定でも 200 になることは verify:demecal-final-setup D8 が見る)。
+  { name: 'script=final-setup', query: '&script=final-setup', status: 200 },
   { name: 'script=daily (凍結)',    query: '&script=daily',    status: 409, body: '凍結中' },
   { name: 'script=unknown',         query: '&script=nope',     status: 400, body: 'unknown script' },
   { name: 'script=constructor',     query: '&script=constructor', status: 400, body: 'unknown script' },
