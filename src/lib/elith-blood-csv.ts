@@ -195,6 +195,90 @@ function randomUuid(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
 }
 
+/**
+ * 1 行ぶんの検査項目 (項目名N / 項目区分N / 検査値N の 3 列組) を measurements[] にする。
+ *
+ * **`buildBloodCsvBundles`（旧・PoC 経路）と `parseBloodCsvRowsStrict`（C1-A・本番用）の
+ * 両方がこれを呼ぶ。** 決定論パースを 2 か所に複製すると必ず片方だけ直って割れるので、
+ * 実装本体は 1 つに保つ (`sanitizeMeasurementsForDelivery` と同じ規律)。
+ * **この関数は C1-A で新規に書いたものではなく、旧経路の該当ループをそのまま切り出したもの。**
+ * 挙動が変わっていないことは `npm run verify:blood-csv` が固定する。
+ */
+function buildRowMeasurements(
+  header: string[],
+  row: string[],
+  itemCountCol: number,
+  declaredRaw: string | null,
+  rowSex: string | null,
+): ElithMeasurement[] {
+  const items: ElithMeasurement[] = [];
+  const startCol = itemCountCol >= 0 ? itemCountCol + 1 : -1;
+  if (startCol < 0) return items;
+
+  const declared = Number(declaredRaw ?? '');
+  const maxTriples = Math.floor((row.length - startCol) / 3);
+  const n = Number.isFinite(declared) && declared > 0 ? Math.min(declared, maxTriples) : maxTriples;
+
+  // pass 1: 区分3 の「判)」判定コードを {照合キー → コード} に集める (説明情報の付与用)。
+  // 「総)」(メタボ等の全体判定) は対象外 (別途)。
+  const assessMap: Record<string, string> = {};
+  for (let k = 0; k < n; k++) {
+    const base = startCol + k * 3;
+    if ((row[base + 1] ?? '').trim() !== '3') continue;
+    const nm = (row[base] ?? '').trim();
+    const code = (row[base + 2] ?? '').trim();
+    if (!code || !/^\s*判[)）]/.test(nm)) continue;
+    for (const key of assessmentKeys(nm)) if (!(key in assessMap)) assessMap[key] = code;
+  }
+  const lookupAssessment = (name: string | null, detail: string | null): string | null => {
+    for (const cand of [detail, name]) {
+      if (cand) {
+        const hit = assessMap[norm(cand)];
+        if (hit) return hit;
+      }
+    }
+    return null;
+  };
+
+  // pass 2: measurements 構築。区分3 は出さない。区分1 には対応する判定コードを assessment として付与。
+  for (let k = 0; k < n; k++) {
+    const base = startCol + k * 3;
+    const block = (row[base + 1] ?? '').trim(); // 項目区分の値 = ブロック番号 (1/2/3)
+    if (block === '3') continue; // 区分3 (判定・総合コード) は単独項目としては納品しない
+    const rowName = (row[base] ?? '').trim();
+    const rawVal = (row[base + 2] ?? '').trim();
+    if (!rowName && !rawVal) continue;
+    // 検査値ヘッダの凡例でコード値をラベルへ (区分2 問診: 1→ハイ 2→イイエ / 0→イイエ 1→ハイ 等)。
+    // 凡例が無い列 (区分1 等) はコードにヒットしないので原本の値がそのまま残る。
+    const legend = headerLegend(header[base + 2]);
+    const value = (rawVal && legend[toHalfWidth(rawVal).trim()]) || rawVal || null;
+    // 項目名: ヘッダ標準名を name、データ行の略号/質問文を name_detail。標準名が無ければ行の値を name。
+    const std = headerStdName(header[base]);
+    const name = std || rowName || null;
+    const name_detail = std && rowName && rowName !== std ? rowName : null;
+    // 区分1 (検査値) には判定コード (F2/A3 等) を assessment として紐づける (該当あれば)。
+    const assessment = block === '1' ? lookupAssessment(name, name_detail) : null;
+    // 項目区分(category)は JSON に出さない (要件4)。CSV は単位/基準値カラムを持たないため初期値は null。
+    const meas: ElithMeasurement = {
+      name,
+      name_detail,
+      value,
+      value_num: toValueNum(value),
+      unit: null,
+      ref_low: null,
+      ref_high: null,
+      flag: null,
+      note: null,
+    };
+    if (assessment) meas.assessment = assessment;
+    // Elith 要望(2026-07): 基準値/単位マスタ(BLOOD_REFERENCE)があれば unit/ref を付与し flag(H/L)を算出。
+    // マスタ未登録の項目は null のまま（挙動不変）。医療値はデメカル一次資料で登録する。
+    applyBloodReference(meas, rowSex);
+    items.push(meas);
+  }
+  return items;
+}
+
 export interface BuildBloodCsvInput {
   /** デコード済み CSV テキスト、または生バイト列 (Shift_JIS 想定) */
   text?: string;
@@ -246,71 +330,8 @@ export function buildBloodCsvBundles(input: BuildBloodCsvInput): BloodCsvParseRe
 
     // 検査項目: 結果項目数の直後から (項目名, 項目区分, 検査値) を itemCount 組 読む。
     // 結果項目数が欠損/不正でも、以降を 3 列ずつ末尾まで読み切る (汎用・堅牢)。
-    const declared = Number(get(idx.itemCount) ?? '');
-    const startCol = idx.itemCount >= 0 ? idx.itemCount + 1 : -1;
-    const items: ElithMeasurement[] = [];
-    if (startCol >= 0) {
-      const maxTriples = Math.floor((row.length - startCol) / 3);
-      const n = Number.isFinite(declared) && declared > 0 ? Math.min(declared, maxTriples) : maxTriples;
-
-      // pass 1: 区分3 の「判)」判定コードを {照合キー → コード} に集める (説明情報の付与用)。
-      // 「総)」(メタボ等の全体判定) は対象外 (別途)。
-      const assessMap: Record<string, string> = {};
-      for (let k = 0; k < n; k++) {
-        const base = startCol + k * 3;
-        if ((row[base + 1] ?? '').trim() !== '3') continue;
-        const nm = (row[base] ?? '').trim();
-        const code = (row[base + 2] ?? '').trim();
-        if (!code || !/^\s*判[)）]/.test(nm)) continue;
-        for (const key of assessmentKeys(nm)) if (!(key in assessMap)) assessMap[key] = code;
-      }
-      const lookupAssessment = (name: string | null, detail: string | null): string | null => {
-        for (const cand of [detail, name]) {
-          if (cand) {
-            const hit = assessMap[norm(cand)];
-            if (hit) return hit;
-          }
-        }
-        return null;
-      };
-
-      // pass 2: measurements 構築。区分3 は出さない。区分1 には対応する判定コードを assessment として付与。
-      for (let k = 0; k < n; k++) {
-        const base = startCol + k * 3;
-        const block = (row[base + 1] ?? '').trim(); // 項目区分の値 = ブロック番号 (1/2/3)
-        if (block === '3') continue; // 区分3 (判定・総合コード) は単独項目としては納品しない
-        const rowName = (row[base] ?? '').trim();
-        const rawVal = (row[base + 2] ?? '').trim();
-        if (!rowName && !rawVal) continue;
-        // 検査値ヘッダの凡例でコード値をラベルへ (区分2 問診: 1→ハイ 2→イイエ / 0→イイエ 1→ハイ 等)。
-        // 凡例が無い列 (区分1 等) はコードにヒットしないので原本の値がそのまま残る。
-        const legend = headerLegend(header[base + 2]);
-        const value = (rawVal && legend[toHalfWidth(rawVal).trim()]) || rawVal || null;
-        // 項目名: ヘッダ標準名を name、データ行の略号/質問文を name_detail。標準名が無ければ行の値を name。
-        const std = headerStdName(header[base]);
-        const name = std || rowName || null;
-        const name_detail = std && rowName && rowName !== std ? rowName : null;
-        // 区分1 (検査値) には判定コード (F2/A3 等) を assessment として紐づける (該当あれば)。
-        const assessment = block === '1' ? lookupAssessment(name, name_detail) : null;
-        // 項目区分(category)は JSON に出さない (要件4)。CSV は単位/基準値カラムを持たないため初期値は null。
-        const meas: ElithMeasurement = {
-          name,
-          name_detail,
-          value,
-          value_num: toValueNum(value),
-          unit: null,
-          ref_low: null,
-          ref_high: null,
-          flag: null,
-          note: null,
-        };
-        if (assessment) meas.assessment = assessment;
-        // Elith 要望(2026-07): 基準値/単位マスタ(BLOOD_REFERENCE)があれば unit/ref を付与し flag(H/L)を算出。
-        // マスタ未登録の項目は null のまま（挙動不変）。医療値はデメカル一次資料で登録する。
-        applyBloodReference(meas, rowSex);
-        items.push(meas);
-      }
-    }
+    // **本体は buildRowMeasurements に切り出し済み** (本番 parser と同じものを使う)。
+    const items = buildRowMeasurements(header, row, idx.itemCount, get(idx.itemCount), rowSex);
 
     const clientId = input.makeClientId(r - 1);
     const dateFolder = testDate.replace(/-/g, '_');
@@ -365,3 +386,231 @@ export function buildBloodCsvBundles(input: BuildBloodCsvInput): BloodCsvParseRe
     totalRows: table.length - 1,
   };
 }
+
+/* ════════════════════════════════════════════════════════════════════
+ * C1-A: production parser (ここから)
+ *
+ * 正本: docs/lab/demecal_phase_c_spec_20260903.md v0.2 §4.1〜§4.3 / §6。
+ *
+ * 【なぜ旧 buildBloodCsvBundles と分けるか】
+ *   旧経路は「CSV parse + client_id 採番 + JSON 生成 + S3 key 生成」を 1 度に行う。
+ *   本番では **本人解決 (指図番号 → diagnostic_user_id) が parse と write の間に入る**ので、
+ *   parse だけを取り出せないと「本人が決まる前に client_id を採番する」ことになる。
+ *   → **純粋 parse をここに分ける。**
+ *
+ * 【この region が作らないもの (spec §1)】
+ *   client_id / diagnostic_id / exported_at / S3 key / S3PutFile / UUID / 現在時刻。
+ *   **この 7 つが 1 つでも出てきたら設計が壊れている。**
+ *   `scripts/verify-blood-parser.ts` が**この region のソースを直接読んで**機械確認する
+ *   (この region の外＝旧経路にはこれらが在るので、範囲を切って見る必要がある)。
+ *
+ * 【旧経路との関係】
+ *   `buildBloodCsvBundles` は**今回変更しない**。attended 運用 (admin 画面からの取り込み) が
+ *   現に使っているため。両者は `buildRowMeasurements` を共有するので、
+ *   **measurements の決定論パースは 1 つのまま**。
+ * ════════════════════════════════════════════════════════════════════ */
+
+/** production parse の失敗コード (spec §4.2 / §4.3 / §6)。 */
+export type BloodParseErrorCode =
+  | 'CSV_HEADER_INVALID'
+  | 'CSV_NO_DATA_ROWS'
+  | 'BLOOD_ROW_ORDER_NO_MISSING'
+  | 'BLOOD_ROW_APPROVED_DATE_INVALID'
+  | 'BLOOD_ROW_TEST_DATE_INVALID'
+  | 'DUPLICATE_EXTERNAL_TEST_ID_IN_CSV';
+
+/**
+ * server 側で独立に検査する最低ヘッダ (spec §6)。
+ * **専用PC 側の検査 (`demecal-verify.ps1` の `$RequiredCsvHeaders`) を信用して省略しない** —
+ * server は別の trust boundary なので、届いたバイト列を自分で検査する。
+ */
+export const REQUIRED_BLOOD_CSV_HEADERS = ['指図番号', '結果承認日', '結果項目数'] as const;
+
+/**
+ * production parse の 1 行。
+ *
+ * **raw PII を持たない。** 生年月日・氏名・かな・電話・郵便番号・住所・メールは返さない。
+ * 生年月日は **age の算出中だけメモリで使い、結果には残さない** (spec §2)。
+ */
+export interface BloodProductionRow {
+  /** CSV のデータ行番号 (1-based)。PII ではない。失敗の指し示しに使う。 */
+  rowIndex: number;
+  /** 指図番号。**必ず string。数値化しない** (spec §3)。 */
+  orderNo: string;
+  /** 採血日 (YYYY-MM-DD)。無ければ null。 */
+  drawnDate: string | null;
+  /** 結果承認日 (YYYY-MM-DD)。**必須**。 */
+  approvedDate: string;
+  /** 採用した検査日 = drawnDate ?? approvedDate。 */
+  testDate: string;
+  /** **`'today'` は存在しない** (spec §4)。 */
+  dateSource: 'drawn_date' | 'approved_date';
+  itemCount: number;
+  subject: { sex: string | null; age: number | null };
+  measurements: ElithMeasurement[];
+  /** CSV の「エラーコード」列 (デメカル側の検査エラー)。parse の失敗コードとは別物。 */
+  errorCode: string | null;
+  /** CSV の「エラー内容」列。同上。 */
+  errorDetail: string | null;
+}
+
+export interface BloodParseFailure {
+  /** 行に紐づく失敗は 1-based のデータ行番号。batch 全体の失敗は null。 */
+  rowIndex: number | null;
+  code: BloodParseErrorCode;
+  /** 人が読む説明。**PII を入れない** (値そのものを書かない)。 */
+  detail: string;
+}
+
+export interface BloodProductionParseResult {
+  /** **1 件でも失敗があれば false**。呼び出し側は write を 1 件も開始しない (spec §5.8)。 */
+  ok: boolean;
+  /**
+   * 成功時のみ埋まる。**`ok:false` のときは必ず空配列** —
+   * 部分的な行を返すと、呼び出し側が「使えるものだけ書く」を選べてしまうため
+   * (spec §5.8 preflight all → write later を型で守る)。
+   */
+  rows: BloodProductionRow[];
+  /** 失敗は**全部**返す (1 件ずつ直させない)。 */
+  failures: BloodParseFailure[];
+  /** ヘッダを除いたデータ行数。ok/失敗にかかわらず入る。 */
+  totalRows: number;
+  /** §6 の最低ヘッダが揃っていたか。 */
+  headerOk: boolean;
+}
+
+export interface ParseBloodCsvStrictInput {
+  /** デコード済み CSV テキスト、または生バイト列 (Shift_JIS 想定)。 */
+  text?: string;
+  bytes?: Uint8Array;
+}
+
+/**
+ * 血液 CSV (デメカル様式) を **本番向けに厳格 parse** する純粋関数。
+ *
+ * spec v0.2 §4.1〜§4.3 / §6。**S3 も DB も network も触らない。**
+ */
+export function parseBloodCsvRowsStrict(input: ParseBloodCsvStrictInput): BloodProductionParseResult {
+  const text = input.text ?? (input.bytes ? decodeBloodCsv(input.bytes) : '');
+  const table = parseCsv(text);
+  const failures: BloodParseFailure[] = [];
+
+  if (table.length === 0) {
+    return { ok: false, rows: [], totalRows: 0, headerOk: false,
+      failures: [{ rowIndex: null, code: 'CSV_HEADER_INVALID', detail: 'CSV に行がありません' }] };
+  }
+
+  // ── §6 ヘッダの独立検査 ───────────────────────────────────────
+  const header = table[0];
+  const missing = REQUIRED_BLOOD_CSV_HEADERS.filter((h) => header.indexOf(h) < 0);
+  if (missing.length > 0) {
+    return { ok: false, rows: [], totalRows: Math.max(0, table.length - 1), headerOk: false,
+      failures: [{ rowIndex: null, code: 'CSV_HEADER_INVALID',
+        detail: `必須ヘッダが足りません: ${missing.join(' ')}` }] };
+  }
+
+  const totalRows = table.length - 1;
+  if (totalRows === 0) {
+    // **0 件は parse としては失敗**。「0 件を正常に扱う」(spec §7) のは
+    // **CSV レスポンス検査の層**であって、ここではない (呼び出し側が rows=0 を先に判定する)。
+    return { ok: false, rows: [], totalRows: 0, headerOk: true,
+      failures: [{ rowIndex: null, code: 'CSV_NO_DATA_ROWS', detail: 'データ行がありません' }] };
+  }
+
+  const idx = {
+    orderNo: colIndex(header, ['指図番号']),
+    sex: colIndex(header, ['性別']),
+    birth: colIndex(header, ['生年月日']),
+    drawn: colIndex(header, ['採血日']),
+    approved: colIndex(header, ['結果承認日']),
+    errCode: colIndex(header, ['エラーコード']),
+    errDetail: colIndex(header, ['エラー内容']),
+    itemCount: colIndex(header, ['結果項目数']),
+  };
+
+  const rows: BloodProductionRow[] = [];
+  for (let r = 1; r < table.length; r++) {
+    const rowIndex = r; // 1-based のデータ行番号
+    const row = table[r];
+    const get = (i: number): string | null => (i >= 0 && i < row.length ? (row[i]?.trim() || null) : null);
+
+    // ── §3 指図番号: 必須・**string のまま**保持する ──────────────
+    // 実値は 15 桁前後の数値だが、Number 化すると 16 桁以上で精度が落ち、
+    // 先頭 0 も消える。**最初から最後まで文字列**で扱う。
+    const orderNoRaw = get(idx.orderNo);
+    if (!orderNoRaw) {
+      failures.push({ rowIndex, code: 'BLOOD_ROW_ORDER_NO_MISSING', detail: '指図番号が空です' });
+      continue;
+    }
+    const orderNo: string = orderNoRaw;
+
+    // ── §4 日付: today fallback は無い ─────────────────────────────
+    const approvedDate = normDate(get(idx.approved));
+    if (!approvedDate) {
+      failures.push({ rowIndex, code: 'BLOOD_ROW_APPROVED_DATE_INVALID',
+        detail: '結果承認日がありません、または日付として読めません' });
+      continue;
+    }
+    const drawnDate = normDate(get(idx.drawn));
+    const testDate = drawnDate ?? approvedDate;
+    const dateSource: BloodProductionRow['dateSource'] = drawnDate ? 'drawn_date' : 'approved_date';
+    if (!testDate) {
+      // 到達しない (approvedDate が非 null なので) が、型と意図を明示するために残す。
+      failures.push({ rowIndex, code: 'BLOOD_ROW_TEST_DATE_INVALID', detail: '検査日を決められません' });
+      continue;
+    }
+
+    const rowSex = normSex(get(idx.sex));
+    // **生年月日はここでしか触らない。** age を出したら捨てる (結果に残さない)。
+    const age = ageOnStrict(normDate(get(idx.birth)), testDate);
+
+    const measurements = buildRowMeasurements(header, row, idx.itemCount, get(idx.itemCount), rowSex);
+
+    rows.push({
+      rowIndex, orderNo, drawnDate, approvedDate, testDate, dateSource,
+      itemCount: measurements.length,
+      subject: { sex: rowSex, age },
+      measurements,
+      errorCode: get(idx.errCode),
+      errorDetail: get(idx.errDetail),
+    });
+  }
+
+  // ── §4.3 CSV 内の指図番号の重複 → batch 全体 FAIL ───────────────
+  // **先頭も末尾も勝手に採用しない。** どちらが正しいかは CSV からは決まらない。
+  const seen = new Map<string, number[]>();
+  for (const row of rows) {
+    const at = seen.get(row.orderNo);
+    if (at) at.push(row.rowIndex); else seen.set(row.orderNo, [row.rowIndex]);
+  }
+  for (const [, at] of seen) {
+    if (at.length > 1) {
+      failures.push({ rowIndex: null, code: 'DUPLICATE_EXTERNAL_TEST_ID_IN_CSV',
+        // **指図番号そのものは detail に書かない** (外部 ID とはいえ最小開示に寄せる)。行番号で指す。
+        detail: `同一の指図番号が ${at.length} 行あります (行 ${at.join(', ')})` });
+    }
+  }
+
+  if (failures.length > 0) {
+    return { ok: false, rows: [], failures, totalRows, headerOk: true };
+  }
+  return { ok: true, rows, failures: [], totalRows, headerOk: true };
+}
+
+/**
+ * 満年齢。**基準日は必須** — `ageAt` は refIso が null のとき「今日」へ落ちるが、
+ * production parser は現在時刻を使ってはいけないので、落ちない版をここに持つ。
+ */
+function ageOnStrict(birthIso: string | null, refIso: string): number | null {
+  if (!birthIso) return null;
+  const b = birthIso.split('-').map(Number);
+  const ref = refIso.split('-').map(Number);
+  if (b.length !== 3 || ref.length !== 3) return null;
+  let age = ref[0] - b[0];
+  if (ref[1] < b[1] || (ref[1] === b[1] && ref[2] < b[2])) age--;
+  return age >= 0 && age < 150 ? age : null;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+ * C1-A: production parser (ここまで)
+ * ════════════════════════════════════════════════════════════════════ */

@@ -15,6 +15,7 @@
     "check": "astro check",
     "astro": "astro",
     "verify:blood-csv": "esbuild scripts/verify-blood-csv-structure.ts --bundle --platform=node --format=esm | node --input-type=module",
+    "verify:blood-parser": "esbuild scripts/verify-blood-parser.ts --bundle --platform=node --format=esm --log-level=error | node --input-type=module",
     "verify:report-model": "esbuild scripts/verify-report-model.ts --bundle --platform=node --format=esm --log-level=error \"--define:import.meta.env={}\" | node --input-type=module",
     "verify:sheet-contract": "esbuild scripts/verify-sheet-contract.ts --bundle --platform=node --format=esm --log-level=error --outfile=node_modules/.cache/verify-sheet-contract.mjs && node node_modules/.cache/verify-sheet-contract.mjs",
     "verify:screen": "node scripts/verify-screen.mjs",

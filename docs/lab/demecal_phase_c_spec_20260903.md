@@ -1031,12 +1031,20 @@ daily-1.7は新runner完成まで凍結
 |---|---|---|
 | **出荷指示 CSV に検査 ID / キット ID の列は無い** | **Confirmed** | `wellfort-site` `supabase/functions/generate-shipping-csv/index.ts:219` のヘッダは `JAN,出荷数,発送先氏名,郵便番号,都道府県,市区町村,地番,建物名,電話番号,order_number` の **10 列**。指図番号もバーコードも無い |
 | **`external_test_id` / `external_barcode` を人が入力する admin 画面は両 repo に無い** | **Confirmed** | `wellfort-site` で `external_test_id` / `external_barcode` / 「検査ID」/「バーコード」の grep = **0 件** |
-| **指図番号はデメカル CSV に載って初めて現れる**（15 桁前後の数値） | **Confirmed** | `docs/lab/demecal_unattended_spec.md:557,562`。CSV 列は `レイアウトID`/**`指図番号`**/姓/名/…/`商品CD`/`代理店番号`/`二次店番号`/`検査グループ`/`採血日`/`結果承認日`/`備考半角`/… |
+| **現在の両 repo および取得済み資料では、デメカル CSV より前に指図番号を取得する経路を確認できない。実際の採番・印字・通知タイミングは Wellfort Q2/Q3 待ち**（CSV 上の実値は 15 桁前後の数値） | **Confirmed**（= 確認できないこと）／**Unknown**（実際の採番タイミング） | `docs/lab/demecal_unattended_spec.md:557,562`。CSV 列は `レイアウトID`/**`指図番号`**/姓/名/…/`商品CD`/`代理店番号`/`二次店番号`/`検査グループ`/`採血日`/`結果承認日`/`備考半角`/… |
 | **設計上も「検査会社が採番」= 将来の話** | **Confirmed** | `docs/architecture/id_management_and_correlation_spec.md:135`「**想定フロー（将来）**: 出荷時に `external_barcode` をキットへ印字/貼付→ユーザー受取/返送時にスキャン→**検査会社が `external_test_id` を採番**→結果受領時に両IDを `lab_tests` に確定」 |
 | **同 spec 自身が「未確定」と明記** | **Confirmed** | 同 `:145`「**将来の外部ID運用**: `external_test_id`/`external_barcode` の**採番タイミング・スキャン工程・突合ルール**」 |
 
 **Derived（B-1 の結論）**:
-**指図番号を採番するのはデメカル側で、Wellfort が結果受領より前にそれを知る経路は現状 1 つも無い。**
+**現在の両 repo および取得済み資料の範囲では、Wellfort が結果受領より前に指図番号を知る経路を確認できない。**
+
+> **【訂正 2026-09-03・ChatGPT 指摘】** 初出時に「**指図番号を採番するのはデメカル側で、
+> 結果受領より前に知る経路は現状 1 つも無い**」と断定したが、**これは repo の範囲を超えた主張**だった。
+> repo から言えるのは「**その経路をこちらでは確認できない**」までで、
+> **実際の採番・印字・通知のタイミングは外部業務**（デメカル／Wellfort の運用）にあり、
+> **Q2/Q3 の回答を待って確定する**。`id_management_and_correlation_spec.md:135` の
+> 「検査会社が採番」も**当社の想定（将来フロー）**であって先方の確認が取れた記述ではない。
+> **外部業務を repo から確定した扱いにしない**（R1/R3）。
 
 ### B-2. その時点で `diagnostic_user_id` を持っている処理はあるか
 
@@ -1229,3 +1237,114 @@ daily-1.7は新runner完成まで凍結
 | **Q6 待ち** | §2.1 の [B]（assemble / 最終納品） |
 
 **ただし v0.2 の時点では上記いずれも未着手。ChatGPT の C0.5 レビューと GO を待つ。**
+
+---
+
+# 19. 【実装記録】C1-A production parser foundation（2026-09-03）
+
+**基準:** `claude/awesome-carson-UeyUZ` / `98e14f6` からの差分。
+**DB / migration / API / S3 write / watermark / runner / scheduler は 1 つも作っていない。**
+
+## 19.1 何を作ったか
+
+`src/lib/elith-blood-csv.ts` に **`parseBloodCsvRowsStrict()`** を追加した（§4.1）。
+S3 / `client_id` / `diagnostic_id` / `exported_at` から独立した**純粋 parser**。
+
+```ts
+parseBloodCsvRowsStrict({ text?: string; bytes?: Uint8Array }): BloodProductionParseResult
+```
+
+```ts
+interface BloodProductionRow {
+  rowIndex: number;                 // 1-based のデータ行番号 (PII ではない)
+  orderNo: string;                  // 指図番号。**必ず string**
+  drawnDate: string | null;
+  approvedDate: string;             // 必須
+  testDate: string;                 // drawnDate ?? approvedDate
+  dateSource: 'drawn_date' | 'approved_date';   // **'today' は型に無い**
+  itemCount: number;
+  subject: { sex: string | null; age: number | null };
+  measurements: ElithMeasurement[];
+  errorCode: string | null;         // CSV の「エラーコード」列 (デメカル側の検査エラー)
+  errorDetail: string | null;       // 同「エラー内容」列
+}
+```
+
+**raw PII を返さない。** 生年月日は **age の算出中だけメモリで使い、結果に残さない**。
+
+### エラーコード
+
+| コード | 意味 |
+|---|---|
+| `CSV_HEADER_INVALID` | §6 の最低ヘッダ（`指図番号` / `結果承認日` / `結果項目数`）が欠けている |
+| `CSV_NO_DATA_ROWS` | ヘッダは妥当だがデータ行が 0 |
+| `BLOOD_ROW_ORDER_NO_MISSING` | 指図番号が空 |
+| `BLOOD_ROW_APPROVED_DATE_INVALID` | 結果承認日が無い / 日付として読めない |
+| `BLOOD_ROW_TEST_DATE_INVALID` | 検査日を決められない（型と意図の明示。現状は到達しない） |
+| `DUPLICATE_EXTERNAL_TEST_ID_IN_CSV` | 同一指図番号が 2 行以上 → **batch 全体 FAIL** |
+
+**1 件でも失敗があれば `ok:false` かつ `rows:[]`。** 部分的な行を返すと呼び出し側が
+「使えるものだけ書く」を選べてしまうため、**§5.8 preflight all → write later を型で守る**。
+失敗は 1 件ずつでなく**全部まとめて**返す。
+
+## 19.2 決定論パースを複製していない
+
+旧 `buildBloodCsvBundles()` の measurements 構築ループを **`buildRowMeasurements()` として切り出し、
+新旧の両方がこれを呼ぶ**。同じロジックを 2 か所に置くと必ず片方だけ直って割れる。
+
+**旧経路の挙動は変えていない** — 既存の `npm run verify:blood-csv` が ALL PASS のままであることで固定。
+（`elith-blood-csv.ts` 以外は触っていない。`api/admin/elith-blood-csv.ts` は attended 運用が使用中なので無変更。）
+
+## 19.3 検査 — `npm run verify:blood-parser`（**48 件 PASS**）
+
+**2 種類を混ぜている**:
+
+- **振る舞い**（P01〜P32）… fixture を通して出力を見る
+- **ソース検査**（P33〜P40）… production parser の **region のソース文字列**を直接読む
+
+ソース検査が要るのは、「今日の日付を作らない」「UUID を作らない」は
+**出力を見るだけでは「たまたま出なかった」と区別できない**から。
+region は `C1-A: production parser (ここから)` 〜 `(ここまで)` のマーカーで切る
+（**旧経路にはこれらが在る**ので、範囲を切らないと検査が成立しない）。
+
+**踏んだ罠 2 件**（どちらも「検査が空振りする」型）:
+
+1. **region の冒頭コメント自体が禁止語を列挙している**ので、素朴に検査すると自分の説明文に
+   引っかかった。マーカーがブロックコメントの**中**にあるため slice は
+   「閉じていないコメント片」で始まる → 先頭の `*/` までと末尾の `/*` 以降を落としてから見る。
+2. **PII 検査が正規化後の形を見ていなかった。** DOB を結果へ残す退行を注入したとき、
+   fixture にある raw の `19800115` では **1 件も引っかからず**、
+   正規化後の `1980-01-15` でしか検出できなかった。→ `RAW_PII`（fixture に在る）と
+   `DERIVED_PII`（正規化後）を分けて両方を見る。
+
+### 退行注入（**4 件とも落ちることを確認**）
+
+| 注入 | 落ちるテスト |
+|---|---|
+| `orderNo` を `Number` 化 | P04（17 桁が `…230` に化ける）/ P05（先頭 0 が消える） |
+| today fallback を復活 | P21 / P22 / P28 / **P34（region に `new Date(`）** |
+| 重複チェックを削除 | P23 / P24 / P25 / P28 |
+| DOB を parse 結果へ残す | **P29** / P31 |
+
+**fixture の指図番号は「Number 化すると必ず壊れる」値にしてある** — 17 桁（`2^53` 超で精度が落ちる）と
+先頭 0 付き。15 桁だと `Number` 往復しても値が一致してしまい、**テストが空振りする**（P06 がその前提を固定）。
+
+## 19.4 変更ファイル
+
+| ファイル | 内容 |
+|---|---|
+| `src/lib/elith-blood-csv.ts` | `parseBloodCsvRowsStrict` 追加 / `buildRowMeasurements` 切り出し |
+| `scripts/verify-blood-parser.ts` | 新規（48 件） |
+| `scripts/blood-csv-fixtures/prod_*.csv` | 新規 7 本（**架空 PII 入り**・Shift_JIS 版 1 本） |
+| `package.json` | `verify:blood-parser` を追加 |
+| `docs/lab/demecal_phase_c_spec_20260903.md` | §16-B の断定を訂正 / 本節を追記 |
+
+**無変更（禁止リスト・機械確認済み）**: `scripts/demecal-verify.ps1` / `scripts/demecal-daily.ps1` /
+`src/pages/api/admin/elith-blood-csv.ts` / `src/pages/api/admin/demecal-state.ts` /
+`src/lib/elith-assemble.ts` / `supabase/migrations/**` / `src/lib/s3.ts` /
+`src/lib/api-auth.ts` / `scripts/verify-intake-scope.ts` / `.github/workflows/**`。
+
+## 19.5 次に進まないもの
+
+mapping table の migration / mapping API / `demecal-import` API / S3 / watermark /
+production runner。**すべて未着手**（Q2〜Q6 の回答と ChatGPT レビュー待ち）。
