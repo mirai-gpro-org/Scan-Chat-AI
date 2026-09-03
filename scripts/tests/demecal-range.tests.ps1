@@ -44,8 +44,10 @@ if (-not (Test-Path $ScriptPath)) { Write-Error "対象が見つかりません:
 $src = Get-Content -Path $ScriptPath -Raw -Encoding UTF8
 
 # コメントを外した「実際に動く行」だけを見る (説明文に書いた語で誤検出しないため)。
-$code = ($src -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
-$code = [regex]::Replace($code, '(?s)<#.*?#>', '')
+# **ブロックコメントを先に落とす** (行コメントを先に消すと `#>` の行まで
+# 消えて `<#...#>` の対応が壊れ、help の中身が残る)。
+$code = [regex]::Replace($src, '(?s)<#.*?#>', '')
+$code = ($code -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
 
 function Get-Plan([string]$lastTo, [string]$today) {
   return (Resolve-DemecalAcquisitionRange -LastTo $lastTo -TodayJst $today)

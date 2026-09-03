@@ -765,6 +765,12 @@ S3 PUT = 0
 last_to = range_to
 ```
 
+> **【2026-09-03 訂正】`ok_zero` は API の `result` ではない。** 実行ログ
+> `/api/admin/demecal-run` の `result` は **`ok` / `fail` の 2 値だけ**
+> (`demecal-run.ts:97`)。0 件は **`result=ok` / `rows=0` / range あり** で表す
+> (`demecal_recovery_plan_20260902.md` §7.2 C-3 が正)。
+> `S3 PUT` / `last_to` の扱いも同 §7.2 C-4 が正 (**rows>0 では前進させない**)。
+
 0件をerrorにしない。
 
 ---

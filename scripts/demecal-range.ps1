@@ -106,7 +106,8 @@ function New-DemecalRangeResult {
 
   返り値の Status:
     ready           … From / To が入る。**ここだけ**が「取りに行ってよい」
-    noop            … 追いついている (last_to == to)。C-4 の実行結果は `ok_noop`。
+    noop            … 追いついている (last_to == to)。C-4 の実行ログは
+                      `result=ok` / `rows=0` / range なし (`ok_noop` は API の result ではない)。
                       **この状態でデメカルへ login / download しない**
     not_initialized … last_to が無い。Code=STATE_NOT_INITIALIZED。
                       **直近 7 日などを自動設定しない** (勝手に範囲を作らない)

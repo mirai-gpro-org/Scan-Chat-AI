@@ -634,7 +634,7 @@ coverage high-watermark として確定する。
 | Status | Code | From/To | 次の動作 |
 |---|---|---|---|
 | `ready` | — | **入る** | この範囲で取得してよい |
-| `noop` | `OK_NOOP` | **空** | 追いついている。**login / download を実行しない**。実行結果は `ok_noop` |
+| `noop` | `OK_NOOP` | **空** | 追いついている。**login / download を実行しない**。実行ログは `result=ok` / `rows=0` / range なし |
 | `not_initialized` | `STATE_NOT_INITIALIZED` | **空** | **停止**。直近 N 日などを自動設定しない |
 | `invalid_state` | `TODAY_JST_INVALID` / `STATE_LAST_TO_INVALID` / **`STATE_LAST_TO_AHEAD_OF_WINDOW`** / `DATE_OUT_OF_RANGE` | **空** | fail-closed で停止 |
 
@@ -830,9 +830,17 @@ watermark だけ安全に前進させる。**0 件を error にしない。**
 **0 件とは「CSV レスポンス自体が有効で、必須ヘッダが存在し、データ行が 0 件」のときだけ。**
 
 ```text
-result = ok_zero
-rows   = 0
+result = ok   /  rows = 0  /  range あり
 ```
+
+**`ok_zero` は API の `result` ではない。** 実行ログ `/api/admin/demecal-run` の `result` は
+**`ok` か `fail` の 2 値だけ** (`demecal-run.ts:97`)。0 件かどうかは `rows` と `range` で表す:
+
+| 状態 | `result` | `rows` | `range` |
+|---|---|---|---|
+| zero (0 件を正常に取得) | `ok` | `0` | **あり** |
+| noop (取りに行っていない) | `ok` | `0` | **なし** |
+| failure | `fail` | — | — |
 
 **0 件成功にしてはいけないもの（すべて failure）**:
 
@@ -917,6 +925,90 @@ T28 header 無し失敗 / T30 HTML 失敗）。**足りなかったのは「rows
 Phase B で実証済みの **cert / login / STATE A/B/C / `RawContentStream` / CSV validation** は
 **同一ロジックを使う**（共通化するか、機械的な parity test を置く）。
 **取得部を独自に書き直さない。**
+
+#### C-4 Foundation（2026-09-03・実装済み）
+
+| | |
+|---|---|
+| 実装 | `scripts/demecal-production.ps1`（`production-1.0`） |
+| 検査 | `scripts/tests/demecal-production.tests.ps1`（`npm run verify:demecal-production`・**43 件**） |
+
+**流れ**:
+
+```text
+JST today → GET demecal-state → Resolve-DemecalAcquisitionRange
+  → noop / not_initialized / invalid_state はここで終わり (ポータルに触らない)
+  → ready のときだけ 証明書 → 資格情報 → ログイン → STATE A/B/C → CSV 検査 → watermark
+```
+
+**Phase B parity は「書き写さない」ことで担保した。**
+`demecal-verify.ps1 -LibOnly` と `demecal-range.ps1` を **dot-source** して
+**同じ関数をそのまま呼ぶ**（コピーは必ずずれる）。**`demecal-verify.ps1` は 1 バイトも変更していない。**
+検査 P20 が **14 関数の `ScriptBlock` が verify-1.4 と同一**であることを、P21 が
+**production 側で再定義していない**ことを機械で見る。
+
+**watermark（§7.2 C-3 の契約を実装）**:
+
+| CSV | 判断 | 理由 |
+|---|---|---|
+| valid + `rows=0` | **前進する** (`ZERO_ROWS`) | 「その range について正常に 0 件だった」と確認できた |
+| valid + `rows>0` | **前進しない** (`HANDOFF_NOT_IMPLEMENTED`) | 取得は成功。だが**「取得した bytes を次工程が確実に受領した」外部契約がまだ無い**。**ここで後段 interface を発明しない** |
+| invalid / rows 不明 | **前進しない** | fail-closed |
+
+**fail-closed（すべて state 据置）**: state GET 失敗 / planner が ready でない /
+証明書 / 資格情報 / ログイン / STATE A/B/C 不一致 / CSV 応答不正 / ヘッダ不正 / バイト検査失敗。
+**`force=true` は送らない**（巻き戻しはこのスクリプトの仕事ではない）。
+same-run retry / range shrink / chunking も無い（C-2 の確定どおり）。
+**取得は成功したが watermark を書けなかった回は `fail` で残す** — 次回 run が同じ範囲を
+取り直すので取り漏れは起きない（C-2 の retry 契約）。
+
+**検査は 3 層**（純粋関数 / parity / **手続き部を子プロセスで実際に走らせる**）。
+③が要るのは、「ポータルに触らない」を**ソース検査では保証できない**から:
+
+| 検査 | 内容 |
+|---|---|
+| P01–P06 | `Get-RunAction`（ready だけ Proceed。noop は `result=ok`/`rows=0`/range なし。他は `fail`） |
+| P10–P15 | `Get-WatermarkDecision`（上の表のとおり。`Ok` なのに rows が null でも前進しない） |
+| P20–P24 | parity（14 関数が同一 / 再定義していない / dot-source している / `daily-1.7` を参照しない） |
+| P30–P35 | ready のとき Phase B と同じ要求を組む（販売先 `000000` / 日付 `yyyy/MM/dd` / `submitType=''` / `submitType=download`） |
+| P40–P51 | **子プロセスで手続き部を実行**。noop / not_initialized / invalid_state で **`Invoke-WebRequest` 0 回**・state 書き込み 0 回・終了コード / **ready では 1 回以上**（0 回が常に 0 でないことの確認）/ どの経路でも実行ログを 1 回送る |
+| P60–P61 | ソースに `force` / retry / sleep / chunk / `FirstRunDays` / CSV のディスク保存 / 後段 interface が無い |
+
+**退行を注入して落ちることを実測**:
+
+| 注入した退行 | 結果 |
+|---|---|
+| noop でも証明書へ進む（plan の分岐を外す） | 2 件（P41 / P51） |
+| `rows>0` でも watermark を前進させる | 1 件（P11） |
+| CSV が invalid でも前進させる | 1 件（P12） |
+| `not_initialized` を ok 扱いにして進める | 4 件（P03 / P04 / P05 / P51） |
+| state 書き込みに `force=true` を足す | 1 件（P60） |
+| STATE B を自前で書き写す | 2 件（**P20 / P21** = parity） |
+
+#### C-4 Foundation で踏んだ実装バグ 3 件（すべて検査が検出）
+
+**どれもソース検査では出ない。「実際に走らせる」検査を置いたから出た。**
+
+1. **dot-source は相手の `param()` を自分のスコープに作る。**
+   `. demecal-verify.ps1 -LibOnly` で **production 自身の `$LibOnly` が `$true` に化け**、
+   **手続き部が丸ごと実行されなくなっていた**。→ 自分の引数を先に
+   `$ProdLibOnly` / `$ProdTodayJst` へ退避する。**名前が同じだと必ず踏む。**
+2. **取り込み専用キーのプレースホルダが「読み込まれる側」にあった。**
+   `$IntakeKey` は verify-1.4 が持っていたので、配布時に差し替える対象がずれて
+   `INTAKE_KEY_MISSING` で止まった。→ **本番で配る production 側で持ち直した**。
+3. **`&` で呼んだスクリプトの `exit` は呼び出し元へ伝わらない。**
+   テストの子プロセスが常に 0 で終わり、終了コードの検査が素通りしていた。
+   → driver 側で `exit $LASTEXITCODE` を拾い直す。
+   併せて **`Start-Process` は空文字の引数を落とす**（`-LastTo ''` が後ろへずれる）ので、
+   子プロセスへの受け渡しは環境変数にした。
+
+#### C-4 Foundation で決めていないもの（C-5 以降）
+
+- **配布の形**。production は `demecal-verify.ps1` と `demecal-range.ps1` を dot-source するので、
+  専用PC には **.ps1 が 3 本要る**。既存の bat 生成（`api/ops/probe-bat`）は 1 本を埋め込む形なので、
+  **3 本をどう配るかは C-5 で決める**（ここで発明しない）。
+- 1 回の指定範囲の上限（C-1 Reality Check のとおり**未確定**）。
+- `rows>0` の受け渡し先（**このセクションの scope 外**）。
 
 ### C-5. scheduler
 

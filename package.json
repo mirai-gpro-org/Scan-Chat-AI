@@ -24,6 +24,7 @@
     "verify:intake-scope": "esbuild scripts/verify-intake-scope.ts --bundle --platform=node --format=esm --log-level=error | node --input-type=module",
     "verify:demecal-flow": "node scripts/verify-demecal-flow.mjs",
     "verify:demecal-range": "node scripts/verify-demecal-range.mjs",
+    "verify:demecal-production": "node scripts/verify-demecal-production.mjs",
     "verify:probe-bat-gate": "node scripts/verify-probe-bat-gate.mjs",
     "verify:ps1-order": "esbuild scripts/verify-ps1-order.ts --bundle --platform=node --format=esm --log-level=error | node --input-type=module",
     "verify:print": "node scripts/verify-print-pdf.mjs"
