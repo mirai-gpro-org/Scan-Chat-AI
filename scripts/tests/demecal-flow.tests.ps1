@@ -86,7 +86,7 @@ Check 'T05 ログアウト form を掴まない' ($fa.Action -eq '/hanyou/start'
 $fch = Form-Raw $htmlCH
 Check 'T05a HanbaitenCode hidden + ダウンロード + 日付なし を C と判定 (A に誤判定しない)' `
   ((Get-StateOf $fch) -eq 'C') ("判定={0}" -f (Get-StateOf $fch))
-$rch = New-StateCRequest $fch
+$rch = New-StateCRequest $fch $htmlCH
 Check 'T05b その C からダウンロードへ進める' ($rch.Ok -and $rch.Body['submitType'] -eq 'download') ("code={0}" -f $rch.Code)
 
 # 【レビュー指摘 2026-09-02】decoy (検索 form 11 項目) が対象 (9 項目) より多い。
@@ -204,10 +204,16 @@ $rb = New-StateBRequest $fb $htmlB $from $to
 Check 'T13 B で日付を yyyy/MM/dd で設定' `
   ($rb.Ok -and $rb.Body['DateFrom'] -eq '2026/07/01' -and $rb.Body['DateTo'] -eq '2026/07/31') `
   ("from={0} to={1}" -f $rb.Body['DateFrom'], $rb.Body['DateTo'])
-Check 'T14 B で「正常終了のみ」を明示選択 (既定の 0 のままにしない)' `
-  ($rb.Ok -and $rb.Body['DataType'] -eq '1') ("DataType={0}" -f $rb.Body['DataType'])
-Check 'T15 B で「出力する」を明示選択 (既定は出力しない=False)' `
-  ($rb.Ok -and $rb.Body['OutputHeader'] -eq 'True') ("OutputHeader={0}" -f $rb.Body['OutputHeader'])
+# **0/1 の意味を仮定しない (レビュー指摘 2026-09-03)。**
+# 見るのは「ラベル『正常終了のみ』に対応する value を送っているか」だけ。
+# fixture の value は架空 (DT-A/DT-B・OH-A/OH-B) で、checked = DT-A / OH-A。
+Check 'T14 B でラベル「正常終了のみ」の value を送る (checked のままにしない)' `
+  ($rb.Ok -and $rb.Body['DataType'] -eq 'DT-B') ("DataType={0}" -f $rb.Body['DataType'])
+Check 'T15 B でラベル「出力する」の value を送る (checked のままにしない)' `
+  ($rb.Ok -and $rb.Body['OutputHeader'] -eq 'OH-B') ("OutputHeader={0}" -f $rb.Body['OutputHeader'])
+Check 'T15a fixture が 0/1・False/True の意味を持たない (未実測の仮定を置かない)' `
+  ($htmlB -notmatch '(?i)value="(?:0|1|True|False)"[^>]*name="(?:DataType|OutputHeader)"' `
+   -and $htmlB -match 'value="DT-B"[^>]*name="DataType"') ''
 
 # **実測契約**: 「確認」は submitType を書き換えない = 空文字で送る。
 Check 'T16 submitType は空文字で送る' `
@@ -289,22 +295,109 @@ Check 'T19g fixture の日付欄はシングルクォート type (実測との�
 Check 'T19h それでも parser は text として扱う' `
   ($fb.Types['DateFrom'] -eq 'text') ("type={0}" -f $fb.Types['DateFrom'])
 
-Write-Host '── STATE C ─────────────────────────────────────────'
+Write-Host '── STATE C (実測契約・2026-09-03 Phase B) ────────'
 
-$rc = New-StateCRequest $fc
-Check 'T20 C は「ダウンロード」だけを押す' `
+$rc = New-StateCRequest $fc $htmlC
+
+Check 'T20 C は submitType=download で送る' `
   ($rc.Ok -and $rc.Body['submitType'] -eq 'download') ("submitType={0}" -f $rc.Body['submitType'])
+Check 'T20a download 以外の値を作らない (back も confirm も出さない)' `
+  ($rc.Ok -and (@($rc.Body.Values | Where-Object { "$_" -match '(?i)^(back|confirm)$' }).Count -eq 0)) ''
+Check 'T20b 押しボタンの名前を body に混ぜない (programmatic submit)' `
+  ($rc.Ok -and -not $rc.Body.ContainsKey('btnDownload') -and -not $rc.Body.ContainsKey('btnBack')) ''
+Check 'T20c 押し方は form-submit (汎用 Resolve-Press を使わない)' `
+  ($rc.Ok -and $rc.Press.Kind -eq 'form-submit') ("kind={0}" -f $rc.Press.Kind)
+Check 'T20d DataCount はサーバが返した値のまま持ち回る (意味を推測しない)' `
+  ($rc.Ok -and $rc.Body['DataCount'] -eq '6') ("DataCount={0}" -f $rc.Body['DataCount'])
+$ckeys = (@($rc.Body.Keys) | Sort-Object) -join ','
+Check 'T20e POST する field は実測の 12 個' `
+  ($ckeys -eq '__RequestVerificationToken,DairitenCode,DairitenName,DataCount,DataType,DateFrom,DateTo,HanbaitenCode,HanbaitenName,ID,OutputHeader,submitType') $ckeys
+Check 'T20f form は action=/hanyou/confirm / method=post / name=myform' `
+  ($fc.Action -eq '/hanyou/confirm' -and $fc.Method -match '(?i)post' -and $fc.Name -eq 'myform') `
+  ("action={0} method={1} name={2}" -f $fc.Action, $fc.Method, $fc.Name)
+$nonHidden = @(@($fc.Fields.Keys) | Where-Object { $fc.Types[$_] -ne 'hidden' })
+Check 'T20g field は 12 個すべて hidden (確認画面に入力欄は無い)' `
+  (@($fc.Fields.Keys).Count -eq 12 -and $nonHidden.Count -eq 0) `
+  ("count={0} / hidden以外={1}" -f @($fc.Fields.Keys).Count, ($nonHidden -join ','))
+Check 'T20h submitType の初期値は空 (value 属性が無い)' `
+  ($fc.Fields['submitType'] -eq '') ("submitType=[{0}]" -f $fc.Fields['submitType'])
+$dlB = @($fc.Buttons | Where-Object { $_.Id -eq 'btnDownload' })
+$bkB = @($fc.Buttons | Where-Object { $_.Id -eq 'btnBack' })
+Check 'T20i btnDownload / btnBack を id でちょうど 1 件ずつ取れる' `
+  ($dlB.Count -eq 1 -and $bkB.Count -eq 1) ("dl={0} back={1}" -f $dlB.Count, $bkB.Count)
+Check 'T20j どちらも type=button / name なし / onclick なし (実測どおり)' `
+  ($dlB[0].Type -eq 'button' -and -not $dlB[0].Name -and $dlB[0].Onclick -eq '' `
+   -and $bkB[0].Type -eq 'button' -and -not $bkB[0].Name -and $bkB[0].Onclick -eq '') ''
+Check 'T20k fixture に confirm という値が無い (実測どおり・action の path 名は別)' `
+  ($htmlC -notmatch "(?i)['\x22]confirm['\x22]") ''
 
-$htmlC2 = $htmlC -replace 'onclick="submitType\.value=''download''; submit\(\);"', ''
-$rc2 = New-StateCRequest (Form-Raw $htmlC2)
-Check 'T21 ダウンロードの押し方が読めなければ STATE_C_DOWNLOAD_ACTION_UNKNOWN' `
+# ── 契約不一致はすべて fail-closed ───────────────────────────
+function Deny-C([string]$html) { return (New-StateCRequest (Form-Raw $html) $html) }
+
+$htmlC1 = $htmlC.Replace('action="/hanyou/confirm"', 'action="/hanyou/entry"')
+$rc1 = Deny-C $htmlC1
+Check 'T21 action が /hanyou/confirm でなければ FAIL' `
+  ((-not $rc1.Ok) -and $rc1.Code -eq 'STATE_C_DOWNLOAD_ACTION_UNKNOWN') ("code={0}" -f $rc1.Code)
+
+$htmlC2 = $htmlC.Replace('name="myform"', 'name="otherform"')
+$rc2 = Deny-C $htmlC2
+Check 'T21a form の name が myform でなければ FAIL' `
   ((-not $rc2.Ok) -and $rc2.Code -eq 'STATE_C_DOWNLOAD_ACTION_UNKNOWN') ("code={0}" -f $rc2.Code)
 
+$htmlC3 = $htmlC.Replace('type="hidden" id="DateFrom"', 'type="text" id="DateFrom"')
+$rc3 = Deny-C $htmlC3
+Check 'T21b hidden 以外の field があれば FAIL (確認画面ではない)' `
+  ((-not $rc3.Ok) -and $rc3.Code -eq 'STATE_C_DOWNLOAD_ACTION_UNKNOWN' -and $htmlC3 -ne $htmlC) `
+  ("code={0} / 改変={1}" -f $rc3.Code, ($htmlC3 -ne $htmlC))
+
+$htmlC4 = $htmlC.Replace('<input id="submitType" name="submitType" class="form-control" type="hidden" />', '<input id="submitType" name="submitType" class="form-control" type="hidden" value="x" />')
+$rc4 = Deny-C $htmlC4
+Check 'T21c submitType の初期値が空でなければ FAIL' `
+  ((-not $rc4.Ok) -and $rc4.Code -eq 'STATE_C_DOWNLOAD_ACTION_UNKNOWN' -and $htmlC4 -ne $htmlC) `
+  ("code={0} / 改変={1}" -f $rc4.Code, ($htmlC4 -ne $htmlC))
+
+$htmlC5 = $htmlC.Replace('<input id="submitType" name="submitType" class="form-control" type="hidden" />', '')
+$rc5 = Deny-C $htmlC5
+Check 'T21d submitType の hidden が無ければ FAIL' `
+  ((-not $rc5.Ok) -and $rc5.Code -eq 'STATE_C_DOWNLOAD_ACTION_UNKNOWN') ("code={0}" -f $rc5.Code)
+
+$htmlC6 = $htmlC.Replace('<button id="btnDownload" type="button"', '<button id="btnDownload" type="button" onclick="doSomething()"')
+$rc6 = Deny-C $htmlC6
+Check 'T21e ボタンが onclick 属性を持てば FAIL (実測契約と違う)' `
+  ((-not $rc6.Ok) -and $rc6.Code -eq 'STATE_C_DOWNLOAD_ACTION_UNKNOWN' -and $htmlC6 -ne $htmlC) `
+  ("code={0} / 改変={1}" -f $rc6.Code, ($htmlC6 -ne $htmlC))
+
 # 「戻る」だけの画面で、戻るを押してしまわないこと
-$htmlC3 = $htmlC -replace '(?s)<button id="btnDownload".*?</button>', ''
-$rc3 = New-StateCRequest (Form-Raw $htmlC3)
+$htmlC7 = [regex]::new('(?s)<button id="btnDownload".*?</button>').Replace($htmlC, '', 1)
+$rc7 = Deny-C $htmlC7
 Check 'T22 ダウンロードが無い画面で「戻る」を押さない' `
-  ((-not $rc3.Ok) -and $rc3.Code -eq 'STATE_C_DOWNLOAD_ACTION_UNKNOWN') ("code={0}" -f $rc3.Code)
+  ((-not $rc7.Ok) -and $rc7.Code -eq 'STATE_C_DOWNLOAD_ACTION_UNKNOWN' -and $htmlC7 -ne $htmlC) `
+  ("code={0} / 改変={1}" -f $rc7.Code, ($htmlC7 -ne $htmlC))
+
+# ハンドラの欠落 / 取り違え。`$(` を避けるため val('...') 側だけを触る。
+$htmlC8 = [regex]::new('(?s)\$\("#btnDownload"\)\.click\(function \(\) \{.*?\}\);').Replace($htmlC, '', 1)
+$rc8 = Deny-C $htmlC8
+Check 'T22a btnDownload の click ハンドラが無ければ FAIL' `
+  ((-not $rc8.Ok) -and $rc8.Code -eq 'STATE_C_DOWNLOAD_ACTION_UNKNOWN' -and $htmlC8 -ne $htmlC) `
+  ("code={0} / 改変={1}" -f $rc8.Code, ($htmlC8 -ne $htmlC))
+
+$htmlC9 = $htmlC -replace "val\('download'\)", "val('back')"
+$rc9 = Deny-C $htmlC9
+Check 'T22b btnDownload が back を設定する fixture なら FAIL' `
+  ((-not $rc9.Ok) -and $rc9.Code -eq 'STATE_C_DOWNLOAD_ACTION_UNKNOWN' -and $htmlC9 -ne $htmlC) `
+  ("code={0} / 改変={1}" -f $rc9.Code, ($htmlC9 -ne $htmlC))
+
+$htmlCa = $htmlC -replace "val\('back'\)", "val('download')"
+$rca = Deny-C $htmlCa
+Check 'T22c btnBack が download を設定する fixture なら FAIL' `
+  ((-not $rca.Ok) -and $rca.Code -eq 'STATE_C_DOWNLOAD_ACTION_UNKNOWN' -and $htmlCa -ne $htmlC) `
+  ("code={0} / 改変={1}" -f $rca.Code, ($htmlCa -ne $htmlC))
+
+$htmlCb = [regex]::new('document\.myform\.submit\(\);').Replace($htmlC, 'void 0;', 1)
+$rcb = Deny-C $htmlCb
+Check 'T22d btnDownload ハンドラが form を送らなければ FAIL' `
+  ((-not $rcb.Ok) -and $rcb.Code -eq 'STATE_C_DOWNLOAD_ACTION_UNKNOWN' -and $htmlCb -ne $htmlC) `
+  ("code={0} / 改変={1}" -f $rcb.Code, ($htmlCb -ne $htmlC))
 
 Write-Host ''
 Write-Host '── CSV の判定 ──────────────────────────────────────'
@@ -393,6 +486,23 @@ foreach ($i in 0..($procLines.Count - 1)) {
 }
 Check 'T40 骨格の送信は失敗経路だけ (直後が必ず Finish 1)' `
   ($sendLines.Count -ge 1 -and $badSend -eq 0) ("Send-Skeleton={0} / 失敗経路でない={1}" -f $sendLines.Count, $badSend)
+
+
+Write-Host ''
+Write-Host '── 骨格の回収に載せないもの ────────────────────────'
+
+# **antiforgery トークンの値は S3 へ上げない** (レビュー指摘 2026-09-03)。
+# 患者 PII ではないが診断に要らない。骨格で見たいのは「その hidden が在るか」。
+$skC = (Get-Skeleton $htmlC) -join "`n"
+Check 'T41 骨格に antiforgery トークンの実値が出ない' `
+  ($skC -notmatch 'DUMMY-ANTIFORGERY-TOKEN') ''
+Check 'T41a 代わりに [REDACTED] が入り、hidden が在ること自体は残る' `
+  ($skC -match '__RequestVerificationToken' -and $skC -match '\[REDACTED\]') ''
+Check 'T41b 業務値の hidden は伏せない (骨格が読めなくならない)' `
+  ($skC -match 'value="000000"' -and $skC -match 'value="Q05-0010"') ''
+# fixture 側が実際にトークンを持っていること (テストが空振りしない)
+Check 'T41c fixture は伏せる前のトークンを持っている' `
+  ($htmlC -match 'DUMMY-ANTIFORGERY-TOKEN') ''
 
 Write-Host ''
 Write-Host ('=' * 52)

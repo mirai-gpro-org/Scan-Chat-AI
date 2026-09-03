@@ -49,7 +49,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 # Shift_JIS は .NET Core で既定登録されていない。5.1 では型が無いので catch される。
 try { [Text.Encoding]::RegisterProvider([Text.CodePagesEncodingProvider]::Instance) } catch {}
 
-$Version    = 'verify-1.2'
+$Version    = 'verify-1.3'
 $BaseUrl    = 'https://dl.demecal.net'
 $LoginUrl   = "$BaseUrl/account/login"
 $StartUrl   = "$BaseUrl/hanyou/start"
@@ -81,6 +81,16 @@ $RequiredCsvHeaders = @('指図番号', '結果承認日', '結果項目数')
 $ExpectedFormName    = 'myform'
 $ExpectedSubmitBtnId = 'btnSubmit'
 $ExpectedBackBtnId   = 'btnBack'
+
+# ── STATE C の DOM 契約 (実測 2026-09-03・Phase B verify-1.2 の骨格) ─
+# 確認画面。**入力欄は 1 つも無く全部 hidden**で、B で送った値と
+# サーバ生成の `DataCount` を持ち回る。ボタンは B と同じく `onclick` 属性を
+# 持たず、inline の jQuery ハンドラが `submitType` に値を入れてから
+# `document.myform.submit()` する。**入れる値は `download` と `back` の 2 つだけ**。
+$ExpectedStateCAction  = '/hanyou/confirm'
+$ExpectedDownloadBtnId = 'btnDownload'
+$SubmitTypeDownload    = 'download'
+$SubmitTypeBack        = 'back'
 
 # verify-only なので `last_to` は読まない。固定幅で引く。
 # `to` は**前日** — 動画の UI に「出力日より前を指定」の表示がある (計画 §8)。
@@ -577,11 +587,98 @@ function New-StateBRequest($form, [string]$pageHtml, [datetime]$from, [datetime]
 }
 
 # ── STATE C: 「ダウンロード」だけ ─────────────────────────────
-function New-StateCRequest($form) {
+#
+# 【実測 2026-09-03・Phase B verify-1.2】ここも**汎用の押し方判定を使わない**。
+#   実サイトの `btnDownload` は `type="button"` で `name` も `onclick` も持たず、
+#   ハンドラは inline の jQuery `.click()`。`Resolve-Press` は
+#   「そのボタン自身の onclick」しか読まないので原理的に決まらない
+#   (STATE B と同じ根)。→ **実測した DOM とハンドラを契約として機械確認**し、
+#   一致したときだけ `submitType='download'` を載せて送る。
+function Test-StateCContract($form, [string]$pageHtml) {
+  function NgC([string]$d) {
+    return [pscustomobject]@{ Ok = $false; Code = 'STATE_C_DOWNLOAD_ACTION_UNKNOWN'; Detail = $d }
+  }
+
+  # ① form の name / action / method
+  if ($form.Name -ne $ExpectedFormName) {
+    return (NgC ("form の name が『{0}』ではありません (実際=『{1}』)" -f $ExpectedFormName, $form.Name))
+  }
+  if ($form.Action -ne $ExpectedStateCAction) {
+    return (NgC ("form の action が『{0}』ではありません (実際=『{1}』)" -f $ExpectedStateCAction, $form.Action))
+  }
+  if ($form.Method -notmatch '(?i)post') {
+    return (NgC ("form の method が post ではありません (実際=『{0}』)" -f $form.Method))
+  }
+
+  # ② 確認画面は**入力欄を持たない**。1 つでも hidden 以外なら別の画面。
+  foreach ($k in @($form.Fields.Keys)) {
+    $t = ''
+    if ($form.Types.ContainsKey($k)) { $t = $form.Types[$k] }
+    if ($t -ne 'hidden') { return (NgC ("field『{0}』が hidden ではありません (type={1})" -f $k, $t)) }
+  }
+  if (@($form.Radios).Count -gt 0) { return (NgC '確認画面に radio/checkbox があります') }
+
+  # ③ submitType は hidden で、**初期値が空**
+  if (-not $form.Types.ContainsKey('submitType') -or $form.Types['submitType'] -ne 'hidden') {
+    return (NgC 'submitType の hidden がありません')
+  }
+  if ($form.Fields['submitType'] -ne '') {
+    return (NgC ("submitType の初期値が空ではありません (実際=『{0}』)" -f $form.Fields['submitType']))
+  }
+
+  # ④ ボタンは id でちょうど 1 件ずつ。**見た目 (class) では区別できないので id で見る。**
+  $dlBtn = @($form.Buttons | Where-Object { $_.Id -eq $ExpectedDownloadBtnId })
+  if ($dlBtn.Count -ne 1) { return (NgC ("button id={0} が {1} 件" -f $ExpectedDownloadBtnId, $dlBtn.Count)) }
+  $bkBtn = @($form.Buttons | Where-Object { $_.Id -eq $ExpectedBackBtnId })
+  if ($bkBtn.Count -ne 1) { return (NgC ("button id={0} が {1} 件" -f $ExpectedBackBtnId, $bkBtn.Count)) }
+  foreach ($b in @($dlBtn[0], $bkBtn[0])) {
+    if ($b.Type -ne 'button') { return (NgC ("button id={0} の type が button ではありません" -f $b.Id)) }
+    if ($b.Name)    { return (NgC ("button id={0} が name を持っています" -f $b.Id)) }
+    if ($b.Onclick) { return (NgC ("button id={0} が onclick 属性を持っています (実測契約と違う)" -f $b.Id)) }
+  }
+
+  # ⑤ inline script のハンドラ契約。**download を入れるのは btnDownload だけ / back は btnBack だけ。**
+  $scripts = Get-InlineScripts $pageHtml
+  $needSubmit = ('document.' + $ExpectedFormName + '.submit(')
+  $pairs = @(
+    [pscustomobject]@{ Id = $ExpectedDownloadBtnId; Want = $SubmitTypeDownload; Deny = $SubmitTypeBack },
+    [pscustomobject]@{ Id = $ExpectedBackBtnId;     Want = $SubmitTypeBack;     Deny = $SubmitTypeDownload }
+  )
+  foreach ($p in $pairs) {
+    $h = Get-ClickHandlerBody $scripts $p.Id
+    if ($null -eq $h) { return (NgC ("{0} の click ハンドラが見つかりません" -f $p.Id)) }
+    if ($h.Replace(' ', '') -notlike ('*' + $needSubmit.Replace(' ', '') + '*')) {
+      return (NgC ("{0} のハンドラが {1}) を呼んでいません" -f $p.Id, $needSubmit))
+    }
+    if ($h -notmatch '(?i)submitType') {
+      return (NgC ("{0} のハンドラが submitType を触っていません" -f $p.Id))
+    }
+    if ($h -notmatch ("(?i)['\x22]" + [regex]::Escape($p.Want) + "['\x22]")) {
+      return (NgC ("{0} のハンドラが submitType='{1}' を設定していません" -f $p.Id, $p.Want))
+    }
+    if ($h -match ("(?i)['\x22]" + [regex]::Escape($p.Deny) + "['\x22]")) {
+      return (NgC ("{0} のハンドラが '{1}' も設定しています (実測契約と違う)" -f $p.Id, $p.Deny))
+    }
+  }
+
+  return [pscustomobject]@{ Ok = $true; Code = ''; Detail = '' }
+}
+
+function New-StateCRequest($form, [string]$pageHtml) {
+  $c = Test-StateCContract $form $pageHtml
+  if (-not $c.Ok) { return (New-Fail $c.Code $c.Detail) }
+
+  # **サーバが返した hidden をそのまま持ち回る。** `DataCount` の意味は推測しないし、
+  # 値も作り直さない (確認画面が出した値を返送するだけ)。
   $body = New-BaseBody $form
-  $press = Resolve-Press $form 'ダウンロード'
-  if (-not $press) { return (New-Fail 'STATE_C_DOWNLOAD_ACTION_UNKNOWN' '「ダウンロード」の押し方を特定できません') }
-  if ($press.Kind -eq 'named' -or $press.Kind -eq 'hidden') { $body[$press.Name] = $press.Value }
+  # ハンドラが入れるのはこの 1 つだけ。押しボタンは name を持たないので body に載らない。
+  $body['submitType'] = $SubmitTypeDownload
+
+  $press = [pscustomobject]@{
+    Kind = 'form-submit'; Name = ''; Value = ''
+    Label = ("{0} / submitType='{1}' → document.{2}.submit()" -f `
+             $ExpectedDownloadBtnId, $SubmitTypeDownload, $ExpectedFormName)
+  }
   return [pscustomobject]@{ Ok = $true; Code = ''; Detail = ''; Body = $body; Press = $press }
 }
 
@@ -660,7 +757,14 @@ function Get-Skeleton([string]$html) {
     $o.Add(("---- form#{0} ----" -f $fi)) | Out-Null
     $ot = [regex]::Match($f, '(?is)<form\b[^>]*>'); if ($ot.Success) { $o.Add($ot.Value) | Out-Null }
     foreach ($tm in [regex]::Matches($f, '(?is)<(?:input|select|option|button|label|textarea)\b[^>]*>')) {
-      $o.Add(($tm.Value -replace '\s+', ' ')) | Out-Null
+      $tag = ($tm.Value -replace '\s+', ' ')
+      # **antiforgery トークンの実値は載せない** (レビュー指摘 2026-09-03)。
+      # 患者 PII ではないが、診断に要らないものを S3 に置き続ける理由が無い。
+      # 骨格で見たいのは「その hidden が在るか」であって値ではない。
+      if ($tag -match '(?i)name="[^"]*(?:token|verification)[^"]*"') {
+        $tag = [regex]::Replace($tag, '(?i)(\bvalue=")[^"]*(")', '${1}[REDACTED]${2}')
+      }
+      $o.Add($tag) | Out-Null
       if ($o.Count -gt 400) { break }
     }
   }
@@ -871,7 +975,7 @@ try {
       $req = New-StateARequest $cur $sel.SellerCode $sel.SellerName
     }
     elseif ($st.Expect -eq 'B') { $req = New-StateBRequest $cur $pageHtml $from $to }
-    else { $req = New-StateCRequest $cur }
+    else { $req = New-StateCRequest $cur $pageHtml }
 
     if (-not $req.Ok) {
       Send-Skeleton $pageHtml ("{0} で契約を満たせない" -f $st.Stage)

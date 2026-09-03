@@ -1,16 +1,31 @@
-<!-- 完全架空の fixture。確認画面が **HanbaitenCode を hidden で持ち回り、
-     日付欄を持たない**形。判定順が A 優先だとこれを A と誤判定し、
-     1 段目へ戻ろうとしてしまう (レビュー指摘 2026-09-02)。
-     判定順 B → C → A なら「ダウンロードの押しどころ」で C になる。 -->
+<!-- 確認画面が **HanbaitenCode を hidden で持ち回り、日付欄を持たない**形。
+     判定順が A 優先だとこれを A と誤判定し、1 段目へ戻ろうとしてしまう
+     (レビュー指摘 2026-09-02)。判定順 B → C → A なら
+     「ダウンロードの押しどころ」で C になる。
+
+     形は state-c.html (実測 DOM) に揃えてある — ここだけ古い創作の形
+     (onclick で submitType を入れる) を残すと、実在しない形を教えることになるため。
+     違いは **日付・DataType・DataCount・OutputHeader を持たない**ことだけ。 -->
 <html><body>
-<form method="post" action="/hanyou/entry">
-  <input name="__RequestVerificationToken" type="hidden" value="TOKEN4" />
-  <input type="hidden" id="ID" name="ID" value="1" />
-  <input type="hidden" id="DairitenCode" name="DairitenCode" value="Q05-0010" />
-  <input type="hidden" id="HanbaitenCode" name="HanbaitenCode" value="000000" />
-  <input type="hidden" id="HanbaitenName" name="HanbaitenName" value="" />
-  <input type="hidden" id="submitType" name="submitType" value="" />
-  <button id="btnDownload" type="button" onclick="submitType.value='download'; submit();">ダウンロード</button>
-  <button id="btnBack3" type="button" onclick="submitType.value='back'; submit();">戻る</button>
+<form name="myform" action="/hanyou/confirm" method="post">
+<input class="form-control" type="hidden" id="ID" name="ID" value="1" />
+<input class="form-control" type="hidden" id="DairitenCode" name="DairitenCode" value="Q05-0010" />
+<input class="form-control" type="hidden" id="HanbaitenCode" name="HanbaitenCode" value="000000" />
+<input class="form-control" type="hidden" id="HanbaitenName" name="HanbaitenName" value="" />
+<button id="btnDownload" type="button" class="btn btn-default">ダウンロード</button>
+<button id="btnBack" type="button" class="btn btn-default">戻る</button>
+<input id="submitType" name="submitType" class="form-control" type="hidden" />
+<input name="__RequestVerificationToken" type="hidden" value="DUMMY-ANTIFORGERY-TOKEN-2" />
 </form>
+<script>
+        $("#btnDownload").click(function () {
+            $('#submitType').val('download');
+            document.myform.submit();
+        });
+
+        $("#btnBack").click(function () {
+            $('#submitType').val('back');
+            document.myform.submit();
+        });
+</script>
 </body></html>

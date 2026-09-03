@@ -1,17 +1,49 @@
-<!-- 完全架空の fixture。確認画面。URL は state-b と同じ /hanyou/entry になり得るので、
-     **URL では判定しない**ことを確かめるために日付も持ち回らせてある
-     (DataType が radio でない = B ではない)。 -->
+<!-- 【実測 DOM】2026-09-03 Phase B verify-1.2 の骨格 (demecal-skeleton f2c747ee) を写したもの。
+     創作 fixture (onclick で submitType を入れる形) は撤回した — 実サイトのボタンは
+     onclick 属性を持たず、ハンドラは inline の jQuery `.click()` で後から付く。
+
+     実測との差として意図的に残しているもの:
+       ・法人名の数値文字参照は 1 重 (実測どおり)
+       ・`__RequestVerificationToken` の値はダミー (実値は fixture に入れない)
+       ・ボタンの表示文字「ダウンロード」「戻る」は**骨格に載っていない**
+         (Get-Skeleton は <button> の開始タグしか出さない)。実ページにこの文字が
+         在ることは、Get-StateOf の C 判定 (ラベル一致) を通って
+         STATE_C_DOWNLOAD_ACTION_UNKNOWN に到達したことから確定している。
+
+     DataType / OutputHeader の値は**架空**にしてある (実測は 0 / True だが、
+     ラベルと value の対応を観測した資料が 1 件も無いため。state-b.html と同じ扱い)。
+     DataCount は実測値 6 のまま = サーバが返した hidden をそのまま持ち回ることの確認用。 -->
 <html><body>
-<form method="post" action="/hanyou/entry">
-  <input name="__RequestVerificationToken" type="hidden" value="TOKEN3" />
-  <input type="hidden" id="ID" name="ID" value="1" />
-  <input type="hidden" id="DairitenCode" name="DairitenCode" value="Q05-0010" />
-  <input type="hidden" id="DateFrom" name="DateFrom" value="2026/07/01" />
-  <input type="hidden" id="DateTo" name="DateTo" value="2026/07/31" />
-  <input type="hidden" id="DataType" name="DataType" value="1" />
-  <input type="hidden" id="OutputHeader" name="OutputHeader" value="True" />
-  <input type="hidden" id="submitType" name="submitType" value="" />
-  <button id="btnDownload" type="button" onclick="submitType.value='download'; submit();">ダウンロード</button>
-  <button id="btnBack2" type="button" onclick="submitType.value='back'; submit();">戻る</button>
+<form name="myform" action="/hanyou/confirm" method="post">
+<input class="form-control" type="hidden" data-val="true" data-val-required="The ID field is required." id="ID" name="ID" value="0" />
+<input class="form-control" type="hidden" id="DairitenCode" name="DairitenCode" value="Q05-0010" />
+<input class="form-control" type="hidden" id="DairitenName" name="DairitenName" value="&#x682A;&#x5F0F;&#x4F1A;&#x793E;" />
+<input class="form-control" type="hidden" id="HanbaitenCode" name="HanbaitenCode" value="000000" />
+<input class="form-control" type="hidden" id="HanbaitenName" name="HanbaitenName" value="&#x682A;&#x5F0F;&#x4F1A;&#x793E;" />
+<input class="form-control" type="hidden" id="DateFrom" name="DateFrom" value="2026/07/04" />
+<input class="form-control" type="hidden" id="DateTo" name="DateTo" value="2026/09/02" />
+<input class="form-control" type="hidden" data-val="true" data-val-required="The DataType field is required." id="DataType" name="DataType" value="DT-B" />
+<input class="form-control" type="hidden" data-val="true" data-val-required="The DataCount field is required." id="DataCount" name="DataCount" value="6" />
+<input class="form-control" type="hidden" data-val="true" data-val-required="The OutputHeader field is required." id="OutputHeader" name="OutputHeader" value="OH-B" />
+<button id="btnDownload" type="button" class="btn btn-default">ダウンロード</button>
+<button id="btnBack" type="button" class="btn btn-default">戻る</button>
+<input id="submitType" name="submitType" class="form-control" type="hidden" />
+<input name="__RequestVerificationToken" type="hidden" value="DUMMY-ANTIFORGERY-TOKEN" />
 </form>
+<script src="https://ajax.aspnetcdn.com/ajax/jquery/jquery-3.3.1.min.js"></script>
+<script src="/lib/jquery/dist/jquery.js"></script>
+<script src="/js/site.min.js?v=DUMMY"></script>
+<script>
+
+        $("#btnDownload").click(function () {
+            $('#submitType').val('download');
+            // dispLoading('処理中...');
+            document.myform.submit();
+        });
+
+        $("#btnBack").click(function () {
+            $('#submitType').val('back');
+            document.myform.submit();
+        });
+</script>
 </body></html>

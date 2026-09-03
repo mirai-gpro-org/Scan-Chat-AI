@@ -11,7 +11,22 @@
        ・日付欄の type は **シングルクォート** (type='text')。実測との差なので消さない
          (parser は既定 text へ落ちるので機能上は問題ない)
        ・radio は同じ id が 2 つずつ付く (実測どおり)
-     トークンと会社名だけ架空の文字列に置き換えてある。 -->
+     トークンと会社名だけ架空の文字列に置き換えてある。
+
+     【radio の value は架空にしてある (2026-09-03・レビュー指摘)】
+       実サイトの value は DataType=0/1・OutputHeader=False/True だが、
+       **どちらのラベルがどちらの value かを観測した資料は 1 件も無い**
+       (骨格は <button>/<label> の中身の文字を載せないので、
+        いつの run にも「正常終了のみ」「出力する」の文字が出てこない)。
+       旧版は「正常終了のみ=1」と置いていたが、これはこちらの仮定だった。
+       → **0/1・False/True の意味を fixture に持たせない**。
+         DT-A/DT-B・OH-A/OH-B という架空の値にして、
+         **「ラベル起点で value を引けること」自体**をテストする
+         (実装はもともと value をハードコードせずラベルから引くので挙動は不変)。
+       なお実測の傍証は 2 つとも「既定側が求める側」を指している —
+       確認画面が持ち回る DataType は checked 側の値で、
+       `demecal_unattended_spec.md:545`「検査結果は既定『正常終了のみ』のまま運用」。
+       ただし断定はしない (観測していないため)。 -->
 <html><body>
 <form class="form-horizontal" name="myform" action="/hanyou/entry" method="post">
 <input class="form-control" type="hidden" data-val="true" data-val-required="The ID field is required." id="ID" name="ID" value="0" />
@@ -26,14 +41,14 @@
 <input type='text' class="form-control" id="DateTo" name="DateTo" value="" />
 <label class="col-sm-2 control-label">検査結果</label>
 <label class="radio-inline">
-<input type="radio" value="0" checked="checked" data-val="true" data-val-required="The DataType field is required." id="DataType" name="DataType">すべて</label>
+<input type="radio" value="DT-A" checked="checked" data-val="true" data-val-required="The DataType field is required." id="DataType" name="DataType">すべて</label>
 <label class="radio-inline">
-<input type="radio" value="1" id="DataType" name="DataType">正常終了のみ</label>
+<input type="radio" value="DT-B" id="DataType" name="DataType">正常終了のみ</label>
 <label class="col-sm-2 control-label">項目見出し</label>
 <label class="radio-inline">
-<input type="radio" value="False" checked="checked" data-val="true" data-val-required="The OutputHeader field is required." id="OutputHeader" name="OutputHeader">出力しない</label>
+<input type="radio" value="OH-A" checked="checked" data-val="true" data-val-required="The OutputHeader field is required." id="OutputHeader" name="OutputHeader">出力しない</label>
 <label class="radio-inline">
-<input type="radio" value="True" id="OutputHeader" name="OutputHeader">出力する</label>
+<input type="radio" value="OH-B" id="OutputHeader" name="OutputHeader">出力する</label>
 <button id="btnSubmit" type="button" class="btn btn-default">確認</button>
 <button id="btnBack" type="button" class="btn btn-default">戻る</button>
 <input id="submitType" name="submitType" class="form-control" type="hidden" />

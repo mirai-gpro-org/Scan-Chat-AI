@@ -964,6 +964,127 @@ bat 生成 OK（`verify-1.2`・placeholder 残り無し）。
 - 日付欄の書式が `yyyy/MM/dd` でよいか（datetimepicker の `format: 'YYYY/MM/DD'` から取ったが、
   サーバ側の受理は未確認）。
 
+### ②-4 Phase B 3 回目の実測と STATE C の修正（2026-09-03・`verify-1.3`）
+
+**正本は `docs/lab/demecal_recovery_plan_20260902.md`。** ここは実測の記録。
+
+専用PC で `verify-1.2` を **1 回だけ**実行。結果:
+
+```
+cert OK / credentials OK / login OK
+STATE A → /hanyou/start → HTTP 200
+STATE B → /hanyou/entry → HTTP 200
+STATE_C_DOWNLOAD_ACTION_UNKNOWN
+```
+
+**業務データの write は 1 件も発生していない**（verify-only）。骨格を自動回収できたので、
+**現地で 4 回目を回さずに原因を確定できた**。
+
+**STATE B の契約は実サイトで成立した。** = `submitType=''` で確認画面へ遷移し、
+日付は `yyyy/MM/dd` で受理され、ラベル起点で選んだ「正常終了のみ」「出力する」の値も通った。
+
+#### 実測した STATE C の構造
+
+```html
+<form name="myform" action="/hanyou/confirm" method="post">
+<input type="hidden" id="ID"            name="ID"            value="0" />
+<input type="hidden" id="DairitenCode"  name="DairitenCode"  value="Q05-0010" />
+<input type="hidden" id="DairitenName"  name="DairitenName"  value="&#x682A;…" />
+<input type="hidden" id="HanbaitenCode" name="HanbaitenCode" value="000000" />
+<input type="hidden" id="HanbaitenName" name="HanbaitenName" value="&#x682A;…" />
+<input type="hidden" id="DateFrom"      name="DateFrom"      value="2026/07/04" />
+<input type="hidden" id="DateTo"        name="DateTo"        value="2026/09/02" />
+<input type="hidden" id="DataType"      name="DataType"      value="0" />
+<input type="hidden" id="DataCount"     name="DataCount"     value="6" />   <!-- STATE B に無い新規 -->
+<input type="hidden" id="OutputHeader"  name="OutputHeader"  value="True" />
+<button id="btnDownload" type="button">…</button>   <!-- onclick 属性は無い -->
+<button id="btnBack"     type="button">…</button>   <!-- onclick 属性は無い -->
+<input id="submitType" name="submitType" type="hidden" />   <!-- value 属性が無い -->
+<input name="__RequestVerificationToken" type="hidden" value="…" />
+</form>
+```
+
+```js
+$("#btnDownload").click(function () { $('#submitType').val('download'); /* dispLoading(...) はコメントアウト */ document.myform.submit(); });
+$("#btnBack").click(function () { $('#submitType').val('back'); document.myform.submit(); });
+```
+
+- **URL は 3 段とも別**（`/hanyou/start` → `/hanyou/entry` → `/hanyou/confirm`）。
+  spec に残っていた「STATE C は `/hanyou/entry` と同じ URL」は推測で、実測で否定された。
+  ただし状態判定は URL を見ないので実装の挙動には影響していない。
+- **確認画面は入力欄を 1 つも持たない**（`<select>`/`<option>`/radio が 0・全部 hidden）。
+- **`submitType` に入る値として実測できたのは `download` と `back` の 2 つだけ**。
+  `confirm` という文字列は 3 画面のどこにも 0 件。
+- **ボタンの表示文字は骨格に載らない**（`Get-Skeleton` は `<button>` の開始タグしか出さない）。
+  実ページの `btnDownload` のラベルに「ダウンロード」が在ることは、
+  `Get-StateOf` の C 判定（ラベル一致）を通って `STATE_C_DOWNLOAD_ACTION_UNKNOWN` へ
+  到達したというコードパスから確定している。
+
+**`verify-1.2` の停止も実装どおりの正しい fail-closed だった。** 根は STATE B と同一で、
+汎用 `Resolve-Press` は**そのボタン自身の `onclick` 属性**しか読まない。
+
+#### `verify-1.3` の修正
+
+1. **STATE C を専用 contract にした**（`Test-StateCContract` / `New-StateCRequest`）。
+   汎用 `Resolve-Press` を使わない。機械確認するのは:
+   form の `name=myform` / `action=/hanyou/confirm` / `method=post` /
+   **全 field が hidden**（radio が 1 つでもあれば別画面）/ `submitType` が hidden で**初期値が空** /
+   `id=btnDownload`・`id=btnBack` がちょうど 1 件ずつ / どちらも `type=button`・name なし・**onclick 属性なし** /
+   **ハンドラ契約**（btnDownload は `submitType='download'` を入れて `document.myform.submit()` を呼び
+   `back` を入れない・btnBack はその逆）。**どれか 1 つでも違えば `STATE_C_DOWNLOAD_ACTION_UNKNOWN`。**
+2. **`DataCount` は意味を推測せず、サーバが返した hidden をそのまま持ち回る。**
+   送る field は実測の 12 個。押しボタンは name を持たないので body に載せない。
+3. **`state-c.html` / `state-c-hidden-seller.html` を実測 DOM へ全面置換**（創作の onclick 形は撤回）。
+4. **`DataType` / `OutputHeader` の 0/1・False/True の意味を fixture から外した**（下記）。
+5. **骨格の `__RequestVerificationToken` は `[REDACTED]` にしてから送る。**
+   患者 PII ではないが診断に要らない。骨格で見たいのは「その hidden が在るか」であって値ではない。
+
+#### `DataType` の 0/1 を仕様にしない（レビュー裁定 2026-09-03）
+
+Confirmed なのは**「ラベル『正常終了のみ』に対応する実 value を送ったら STATE C へ遷移した」**ことだけ。
+どちらのラベルがどちらの value かは**観測した資料が 1 件も無い**（骨格は `<label>` の中身の文字を
+載せないため、どの run にもその文字が出てこない）。旧 fixture の「正常終了のみ = `value 1`」は
+**こちらの仮定**だった。→ fixture の値を架空の `DT-A`/`DT-B`・`OH-A`/`OH-B` に置き換え、
+**「ラベル起点で value を引けること」自体**をテストする形にした（実装は元々ハードコードして
+いないので挙動は不変）。T14/T15 の文言も「既定 0 のままにしない」から
+「ラベルに対応する value を送る（checked のままにしない）」へ訂正。
+
+#### CSV レスポンスの検査（既存のまま）
+
+`RawContentStream` から byte[] を取り `Test-CsvResponse` で判定する経路は既に実装済みで変更なし。
+ログに出すのは **status / content-type / content-disposition / filename / byte count / SHA-256 /
+rows / 必須ヘッダの結果**だけ。**CSV 本文・先頭バイトは出さない。保存も S3 投入も `last_to` 更新もしない。**
+
+#### 検証（実サイトは未実行）
+
+`npm run verify:demecal-flow` = **116 件 PASS**（STATE C は T20〜T22d の 22 件 + 骨格 T41 系 4 件）。
+退行注入で**7 件とも落ちることを確認済み**:
+
+| 注入 | 落ちるテスト |
+|---|---|
+| 「ダウンロード」を汎用 `Resolve-Press` に戻す | T05b / T20a / T20b / T20c / T20e |
+| ハンドラ契約（⑤）を丸ごと外す | T22a / T22b / T22c / T22d |
+| 全 field hidden の確認（②）を外す | T21b |
+| `action`／`method` の確認を外す | T21 |
+| `DataCount` を作り直す | T20d |
+| 骨格の `[REDACTED]` を外す | T41 / T41a |
+| `DataType` を checked のまま送る | T14 |
+
+`verify:ps1-order` OK ／ `verify:intake-scope` OK ／ `verify:probe-bat-gate` 10 ケース OK ／
+`ParseFile` 構文エラー 0 ／ `astro check` 0 errors ／ bat 生成 OK（`verify-1.3`・placeholder 残り無し）。
+
+**Wellfort への再実行は依頼していない。** Phase C にも進んでいない。
+
+#### この回で残った未確認
+
+- **`POST /hanyou/confirm`（`submitType=download`）の応答が CSV かどうか。** 未観測。
+  実測できているのは `start → entry` と `entry → confirm` の 2 回で、**どちらも HTML が返っている**。
+  4 つ目の画面か 302 かの可能性は現在の証拠では否定できない。
+- `DataCount` の意味（該当件数か否か）。名前と値からそう読めるだけで、確認画面の表示文字が
+  骨格に無いため断定できない。**だから値を作らず持ち回るだけにしてある。**
+- `/js/site.min.js` に `btnDownload` を触る別のハンドラが在るか。未取得。
+- `DataType` のラベル↔value 対応（上記）。
+
 ### ② 本番の自動実行（`demecal-fetch.ps1` ＋ セットアップ bat・未実装）
 
 **①の結果を見てから作る**（form の `action`/`name` が確定するため）。
