@@ -91,6 +91,7 @@ Elith から受領した JSON を**可読化**して本人に見せる報告書�
 | `npm run verify:sheet-contract` | **モックから抽出した紙面契約 ↔ 表示モデル**（サーバ不要） |
 | `npm run verify:screen` | **契約 ↔ 実際の画面** ＋ 幅・行長・紙面の実測 ＋ **端末別の保存手順**（UA ごとの分岐・印刷ビューに出ていないこと）。要 `npm run dev` |
 | `npm run verify:demo-gate` | 誰にダミーが出るか **12 ケース**＋デモの経路に admin が混ざっていないこと |
+| `npm run verify:print` | **印刷/PDF を実際に焼いて**改ページ・上下の余白・ページ番号を測る（要 `npm run dev` と poppler-utils） |
 | `npm run verify:report` | 上記のうちサーバ不要な 3 つをまとめて |
 | `npx astro check` | 0 errors であること |
 

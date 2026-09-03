@@ -87,6 +87,12 @@ const supportContact = cfg('ui.support_contact');
  */
 const saveGuides = applySaveStepOverrides(cfg('ui.save_steps') ?? '');
 
+/**
+ * CSS の `content` に置く文字列。**引用符と改行だけを潰す** (中身は変えない)。
+ */
+const cssStr = (v: string): string =>
+  '"' + v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\s+/g, ' ').trim() + '"';
+
 const healthAge = data ? await getHealthAge(data.diagnosticUserId) : null;
 
 /**
@@ -117,6 +123,47 @@ const reportCtx = {
 const vm = previewType != null
   ? previewVM(reportCtx, previewType)
   : await loadReportVM(reportCtx);
+
+/**
+ * **走りフッター (見本 全ページ下の帯) とページ番号。**
+ *
+ * `@page` の**マージンボックス**に置く。ページ番号は `counter(page)` / `counter(pages)` で、
+ * ブラウザが数えた実際のページ数なので**採番の捏造にならない**
+ * (以前「CSS だけでは採番できない」として入れていなかったが、実測で組めることを確認した)。
+ *
+ * - **表紙だけ番号を出さない**。見本 p1 も帯を持たない。
+ * - **未対応のブラウザでは帯ごと出ない**が、`@page` の余白は効くので紙面は崩れない。
+ *   作成日と版は表紙に印字してあるので (spec §4.4)、そこが欠けることもない。
+ * - 氏名は**本人の紙面**にしか出ない (PII 分離は外部への受け渡しの話・spec §1.0.2)。
+ */
+const footLeft = cssStr(`${AI_PREVENTION_REPORT_LABEL}｜${vm.cover.name}`);
+const footRight = cssStr(formatJpDate(vm.cover.issuedOn) || vm.cover.issuedOn);
+const pageCss = `
+@page {
+  size: A4;
+  /* 左右は紙面側の余白 (.rp-inner の 8.1%) が持つので 0。上下だけここで確保する。 */
+  margin: 16mm 0 14mm;
+}
+/* 表紙は teal の帯を紙の端まで出す (見本 p1)。 */
+@page :first { margin-top: 0; }
+
+/*
+ * 走りフッターとページ番号は**別の @page 規則に分ける**。
+ * マージンボックス未対応のブラウザではこの塊だけが捨てられ、
+ * 上の余白指定は生き残る (帯が出ないだけで紙面は崩れない)。
+ */
+@page {
+  @bottom-left   { content: ${footLeft};  font-size: 9pt; color: #55636A; margin-left: 8.1%; }
+  @bottom-center { content: counter(page) " / " counter(pages); font-size: 9pt; color: #55636A; }
+  @bottom-right  { content: ${footRight}; font-size: 9pt; color: #55636A; margin-right: 8.1%; }
+}
+/* 表紙には番号も帯も振らない (見本 p1 も帯を持たない)。 */
+@page :first {
+  @bottom-left { content: ""; }
+  @bottom-center { content: ""; }
+  @bottom-right { content: ""; }
+}
+`;
 
 const q = (extra: Record<string, string>) => {
   const p = new URLSearchParams();
@@ -182,7 +229,11 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
     詳細は `global.css` の `.rp-sheet` と 仕様書 §4.3.5。
   */}
 
-  <main class={`report-sheet rp-sheet ${isPrint ? 'rp-plain' : ''}`}>
+  {/* 走りフッターとページ番号 (`@page` のマージンボックス)。SSR で氏名と作成日を埋めるため
+    `is:inline` の style で出す — Astro の通常の <style> は静的な値しか持てない。 */}
+<style is:inline set:html={pageCss}></style>
+
+<main class={`report-sheet rp-sheet ${isPrint ? 'rp-plain' : ''}`}>
 
     {/* ══════════ ① 表紙 (見本 p1) ══════════
         見本の表紙は 上端 teal ルール / 淡色パネル / 右上の円モチーフ / タイトル /
@@ -511,14 +562,6 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
       </section>
     )}
 
-    {/* ══════════ ⑬ フッター (見本 全ページ) ══════════
-        見本は全ページ下に 左=報告書名/氏名・中央=ページ番号・右=作成日 の帯を置く。
-        画面では不要なので **印刷時だけ** 出す (`.rp-sheet-foot`)。
-        ページ番号は CSS だけでは採番できないため入れない (捏造しない)。 */}
-    <div class="rp-sheet-foot hidden border-t border-slate-200 pt-2 font-mono text-[10px] text-slate-500">
-      <span>{AI_PREVENTION_REPORT_LABEL}｜{vm.cover.name}</span>
-      <span class="float-right">{formatJpDate(vm.cover.issuedOn) || vm.cover.issuedOn}</span>
-    </div>
 
     {/* ══════════ 手元に残す (spec §4.4 手段 A) ══════════
         **端末別に手順を出す** (発注者裁定 2026-09-02・案 1＋案 3)。
@@ -734,7 +777,33 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
     body { background: #fff; }
     nav, header.app-nav, .no-print { display: none !important; }
     .report-sheet { padding: 0 !important; }
-    .card, .rp-card, .report-sheet table, .report-sheet details { break-inside: avoid; }
     details > summary { list-style: none; }
+
+    /*
+     * ── 改ページ ────────────────────────────────────────────
+     * **以前は カード・表・章 を丸ごと `break-inside: avoid` にしていた。**
+     * 1 ページに収まらない塊まで「割らない」と宣言したため、入りきらないカードが
+     * 丸ごと次ページへ送られ、**手前に巨大な空白**が残っていた
+     * (実測 2026-09-03: 32 ページ中 使用率 1.7% / 11.5% / 24.1% / 26.2% のページ)。
+     *
+     * 割ってよいものは割り、**割ってはいけない最小単位だけ**を守る。
+     */
+    .rp-card, .report-sheet details, .report-sheet table, .card { break-inside: auto; }
+    /* 割ると意味が壊れるもの = 2 連大数字・数直線・表の 1 行・左ラベル行・週プラン・救急枠 */
+    .rp-nums, .rp-gauge, .rp-lrow, .rp-wrow, .rp-er, .rp-axis,
+    .report-sheet tr { break-inside: avoid; }
+    /*
+     * 番号つきの項目 (「まず確認すること」等) は**小見出しと本文で割らない**。
+     * 割ると見出しだけがページの最後に残る (実測: p1 の末尾が「2. 相談先とタイミング」だけ)。
+     * ページより長い項目はブラウザが従来どおり割るので、行き止まりにはならない。
+     */
+    .report-sheet li { break-inside: avoid; }
+    /* 見出しがページの最後に取り残されない (「全編」だけのページが出ていた) */
+    .rp-axis, .rp-h3, .report-sheet h2, .report-sheet h3, .report-sheet h4,
+    details > summary { break-after: avoid; }
+    /* 表がページをまたぐときは teal のヘッダを次ページにも出す */
+    .report-sheet thead { display: table-header-group; }
+    /* 1 行だけ残す/送るをしない */
+    .report-sheet p, .report-sheet li { orphans: 2; widows: 2; }
   }
 </style>
