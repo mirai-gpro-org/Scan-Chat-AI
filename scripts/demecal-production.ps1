@@ -64,20 +64,33 @@ $IntakeKey = '__LAB_INTAKE_KEY__'
 
 <#
 .SYNOPSIS
-  JST の今日 (YYYY-MM-DD)。**プランナには渡す側が決めた値を入れる** (C-1 の契約)。
+  ある瞬間 (DateTimeOffset) を JST の暦日 (YYYY-MM-DD) にする。**純粋関数**。
 .DESCRIPTION
-  専用PC は日本時間で運用されるが、**ローカル時刻に暗黙に依存しない**。
-  タイムゾーン id はプラットフォームで違う (Windows='Tokyo Standard Time' /
-  IANA='Asia/Tokyo') ので両方試し、どちらも無い環境でだけローカル日付へ落ちる。
+  **JST は UTC+09:00 固定**なので、OS のタイムゾーンデータベースにも
+  **ローカル時刻にも依存しない**。瞬間を +09:00 へ寄せて日付だけを取る。
+
+  **ローカル時刻へのフォールバックを置かない (2026-09-03 レビュー裁定)。**
+  以前は `FindSystemTimeZoneById('Tokyo Standard Time' / 'Asia/Tokyo')` を試し、
+  どちらも無い環境で `(Get-Date).Date` へ落ちる作りだった。これは
+  **PC の時計が JST でない環境で、黙って別の日を取りに行く**。
+  取得範囲は watermark を動かすので、**間違った日付は「取り漏れ」か
+  「二度と取りに行かれない範囲」に直結する**。id が無いことより静かに壊れる方が悪い。
+
+  `ToOffset` は**入力自身の offset が何であっても**同じ瞬間を +09:00 で表し直す
+  ので、UTC でも +09:00 でも -05:00 でも同じ答えになる。
+#>
+function ConvertTo-JstDate {
+  param([Parameter(Mandatory)][DateTimeOffset]$Instant)
+  return $Instant.ToOffset([TimeSpan]::FromHours(9)).ToString(
+    'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+}
+
+<#
+.SYNOPSIS
+  JST の今日 (YYYY-MM-DD)。**プランナには渡す側が決めた値を入れる** (C-1 の契約)。
 #>
 function Get-JstToday {
-  foreach ($id in @('Tokyo Standard Time', 'Asia/Tokyo')) {
-    try {
-      $z = [TimeZoneInfo]::FindSystemTimeZoneById($id)
-      return ([TimeZoneInfo]::ConvertTime([DateTimeOffset]::Now, $z)).Date.ToString('yyyy-MM-dd')
-    } catch {}
-  }
-  return (Get-Date).Date.ToString('yyyy-MM-dd')
+  return (ConvertTo-JstDate ([DateTimeOffset]::UtcNow))
 }
 
 <#

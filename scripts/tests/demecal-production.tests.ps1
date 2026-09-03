@@ -57,6 +57,61 @@ function Plan([string]$lastTo, [string]$today) {
   return (Resolve-DemecalAcquisitionRange -LastTo $lastTo -TodayJst $today)
 }
 
+Write-Host "`n― JST の暦日 (ローカル時刻に依存しない) ―――――――――"
+# 2026-09-03 レビュー裁定: ローカル時刻へのフォールバックを禁止する。
+# JST は UTC+09:00 固定なので OS のタイムゾーン DB にも依存しない。
+
+function Jst([string]$iso) {
+  return (ConvertTo-JstDate ([DateTimeOffset]::Parse($iso, [Globalization.CultureInfo]::InvariantCulture,
+    [Globalization.DateTimeStyles]::RoundtripKind)))
+}
+
+Check 'J01 2026-09-03T14:59:59Z → 2026-09-03 (JST 23:59:59)' `
+  ((Jst '2026-09-03T14:59:59Z') -eq '2026-09-03') (Jst '2026-09-03T14:59:59Z')
+Check 'J02 2026-09-03T15:00:00Z → 2026-09-04 (JST 00:00:00 = 日付が変わる)' `
+  ((Jst '2026-09-03T15:00:00Z') -eq '2026-09-04') (Jst '2026-09-03T15:00:00Z')
+
+# 入力自身の offset が何であっても同じ瞬間なら同じ答えになる。
+Check 'J03 同じ瞬間なら offset 表記が違っても同じ日 (+09:00 表記)' `
+  ((Jst '2026-09-04T00:00:00+09:00') -eq '2026-09-04') (Jst '2026-09-04T00:00:00+09:00')
+Check 'J04 同じ瞬間なら offset 表記が違っても同じ日 (-05:00 表記)' `
+  ((Jst '2026-09-03T10:00:00-05:00') -eq '2026-09-04') (Jst '2026-09-03T10:00:00-05:00')
+
+Check 'J05 年をまたぐ境界 2026-12-31T15:00:00Z → 2027-01-01' `
+  ((Jst '2026-12-31T15:00:00Z') -eq '2027-01-01') (Jst '2026-12-31T15:00:00Z')
+Check 'J06 年をまたぐ境界の 1 秒前 2026-12-31T14:59:59Z → 2026-12-31' `
+  ((Jst '2026-12-31T14:59:59Z') -eq '2026-12-31') (Jst '2026-12-31T14:59:59Z')
+
+Check 'J07 うるう日 2024-02-28T15:00:00Z → 2024-02-29' `
+  ((Jst '2024-02-28T15:00:00Z') -eq '2024-02-29') (Jst '2024-02-28T15:00:00Z')
+
+# **実行時にローカル時刻を取らない。** Get-Date を投げる関数で覆って Get-JstToday を呼ぶ。
+function Get-Date { throw 'Get-JstToday がローカル時刻 (Get-Date) を使っています' }
+$jstNow = ''
+$jstErr = ''
+try { $jstNow = Get-JstToday } catch { $jstErr = $_.Exception.Message }
+Remove-Item Function:\Get-Date -ErrorAction SilentlyContinue
+Check 'J08 Get-JstToday は Get-Date を呼ばない (実行時)' `
+  ($jstErr -eq '' -and $jstNow -match '^\d{4}-\d{2}-\d{2}$') ("err={0} value={1}" -f $jstErr, $jstNow)
+
+# **ソースにもローカル時刻・タイムゾーン DB を書いていない** (この 2 関数の中だけを見る)。
+$jstSrc = ''
+foreach ($fn in @('ConvertTo-JstDate', 'Get-JstToday')) {
+  $jstSrc += (Get-Command $fn).ScriptBlock.ToString() + "`n"
+}
+$jstBad = @()
+foreach ($f in @(
+  @{ n = 'ローカル時刻 (Get-Date)'; p = 'Get-Date' },
+  @{ n = 'ローカル時刻 (DateTime::Now / Today / ToLocalTime)'; p = '::Now\b|::Today\b|ToLocalTime' },
+  @{ n = 'タイムゾーン DB (TimeZoneInfo / FindSystemTimeZoneById)'; p = 'TimeZoneInfo|FindSystemTimeZoneById' }
+)) {
+  if ([regex]::IsMatch($jstSrc, $f.p)) { $jstBad += $f.n }
+}
+Check 'J09 JST 変換のソースにローカル時刻・タイムゾーン DB が無い' ($jstBad.Count -eq 0) ($jstBad -join ' / ')
+Check 'J10 JST は +09:00 固定で変換している' `
+  ($jstSrc -match 'ToOffset' -and $jstSrc -match 'FromHours\(9\)') ''
+Check 'J11 Get-JstToday の入力は UTC の瞬間 (UtcNow)' ($jstSrc -match 'UtcNow') ''
+
 Write-Host "`n― Get-RunAction (ポータルへ行ってよいかを決める) ―――――"
 
 $a = Get-RunAction (Plan '2026-08-31' '2026-09-03')
