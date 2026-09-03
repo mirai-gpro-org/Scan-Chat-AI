@@ -1,21 +1,64 @@
-<!-- 完全架空の fixture。条件入力の画面。
-     ・日付は必須で初期は空
-     ・検査結果 / 項目見出しは radio。**既定は「出力しない」**
-     ・実行の指示は hidden submitType に、押したボタン自身の onclick が入れる -->
+<!-- 完全架空の fixture。ただし**構造は 2026-09-03 の実測 (Phase B verify-1.1 骨格) を再現**する。
+
+     旧版は架空の確認ボタン (onclick で submitType へ値を入れる形) を置いていたが、
+     実サイトにそんな要素は無い。実測の要点:
+       ・form に name="myform" が在る (JS が document.myform.submit() を呼ぶ)
+       ・btnSubmit / btnBack は type=button で name / value / onclick を持たない
+         (ハンドラは inline の jQuery .click())
+       ・btnSubmit は submitType を書き換えず form を送るだけ
+       ・submitType に値を入れるのは btnBack の 'back' だけ
+       ・submitType の hidden は **value 属性を持たない**
+       ・日付欄の type は **シングルクォート** (type='text')。実測との差なので消さない
+         (parser は既定 text へ落ちるので機能上は問題ない)
+       ・radio は同じ id が 2 つずつ付く (実測どおり)
+     トークンと会社名だけ架空の文字列に置き換えてある。 -->
 <html><body>
-<form method="post" action="/hanyou/entry">
-  <input name="__RequestVerificationToken" type="hidden" value="TOKEN2" />
-  <input type="hidden" id="ID" name="ID" value="1" />
-  <input readonly type="text" id="DairitenCode" name="DairitenCode" value="Q05-0010" />
-  <input type="hidden" id="HanbaitenCode" name="HanbaitenCode" value="000000" />
-  <input type="text" id="DateFrom" name="DateFrom" value="" />
-  <input type="text" id="DateTo" name="DateTo" value="" />
-  <input type="radio" id="DataType1" name="DataType" value="0" checked /><label for="DataType1">すべて</label>
-  <input type="radio" id="DataType2" name="DataType" value="1" /><label for="DataType2">正常終了のみ</label>
-  <input type="radio" id="OutputHeader1" name="OutputHeader" value="False" checked /><label for="OutputHeader1">出力しない</label>
-  <input type="radio" id="OutputHeader2" name="OutputHeader" value="True" /><label for="OutputHeader2">出力する</label>
-  <input type="hidden" id="submitType" name="submitType" value="" />
-  <button id="btnConfirm" type="button" onclick="submitType.value='confirm'; submit();">確認</button>
-  <button id="btnBack" type="button" onclick="submitType.value='back'; submit();">戻る</button>
+<form class="form-horizontal" name="myform" action="/hanyou/entry" method="post">
+<input class="form-control" type="hidden" data-val="true" data-val-required="The ID field is required." id="ID" name="ID" value="0" />
+<label class="col-sm-2 control-label">代理店</label>
+<input class="form-control" readonly type="text" id="DairitenCode" name="DairitenCode" value="Q05-0010" />
+<input class="form-control" readonly type="text" id="DairitenName" name="DairitenName" value="&#x682A;&#x5F0F;&#x4F1A;&#x793E;" />
+<label class="col-sm-2 control-label">販売先</label>
+<input class="form-control" readonly type="text" id="HanbaitenCode" name="HanbaitenCode" value="000000" />
+<input class="form-control" readonly type="text" id="HanbaitenName" name="HanbaitenName" value="&#x682A;&#x5F0F;&#x4F1A;&#x793E;" />
+<label class="col-sm-2 control-label">結果承認日</label>
+<input type='text' class="form-control" id="DateFrom" name="DateFrom" value="" />
+<input type='text' class="form-control" id="DateTo" name="DateTo" value="" />
+<label class="col-sm-2 control-label">検査結果</label>
+<label class="radio-inline">
+<input type="radio" value="0" checked="checked" data-val="true" data-val-required="The DataType field is required." id="DataType" name="DataType">すべて</label>
+<label class="radio-inline">
+<input type="radio" value="1" id="DataType" name="DataType">正常終了のみ</label>
+<label class="col-sm-2 control-label">項目見出し</label>
+<label class="radio-inline">
+<input type="radio" value="False" checked="checked" data-val="true" data-val-required="The OutputHeader field is required." id="OutputHeader" name="OutputHeader">出力しない</label>
+<label class="radio-inline">
+<input type="radio" value="True" id="OutputHeader" name="OutputHeader">出力する</label>
+<button id="btnSubmit" type="button" class="btn btn-default">確認</button>
+<button id="btnBack" type="button" class="btn btn-default">戻る</button>
+<input id="submitType" name="submitType" class="form-control" type="hidden" />
+<input name="__RequestVerificationToken" type="hidden" value="DUMMY-ANTIFORGERY-TOKEN" />
 </form>
+<script src="/lib/jquery/dist/jquery.js"></script>
+<script src="/lib/eonasdan-bootstrap-datetimepicker/build/js/bootstrap-datetimepicker.min.js"></script>
+<script>
+        $('#datepicker1').datetimepicker({
+            locale: 'ja',
+            format: 'YYYY/MM/DD',
+        });
+        $('#datepicker2').datetimepicker({
+            locale: 'ja',
+            format: 'YYYY/MM/DD',
+        });
+
+        $("#btnSubmit").click(function () {
+            dispLoading('処理中...');
+            document.myform.submit();
+        });
+
+        $("#btnBack").click(function () {
+            $('#submitType').val('back');
+            document.myform.submit();
+        });
+</script>
 </body></html>

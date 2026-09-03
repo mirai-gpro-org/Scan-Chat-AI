@@ -195,38 +195,100 @@ $r6 = New-StateARequest $fa4 '000000' '架空テスト販売先'
 Check 'T12b その改変で STATE A が FAIL する' `
   ((-not $r6.Ok) -and $r6.Code -eq 'STATE_A_EXPECTATION_FAILED') ("code={0}" -f $r6.Code)
 
-Write-Host '── STATE B ─────────────────────────────────────────'
+Write-Host '── STATE B (実測契約・2026-09-03 Phase B) ──────────'
 
 $from = [datetime]'2026-07-01'
 $to   = [datetime]'2026-07-31'
-$rb = New-StateBRequest $fb $from $to
+$rb = New-StateBRequest $fb $htmlB $from $to
+
 Check 'T13 B で日付を yyyy/MM/dd で設定' `
   ($rb.Ok -and $rb.Body['DateFrom'] -eq '2026/07/01' -and $rb.Body['DateTo'] -eq '2026/07/31') `
   ("from={0} to={1}" -f $rb.Body['DateFrom'], $rb.Body['DateTo'])
-Check 'T14 B で「正常終了のみ」を明示選択 (既定のままにしない)' `
+Check 'T14 B で「正常終了のみ」を明示選択 (既定の 0 のままにしない)' `
   ($rb.Ok -and $rb.Body['DataType'] -eq '1') ("DataType={0}" -f $rb.Body['DataType'])
-Check 'T15 B で「出力する」を明示選択 (既定は出力しない)' `
+Check 'T15 B で「出力する」を明示選択 (既定は出力しない=False)' `
   ($rb.Ok -and $rb.Body['OutputHeader'] -eq 'True') ("OutputHeader={0}" -f $rb.Body['OutputHeader'])
-Check 'T16 B は「確認」を押す。「戻る」を押さない' `
-  ($rb.Ok -and $rb.Body['submitType'] -eq 'confirm') ("submitType={0}" -f $rb.Body['submitType'])
 
-$htmlB2 = $htmlB -replace '<label for="DataType2">正常終了のみ</label>', '<label for="DataType2">エラーのみ</label>'
-$rb2 = New-StateBRequest (Form-Raw $htmlB2) $from $to
+# **実測契約**: 「確認」は submitType を書き換えない = 空文字で送る。
+Check 'T16 submitType は空文字で送る' `
+  ($rb.Ok -and $rb.Body.ContainsKey('submitType') -and $rb.Body['submitType'] -eq '') `
+  ("submitType=[{0}]" -f $rb.Body['submitType'])
+Check 'T16a confirm という値を 1 つも作らない' `
+  ($rb.Ok -and (@($rb.Body.Values | Where-Object { "$_" -match '(?i)confirm' }).Count -eq 0)) ''
+Check 'T16b 「戻る」の back を送らない' `
+  ($rb.Ok -and (@($rb.Body.Values | Where-Object { "$_" -eq 'back' }).Count -eq 0)) ''
+Check 'T16c 押しボタンの名前を body に混ぜない (programmatic submit)' `
+  ($rb.Ok -and -not $rb.Body.ContainsKey('btnSubmit') -and -not $rb.Body.ContainsKey('btnBack')) ''
+Check 'T16d 押し方は form-submit (汎用 Resolve-Press を使わない)' `
+  ($rb.Ok -and $rb.Press.Kind -eq 'form-submit') ("kind={0}" -f $rb.Press.Kind)
+$bkeys = (@($rb.Body.Keys) | Sort-Object) -join ','
+Check 'T16e POST する field は実測の 11 個' `
+  ($bkeys -eq '__RequestVerificationToken,DairitenCode,DairitenName,DataType,DateFrom,DateTo,HanbaitenCode,HanbaitenName,ID,OutputHeader,submitType') $bkeys
+
+# ── ボタンを id で見分ける (取り違えない) ───────────────────
+$subBtn = @($fb.Buttons | Where-Object { $_.Id -eq 'btnSubmit' })
+$bakBtn = @($fb.Buttons | Where-Object { $_.Id -eq 'btnBack' })
+Check 'T16f btnSubmit / btnBack を id でちょうど 1 件ずつ取れる' `
+  ($subBtn.Count -eq 1 -and $bakBtn.Count -eq 1) ("submit={0} back={1}" -f $subBtn.Count, $bakBtn.Count)
+Check 'T16g どちらも onclick 属性を持たない (実測どおり)' `
+  ($subBtn[0].Onclick -eq '' -and $bakBtn[0].Onclick -eq '') ("onclick=[{0}]" -f $subBtn[0].Onclick)
+Check 'T16h btnSubmit は type=button で name を持たない' `
+  ($subBtn[0].Type -eq 'button' -and -not $subBtn[0].Name) ("type={0} name={1}" -f $subBtn[0].Type, $subBtn[0].Name)
+Check 'T16i form の name が myform' ($fb.Name -eq 'myform') ("name={0}" -f $fb.Name)
+
+# ── 契約不一致はすべて fail-closed ───────────────────────────
+$rb2 = New-StateBRequest (Form-Raw ($htmlB -replace 'id="DataType" name="DataType">正常終了のみ', 'id="DataType" name="DataType">エラーのみ')) `
+        ($htmlB -replace '正常終了のみ', 'エラーのみ') $from $to
 Check 'T17 「正常終了のみ」が無ければ FAIL' `
   ((-not $rb2.Ok) -and $rb2.Code -eq 'STATE_B_DATATYPE_NOT_FOUND') ("code={0}" -f $rb2.Code)
 
-$htmlB3 = $htmlB -replace '<label for="OutputHeader2">出力する</label>', '<label for="OutputHeader2">なし</label>'
-$rb3 = New-StateBRequest (Form-Raw $htmlB3) $from $to
+$htmlB3 = $htmlB -replace 'name="OutputHeader">出力する', 'name="OutputHeader">なし'
+$rb3 = New-StateBRequest (Form-Raw $htmlB3) $htmlB3 $from $to
 Check 'T18 「出力する」が無ければ FAIL' `
   ((-not $rb3.Ok) -and $rb3.Code -eq 'STATE_B_OUTPUTHEADER_NOT_FOUND') ("code={0}" -f $rb3.Code)
 
-# 押し方が読めない画面では**別の値を試さず**止まる (Unknown を埋めない)
-$htmlB4 = $htmlB -replace 'onclick="submitType\.value=''confirm''; submit\(\);"', ''
-$rb4 = New-StateBRequest (Form-Raw $htmlB4) $from $to
-Check 'T19 確認の押し方が読めなければ STATE_B_CONFIRM_ACTION_UNKNOWN' `
+$htmlB4 = $htmlB.Replace('name="myform"', 'name="otherform"')
+$rb4 = New-StateBRequest (Form-Raw $htmlB4) $htmlB4 $from $to
+Check 'T19 form の name が myform でなければ FAIL' `
   ((-not $rb4.Ok) -and $rb4.Code -eq 'STATE_B_CONFIRM_ACTION_UNKNOWN') ("code={0}" -f $rb4.Code)
 
-Write-Host ''
+$htmlB5 = $htmlB.Replace('id="btnSubmit"', 'id="btnOther"')
+$rb5 = New-StateBRequest (Form-Raw $htmlB5) $htmlB5 $from $to
+Check 'T19a btnSubmit が無ければ FAIL' `
+  ((-not $rb5.Ok) -and $rb5.Code -eq 'STATE_B_CONFIRM_ACTION_UNKNOWN') ("code={0}" -f $rb5.Code)
+
+# btnSubmit のハンドラからだけ submit 呼び出しを外す (最初の 1 件 = btnSubmit 側)。
+$htmlB6 = [regex]::new('document\.myform\.submit\(\);').Replace($htmlB, 'void 0;', 1)
+$rb6 = New-StateBRequest (Form-Raw $htmlB6) $htmlB6 $from $to
+Check 'T19b btnSubmit ハンドラが form を送らなければ FAIL' `
+  ((-not $rb6.Ok) -and $rb6.Code -eq 'STATE_B_CONFIRM_ACTION_UNKNOWN' -and $htmlB6 -ne $htmlB) ("code={0} / 改変={1}" -f $rb6.Code, ($htmlB6 -ne $htmlB))
+
+# btnSubmit のハンドラが submitType を書き換える形にする (実測契約と違う)。
+# `jQuery(` を使うのは、PowerShell の二重引用符内で `$(` が部分式として評価されるため。
+$htmlB7 = $htmlB -replace "dispLoading\('処理中\.\.\.'\);", "jQuery('#submitType').val('confirm');"
+$rb7 = New-StateBRequest (Form-Raw $htmlB7) $htmlB7 $from $to
+Check 'T19c btnSubmit ハンドラが submitType を書き換える fixture なら FAIL (実測契約と違う)' `
+  ((-not $rb7.Ok) -and $rb7.Code -eq 'STATE_B_CONFIRM_ACTION_UNKNOWN' -and $htmlB7 -ne $htmlB) ("code={0} / 改変={1}" -f $rb7.Code, ($htmlB7 -ne $htmlB))
+
+# btnBack が 'back' を入れない形にする。
+$htmlB8 = $htmlB -replace "val\('back'\)", "val('none')"
+$rb8 = New-StateBRequest (Form-Raw $htmlB8) $htmlB8 $from $to
+Check 'T19d btnBack が back を設定しなければ FAIL' `
+  ((-not $rb8.Ok) -and $rb8.Code -eq 'STATE_B_CONFIRM_ACTION_UNKNOWN' -and $htmlB8 -ne $htmlB) ("code={0} / 改変={1}" -f $rb8.Code, ($htmlB8 -ne $htmlB))
+
+$htmlB9 = $htmlB.Replace('<input id="submitType" name="submitType" class="form-control" type="hidden" />', '')
+$rb9 = New-StateBRequest (Form-Raw $htmlB9) $htmlB9 $from $to
+Check 'T19e submitType の hidden が無ければ FAIL' `
+  ((-not $rb9.Ok) -and $rb9.Code -eq 'STATE_B_CONFIRM_ACTION_UNKNOWN') ("code={0}" -f $rb9.Code)
+
+# fixture が実測どおりであること自体の確認 (テストが空振りしないため)
+Check 'T19f fixture に confirm という文字列が無い (実測どおり)' `
+  ($htmlB -notmatch '(?i)confirm') ''
+Check 'T19g fixture の日付欄はシングルクォート type (実測との差を消していない)' `
+  ($htmlB -match "type='text'") ''
+Check 'T19h それでも parser は text として扱う' `
+  ($fb.Types['DateFrom'] -eq 'text') ("type={0}" -f $fb.Types['DateFrom'])
+
 Write-Host '── STATE C ─────────────────────────────────────────'
 
 $rc = New-StateCRequest $fc

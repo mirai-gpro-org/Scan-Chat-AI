@@ -49,7 +49,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 # Shift_JIS は .NET Core で既定登録されていない。5.1 では型が無いので catch される。
 try { [Text.Encoding]::RegisterProvider([Text.CodePagesEncodingProvider]::Instance) } catch {}
 
-$Version    = 'verify-1.1'
+$Version    = 'verify-1.2'
 $BaseUrl    = 'https://dl.demecal.net'
 $LoginUrl   = "$BaseUrl/account/login"
 $StartUrl   = "$BaseUrl/hanyou/start"
@@ -71,6 +71,16 @@ $ExpectedSellerCode = '000000'
 $ExpectedDataType   = '正常終了のみ'
 $ExpectedHeader     = '出力する'
 $RequiredCsvHeaders = @('指図番号', '結果承認日', '結果項目数')
+
+# ── STATE B の DOM 契約 (実測 2026-09-03・Phase B verify-1.2) ─
+# 実サイトは form に `name="myform"` を持ち、ボタンは **onclick 属性を持たない**
+# (ハンドラは inline の jQuery `.click()`)。「確認」= `btnSubmit` で、
+# **submitType を書き換えずに `document.myform.submit()` するだけ**。
+# `submitType` に値を入れるのは `btnBack` の `'back'` だけで、
+# **`confirm` という文字列はこの画面に存在しない**。
+$ExpectedFormName    = 'myform'
+$ExpectedSubmitBtnId = 'btnSubmit'
+$ExpectedBackBtnId   = 'btnBack'
 
 # verify-only なので `last_to` は読まない。固定幅で引く。
 # `to` は**前日** — 動画の UI に「出力日より前を指定」の表示がある (計画 §8)。
@@ -109,10 +119,16 @@ function Get-Forms([string]$html) {
   if (-not $html) { return $out }
   foreach ($fm in [regex]::Matches($html, '(?is)<form\b[^>]*>.*?</form>')) {
     $f = $fm.Value
+    # **属性は form の開始タグからだけ読む** (中の input の name を拾わないため)。
+    $ot0 = ''
+    $otm = [regex]::Match($f, '(?is)<form\b[^>]*>'); if ($otm.Success) { $ot0 = $otm.Value }
     $action = ''
-    $ma = [regex]::Match($f, '(?i)action="([^"]*)"'); if ($ma.Success) { $action = Html-Decode $ma.Groups[1].Value }
+    $ma = [regex]::Match($ot0, '(?i)action="([^"]*)"'); if ($ma.Success) { $action = Html-Decode $ma.Groups[1].Value }
     $method = 'get'
     $mm = [regex]::Match($f, '(?i)method="([^"]*)"'); if ($mm.Success) { $method = $mm.Groups[1].Value }
+    # **form の name。** STATE B の契約判定に要る (`document.myform.submit()` の myform)。
+    $formName = ''
+    $fn = [regex]::Match($ot0, '(?i)\bname="([^"]*)"'); if ($fn.Success) { $formName = $fn.Groups[1].Value }
 
     $fields  = @{}   # 送る名前 → 値
     $types   = @{}   # 名前 → text/hidden/radio/checkbox/select/textarea
@@ -131,7 +147,9 @@ function Get-Forms([string]$html) {
       $val  = ''; if ($v.Success) { $val = Html-Decode $v.Groups[1].Value }
       if ($type -eq 'reset') { continue }
       if ($type -match '^(submit|image|button)$') {
-        $buttons += [pscustomobject]@{ Name = $name; Value = $val; Label = $val; Type = $type; Onclick = '' }
+        $bid0 = ''
+        $bim = [regex]::Match($tag, '(?i)\bid="([^"]*)"'); if ($bim.Success) { $bid0 = $bim.Groups[1].Value }
+        $buttons += [pscustomobject]@{ Name = $name; Value = $val; Label = $val; Type = $type; Onclick = ''; Id = $bid0 }
         $shape += ("      button(input) name={0} label={1}" -f $name, $val)
         continue
       }
@@ -207,13 +225,15 @@ function Get-Forms([string]$html) {
       $bname = ''; if ($n.Success) { $bname = $n.Groups[1].Value }
       $bval  = ''; if ($v.Success) { $bval = Html-Decode $v.Groups[1].Value }
       $bonc  = ''; if ($oc.Success) { $bonc = Html-Decode $oc.Groups[1].Value }
-      $buttons += [pscustomobject]@{ Name = $bname; Value = $bval; Label = $label; Type = $btype; Onclick = $bonc }
+      $bid = ''
+      $bi = [regex]::Match($attr, '(?i)\bid="([^"]*)"'); if ($bi.Success) { $bid = $bi.Groups[1].Value }
+      $buttons += [pscustomobject]@{ Name = $bname; Value = $bval; Label = $label; Type = $btype; Onclick = $bonc; Id = $bid }
       $shape += ("      button name={0} type={1} label={2} onclick={3}" -f `
                  $bname, $btype, $label, ($bonc -replace '^(.{0,120}).*$', '$1'))
     }
 
     $out += [pscustomobject]@{
-      Action = $action; Method = $method; Fields = $fields; Types = $types
+      Action = $action; Method = $method; Name = $formName; Fields = $fields; Types = $types
       Radios = $radios; Options = $options; Buttons = $buttons; Shape = $shape
     }
   }
@@ -436,27 +456,123 @@ function New-StateARequest($form, [string]$sellerCode, [string]$sellerName) {
 }
 
 # ── STATE B: 日付・検査結果・項目見出しを明示して「確認」 ─────
-function New-StateBRequest($form, [datetime]$from, [datetime]$to) {
+#
+# 【実測 2026-09-03・Phase B verify-1.2】ここは**汎用の押し方判定を使わない**。
+#   実サイトのボタンは `onclick` 属性を持たず、ハンドラは inline の jQuery `.click()`。
+#   `Resolve-Press` は「そのボタン自身の onclick」しか読まないので原理的に決まらない
+#   (= `STATE_B_CONFIRM_ACTION_UNKNOWN` は実装どおりの正しい停止だった)。
+#   → **この画面だけは実測した DOM 契約を明示的に確認する**。
+#
+# **`confirm` という値は作らない・送らない。** 実サイトの「確認」は
+# `submitType` を書き換えず空のまま `document.myform.submit()` するだけで、
+# `confirm` という文字列は取得した HTML/script のどこにも存在しない。
+
+# ページの inline script (src を持たない <script>) だけを連結して返す。
+function Get-InlineScripts([string]$html) {
+  $out = New-Object System.Collections.Generic.List[string]
+  if (-not $html) { return '' }
+  foreach ($sm in [regex]::Matches($html, '(?is)<script\b([^>]*)>(.*?)</script>')) {
+    if ($sm.Groups[1].Value -match '(?i)\bsrc\s*=') { continue }
+    $out.Add($sm.Groups[2].Value) | Out-Null
+  }
+  return ($out -join "`n")
+}
+
+# `$("#<id>").click(function () { ... })` の**中身だけ**を取り出す。
+# 見つからなければ $null (呼び出し側が fail-closed する)。
+function Get-ClickHandlerBody([string]$scripts, [string]$id) {
+  if (-not $scripts -or -not $id) { return $null }
+  $pat = ('(?s)\$\(\s*["\x27]#' + [regex]::Escape($id) +
+          '["\x27]\s*\)\s*\.\s*click\s*\(\s*function\s*\([^)]*\)\s*\{(.*?)\}\s*\)\s*;')
+  $m = [regex]::Match($scripts, $pat)
+  if (-not $m.Success) { return $null }
+  return $m.Groups[1].Value
+}
+
+# STATE B の DOM / ハンドラ契約を機械確認する。**一致しなければ進まない。**
+function Test-StateBContract($form, [string]$pageHtml) {
+  function Ng([string]$d) {
+    return [pscustomobject]@{ Ok = $false; Code = 'STATE_B_CONFIRM_ACTION_UNKNOWN'; Detail = $d
+                              DataTypeValue = ''; OutputHeaderValue = '' }
+  }
+
+  # ① form の name
+  if ($form.Name -ne $ExpectedFormName) {
+    return (Ng ("form の name が『{0}』ではありません (実際=『{1}』)" -f $ExpectedFormName, $form.Name))
+  }
+  # ② 日付欄
+  if (-not $form.Fields.ContainsKey('DateFrom') -or -not $form.Fields.ContainsKey('DateTo')) {
+    return (Ng 'DateFrom / DateTo がありません')
+  }
+  # ③ submitType が hidden で在る
+  if (-not $form.Types.ContainsKey('submitType') -or $form.Types['submitType'] -ne 'hidden') {
+    return (Ng 'submitType の hidden がありません')
+  }
+  # ④ 検査結果 / 項目見出し はラベルでちょうど 1 件
+  $dt = @($form.Radios | Where-Object { $_.Name -eq 'DataType' -and $_.Label -match $ExpectedDataType })
+  if ($dt.Count -ne 1) {
+    return [pscustomobject]@{ Ok = $false; Code = 'STATE_B_DATATYPE_NOT_FOUND'
+      Detail = ("検査結果『{0}』の選択肢が {1} 件" -f $ExpectedDataType, $dt.Count)
+      DataTypeValue = ''; OutputHeaderValue = '' }
+  }
+  $oh = @($form.Radios | Where-Object { $_.Name -eq 'OutputHeader' -and $_.Label -match $ExpectedHeader })
+  if ($oh.Count -ne 1) {
+    return [pscustomobject]@{ Ok = $false; Code = 'STATE_B_OUTPUTHEADER_NOT_FOUND'
+      Detail = ("項目見出し『{0}』の選択肢が {1} 件" -f $ExpectedHeader, $oh.Count)
+      DataTypeValue = ''; OutputHeaderValue = '' }
+  }
+  # ⑤ ボタンは id でちょうど 1 件ずつ (**取り違えないよう id で見る**)
+  $sub = @($form.Buttons | Where-Object { $_.Id -eq $ExpectedSubmitBtnId })
+  if ($sub.Count -ne 1) { return (Ng ("button id={0} が {1} 件" -f $ExpectedSubmitBtnId, $sub.Count)) }
+  $bk  = @($form.Buttons | Where-Object { $_.Id -eq $ExpectedBackBtnId })
+  if ($bk.Count -ne 1) { return (Ng ("button id={0} が {1} 件" -f $ExpectedBackBtnId, $bk.Count)) }
+  # ⑥ btnSubmit は type=button で name を持たない (押しボタンは送られない)
+  if ($sub[0].Type -ne 'button') { return (Ng ("{0} の type が button ではありません" -f $ExpectedSubmitBtnId)) }
+  if ($sub[0].Name) { return (Ng ("{0} が name を持っています" -f $ExpectedSubmitBtnId)) }
+
+  # ⑦ inline script のハンドラ契約
+  $scripts = Get-InlineScripts $pageHtml
+  $sb = Get-ClickHandlerBody $scripts $ExpectedSubmitBtnId
+  if ($null -eq $sb) { return (Ng ("{0} の click ハンドラが見つかりません" -f $ExpectedSubmitBtnId)) }
+  # **form を送ること** (`document.myform.submit()`)
+  $needSubmit = ('document.' + $ExpectedFormName + '.submit(')
+  if ($sb.Replace(' ', '') -notlike ('*' + $needSubmit.Replace(' ', '') + '*')) {
+    return (Ng ("{0} のハンドラが {1}) を呼んでいません" -f $ExpectedSubmitBtnId, $needSubmit))
+  }
+  # **submitType を書き換えないこと** (書き換えるなら実測契約と違う = 進まない)
+  if ($sb -match '(?i)submitType') {
+    return (Ng ("{0} のハンドラが submitType を触っています (実測契約と違う)" -f $ExpectedSubmitBtnId))
+  }
+  # 「戻る」だけが submitType='back' を入れる
+  $bb = Get-ClickHandlerBody $scripts $ExpectedBackBtnId
+  if ($null -eq $bb) { return (Ng ("{0} の click ハンドラが見つかりません" -f $ExpectedBackBtnId)) }
+  if ($bb -notmatch "(?i)submitType" -or $bb -notmatch "(?i)['\x22]back['\x22]") {
+    return (Ng ("{0} のハンドラが submitType='back' を設定していません" -f $ExpectedBackBtnId))
+  }
+
+  return [pscustomobject]@{
+    Ok = $true; Code = ''; Detail = ''
+    DataTypeValue = $dt[0].Value; OutputHeaderValue = $oh[0].Value
+  }
+}
+
+function New-StateBRequest($form, [string]$pageHtml, [datetime]$from, [datetime]$to) {
+  $c = Test-StateBContract $form $pageHtml
+  if (-not $c.Ok) { return (New-Fail $c.Code $c.Detail) }
+
   $body = New-BaseBody $form
   $body['DateFrom'] = $from.ToString('yyyy/MM/dd')
   $body['DateTo']   = $to.ToString('yyyy/MM/dd')
+  # **「現在 checked だからそのまま」は不可。** ラベルから実 value を取る。
+  $body['DataType']     = $c.DataTypeValue
+  $body['OutputHeader'] = $c.OutputHeaderValue
+  # **「確認」は submitType を空のまま送る** (実測。`confirm` を作らない)。
+  $body['submitType'] = ''
 
-  # **「現在 checked だからそのまま」は不可** (計画 §2 STATE B)。ラベルから値を取る。
-  $dt = @($form.Radios | Where-Object { $_.Name -eq 'DataType' -and $_.Label -match $ExpectedDataType })
-  if ($dt.Count -eq 0) {
-    return (New-Fail 'STATE_B_DATATYPE_NOT_FOUND' ("検査結果『{0}』の選択肢がありません" -f $ExpectedDataType))
+  $press = [pscustomobject]@{
+    Kind = 'form-submit'; Name = ''; Value = ''
+    Label = ("{0} / document.{1}.submit()" -f $ExpectedSubmitBtnId, $ExpectedFormName)
   }
-  $body['DataType'] = $dt[0].Value
-
-  $oh = @($form.Radios | Where-Object { $_.Name -eq 'OutputHeader' -and $_.Label -match $ExpectedHeader })
-  if ($oh.Count -eq 0) {
-    return (New-Fail 'STATE_B_OUTPUTHEADER_NOT_FOUND' ("項目見出し『{0}』の選択肢がありません" -f $ExpectedHeader))
-  }
-  $body['OutputHeader'] = $oh[0].Value
-
-  $press = Resolve-Press $form '確認'
-  if (-not $press) { return (New-Fail 'STATE_B_CONFIRM_ACTION_UNKNOWN' '「確認」の押し方を特定できません') }
-  if ($press.Kind -eq 'named' -or $press.Kind -eq 'hidden') { $body[$press.Name] = $press.Value }
   return [pscustomobject]@{ Ok = $true; Code = ''; Detail = ''; Body = $body; Press = $press }
 }
 
@@ -754,7 +870,7 @@ try {
       if (-not $sel.Ok) { Finish 1 'fail' $sel.Code $sel.Detail }
       $req = New-StateARequest $cur $sel.SellerCode $sel.SellerName
     }
-    elseif ($st.Expect -eq 'B') { $req = New-StateBRequest $cur $from $to }
+    elseif ($st.Expect -eq 'B') { $req = New-StateBRequest $cur $pageHtml $from $to }
     else { $req = New-StateCRequest $cur }
 
     if (-not $req.Ok) {

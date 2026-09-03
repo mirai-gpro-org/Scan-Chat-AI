@@ -855,6 +855,115 @@ bat 生成 OK（`デメカル疎通確認_v1.1.bat`・placeholder 残り無し�
 - ページ読み込み時に `loadHanbaitens()` が呼ばれるか（捕捉した inline script には呼び出しが無い）。
 - `HanbaitenCode` を空のまま POST したときのサーバの挙動。**未試行**。
 
+### ②-3 Phase B 2 回目の実測と STATE B の修正（2026-09-03・`verify-1.2`）
+
+**正本は `docs/lab/demecal_recovery_plan_20260902.md`。** ここは実測の記録。
+
+専用PC で `verify-1.1` を **1 回だけ**実行。結果:
+
+```
+cert OK / credentials OK / login OK
+STATE A → HTTP 200 / text/html; charset=utf-8
+STATE_B_CONFIRM_ACTION_UNKNOWN
+```
+
+**Elith/S3 への書き込み・`last_to` の更新・CSV の保存は 1 件も発生していない**（verify-only）。
+今回も失敗時の骨格を自動回収できたので、**現地で 3 回目を回さずに原因を確定できた**。
+
+**STATE A は通った。** = `GET /hanbaiten?dairitenCode=Q05-0010` が `code == "000000"` を
+**ちょうど 1 件**・`name` 非空で返し、その値を載せた POST をサーバが受理して次の画面へ進んだ、
+ということ（②-2 の未確認 1 件目がこれで埋まった）。次画面の `HanbaitenCode` に `000000` が
+入って返ってきている。
+
+#### 実測した STATE B の構造
+
+```html
+<form class="form-horizontal" name="myform" action="/hanyou/entry" method="post">
+<input type="hidden" id="ID" name="ID" value="0" />
+<input readonly type="text" id="DairitenCode"  name="DairitenCode"  value="Q05-0010" />
+<input readonly type="text" id="DairitenName"  name="DairitenName"  value="&#x682A;…" />
+<input readonly type="text" id="HanbaitenCode" name="HanbaitenCode" value="000000" />
+<input readonly type="text" id="HanbaitenName" name="HanbaitenName" value="&#x682A;…" />
+<input type='text' id="DateFrom" name="DateFrom" value="" />   <!-- type だけシングルクォート -->
+<input type='text' id="DateTo"   name="DateTo"   value="" />
+<input type="radio" value="0" checked id="DataType" name="DataType">すべて
+<input type="radio" value="1"         id="DataType" name="DataType">正常終了のみ
+<input type="radio" value="False" checked id="OutputHeader" name="OutputHeader">出力しない
+<input type="radio" value="True"          id="OutputHeader" name="OutputHeader">出力する
+<button id="btnSubmit" type="button">確認</button>   <!-- onclick 属性は無い -->
+<button id="btnBack"   type="button">戻る</button>   <!-- onclick 属性は無い -->
+<input id="submitType" name="submitType" type="hidden" />   <!-- value 属性が無い -->
+<input name="__RequestVerificationToken" type="hidden" value="…" />
+```
+
+inline script（`<script src>` ではない側）:
+
+```js
+$("#btnSubmit").click(function () { dispLoading('処理中...'); document.myform.submit(); });
+$("#btnBack").click(function () { $('#submitType').val('back'); document.myform.submit(); });
+```
+
+- **文字列 `confirm` は骨格全体で 0 件。** 「確認ボタン＝`submitType=confirm`」は**実在しない**。
+  `verify-1.1` までの fixture が持っていた `submitType='confirm'` は**こちらの創作**なので撤回した。
+- **`submitType` を触るのは「戻る」だけ。**「確認」は値を入れずに form を送る
+  → **ブラウザ相当の POST は `submitType` を空文字のまま送る**。
+- ボタンはどちらも `onclick` 属性を持たず、ハンドラは jQuery の `.click()` で後から付く。
+- radio は `id` が重複している（`DataType` が 2 つ・`OutputHeader` が 2 つ）ので、
+  **radio の特定に id は使えない**（ラベルと `name` で見る）。
+- `submitType` の hidden に `value` 属性が無い = **既定値は空文字**。
+
+**`verify-1.1` の停止も実装どおりの正しい fail-closed だった**（判定の誤りではない）。
+汎用の `Resolve-Press` は**そのボタン自身の `onclick` 属性**しか読まないので、
+属性が存在しない実サイトでは原理的に押し方が決まらない。
+
+#### `verify-1.2` の修正
+
+1. **STATE B を専用 contract にした**（`Test-StateBContract` / `New-StateBRequest`）。
+   「確認」については**汎用 `Resolve-Press` を使わない**。機械確認するのは 7 点:
+   form の `name="myform"` / `DateFrom`+`DateTo` の存在 / `submitType` が hidden で存在 /
+   ラベル「正常終了のみ」がちょうど 1 件 / ラベル「出力する」がちょうど 1 件 /
+   `id=btnSubmit` と `id=btnBack` がちょうど 1 件ずつ / `btnSubmit` が `type=button` で name 無し。
+   加えて**今回実測した inline script のハンドラ契約**（btnSubmit は form を送るだけで
+   `submitType` を触らない・btnBack だけが `'back'` を入れる）も見る。
+   **どれか 1 つでも違えば `STATE_B_CONFIRM_ACTION_UNKNOWN` で fail-closed。**
+2. **`submitType` は空文字で送る。`confirm` という値を作らない・送らない。**
+3. **parser を必要最小限だけ拡張**した: form の `name` 属性を取る（属性は
+   **form の開始タグからだけ**読む＝中身の `name=` を拾わない）/ button の `id` を取る。
+4. **`state-b.html` / `state-b-decoy.html` fixture を実測 DOM へ置換**。
+   `type='text'` のシングルクォートも**実測との差として残した**（parser が text と解釈することを
+   T19g/T19h が固定する）。inline script のハンドラ 2 本も fixture に入れた。
+
+**送る field は実測の 11 個**（`ID` / `DairitenCode` / `DairitenName` / `HanbaitenCode` /
+`HanbaitenName` / `DateFrom` / `DateTo` / `DataType` / `OutputHeader` / `submitType` /
+`__RequestVerificationToken`）。押しボタンは name を持たないので**混ぜない**。
+
+#### 検証（実サイトは未実行）
+
+`npm run verify:demecal-flow` = **91 件 PASS**（STATE B は T13〜T19h の 24 件）。
+退行注入で**4 件とも落ちることを確認済み**:
+
+| 注入 | 落ちるテスト |
+|---|---|
+| `submitType` に `'confirm'` を入れる | T16 / T16a |
+| 「確認」を汎用 `Resolve-Press` に戻す | T16a / T16b / T16c / T16d / T16e |
+| ハンドラ契約（⑦）を丸ごと外す | T19b / T19c / T19d |
+| `DataType` を既定（checked の `0`）のままにする | T14 |
+
+`verify:ps1-order` OK ／ `verify:intake-scope` OK ／ `verify:probe-bat-gate` OK（10 ケース）／
+`ParseFile` 構文エラー 0 ／ `astro check` 0 errors ／
+bat 生成 OK（`verify-1.2`・placeholder 残り無し）。
+
+**Wellfort への再実行は依頼していない。** Phase C にも進んでいない。
+
+#### この回で残った未確認
+
+- **STATE C（確認画面）の DOM は依然 Unknown。** 「確認」を押した先が何を返すかは未取得なので
+  `New-StateCRequest` は変更していない。
+- `dispLoading()` の実体（別ファイルの script）。**押下相当の POST には不要**。
+- サーバが `submitType` 空文字をどう解釈するか（確認へ進むのか）。**未試行**。
+- 日付欄の書式が `yyyy/MM/dd` でよいか（datetimepicker の `format: 'YYYY/MM/DD'` から取ったが、
+  サーバ側の受理は未確認）。
+
 ### ② 本番の自動実行（`demecal-fetch.ps1` ＋ セットアップ bat・未実装）
 
 **①の結果を見てから作る**（form の `action`/`name` が確定するため）。
