@@ -99,13 +99,18 @@ function New-DemecalRangeResult {
   from = last_to + 1日
   → **overlap しない。** from は必ず last_to より後、to は必ず TodayJst より前。
 
+  watermark と窓の終端 (to) の関係:
+    last_to <  to … ready
+    last_to == to … noop
+    last_to >  to … invalid_state (STATE_LAST_TO_AHEAD_OF_WINDOW)
+
   返り値の Status:
     ready           … From / To が入る。**ここだけ**が「取りに行ってよい」
-    noop            … 新しい範囲が無い (from > to)。C-4 の実行結果は `ok_noop`。
+    noop            … 追いついている (last_to == to)。C-4 の実行結果は `ok_noop`。
                       **この状態でデメカルへ login / download しない**
     not_initialized … last_to が無い。Code=STATE_NOT_INITIALIZED。
                       **直近 7 日などを自動設定しない** (勝手に範囲を作らない)
-    invalid_state   … 入力が壊れている。fail-closed で停止する
+    invalid_state   … 入力または状態が壊れている。fail-closed で停止する
 
   **From / To は ready のときだけ入れる** (noop / invalid_state では空文字)。
   呼び出し側が Status を見ずに .From/.To を読んでも、壊れた範囲でダウンロードに
@@ -128,7 +133,15 @@ function Resolve-DemecalAcquisitionRange {
       'today_jst が YYYY-MM-DD の実在する暦日でない')
   }
 
-  # 2. watermark が無ければ**そこで止まる**。範囲をこちらで作らない。
+  # 2. 窓の終端を先に決める。DateTime の端 (0001-01-01) で溢れるので囲う。
+  try {
+    $to = $today.AddDays(-1)
+  } catch {
+    return (New-DemecalRangeResult 'invalid_state' 'DATE_OUT_OF_RANGE' '' '' `
+      '日付が扱える範囲の端を越えた')
+  }
+
+  # 3. watermark が無ければ**そこで止まる**。範囲をこちらで作らない。
   if ([string]::IsNullOrWhiteSpace($LastTo)) {
     return (New-DemecalRangeResult 'not_initialized' 'STATE_NOT_INITIALIZED' '' '' `
       'last_to が未初期化。初回の範囲は運用で明示的に決める (直近N日を自動設定しない)')
@@ -140,20 +153,30 @@ function Resolve-DemecalAcquisitionRange {
       'last_to が YYYY-MM-DD の実在する暦日でない')
   }
 
-  # 3. 日付の足し引き。DateTime の端 (0001-01-01 / 9999-12-31) で溢れるので囲う。
-  try {
-    $to   = $today.AddDays(-1)
-    $from = $last.AddDays(1)
-  } catch {
-    return (New-DemecalRangeResult 'invalid_state' 'DATE_OUT_OF_RANGE' '' '' `
-      '日付が扱える範囲の端を越えた')
+  # 4. watermark と窓の終端 (= JST の昨日) の関係で 3 つに分かれる。
+  #
+  #    last_to >  to … **異常**。fail-closed で止める (下記)
+  #    last_to == to … 追いついている。noop
+  #    last_to <  to … 未取得の範囲がある。ready
+  #
+  #    **`last_to > to` を noop にしてはならない (2026-09-03 レビュー裁定)。**
+  #    last_to は「結果承認日ベースで、この日まで取得完了」の watermark なので、
+  #    **窓の終端より未来の値は「追いついた」ではなく、状態が壊れている証拠**
+  #    (時計ずれ / 別環境の state を読んだ / 誤った force 巻き戻し 等)。
+  #    noop にすると**黙って毎日何もしないまま放置**され、その間の未取得分は
+  #    watermark が前進済みなので**永久に回収されない**。だから止めて人に見せる。
+  if ($last -gt $to) {
+    return (New-DemecalRangeResult 'invalid_state' 'STATE_LAST_TO_AHEAD_OF_WINDOW' '' '' `
+      ('last_to={0} が窓の終端 {1} (JST の昨日) より未来。状態が壊れている' `
+        -f (Format-DemecalDate $last), (Format-DemecalDate $to)))
   }
 
-  # 4. 追いついていれば何もしない。**ここで login / download へ進ませない。**
-  if ($from -gt $to) {
+  if ($last -eq $to) {
     return (New-DemecalRangeResult 'noop' 'OK_NOOP' '' '' `
-      ('新しい範囲が無い (from={0} > to={1})' -f (Format-DemecalDate $from), (Format-DemecalDate $to)))
+      ('新しい範囲が無い (last_to={0} = 窓の終端)' -f (Format-DemecalDate $to)))
   }
 
+  # ここまで来れば last < to なので from = last+1 <= to。溢れようがない。
+  $from = $last.AddDays(1)
   return (New-DemecalRangeResult 'ready' '' (Format-DemecalDate $from) (Format-DemecalDate $to) '')
 }

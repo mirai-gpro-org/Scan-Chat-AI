@@ -140,7 +140,8 @@ Check 'C23 today_jst が壊れていれば last_to=null より優先して inval
   ($r.Status -eq 'invalid_state' -and $r.Code -eq 'TODAY_JST_INVALID') (Desc $r)
 
 $r = Get-Plan '9999-12-31' '2026-09-03'
-Check 'C24 last_to=9999-12-31 (足すと溢れる) → invalid_state' ($r.Status -eq 'invalid_state') (Desc $r)
+Check 'C24 last_to=9999-12-31 → invalid_state (窓より未来なので AHEAD で止まる)' `
+  ($r.Status -eq 'invalid_state' -and $r.Code -eq 'STATE_LAST_TO_AHEAD_OF_WINDOW') (Desc $r)
 $r = Get-Plan '2026-09-01' '0001-01-01'
 Check 'C25 today=0001-01-01 (引くと溢れる) → invalid_state' ($r.Status -eq 'invalid_state') (Desc $r)
 
@@ -164,10 +165,43 @@ Check 'C30 overlap 0 (from は必ず last_to より後)' ($overlap -eq 0) ("over
 Check 'C31 today を含めない (to は必ず today より前)' ($includesToday -eq 0) ("含んだ={0}" -f $includesToday)
 Check 'C32 隙間 0 (from は last_to + 1日 ちょうど)' ($gap -eq 0) ("ずれ={0}" -f $gap)
 
-$r = Get-Plan '2026-09-05' '2026-09-03'
-Check 'C33 last_to が未来 (時計ずれ等) でも取りに行かない → noop' ($r.Status -eq 'noop') (Desc $r)
+Write-Host "`n― watermark と窓の終端 (= JST の昨日) の関係 ―――――――"
+# 2026-09-03 レビュー裁定: last_to > to を noop にしない。
+#   last_to <  to → ready / last_to == to → noop / last_to >  to → invalid_state
+# 「追いついた」と「状態が壊れている」を同じ noop に畳むと、壊れた側が
+# **黙って毎日何もしないまま放置**される (watermark は前進済みなので永久に回収されない)。
+
+$r = Get-Plan '2026-09-01' '2026-09-03'
+Check 'C33 last_to(09-01) <  to(09-02) → ready' (IsReady $r '2026-09-02' '2026-09-02') (Desc $r)
+
+$r = Get-Plan '2026-09-02' '2026-09-03'
+Check 'C34 last_to(09-02) == to(09-02) → noop / OK_NOOP' `
+  ($r.Status -eq 'noop' -and $r.Code -eq 'OK_NOOP') (Desc $r)
+
 $r = Get-Plan '2026-09-03' '2026-09-03'
-Check 'C34 last_to == today でも noop (今日は取らない)' ($r.Status -eq 'noop') (Desc $r)
+Check 'C35 last_to(09-03) == today > to(09-02) → invalid_state' `
+  ($r.Status -eq 'invalid_state' -and $r.Code -eq 'STATE_LAST_TO_AHEAD_OF_WINDOW') (Desc $r)
+Check 'C35b From/To は空' ($r.From -eq '' -and $r.To -eq '') (Desc $r)
+
+$r = Get-Plan '2026-09-05' '2026-09-03'
+Check 'C36 last_to(09-05) > today → invalid_state (時計ずれ/別環境の state/誤 force)' `
+  ($r.Status -eq 'invalid_state' -and $r.Code -eq 'STATE_LAST_TO_AHEAD_OF_WINDOW') (Desc $r)
+Check 'C36b From/To は空' ($r.From -eq '' -and $r.To -eq '') (Desc $r)
+
+# 未来 state が noop に混ざっていないことを、noop を返す入力の集合で固定する。
+$noopCount = 0
+foreach ($p in @(@('2026-09-02','2026-09-03'), @('2025-12-31','2026-01-01'), @('2024-02-29','2024-03-01'))) {
+  $x = Get-Plan $p[0] $p[1]
+  if ($x.Status -eq 'noop') { $noopCount++ }
+}
+Check 'C37 noop は last_to == to の回だけ (3/3)' ($noopCount -eq 3) ("noop={0}" -f $noopCount)
+
+$aheadAsNoop = 0
+foreach ($p in @(@('2026-09-03','2026-09-03'), @('2026-09-05','2026-09-03'), @('2027-01-01','2026-09-03'), @('9999-12-31','2026-09-03'))) {
+  $x = Get-Plan $p[0] $p[1]
+  if ($x.Status -eq 'noop') { $aheadAsNoop++ }
+}
+Check 'C38 窓より未来の last_to を noop にしない (0/4)' ($aheadAsNoop -eq 0) ("noop へ落ちた={0}" -f $aheadAsNoop)
 
 Write-Host "`n― 初回 fallback / 上限 clamp を持ち込んでいない ―――――"
 

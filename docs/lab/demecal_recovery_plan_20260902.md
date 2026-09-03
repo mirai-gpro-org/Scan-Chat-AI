@@ -558,7 +558,7 @@ RawContentStream byte[]
 Shift_JIS
 filename / header / row-count / SHA-256 validation
 0-row handling
-acquisition watermark / overlap
+acquisition watermark / overlap の要否 (→ C-2 で「しない」と確定)
 Task Scheduler
 acquisition monitoring
 fail-closed
@@ -601,7 +601,7 @@ Elith S3 handoff
 
 ```text
 C-1 date range / watermark
-C-2 overlap / retry
+C-2 retry / catch-up
 C-3 zero rows
 C-4 production acquisition runner
 C-5 scheduler
@@ -636,7 +636,26 @@ coverage high-watermark として確定する。
 | `ready` | — | **入る** | この範囲で取得してよい |
 | `noop` | `OK_NOOP` | **空** | 追いついている。**login / download を実行しない**。実行結果は `ok_noop` |
 | `not_initialized` | `STATE_NOT_INITIALIZED` | **空** | **停止**。直近 N 日などを自動設定しない |
-| `invalid_state` | `TODAY_JST_INVALID` / `STATE_LAST_TO_INVALID` / `DATE_OUT_OF_RANGE` | **空** | fail-closed で停止 |
+| `invalid_state` | `TODAY_JST_INVALID` / `STATE_LAST_TO_INVALID` / **`STATE_LAST_TO_AHEAD_OF_WINDOW`** / `DATE_OUT_OF_RANGE` | **空** | fail-closed で停止 |
+
+**watermark と窓の終端 (`to` = JST の昨日) の関係で 3 つに分かれる**
+（2026-09-03 レビュー裁定。**`last_to > to` を `noop` にしない**）:
+
+| 関係 | 結果 | 例 (`today=2026-09-03` → `to=2026-09-02`) |
+|---|---|---|
+| `last_to < to` | `ready` | `last_to=2026-09-01` → `ready 09-02..09-02` |
+| `last_to == to` | `noop` / `OK_NOOP` | `last_to=2026-09-02` → `noop` |
+| `last_to > to` | `invalid_state` / **`STATE_LAST_TO_AHEAD_OF_WINDOW`** | `last_to=2026-09-03`（= today）/ `2026-09-05` → `invalid_state` |
+
+**理由**: `last_to` は「結果承認日ベースで、この日まで取得完了」の watermark なので、
+**窓の終端より未来の値は「追いついた」ではなく、状態が壊れている証拠**
+（時計ずれ / 別環境の state を読んだ / 誤った `force` 巻き戻し 等）。
+これを `noop` に畳むと、壊れた側が**黙って毎日何もしないまま放置**され、
+その間の未取得分は watermark が前進済みなので**永久に回収されない**。
+だから止めて人に見せる（`invalid_state` は監視に出る＝§7.2 C-6）。
+
+**`last_to == today` も `invalid_state`**（`to` は昨日なので `today > to`）。
+当日中に結果承認される行を取り逃さないため `to = today` を使わない、という C-1 の前提の裏返し。
 
 **`From`/`To` は `ready` のときだけ入れる**（`noop` などでは空文字）。呼び出し側が `Status` を
 見ずに `.From`/`.To` を読んでも、**壊れた範囲でダウンロードへ進めない**ようにするため。
@@ -697,13 +716,27 @@ network call 0 / state write 0 / `force` 0 / 現在時刻 0 / overlap 0 / 隙間
   Phase B の成功証跡）も無変更（`verify:demecal-flow` 129 件 PASS で確認）。
 - STATE A/B/C・CSV download・scheduler・後段連携は C-1 の対象外。
 
-### C-2. overlap / retry
+### C-2. retry / catch-up
 
-直近 N 日を毎回取り直す（設計値は ChatGPT が確定）。
-長期停止後の catch-up と、1 回あたりの取得範囲の上限を決める。
+**旧題「overlap / retry」と「直近 N 日を毎回取り直す」は撤回（2026-09-03）。**
+C-1 で **`from = last_to + 1日` / overlap しない**と確定したので、
+同じ節に「毎回取り直す」が残っていると正面から矛盾する。
 
-**重複取得そのものは取得層では避けられない**（同じ範囲を再取得するのが overlap の目的）。
-**重複の扱いは後段の責務**であり、このセクションでは扱わない。
+```text
+通常:     last_to + 1日 ～ JST の昨日 の連続範囲
+失敗:     last_to 据置 → 次回、同じ未取得範囲を再試行
+長期停止: last_to + 1日 から catch-up
+overlap はしない
+```
+
+**取り漏れは overlap でなく「連続 range ＋ 失敗時 `last_to` 据置」で防ぐ。**
+成功した回だけ watermark が前進するので（`demecal-state.ts:74` の単調前進）、
+走らなかった日・失敗した日の範囲は**次の成功回がそのまま続きから拾う**。
+これが §1「無人にしてよい根拠」そのもので、overlap は要らない。
+
+このセクションで決めるのは **再試行の間隔と上限**、および
+**長期停止後に 1 回で何日ぶんまで要求するか**（= C-1 で保留した範囲上限。
+根拠が無いので推測で 60 日に固定しない → C-4 の確認事項）。
 
 ### C-3. zero rows
 
@@ -735,7 +768,7 @@ Windows Task Scheduler。ユーザー `info` / 「ログオン中のみ実行」
 ```text
 Phase B の取得部を維持 (verify-1.4 を書き直さない)
 to = 当日を使わない
-overlap で取り漏らさない
+連続 range + 失敗時 last_to 据置で取り漏らさない
 失敗時に watermark を前進させない
 0 件を正常に扱う
 production runner が無人で走る
