@@ -1,6 +1,6 @@
-# デメカル 取得範囲プランナ (C-1) のテスト
+# デメカル 取得範囲プランナ (C-1 / C-2) のテスト
 #
-# 正本: docs/lab/demecal_recovery_plan_20260902.md §7.2 C-1
+# 正本: docs/lab/demecal_recovery_plan_20260902.md §7.2 C-1 (範囲) / C-2 (retry・catch-up)
 # 実行: pwsh -NoProfile -File scripts/tests/demecal-range.tests.ps1
 #       (npm run verify:demecal-range)
 #
@@ -203,6 +203,121 @@ foreach ($p in @(@('2026-09-03','2026-09-03'), @('2026-09-05','2026-09-03'), @('
 }
 Check 'C38 窓より未来の last_to を noop にしない (0/4)' ($aheadAsNoop -eq 0) ("noop へ落ちた={0}" -f $aheadAsNoop)
 
+Write-Host "`n― C-2 retry / catch-up 契約 ―――――――――――――――"
+# 正本: docs/lab/demecal_recovery_plan_20260902.md §7.2 C-2
+#   retry = 次回 scheduled run (同一 run 内で再試行しない)
+#   catch-up = last_to + 1日 〜 JST の昨日 の連続範囲
+#   no overlap / no gap / range cap 未確定なので自動 chunking なし
+#
+# **プランナは「失敗した」ことを知らない。**それでよい —
+# 失敗しても last_to が動かないので、次回 run は同じ入力から同じ範囲を再計算する。
+# 「失敗回数」を渡す設計にすると、そこから backoff・範囲縮小が生えてくる。
+
+# 日付範囲を 1 日ずつ数える (テスト側の道具。プランナには入れない)
+function Add-Days([hashtable]$acc, [string]$from, [string]$to) {
+  $d = ConvertTo-DemecalDate $from
+  $e = ConvertTo-DemecalDate $to
+  while ($d -le $e) { $k = Format-DemecalDate $d; $acc[$k] = 1 + $acc[$k]; $d = $d.AddDays(1) }
+}
+
+# ① 状態が同じで today も同じなら、何度呼んでも同じ範囲
+$a = Get-Plan '2026-08-31' '2026-09-03'
+$b = Get-Plan '2026-08-31' '2026-09-03'
+$c = Get-Plan '2026-08-31' '2026-09-03'
+Check 'C60 同じ state + 同じ today → 毎回まったく同じ範囲 (09-01..09-02)' `
+  ((IsReady $a '2026-09-01' '2026-09-02') -and (Desc $a) -eq (Desc $b) -and (Desc $b) -eq (Desc $c)) `
+  ("{0} / {1} / {2}" -f (Desc $a), (Desc $b), (Desc $c))
+
+# ② 失敗して state 据置 → 次回 run が同じ未取得範囲を再計算する
+#    (run#1 が失敗しても last_to は動かないので、run#2 の入力は run#1 と同一)
+$run1 = Get-Plan '2026-08-31' '2026-09-03'     # 失敗したと仮定 → last_to 据置
+$run2 = Get-Plan '2026-08-31' '2026-09-03'     # 次回 run。同じ state・同じ日
+Check 'C61 失敗→last_to 据置→次回 run は同じ範囲 (開始日をずらさない)' `
+  ($run1.From -eq $run2.From -and $run1.To -eq $run2.To -and $run2.From -eq '2026-09-01') (Desc $run2)
+
+# ③ 状態が同じで today だけ進んだら、from は不変・to だけ伸びる
+$d0 = Get-Plan '2026-08-31' '2026-09-03'
+$d1 = Get-Plan '2026-08-31' '2026-09-05'
+Check 'C62 same from / extended to (from=09-01 のまま to だけ 09-02→09-04)' `
+  ($d0.From -eq '2026-09-01' -and $d1.From -eq '2026-09-01' -and $d0.To -eq '2026-09-02' -and $d1.To -eq '2026-09-04') `
+  ("{0} → {1}" -f (Desc $d0), (Desc $d1))
+
+# ④ 取り込み成功で watermark が前進 → 次の from = 前回の to + 1日
+$lastTo = '2026-08-31'
+$prevTo = ''
+$chainOk = $true
+foreach ($t in @('2026-09-03', '2026-09-04', '2026-09-05', '2026-09-06')) {
+  $p = Get-Plan $lastTo $t
+  if ($p.Status -ne 'ready') { $chainOk = $false; break }
+  if ($prevTo -ne '') {
+    $want = Format-DemecalDate ((ConvertTo-DemecalDate $prevTo).AddDays(1))
+    if ($p.From -ne $want) { $chainOk = $false; break }
+  }
+  $prevTo = $p.To
+  $lastTo = $p.To          # 取り込み成功 → watermark 前進
+}
+Check 'C63 成功で watermark 前進 → 次の from = 前回の to + 1日' $chainOk ("最後の to={0}" -f $prevTo)
+
+# ⑤ 数日走らなくても、最後に成功した watermark の次の日から連続で取りに行く
+$cu = Get-Plan '2026-08-31' '2026-09-10'
+Check 'C64 多日停止の catch-up (last_to=08-31 / today=09-10 → 09-01..09-09)' `
+  (IsReady $cu '2026-09-01' '2026-09-09') (Desc $cu)
+
+# ⑥ 連続した run を通しで回して、覆った日が 1 回ずつ・隙間なし
+$acc = @{}; $lastTo = '2026-08-31'
+foreach ($t in @('2026-09-03', '2026-09-04', '2026-09-05', '2026-09-08')) {
+  $p = Get-Plan $lastTo $t
+  if ($p.Status -ne 'ready') { continue }
+  Add-Days $acc $p.From $p.To
+  $lastTo = $p.To
+}
+$dupes = @($acc.Keys | Where-Object { $acc[$_] -gt 1 })
+$sorted = @($acc.Keys | Sort-Object)
+$gapCount = 0
+for ($i = 1; $i -lt $sorted.Count; $i++) {
+  $want = Format-DemecalDate ((ConvertTo-DemecalDate $sorted[$i - 1]).AddDays(1))
+  if ($sorted[$i] -ne $want) { $gapCount++ }
+}
+Check 'C65 通し実行で overlap 0 (同じ日を 2 回取りに行かない)' ($dupes.Count -eq 0) ("重複={0}" -f $dupes.Count)
+Check 'C66 通し実行で gap 0 (日付が連続している)' ($gapCount -eq 0) ("隙間={0}" -f $gapCount)
+Check 'C67 覆った範囲は 09-01..09-07' `
+  ($sorted[0] -eq '2026-09-01' -and $sorted[$sorted.Count - 1] -eq '2026-09-07') `
+  ("{0}..{1}" -f $sorted[0], $sorted[$sorted.Count - 1])
+
+# ⑦ 途中で失敗しても (= その回は last_to を据え置く) 隙間も重複も生まれない
+$acc2 = @{}; $lastTo = '2026-08-31'
+$failDays = @{ '2026-09-04' = $true }    # この日の run は失敗したことにする
+foreach ($t in @('2026-09-03', '2026-09-04', '2026-09-05', '2026-09-08')) {
+  $p = Get-Plan $lastTo $t
+  if ($p.Status -ne 'ready') { continue }
+  if ($failDays[$t]) { continue }        # 失敗 → 取り込まない・last_to も動かさない
+  Add-Days $acc2 $p.From $p.To
+  $lastTo = $p.To
+}
+$dupes2 = @($acc2.Keys | Where-Object { $acc2[$_] -gt 1 })
+$sorted2 = @($acc2.Keys | Sort-Object)
+$gap2 = 0
+for ($i = 1; $i -lt $sorted2.Count; $i++) {
+  $want = Format-DemecalDate ((ConvertTo-DemecalDate $sorted2[$i - 1]).AddDays(1))
+  if ($sorted2[$i] -ne $want) { $gap2++ }
+}
+Check 'C68 失敗を挟んでも overlap 0 / gap 0 (再試行が同じ範囲を取り直す)' `
+  ($dupes2.Count -eq 0 -and $gap2 -eq 0) ("重複={0} 隙間={1}" -f $dupes2.Count, $gap2)
+Check 'C69 失敗を挟んでも 09-01..09-07 を覆う (取り漏れゼロ)' `
+  ($sorted2[0] -eq '2026-09-01' -and $sorted2[$sorted2.Count - 1] -eq '2026-09-07') `
+  ("{0}..{1}" -f $sorted2[0], $sorted2[$sorted2.Count - 1])
+
+# ⑧ 同じ入力を何度繰り返しても範囲が縮まない (adaptive shrink を持たない)
+$shrink = 0
+$first = Get-Plan '2026-01-01' '2026-09-03'
+foreach ($n in 1..5) {
+  $x = Get-Plan '2026-01-01' '2026-09-03'
+  if ($x.From -ne $first.From -or $x.To -ne $first.To) { $shrink++ }
+}
+Check 'C70 呼び直しても範囲が縮まない (adaptive shrink なし)' ($shrink -eq 0) ("変化={0}" -f $shrink)
+Check 'C71 大きな backlog を 1 回で返す (自動 chunking なし)' `
+  (IsReady $first '2026-01-02' '2026-09-02') (Desc $first)
+
 Write-Host "`n― 初回 fallback / 上限 clamp を持ち込んでいない ―――――"
 
 $r = Get-Plan '2026-08-27' '2026-09-03'
@@ -226,7 +341,12 @@ $forbidden = @(
   @{ n = '現在時刻 (Get-Date / Now / Today / UtcNow)'; p = 'Get-Date|::Now|::Today|::UtcNow|DateTime\]::Now' },
   @{ n = '初回 fallback (FirstRunDays)'; p = 'FirstRunDays' },
   @{ n = '範囲上限の決め打ち (MaxRangeDays)'; p = 'MaxRangeDays' },
-  @{ n = 'ファイル書き込み'; p = 'Set-Content|Out-File|Export-Clixml|\[IO\.File\]::Write' }
+  @{ n = 'ファイル書き込み'; p = 'Set-Content|Out-File|Export-Clixml|\[IO\.File\]::Write' },
+  # ── C-2: 同一 run 内の再試行・待機・範囲の自動調整を持ち込まない ──
+  @{ n = '待機 (sleep / backoff)'; p = 'Start-Sleep|\bsleep\b|backoff|Thread\]::Sleep' },
+  @{ n = '再試行の概念 (retry / attempt / maxTries)'; p = '\bretry|\bRetry|attempt|Attempt|maxTr|MaxTr' },
+  @{ n = 'ループ (同一 run 内で回して別候補を試す)'; p = '\bwhile\s*\(|\bfor\s*\(|\bforeach\b|\bdo\s*\{' },
+  @{ n = '範囲の自動調整 (chunk / split / shrink / clamp)'; p = 'chunk|Chunk|\bsplit\b|shrink|Shrink|clamp|Clamp|Math\]::Min' }
 )
 foreach ($f in $forbidden) {
   $hit = [regex]::Matches($code, $f.p)
