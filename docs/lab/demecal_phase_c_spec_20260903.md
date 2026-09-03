@@ -1279,7 +1279,8 @@ interface BloodProductionRow {
 | `CSV_HEADER_INVALID` | §6 の最低ヘッダ（`指図番号` / `結果承認日` / `結果項目数`）が欠けている |
 | `CSV_NO_DATA_ROWS` | ヘッダは妥当だがデータ行が 0 |
 | `BLOOD_ROW_ORDER_NO_MISSING` | 指図番号が空 |
-| `BLOOD_ROW_APPROVED_DATE_INVALID` | 結果承認日が無い / 日付として読めない |
+| `BLOOD_ROW_DRAWN_DATE_INVALID` | **採血日が入っているのに実在する日付でない**（v0.2.1 追加） |
+| `BLOOD_ROW_APPROVED_DATE_INVALID` | 結果承認日が無い / 実在する日付でない |
 | `BLOOD_ROW_TEST_DATE_INVALID` | 検査日を決められない（型と意図の明示。現状は到達しない） |
 | `DUPLICATE_EXTERNAL_TEST_ID_IN_CSV` | 同一指図番号が 2 行以上 → **batch 全体 FAIL** |
 
@@ -1348,3 +1349,66 @@ region は `C1-A: production parser (ここから)` 〜 `(ここまで)` のマ�
 
 mapping table の migration / mapping API / `demecal-import` API / S3 / watermark /
 production runner。**すべて未着手**（Q2〜Q6 の回答と ChatGPT レビュー待ち）。
+
+---
+
+# 20. 【実装記録】C1-A レビュー指摘の修正 — 日付の暦検証（2026-09-03）
+
+**ChatGPT C1-A レビューの blocker 1 件。** parser 以外は触っていない。
+
+## 20.1 何が壊れていたか
+
+1. **`normDate()` は「月 1〜12 / 日 1〜31」しか見ない。**
+   `2026-02-31` / `2026-04-31` / `2025-02-29` を**受理していた**。
+   医療データの日付なので、**存在しない日をそのまま納品してはいけない**。
+2. **strict parser が「採血日が空」と「採血日が在るのに不正」を区別していなかった。**
+   どちらも `null` になり、**不正な採血日が黙って結果承認日へ fallback**していた
+   （= 採血日が別の日に化けたまま通る）。
+
+## 20.2 直し方
+
+- **`normDateStrict()` を strict 専用に新設**（`normDate` は attended 経路が使うので**変更しない**）。
+  - **実在する暦日だけを通す**。閏年は **100 年 / 400 年規則まで**。
+  - **`Date` を一切使わない** — production parser に現在時刻を持ち込まないため、算術だけで判定する。
+  - 年の範囲は 1900〜2999（`0000` 年のような明らかな異常を落とす。生年月日も検査日も通る幅）。
+- **戻り値を 3 値 `{blank | invalid | ok}` にした。**
+  `string | null` の 2 値だと呼び出し側が必ず取り違える（実際 v1 がそうなっていた）。
+- **採血日**: 空 → `drawnDate=null` で `approvedDate` へ fallback（従来どおり）。
+  **在るのに不正 → `BLOOD_ROW_DRAWN_DATE_INVALID` で FAIL（fallback しない）。**
+- **結果承認日**: 同じ暦検証。不正なら既存の `BLOOD_ROW_APPROVED_DATE_INVALID`。
+- **生年月日も strict で見る**（`2025-02-29` から年齢を作らない）。
+  ただし必須ではないので **FAIL にはせず `age` を null** にする。
+
+## 20.3 検証 — `npm run verify:blood-parser` = **61 件 PASS**（48 → 61）
+
+追加は P41〜P53。
+
+| | 内容 |
+|---|---|
+| P41 / P42 | `2026-02-28` valid / **閏年 `2024-02-29` valid** |
+| P43 / P44 / P45 | **非閏年 `2025-02-29`** / **`2026-02-31`** / **`2026-04-31`** が invalid |
+| P46 / P47 | **不正な採血日が `approvedDate` へ fallback しない**（+ その検査が意味を持つ前提） |
+| P48 | **空の採血日だけ** は fallback する |
+| P49 / P50 | 結果承認日にも同じ暦検証が効く |
+| P51 | （前提）旧 `normDate` はこれらを受理する = strict 版が要る理由 |
+| **P52 / P53** | **100 年規則 `2100-02-29` invalid / 400 年規則 `2000-02-29` valid** |
+
+### 退行注入（**4 件とも落ちる**）
+
+| 注入 | 落ちるテスト |
+|---|---|
+| 暦検証を旧 `normDate` 相当（`D <= 31`）へ戻す | P43 / P44 / P45 / P46 / P49 / P50 |
+| 不正な採血日を blank と同じ扱いにする（fallback 復活） | P43 / P44 / P45 / P46 / **P47** |
+| 閏年を `year % 4 === 0` だけにする | **P52** |
+| 400 年規則だけ落とす（`% 100 !== 0` のみ） | **P53** |
+
+> **P52 / P53 は後から足した。** 最初に「閏年を 4 の倍数だけ」に壊す退行を注入したとき、
+> **59 件すべて PASS のままだった** — 100 年 / 400 年規則を 1 件もテストしていなかった。
+> **退行注入をしなければ、この穴には気づけなかった。**
+
+既存 suite は全て PASS（`verify:blood-csv` ALL PASS = **旧経路の挙動不変**／`verify:demecal-flow` 129 /
+`verify:report-model` 92 / `verify:sheet-contract` / `verify:demo-gate` / `verify:ps1-order` /
+`verify:intake-scope` / `verify:probe-bat-gate` / `astro check` 0 errors / `astro build` 成功）。
+
+**変更したのは `src/lib/elith-blood-csv.ts` と `scripts/verify-blood-parser.ts` の 2 本だけ。**
+DB / migration / API / S3 / mapping / watermark へは進んでいない。

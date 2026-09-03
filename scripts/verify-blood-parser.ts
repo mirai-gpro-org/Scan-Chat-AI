@@ -147,6 +147,79 @@ check('P28 失敗時は rows が必ず空 (部分成功を返さない)',
   [noOrder, noApproved, badApproved, dup, badHeader].every((r) => r.rows.length === 0), '');
 
 console.log('');
+console.log('── 日付の暦検証 (C1-A レビュー指摘 2026-09-03) ──────');
+
+/**
+ * 日付だけを変えた最小 CSV を組み立てる。
+ *
+ * **fixture ファイルにしない理由**: 検証したいのは日付 1 列だけで、
+ * ほぼ同じ CSV が 6 本並ぶと「どれが何を見ているか」が読めなくなる。
+ * PII 境界の検査 (P29〜P32) は**実ファイル**の fixture を使う (そちらは中身が要点なので)。
+ */
+function mkCsv(drawn: string, approved: string): string {
+  const header = ['指図番号', '性別', '生年月日', '採血日', '結果承認日',
+    'エラーコード', 'エラー内容', '結果項目数', '"項目名1\n総タンパク"', '項目区分1', '検査値1'].join(',');
+  const row = ['20212345678901234', '男', '19800115', drawn, approved, '', '', '1', 'TP', '1', '7.2'].join(',');
+  return `${header}\r\n${row}\r\n`;
+}
+const at = (drawn: string, approved: string): BloodProductionParseResult =>
+  parseBloodCsvRowsStrict({ text: mkCsv(drawn, approved) });
+
+// ── 実在する日は通る ───────────────────────────────────────────
+const d0228 = at('20260228', '20260807');
+check('P41 2026-02-28 は valid (testDate=採血日)',
+  d0228.ok && d0228.rows[0]?.testDate === '2026-02-28', `${d0228.ok} / ${d0228.rows[0]?.testDate}`);
+const dLeap = at('20240229', '20260807');
+check('P42 閏年 2024-02-29 は valid',
+  dLeap.ok && dLeap.rows[0]?.testDate === '2024-02-29', `${dLeap.ok} / ${dLeap.rows[0]?.testDate}`);
+
+// ── 実在しない日は落ちる ───────────────────────────────────────
+const dNoLeap = at('20250229', '20260807');
+check('P43 非閏年 2025-02-29 は invalid → BLOOD_ROW_DRAWN_DATE_INVALID',
+  !dNoLeap.ok && codes(dNoLeap).join(',') === 'BLOOD_ROW_DRAWN_DATE_INVALID', codes(dNoLeap).join(','));
+const d0231 = at('20260231', '20260807');
+check('P44 2026-02-31 は invalid → BLOOD_ROW_DRAWN_DATE_INVALID',
+  !d0231.ok && codes(d0231).join(',') === 'BLOOD_ROW_DRAWN_DATE_INVALID', codes(d0231).join(','));
+const d0431 = at('20260431', '20260807');
+check('P45 2026-04-31 (小の月の 31 日) は invalid → BLOOD_ROW_DRAWN_DATE_INVALID',
+  !d0431.ok && codes(d0431).join(',') === 'BLOOD_ROW_DRAWN_DATE_INVALID', codes(d0431).join(','));
+
+// ── 100 年 / 400 年規則 ────────────────────────────────────────
+// **これが無いと「4 の倍数なら閏年」の実装でもテストが全部通ってしまう**
+// (実測 2026-09-03: 閏年判定を `year % 4 === 0` に壊しても 59 件 PASS のままだった)。
+const dCentury = at('21000229', '20260807');
+check('P52 2100-02-29 は invalid (100 年規則: 2100 は閏年でない)',
+  !dCentury.ok && codes(dCentury).join(',') === 'BLOOD_ROW_DRAWN_DATE_INVALID', codes(dCentury).join(','));
+const dQuad = at('20000229', '20260807');
+check('P53 2000-02-29 は valid (400 年規則: 2000 は閏年)',
+  dQuad.ok && dQuad.rows[0]?.testDate === '2000-02-29', `${dQuad.ok} / ${dQuad.rows[0]?.testDate}`);
+
+// ── **不正な採血日は結果承認日へ fallback しない** (今回の blocker) ──
+check('P46 不正な採血日は approvedDate へ fallback しない (rows が 0)',
+  d0231.rows.length === 0 && dNoLeap.rows.length === 0 && d0431.rows.length === 0,
+  `${d0231.rows.length} / ${dNoLeap.rows.length} / ${d0431.rows.length}`);
+check('P47 fallback していたら testDate=2026-08-07 になるはず = この検査が意味を持つ',
+  !d0231.rows.some((r) => r.testDate === '2026-08-07'), JSON.stringify(d0231.rows.map((r) => r.testDate)));
+
+// ── 空の採血日「だけ」は fallback してよい ─────────────────────
+const dBlank = at('', '20260807');
+check('P48 空の採血日は approvedDate へ fallback する (drawnDate=null)',
+  dBlank.ok && dBlank.rows[0]?.drawnDate === null
+  && dBlank.rows[0]?.testDate === '2026-08-07' && dBlank.rows[0]?.dateSource === 'approved_date',
+  `${dBlank.ok} / ${dBlank.rows[0]?.drawnDate} / ${dBlank.rows[0]?.testDate}`);
+
+// ── 結果承認日も同じ暦検証を通す ───────────────────────────────
+const aNoLeap = at('20260805', '20250229');
+check('P49 結果承認日 2025-02-29 は invalid → BLOOD_ROW_APPROVED_DATE_INVALID',
+  !aNoLeap.ok && codes(aNoLeap).join(',') === 'BLOOD_ROW_APPROVED_DATE_INVALID', codes(aNoLeap).join(','));
+const a0431 = at('20260805', '20260431');
+check('P50 結果承認日 2026-04-31 は invalid → BLOOD_ROW_APPROVED_DATE_INVALID',
+  !a0431.ok && codes(a0431).join(',') === 'BLOOD_ROW_APPROVED_DATE_INVALID', codes(a0431).join(','));
+check('P51 (前提) 旧 normDate はこれらを受理してしまう = strict 版が要る理由',
+  /if \(M < 1 \|\| M > 12 \|\| D < 1 \|\| D > 31\) return null;/.test(
+    readFileSync(resolve(ROOT, 'src/lib/elith-blood-csv.ts'), 'utf-8')), '');
+
+console.log('');
 console.log('── PII 境界 ────────────────────────────────────────');
 
 // fixture に入れてある**架空の** PII。1 つでも parse 結果に出たら落とす。

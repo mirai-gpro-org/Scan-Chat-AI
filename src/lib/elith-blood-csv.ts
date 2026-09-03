@@ -415,6 +415,7 @@ export type BloodParseErrorCode =
   | 'CSV_HEADER_INVALID'
   | 'CSV_NO_DATA_ROWS'
   | 'BLOOD_ROW_ORDER_NO_MISSING'
+  | 'BLOOD_ROW_DRAWN_DATE_INVALID'
   | 'BLOOD_ROW_APPROVED_DATE_INVALID'
   | 'BLOOD_ROW_TEST_DATE_INVALID'
   | 'DUPLICATE_EXTERNAL_TEST_ID_IN_CSV';
@@ -544,14 +545,27 @@ export function parseBloodCsvRowsStrict(input: ParseBloodCsvStrictInput): BloodP
     }
     const orderNo: string = orderNoRaw;
 
-    // ── §4 日付: today fallback は無い ─────────────────────────────
-    const approvedDate = normDate(get(idx.approved));
-    if (!approvedDate) {
+    // ── §4 日付: today fallback は無い。実在する暦日だけを通す ────
+    const approved = normDateStrict(get(idx.approved));
+    if (approved.kind !== 'ok') {
       failures.push({ rowIndex, code: 'BLOOD_ROW_APPROVED_DATE_INVALID',
-        detail: '結果承認日がありません、または日付として読めません' });
+        detail: approved.kind === 'blank'
+          ? '結果承認日がありません'
+          : '結果承認日が実在する日付ではありません' });
       continue;
     }
-    const drawnDate = normDate(get(idx.drawn));
+    const approvedDate = approved.iso;
+
+    // **「空」と「在るのに不正」を区別する。**
+    // 混同すると `2026-02-31` のような行が黙って結果承認日へ落ち、
+    // **採血日が別の日に化けたまま納品される**。空のときだけ fallback してよい。
+    const drawn = normDateStrict(get(idx.drawn));
+    if (drawn.kind === 'invalid') {
+      failures.push({ rowIndex, code: 'BLOOD_ROW_DRAWN_DATE_INVALID',
+        detail: '採血日が入っていますが実在する日付ではありません' });
+      continue;
+    }
+    const drawnDate = drawn.kind === 'ok' ? drawn.iso : null;
     const testDate = drawnDate ?? approvedDate;
     const dateSource: BloodProductionRow['dateSource'] = drawnDate ? 'drawn_date' : 'approved_date';
     if (!testDate) {
@@ -562,7 +576,10 @@ export function parseBloodCsvRowsStrict(input: ParseBloodCsvStrictInput): BloodP
 
     const rowSex = normSex(get(idx.sex));
     // **生年月日はここでしか触らない。** age を出したら捨てる (結果に残さない)。
-    const age = ageOnStrict(normDate(get(idx.birth)), testDate);
+    // 生年月日も strict で見る (`2025-02-29` のような日から年齢を作らない)。
+    // ただし生年月日は必須ではないので、不正でも FAIL にはせず age を null にする。
+    const birth = normDateStrict(get(idx.birth));
+    const age = ageOnStrict(birth.kind === 'ok' ? birth.iso : null, testDate);
 
     const measurements = buildRowMeasurements(header, row, idx.itemCount, get(idx.itemCount), rowSex);
 
@@ -595,6 +612,50 @@ export function parseBloodCsvRowsStrict(input: ParseBloodCsvStrictInput): BloodP
     return { ok: false, rows: [], failures, totalRows, headerOk: true };
   }
   return { ok: true, rows, failures: [], totalRows, headerOk: true };
+}
+
+/**
+ * strict 日付の 3 値。**「空」と「在るのに不正」を型で分ける。**
+ * 2 値 (string | null) にすると呼び出し側が必ず取り違える — 実際 v1 では
+ * `2026-02-31` の採血日が null になり、**結果承認日へ黙って fallback していた**。
+ */
+type StrictDate =
+  | { kind: 'blank' }
+  | { kind: 'invalid' }
+  | { kind: 'ok'; iso: string };
+
+/** その年月の日数。**閏年を正しく数える** (400 年規則まで)。 */
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) {
+    const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+    return leap ? 29 : 28;
+  }
+  return [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+}
+
+/**
+ * production 用の日付正規化。**実在する暦日だけを通す。**
+ *
+ * 旧 `normDate` は「月 1〜12 / 日 1〜31」しか見ないので `2026-02-31` や
+ * `2026-04-31` を受理する (`2025-02-29` も通る)。医療データの日付なので、
+ * **存在しない日をそのまま納品してはいけない。**
+ * 旧 `normDate` は attended 経路が使っているため**変更しない**。ここは strict 専用。
+ *
+ * **`Date` を一切使わない** — production parser は現在時刻を作ってはいけないので、
+ * `new Date(...)` を region に持ち込まずに算術だけで判定する。
+ */
+function normDateStrict(v: string | undefined | null): StrictDate {
+  const raw = (v ?? '').trim();
+  if (!raw) return { kind: 'blank' };
+  const m = /(\d{4})\D?(\d{1,2})\D?(\d{1,2})/.exec(raw);
+  if (!m) return { kind: 'invalid' };
+  const Y = +m[1], M = +m[2], D = +m[3];
+  // 年の範囲: 生年月日 (古い) と検査日 (未来寄り) の両方を通すが、
+  // 0000 年のような明らかな異常は落とす。
+  if (Y < 1900 || Y > 2999) return { kind: 'invalid' };
+  if (M < 1 || M > 12) return { kind: 'invalid' };
+  if (D < 1 || D > daysInMonth(Y, M)) return { kind: 'invalid' };
+  return { kind: 'ok', iso: `${String(Y).padStart(4, '0')}-${String(M).padStart(2, '0')}-${String(D).padStart(2, '0')}` };
 }
 
 /**
