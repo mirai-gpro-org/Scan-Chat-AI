@@ -220,6 +220,38 @@ check('P51 (前提) 旧 normDate はこれらを受理してしまう = strict �
     readFileSync(resolve(ROOT, 'src/lib/elith-blood-csv.ts'), 'utf-8')), '');
 
 console.log('');
+console.log('── 日付書式の exact match (レビュー指摘 2026-09-03) ──');
+
+/** 採血日にその文字列を入れて parse し、通ったかどうかだけを見る。 */
+const drawnOk = (v: string): boolean => {
+  const r = at(v, '20260807');
+  return r.ok && r.rows[0]?.testDate === '2026-02-28';
+};
+const drawnRejected = (v: string): boolean => {
+  const r = at(v, '20260807');
+  // **fallback していないこと**まで見る (invalid が blank 扱いになると
+  // testDate=2026-08-07 で ok:true になってしまい、この検査が空振りする)。
+  return !r.ok && codes(r).join(',') === 'BLOOD_ROW_DRAWN_DATE_INVALID' && r.rows.length === 0;
+};
+
+check('P54 YYYYMMDD は valid', drawnOk('20260228'), '');
+check('P55 YYYY-MM-DD は valid', drawnOk('2026-02-28'), '');
+check('P56 YYYY/MM/DD は valid', drawnOk('2026/02/28'), '');
+
+check('P57 前にゴミが付く abc2026-02-28 は invalid', drawnRejected('abc2026-02-28'), '');
+check('P58 後ろにゴミが付く 2026-02-28xyz は invalid', drawnRejected('2026-02-28xyz'), '');
+check('P59 9 桁の 202602280 は invalid', drawnRejected('202602280'), '');
+check('P60 2026-02-280 は invalid', drawnRejected('2026-02-280'), '');
+check('P61 任意の区切り 2026a02b28 は invalid (区切りは - と / だけ)', drawnRejected('2026a02b28'), '');
+check('P62 区切りが前後で違う 2026-02/28 は invalid', drawnRejected('2026-02/28'), '');
+check('P63 1 桁の月日 2026-2-28 は invalid (書式を 3 つに固定している)', drawnRejected('2026-2-28'), '');
+check('P64 前後の空白は trim される ( 2026-02-28 は valid)', drawnOk(' 2026-02-28 '), '');
+
+check('P65 (前提) 部分一致なら通ってしまう値である = この検査が意味を持つ',
+  ['abc2026-02-28', '2026-02-28xyz', '202602280', '2026-02-280', '2026a02b28']
+    .every((v) => /(\d{4})\D?(\d{1,2})\D?(\d{1,2})/.test(v)), '');
+
+console.log('');
 console.log('── PII 境界 ────────────────────────────────────────');
 
 // fixture に入れてある**架空の** PII。1 つでも parse 結果に出たら落とす。

@@ -643,13 +643,34 @@ function daysInMonth(year: number, month: number): number {
  *
  * **`Date` を一切使わない** — production parser は現在時刻を作ってはいけないので、
  * `new Date(...)` を region に持ち込まずに算術だけで判定する。
+ *
+ * **文字列は exact match で見る (レビュー指摘 2026-09-03)。**
+ * 旧実装は `/(\d{4})\D?(\d{1,2})\D?(\d{1,2})/` の**部分一致**だったので、
+ * `2026-02-28xyz` / `abc2026-02-28` / `202602280` (9 桁) / `2026a02b28` を
+ * **黙って受理していた**。前後のゴミを無視して「それらしい部分」を拾うのは、
+ * 医療データの日付では**取り違えを静かに通す**ことになる。
+ * → **許可する形式を 3 つに固定し、全体一致でしか通さない。**
  */
+/** 許可する日付の書式 (この 3 つだけ)。区切りは `-` か `/` で、**前後で同じもの**。 */
+const STRICT_DATE_COMPACT = /^(\d{4})(\d{2})(\d{2})$/;          // YYYYMMDD
+const STRICT_DATE_SEPARATED = /^(\d{4})([-/])(\d{2})\2(\d{2})$/; // YYYY-MM-DD / YYYY/MM/DD
+
 function normDateStrict(v: string | undefined | null): StrictDate {
   const raw = (v ?? '').trim();
   if (!raw) return { kind: 'blank' };
-  const m = /(\d{4})\D?(\d{1,2})\D?(\d{1,2})/.exec(raw);
-  if (!m) return { kind: 'invalid' };
-  const Y = +m[1], M = +m[2], D = +m[3];
+
+  let Y = 0, M = 0, D = 0;
+  const compact = STRICT_DATE_COMPACT.exec(raw);
+  const separated = compact ? null : STRICT_DATE_SEPARATED.exec(raw);
+  if (compact) {
+    Y = +compact[1]; M = +compact[2]; D = +compact[3];
+  } else if (separated) {
+    // `\2` の後方参照で **区切りが前後で同じ**ことを要求する (`2026-02/28` は通さない)。
+    Y = +separated[1]; M = +separated[3]; D = +separated[4];
+  } else {
+    return { kind: 'invalid' };
+  }
+
   // 年の範囲: 生年月日 (古い) と検査日 (未来寄り) の両方を通すが、
   // 0000 年のような明らかな異常は落とす。
   if (Y < 1900 || Y > 2999) return { kind: 'invalid' };

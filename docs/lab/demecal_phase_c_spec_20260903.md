@@ -1412,3 +1412,71 @@ production runner。**すべて未着手**（Q2〜Q6 の回答と ChatGPT レビ
 
 **変更したのは `src/lib/elith-blood-csv.ts` と `scripts/verify-blood-parser.ts` の 2 本だけ。**
 DB / migration / API / S3 / mapping / watermark へは進んでいない。
+
+---
+
+# 21. 【実装記録】日付書式を exact match へ（2026-09-03・C1-A 再レビュー）
+
+**残り 1 点の指摘。parser 以外は触っていない。**
+
+## 21.1 何が問題だったか
+
+`normDateStrict()` の抽出が `/(\d{4})\D?(\d{1,2})\D?(\d{1,2})/` の**部分一致**だったため、
+**前後にゴミが付いた値や桁数の合わない値を黙って受理**していた:
+
+| 入力 | 旧実装 | あるべき |
+|---|---|---|
+| `abc2026-02-28` | 通る | invalid |
+| `2026-02-28xyz` | 通る | invalid |
+| `202602280`（9 桁） | 通る | invalid |
+| `2026-02-280` | 通る | invalid |
+| `2026a02b28` | 通る（`\D` が何でも拾う） | invalid |
+
+**「それらしい部分」を拾って前後を無視するのは、医療データの日付では取り違えを静かに通す。**
+
+## 21.2 直し方 — 許可する書式を 3 つに固定し、全体一致でしか通さない
+
+```ts
+const STRICT_DATE_COMPACT   = /^(\d{4})(\d{2})(\d{2})$/;          // YYYYMMDD
+const STRICT_DATE_SEPARATED = /^(\d{4})([-/])(\d{2})\2(\d{2})$/;   // YYYY-MM-DD / YYYY/MM/DD
+```
+
+- **区切りは `-` と `/` だけ**（任意の `\D` を許さない）。
+- **`\2` の後方参照で前後の区切りが同じ**ことを要求する（`2026-02/28` は通さない）。
+- **月日は 2 桁固定**（`2026-2-28` は invalid）。書式を 3 つに固定した以上、
+  1 桁を黙って受けると「固定した」ことにならない。実データは `20260805` の 8 桁。
+- 前後の空白は従来どおり `trim()` する。
+- **`daysInMonth` / 100 年・400 年規則はそのまま**（§20 の内容は無変更）。
+
+## 21.3 検証 — `npm run verify:blood-parser` = **73 件 PASS**（61 → 73）
+
+追加は P54〜P65。
+
+| | 内容 |
+|---|---|
+| P54 / P55 / P56 | `YYYYMMDD` / `YYYY-MM-DD` / `YYYY/MM/DD` が valid |
+| P57 / P58 | 前後にゴミ（`abc…` / `…xyz`）が invalid |
+| P59 / P60 | 桁数違い（`202602280` / `2026-02-280`）が invalid |
+| P61 / P62 | 任意の区切り（`2026a02b28`）/ 前後で違う区切り（`2026-02/28`）が invalid |
+| P63 | 1 桁の月日（`2026-2-28`）が invalid |
+| P64 | 前後の空白は trim される |
+| P65 | （前提）**これらは部分一致なら全部通る値**である = この検査が意味を持つ |
+
+**不正判定は「落ちること」だけでなく「fallback していないこと」まで見る**
+（`BLOOD_ROW_DRAWN_DATE_INVALID` かつ `rows.length === 0`）。
+invalid が blank 扱いに退行すると `testDate=結果承認日` で `ok:true` になり、
+**「落ちるはず」の検査が静かに空振りする**ため。
+
+### 退行注入（**3 件とも落ちる**）
+
+| 注入 | 落ちるテスト |
+|---|---|
+| 部分一致（旧実装）へ戻す | P57 / P58 / P59 / P60 / P61 / P62 / P63 |
+| 区切りを任意の `\D` にする（アンカーは残す） | P61 / P62 |
+| 末尾アンカー `$` だけ外す | P58 / P59 / P60 |
+
+既存 suite は全て PASS（`verify:blood-csv` ALL PASS = **旧経路の挙動不変**／`verify:demecal-flow` 129 /
+`verify:report-model` 92 / `verify:sheet-contract` / `verify:ps1-order` / `verify:intake-scope` /
+`verify:probe-bat-gate` / `astro check` 0 errors / `astro build` 成功）。
+
+**変更したのは `src/lib/elith-blood-csv.ts` と `scripts/verify-blood-parser.ts` の 2 本だけ。**
