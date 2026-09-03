@@ -530,79 +530,141 @@ CSV_HEADER_INVALID
 
 ---
 
-# 7. Phase C — 本番連携と無人化
+# 7. Phase C — 取得運用の完成
 
-Phase B成功後に別問題として着手する。
+**【スコープ訂正 2026-09-03・ChatGPT】** 旧 §7 は「本番連携と無人化」として
+**本人紐付け・冪等性・Elith/S3 本番 write** まで含めていたが、**広げすぎだった**。
 
-## C-1. 本人紐付け
+正本の再確認:
 
-現在の `test-<時刻>-<連番>` client_idを本番利用しない。
+- `demecal_auto_download_overview_spec.md` の目的は **CSV 自動ダウンロード・定期取得**
+- **後続連携は「任意」**
+- `lab_integration_workflow.md` は**ユーザー割当を扱う別仕様**
 
-CSV `指図番号` (`external_test_id`) をWellfort側の内部 `diagnostic_user_id` へ確定的に結び付ける。
+→ **このセクションの責務を「Leisure / Demecal から血液検査 CSV を
+安全・確実・無人で取得すること」だけに限定する。**
 
-正本:
+## 7.0 スコープ
 
-- `lab_tests.external_test_id`
-- `id_management_and_correlation_spec.md`
-
-## C-2. 冪等性
-
-同じCSV/同じ指図番号/同じ結果を再取得してもElithへ二重納品しない。
-
-**取り込み成功 → last_to更新失敗 → 同じ範囲再取得**でも重複しないことを機械保証する。
-
-## C-3. date watermark / overlap
-
-`last_to` の意味を「結果承認日で安全に確定したwatermark」として再設計する。
-
-現在の `to = today` は使用しない。
-
-最低案:
+### In Scope
 
 ```text
-to = yesterday
+mTLS
+login
+STATE A/B/C
+date range
+CSV download
+RawContentStream byte[]
+Shift_JIS
+filename / header / row-count / SHA-256 validation
+0-row handling
+acquisition watermark / overlap
+Task Scheduler
+acquisition monitoring
+fail-closed
+PII を不要に保存しない
 ```
 
-より堅牢な案:
+### OUT OF SCOPE — see lab integration / data pipeline specs
 
 ```text
-過去N日を毎回overlap取得
- + external_test_id等で冪等化
+指図番号 → diagnostic_user_id
+mapping table
+customer / app_bridge
+EC
+lab_tests
+test_artifacts
+diagnosis DB
+Elith JSON
+Elith S3 handoff
+全体パイプライン設計
 ```
 
-採用方式はChatGPT側で最終決定する。
+**今後このセクションでは、上記について調査・設計・実装・質問作成を行わない。**
+参照先は `lab_integration_workflow.md` / `lab_data_pipeline_master_spec.md` /
+`id_management_and_correlation_spec.md`。
 
-## C-4. 0件
+旧 §7 の本文と、それを具体化した `demecal_phase_c_spec_20260903.md` は
+**削除せず履歴として残す**（同 spec の冒頭に
+`SUPERSEDED FOR DEMECAL ACQUISITION SCOPE` を記録済み）。
 
-正しいCSVヘッダがありデータ行0件なら正常。
+## 7.1 既存成果物の扱い
+
+| 成果物 | 扱い |
+|---|---|
+| `scripts/demecal-verify.ps1` (`verify-1.4`) | **取得部の実機成功証跡として保持。** 変更しない |
+| `scripts/demecal-daily.ps1` (`daily-1.7`) | **凍結維持。** 新 runner ができるまで配布しない |
+| `parseBloodCsvRowsStrict()` / C1-A 実装 | **revert しない。** ただし**後段データ処理向けの成果物**として扱い、
+**取得の完成条件から外す**。**このセクションでは `src/lib/elith-blood-csv.ts` を変更しない** |
+
+## 7.2 Phase C（取得）の対象
 
 ```text
-rows=0
-result=ok
+C-1 date range / watermark
+C-2 overlap / retry
+C-3 zero rows
+C-4 production acquisition runner
+C-5 scheduler
+C-6 monitoring
 ```
 
-とし、必要なwatermarkだけ安全に前進させる。
+### C-1. date range / watermark
 
-## C-5. 本番write順序
+`last_to` の意味を「**結果承認日で、この日までの取得が成功した**」という
+coverage high-watermark として確定する。
 
-本人紐付け・冪等性・watermarkが完成してから初めて:
+- **`to = today` は使わない**（当日中に結果承認される行を取り逃すため）。
+- **失敗時に `last_to` を前進させない**（この性質が無人運用の根拠。§1）。
+- **`last_to` は CSV 内の最大採血日・最大 test_date ではない。**
+
+### C-2. overlap / retry
+
+直近 N 日を毎回取り直す（設計値は ChatGPT が確定）。
+長期停止後の catch-up と、1 回あたりの取得範囲の上限を決める。
+
+**重複取得そのものは取得層では避けられない**（同じ範囲を再取得するのが overlap の目的）。
+**重複の扱いは後段の責務**であり、このセクションでは扱わない。
+
+### C-3. zero rows
+
+正しいヘッダがありデータ行 0 件なら**正常**。`rows=0` / `result=ok` とし、
+watermark だけ安全に前進させる。**0 件を error にしない。**
+
+### C-4. production acquisition runner
+
+新規系統（例 `scripts/demecal-production.ps1`）。**`daily-1.7` を復活させない。**
+Phase B で実証済みの **cert / login / STATE A/B/C / `RawContentStream` / CSV validation** は
+**同一ロジックを使う**（共通化するか、機械的な parity test を置く）。
+**取得部を独自に書き直さない。**
+
+### C-5. scheduler
+
+Windows Task Scheduler。ユーザー `info` / 「ログオン中のみ実行」/
+ログオン時＋毎日 / 「開始時刻を過ぎたらすぐ開始」ON（`demecal_unattended_spec §4.3`）。
+**実行時刻は業務判断。コードで勝手に決めない。**
+
+### C-6. monitoring
+
+`/api/admin/demecal-run` の実行ログ ＋ GitHub Actions の日次ワークフローを見張りにする
+（**新しい通知基盤は作らない** = 既存の確定事項どおり）。
+送るのは**非 PII の取得結果だけ**（範囲 / 行数 / 結果 / エラーコード）。
+**CSV 本文・臨床値・PII は送らない。**
+
+## 7.3 このセクションの完成条件
 
 ```text
-CSV取得
- → validate
- → id resolve
- → idempotency check
- → Elith/S3 write
- → success確認
- → watermark更新
- → cleanup
+Phase B の取得部を維持 (verify-1.4 を書き直さない)
+to = 当日を使わない
+overlap で取り漏らさない
+失敗時に watermark を前進させない
+0 件を正常に扱う
+production runner が無人で走る
+scheduler が登録され、走ったことがサーバ側に残る
+失敗が人に届く
+PII を不要に保存しない
 ```
 
-を有効化する。
-
-## C-6. 無人化
-
-最後にタスクスケジューラ・監視・通知を有効化する。
+**本人紐付け・Elith/S3 本番納品は、この完成条件に含めない。**
 
 ---
 

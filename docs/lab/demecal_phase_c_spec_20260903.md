@@ -1,3 +1,43 @@
+> # ⚠️ SUPERSEDED FOR DEMECAL ACQUISITION SCOPE
+>
+> **確定 2026-09-03（ChatGPT スコープ訂正）。**
+>
+> 本書は **デメカル取得セクションの正本ではなくなった。**
+> このセクションの責務は
+> **「Leisure / Demecal から血液検査 CSV を安全・確実・無人で取得すること」だけ**に限定する。
+>
+> 根拠（正本の再確認）:
+>
+> - `demecal_auto_download_overview_spec.md` の目的は **CSV 自動ダウンロード・定期取得**
+> - **後続連携は「任意」**
+> - `lab_integration_workflow.md` は**ユーザー割当を扱う別仕様**
+>
+> ## 本書のうち、このセクションの対象から外れた部分（**別セクションへ移管**）
+>
+> | 本書の節 | 扱い |
+> |---|---|
+> | §1.1（本人紐付け）/ §3 C0-1 / §4.4 / §4.5 | **OUT OF SCOPE — see lab integration / data pipeline specs** |
+> | §5.2 ledger / §5.6 DB finalization / §5.3 semantic hash / §5.7 already imported | 同上 |
+> | §2.1・§3 C0-2（Elith folder date）/ §16-C / §16-D | 同上 |
+> | §16-A / §16-B（mapping の実在確認・発生源） | 同上 |
+> | §17 Q1〜Q6（Wellfort / Elith 確認事項） | 同上（**このセクションでは今後質問を作らない**） |
+> | §19 / §20 / §21（C1-A parser 実装記録） | **revert しない。** ただし**後段データ処理向けの成果物**であり、**取得の完成条件から外す** |
+>
+> **今後このセクションでは、上記について調査・設計・実装・質問作成を行わない。**
+> **`src/lib/elith-blood-csv.ts` もこのセクションでは変更しない。**
+>
+> ## このセクションで生きている部分
+>
+> §4.2（today fallback 禁止の考え方）/ §6（watermark・overlap）/ §7（0 件）/
+> §8（production runner）/ §9（fault injection のうち取得に関わるもの）/
+> §11（scheduler / monitoring）/ §13（Stop Conditions のうち取得に関わるもの）。
+>
+> **取得スコープの Phase C 定義は `demecal_recovery_plan_20260902.md` §7 が正。**
+>
+> **履歴として残す。削除しない**（判断の経緯が消えると同じ議論を繰り返すため）。
+
+---
+
 # デメカル自動取得 Phase C — 本番連携・冪等化・無人化 詳細仕様
 
 **版:** **v0.2 (2026-09-03 改訂)**  
