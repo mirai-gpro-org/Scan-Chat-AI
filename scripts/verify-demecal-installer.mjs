@@ -177,8 +177,32 @@ check('A22 配置先の既定は C:\\demecal\\production',
  */
 const shaCalls = (batText.match(/\$got = Sha256File \$dest/g) ?? []).length;
 check('A23 ハッシュ照合が 作業フォルダと配置後の 2 回ある', shaCalls === 2, `${shaCalls} 回`);
-check('A24 配置後の欠損・不一致に別のコードを持つ',
-  batText.includes('INSTALLED_MISSING') && batText.includes('INSTALLED_MISMATCH'));
+check('A24 配置後の欠損・不一致・本数に別のコードを持つ',
+  batText.includes('INSTALLED_MISSING') && batText.includes('INSTALLED_MISMATCH')
+  && batText.includes('INSTALLED_SET_INCOMPLETE'));
+// 本数照合は**条件式ごと**見る。エラーコードの文字列が残っていても、条件を
+// `$false` に潰せば黙って素通りする (実測 2026-09-03: 文字列の有無だけでは通った)。
+check('A24b 配置後の本数照合が条件式として在る',
+  batText.includes('$done = @(Get-ChildItem -LiteralPath $InstallRoot -File')
+  && batText.includes("if (($done -join '|') -ne ($want -join '|')) {"));
+
+/*
+ * **旧セット (.old) を捨ててよいのは、配置後の照合が全部通ったあとだけ。**
+ * 先に捨てると、照合に落ちても戻す先が無く**壊れた新セットが target に居座る**。
+ * 順序そのものはソースでしか固定できない (捨てるのが早すぎても、照合が通る限り
+ * 実行時の見た目は正常なので)。
+ */
+const DISCARD_OLD = 'if ($OldSaved) { try { Remove-Item -LiteralPath $OldDir -Recurse -Force } catch {} }';
+const iDiscard = batText.indexOf(DISCARD_OLD);
+const iLastSha = batText.lastIndexOf('$got = Sha256File $dest');
+const iPostSet = batText.indexOf('INSTALLED_SET_INCOMPLETE');
+check('A25 .old を捨てるのは 配置後のハッシュ照合より後',
+  iDiscard > 0 && iLastSha > 0 && iDiscard > iLastSha);
+check('A26 .old を捨てるのは 配置後の本数照合より後',
+  iDiscard > 0 && iPostSet > 0 && iDiscard > iPostSet);
+check('A27 配置後の照合に落ちたら旧セットへ戻す',
+  (batText.match(/^\s*Restore-Old$/gm) ?? []).length === 3,
+  `Restore-Old ${(batText.match(/^\s*Restore-Old$/gm) ?? []).length} 箇所`);
 
 // ══ B. 配布口 ═════════════════════════════════════════════════════
 console.log('\n[B] 配布口 /api/ops/probe-bat');
@@ -377,12 +401,52 @@ check('C22 失敗しても既存の正常セットが 1 バイトも変わらな
   INSTALL_FILES.map((n) => shaOrGone(join(target, n)).slice(0, 8)).join(' / '));
 check('C23 失敗しても中途半端な作業フォルダを残さない', !existsSync(`${target}.new`));
 
-// ── 失敗のさせ方 3: OneDrive 配下 ─────────────────────────────────
+// ── 失敗のさせ方 3: 入れ替えた**後**の照合で落とす ────────────────
+//   C20〜C23 は **入れ替える前**に落ちる形しか見ていない。
+//   入れ替えた後に落ちる形は「target に壊れた新セットが載っている」状態からの
+//   復旧なので、別の経路として固定する。
+//   2 回目の `Sha256File` (= 配置後の照合) **だけ**を潰して強制的に不一致にする。
+const iSecondSha = batText.lastIndexOf('$got = Sha256File $dest');
+const postSwapBad = join(work, 'post-swap-bad.bat');
+writeFileSync(postSwapBad, Buffer.from(
+  `${batText.slice(0, iSecondSha)}$got = 'forced-post-swap-mismatch'${batText.slice(iSecondSha + '$got = Sha256File $dest'.length)}`,
+  'utf8'));
+
+// (a) 既存の正常セットがあるとき → 旧 3 本が**バイト単位で完全復元**される。
+const good = INSTALL_FILES.map((n) => shaOrGone(join(target, n)));
+const goodManifest = readFileSync(join(target, 'install-manifest.json'), 'utf8');
+const bad4 = runInstaller(postSwapBad, target);
+check('C26 配置後の照合に落ちたら INSTALL_FAILED',
+  bad4.out.includes('INSTALL_FAILED') && bad4.out.includes('INSTALLED_MISMATCH'));
+check('C27 配置後の照合に落ちたら exit != 0', bad4.code !== 0 && bad4.code !== 99, `exit=${bad4.code}`);
+check('C28 旧 3 本がバイト単位で完全復元される',
+  INSTALL_FILES.every((n, i) => shaOrGone(join(target, n)) === good[i]),
+  INSTALL_FILES.map((n) => shaOrGone(join(target, n)).slice(0, 8)).join(' / '));
+check('C29 旧セットの手控えも戻っている',
+  existsSync(join(target, 'install-manifest.json'))
+  && readFileSync(join(target, 'install-manifest.json'), 'utf8') === goodManifest);
+check('C30 壊れた新セットを target に残さない',
+  shaOrGone(join(target, 'demecal-production.ps1')) !== built.entries[0].sha256
+  && shaOrGone(join(target, 'demecal-production.ps1')) === good[0]);
+check('C31 .new も .old も残さない',
+  !existsSync(`${target}.new`) && !existsSync(`${target}.old`));
+
+// (b) 初回インストール (旧セットが無い) → **target 自体を残さない**。
+const firstTime = join(work, 'first', 'production');
+const bad5 = runInstaller(postSwapBad, firstTime);
+check('C32 初回で配置後の照合に落ちたら INSTALL_FAILED / exit != 0',
+  bad5.out.includes('INSTALL_FAILED') && bad5.code !== 0 && bad5.code !== 99, `exit=${bad5.code}`);
+check('C33 初回で落ちたら target 自体を残さない (壊れたセットを置かない)',
+  !existsSync(firstTime), existsSync(firstTime) ? readdirSync(firstTime).join(' ') : 'なし');
+check('C34 初回で落ちても .new / .old を残さない',
+  !existsSync(`${firstTime}.new`) && !existsSync(`${firstTime}.old`));
+
+// ── 失敗のさせ方 4: OneDrive 配下 ─────────────────────────────────
 const od = join(work, 'OneDrive', 'demecal', 'production');
 mkdirSync(dirname(od), { recursive: true });
 const bad3 = runInstaller(batPath, od);
-check('C24 OneDrive 配下へは配置しない', bad3.out.includes('ONEDRIVE_PATH') && bad3.code !== 0, `exit=${bad3.code}`);
-check('C25 OneDrive のときは 1 本も作らない', !existsSync(od));
+check('C35 OneDrive 配下へは配置しない', bad3.out.includes('ONEDRIVE_PATH') && bad3.code !== 0, `exit=${bad3.code}`);
+check('C36 OneDrive のときは 1 本も作らない', !existsSync(od));
 
 // ══ D. 凍結されているものが動いていない ═══════════════════════════
 console.log('\n[D] 凍結の維持');
