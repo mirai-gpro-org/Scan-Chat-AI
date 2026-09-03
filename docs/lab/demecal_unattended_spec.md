@@ -1137,6 +1137,37 @@ byte count / SHA-256 / rows / 必須ヘッダ結果）。**CSV 本文・先頭�
 
 **Wellfort への再実行は依頼していない。** Phase C にも進んでいない。
 
+### ②-6 Phase B 完了（2026-09-03・`verify-1.4`・実機 ○ / ChatGPT 判定 PASS）
+
+専用PC で `verify-1.4` を実行し **結果 ○**。**Phase B PASS**。
+Exit Criteria と Confirmed の一覧は
+**`docs/lab/demecal_recovery_plan_20260902.md` §6.6 が正**（二重管理しない）。要点だけ:
+
+- **mTLS / login → STATE A → STATE B → STATE C → CSV** が実サイトで 1 本通った。
+- **`GET /hanbaiten` → `000000`** / **「正常終了のみ」「出力する」** / **`submitType=download`** が受理された。
+- **Windows PowerShell 5.1 の `RawContentStream` から byte[]** を取り、**Shift_JIS で decode** し、
+  **filename 規則 / 必須ヘッダ / 行数** の検査まで通った。
+- **業務データの write は 4 回とも 1 件も発生していない**（`elith-blood-csv` / BloodTestData / S3 /
+  `last_to` / CSV のディスク保存・本文送信 いずれも無し）。
+- 傍証: この回は `probe-upload` へ**新しい骨格が上がっていない**（`Send-Skeleton` は失敗経路にしか無い）。
+
+**個々の実測値（行数・ファイル名・SHA-256）はここに書かない** — 実行画面の値がこちらへ渡って
+いないため。**書けば捏造になる。** 非PII の実行ログ (`/api/admin/demecal-run`) に残っている。
+
+#### ここで「無人化が終わった」わけではない
+
+**取れたのは「CSV を 1 本、正しく取ってきてメモリ上で検証できる」ところまで。**
+§3 以降が求めている **本人紐付け / 冪等性 / `last_to` の前進 / 0 件の扱い / 本番 write の順序 /
+タスク登録と監視** は **1 行も実装していない**（Phase C）。
+**`last_to` の単調前進**（§1 の「無人にしてよい根拠」）も、**まだコードで担保されていない**。
+
+#### 凍結と証跡
+
+- **`scripts/demecal-verify.ps1` (`verify-1.4`) は残す。** Phase B の成功証跡であり、
+  Phase C 後も**業務データ write 抜きで取得部だけを試せる唯一の口**になる。
+- **`daily-1.7` の凍結は維持**（`api/ops/probe-bat` の `FROZEN` が 409 を返す）。**配布しない。**
+- 次は **ChatGPT から Phase C の詳細仕様**を受けてから着手する。**先回りして実装しない。**
+
 ### ② 本番の自動実行（`demecal-fetch.ps1` ＋ セットアップ bat・未実装）
 
 **①の結果を見てから作る**（form の `action`/`name` が確定するため）。

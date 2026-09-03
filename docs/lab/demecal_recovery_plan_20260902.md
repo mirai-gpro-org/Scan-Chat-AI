@@ -482,6 +482,52 @@ CSV_HEADER_INVALID
 
 ここで初めて「デメカル取得部は完成」と判定する。
 
+## 6.6 Phase B 完了記録（2026-09-03・`verify-1.4`・ChatGPT 判定 PASS）
+
+**専用PC で `scripts/demecal-verify.ps1` / `verify-1.4` を実行し、結果 ○。**
+上の Exit Criteria を全て満たしたので **Phase B PASS**。
+
+実測の経緯は `docs/lab/demecal_unattended_spec.md` の ②-1〜②-6 が正
+（1 回の実機ごとに 1 節。停止コードと実測 DOM と修正内容をそこに書いてある）。
+
+### Confirmed（この 4 回の実機で確定したこと）
+
+| # | 事項 | 確定した回 |
+|---|---|---|
+| 1 | **mTLS**（`Cert:\CurrentUser\My` の証明書で接続）と **login**（GET→POST の antiforgery 往復） | `verify-1.0` 以降 全回 |
+| 2 | **STATE A**（`/hanyou/start`） | `verify-1.1` |
+| 3 | **STATE B**（`/hanyou/entry`） | `verify-1.2` |
+| 4 | **STATE C**（`/hanyou/confirm`） | `verify-1.4` |
+| 5 | **`GET /hanbaiten?dairitenCode=…` → `code=="000000"` がちょうど 1 件** で販売先が決まる | `verify-1.1`→`1.2` で通過 |
+| 6 | **検査結果「正常終了のみ」/ 項目見出し「出力する」** をラベル起点で選んで送ると受理される | `verify-1.2`→`1.3` で通過 |
+| 7 | **`POST /hanyou/confirm` に `submitType=download`** を送ると CSV 応答が返る | `verify-1.4` |
+| 8 | **CSV レスポンスが返ること自体** | `verify-1.4` |
+| 9 | **Windows PowerShell 5.1 で `RawContentStream` から byte[] を取れる**（`$r.Content` は文字列なので使わない） | `verify-1.4` |
+| 10 | **Shift_JIS として decode できる** | `verify-1.4` |
+| 11 | **filename 規則 / 必須ヘッダ / 行数** の検査が通る | `verify-1.4` |
+| 12 | **verify-only で業務データの write が 1 件も発生しない**（`elith-blood-csv` / BloodTestData / S3 / `last_to` / CSV のディスク保存・本文送信 いずれも無し） | 全 4 回 |
+
+**傍証（こちらで実測）**: `verify-1.4` の回で `probe-upload` へ**新しい骨格が 1 件も上がっていない**
+（`probe-list` の件数 31・最新は `verify-1.2` の `f2c747ee` のまま）。
+`Send-Skeleton` は**失敗経路にしか無い**ので、成功時にこうなるのが正しい挙動。
+
+**この記録に個々の実測値（行数・ファイル名・SHA-256）は書かない** — 実行画面の値が
+こちらへ渡っていないため。**書けば捏造になる。** 必要なら
+`GET /api/admin/demecal-run` の実行ログ（非PII）に残っている。
+
+### この時点の到達点と非到達点
+
+- **到達**: 「デメカルから CSV を 1 本、正しく取ってきてメモリ上で検証できる」までが機械で担保された。
+- **非到達（Phase C の担当）**: 本人紐付け / 冪等性 / date watermark と overlap / 0 件の扱い /
+  本番 write の順序 / 無人化（タスク登録・監視）。**この 6 つは 1 行も実装していない。**
+
+### 成功証跡として残すもの
+
+- **`scripts/demecal-verify.ps1` (`verify-1.4`) は消さない。** Phase B の成功証跡であり、
+  Phase C で本番経路を作った後も「取得部だけを業務データ write 抜きで試せる唯一の口」になる。
+- **`scripts/demecal-daily.ps1` (`daily-1.7`) の凍結は維持**（`api/ops/probe-bat` の `FROZEN` で
+  409 を返す）。Phase C の実装が出来るまで**配布しない**。
+
 ---
 
 # 7. Phase C — 本番連携と無人化
