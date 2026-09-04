@@ -289,32 +289,35 @@ function json(data: unknown, status = 200): Response {
  *
  * ダッシュボードは 5 種類のカードを常に描き、その種別の行が 0 件だと中身だけ空になる。
  * 画面を見ても「行が無い」のか「描画が壊れている」のか区別できないので、ここで数える。
+ *
+ * **`loadDashboard()` の結果をそのまま見る。** Cookie の uid を直に使って DB を
+ * 引き直すと、デモのフォールバック (別 uid の実データ / 組込みダミー) を通らないので
+ * **画面と違う答えを出す診断**になる (inspectReport と同じ理由)。
  * 出すのは **種別と件数と日付だけ** (PII を載せない)。
  */
-async function inspectArtifacts(uid: string | null): Promise<Record<string, unknown>> {
+async function inspectArtifacts(viewerUid: string | null): Promise<Record<string, unknown>> {
   const KINDS = ['health_checkup', 'blood', 'cancer_urine', 'ai_prediction', 'genetics'];
-  const sb = getServerSupabase();
-  if (!sb || !uid) return { note: sb ? 'uid なし' : '(Supabase 未設定)' };
   try {
-    const { data, error } = await (sb.schema('diagnosis') as any)
-      .from('test_artifacts')
-      .select('test_type, test_date, status, source')
-      .eq('diagnostic_user_id', uid)
-      .order('test_date', { ascending: false });
-    if (error) return { error: error.message };
-    const rows = (data ?? []) as { test_type: string; test_date: string; status: string; source: string }[];
+    const { loadDashboard } = await import('../../../lib/dashboard-queries');
+    const r = await loadDashboard(viewerUid);
+    if (!r || 'error' in r) return { error: r && 'error' in r ? r.error : '取得できず' };
+
+    const rows = r.artifacts ?? [];
     const byKind: Record<string, unknown> = {};
     for (const k of KINDS) {
-      const mine = rows.filter((r) => r.test_type === k);
+      const mine = rows.filter((a) => a.test_type === k);
       byKind[k] = mine.length === 0
         ? '0 件 → カードは空になる'
         : `${mine.length} 件 (最新 ${String(mine[0].test_date).slice(0, 10)} / ${mine[0].source} / ${mine[0].status})`;
     }
-    const other = rows.filter((r) => !KINDS.includes(r.test_type)).map((r) => r.test_type);
+    const other = [...new Set(rows.filter((a) => !KINDS.includes(a.test_type)).map((a) => a.test_type))];
     return {
       total: rows.length,
+      /** どこから来た検査データか。demo なら真鍋(DEFAULT_USER)か組込みダミー。 */
+      result_uid: r.resultUid,
+      using_demo_data: r.usingDemoData,
       by_test_type: byKind,
-      ...(other.length ? { 画面に出ない種別: [...new Set(other)] } : {}),
+      ...(other.length ? { 画面に出ない種別: other } : {}),
     };
   } catch (err) {
     return { error: String(err instanceof Error ? err.message : err) };
