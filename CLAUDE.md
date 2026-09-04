@@ -373,12 +373,25 @@ Vercel の 4.5 MB は **関数を通るデータにだけ**かかる。**ファ�
     8 MB の画像が**無劣化のまま** PUT される・S3 失敗時に圧縮へ落ちることを実測。
   - 退行注入で落ちることを確認済み (キー検証を prefix 一致だけに緩める → 20→11 /
     縮小を無効化 → body 10.26 MiB で FAIL)。
-- **【未対応・オペレーション側】**
-  - **バケットの CORS** (アプリのオリジンからの PUT を許可)。無いと②が黙って失敗し③へ落ちる
-    = 画像は通るが **PDF は 3.2 MB のまま**。**本番で PDF を通すにはこれが要る**。
-  - `scan-uploads/` は一時領域なので **ライフサイクルで自動失効**させる
-    (原本の保管は `originals-storage.ts` の役目で別物)。
-  - **本番の実 S3 での疎通は未確認** (キーは Vercel にしかないのでローカルで実行できない)。
+- **【AWS 側の作業 = 手順書あり】`docs/operations/スキャンS3直アップロード_バケット設定手順書.md`**
+  (①CORS=必須 / ②ライフサイクル=推奨。JSON・コンソール手順・CLI・確認コマンド・切り分け表)。
+  - **本番の実測 (2026-09-04)**: バケット `wellfort-ai-input` / `ap-northeast-1` /
+    プレフィックス **`scan-accuracy-test/scan-uploads/`** / チケット発行は **200 で動作** /
+    **CORS は未設定** (`CORSResponse: CORS is not enabled for this bucket`)。
+    **推測せず `POST /api/scan/upload-ticket` の `key` でプレフィックスを確認する**
+    (`AWS_S3_PREFIX` を変えると変わる。署名を出すだけでファイルは作られない)。
+  - **CORS が無いと②が黙って失敗し③へ落ちる** = 画像は通るが **PDF は 3.2 MB のまま**。
+    → **「画像は通るが PDF だけ落ちる」は CORS 未設定の症状**。判定は OPTIONS プリフライトが
+    403 か 200 か (手順書 §3.1)。
+  - **CORS はバケットを公開しない** (権限は presigned URL が持つ)。
+    **バケットポリシー / パブリックアクセスブロックは触らない**。`GET` も足さない
+    (サーバ側の読み出しは CORS を通らない)。
+  - **ライフサイクルの prefix に `scan-uploads/` を必ず含める** —
+    `scan-accuracy-test/` だけにすると **Elith 納品 JSON が消える**。
+    バージョニング有効なら `Expiration` は削除マーカーを付けるだけなので
+    `NoncurrentVersionExpiration` も要る (手順書 §2.2 で事前確認)。
+  - **本番の実 S3 での PUT は未確認** (CORS 未設定のため到達しない)。CORS 投入後、
+    **4MB 超の PDF を 1 回通す**のが完了条件 (画像は圧縮で通ってしまうので判定にならない)。
 - **#2〜#8 の他の口は手つかず** — `elith-report/upload`(40MB) / `lab-results/upload`(20MB) /
   `elith-output`(8MB) は名乗りが実際 (~4.5MB) を超えたまま、admin バッチスキャン
   (`elith-scan`/`elith-hc-merge`/`elith-genetic-merge`) は**上限の宣言もチェックも無い**。
@@ -1499,6 +1512,7 @@ Supabase database linter の指摘を棚卸しした結果。**テストフェ�
 | `docs/lab/kit_progress_management.md` | 検査キット発送・進捗管理 |
 | `docs/architecture/data_integration_requirements.md` | PII 分離・連携要件 |
 | `docs/operations/S3原本ストレージ_構築手順書.md` | **原本を S3 ap-northeast-1 へ置くためのインフラ手順** (Object Lock / ライフサイクル / IAM / Vercel env / 動作確認)。Compliance モードの不可逆性に注意 |
+| **`docs/operations/スキャンS3直アップロード_バケット設定手順書.md`** | **スキャンで 10MB を通すための AWS 側作業** (①CORS=必須・無いと PDF は 3.2MB のまま / ②ライフサイクル=推奨)。バケット・プレフィックス・CORS 未設定は**本番の実測値**。設定前後を同じコマンドで判定できる確認手順つき。**CORS はバケットを公開しない**・ライフサイクルの prefix を誤ると Elith 納品が消える、の 2 点が要注意 |
 | `docs/architecture/id_management_and_correlation_spec.md` | **ID体系の正本**(顧客ID/診断ユーザーID=diagnostic_user_id/注文/契約/出荷/検査/各社上りID/Elith client_id を層別整理・採番=現状全てWellfort・相関マップ・PII境界・**将来の各社独自ID/キット物理ID(POS/バーコード)連携=受け皿カラム`lab_tests.external_test_id`/`external_barcode`実在**) |
 | `docs/architecture/diagnostic_session_data_spec.md` | 診断セッションのデータ構造 |
 | `docs/scan/scan_feature_requirements.md` / `docs/scan/scan_s3_export.md` | AIスキャン機能要件 / S3書き出し |
