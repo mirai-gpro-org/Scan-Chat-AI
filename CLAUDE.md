@@ -375,6 +375,14 @@ Vercel の 4.5 MB は **関数を通るデータにだけ**かかる。**ファ�
     縮小を無効化 → body 10.26 MiB で FAIL)。
 - **【AWS 側の作業 = 手順書あり】`docs/operations/スキャンS3直アップロード_バケット設定手順書.md`**
   (①CORS=必須 / ②ライフサイクル=推奨。JSON・コンソール手順・CLI・確認コマンド・切り分け表)。
+  - **①②を 1 つの JSON にはできない** — S3 の別サブリソースで API もコンソールのタブも別
+    (`PutBucketCors` / `PutBucketLifecycleConfiguration`)。**まとめられるのは「作業 1 回」まで**
+    = `scripts/aws-scan-s3-setup.sh` (両方適用 + 検証)。CloudFormation なら 1 文書に書けるが、
+    **データの入った既存バケットには resource import が要り置換の危険がある**ので採らない。
+  - スクリプトが**手作業より安全**な点: プレフィックスを人に入力させない
+    (**誤ると Elith 納品 JSON が削除対象**) / `scan-uploads/` で終わらなければ中止 /
+    既存ルールを get→統合→put で消さない / バージョニングと Object Lock を先に見る /
+    冪等 / 適用後に自分で検証。スタブで 5 経路を動作確認済み。
   - **本番の実測 (2026-09-04)**: バケット `wellfort-ai-input` / `ap-northeast-1` /
     プレフィックス **`scan-accuracy-test/scan-uploads/`** / チケット発行は **200 で動作** /
     **CORS は未設定** (`CORSResponse: CORS is not enabled for this bucket`)。
