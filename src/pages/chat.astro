@@ -52,15 +52,12 @@ const diagnosticUserId = viewer.uid;
     </div>
   </header>
 
-  <div class="flex items-center justify-between px-5 pt-2 pb-1">
-    <div class="inline-flex rounded-full bg-slate-100 p-1" role="tablist" id="mode-toggle">
-      <button type="button" data-mode="voice" class="mode-pill on" role="tab" aria-selected="true">
-        <AppIcon name="mic" size={20} /> 音声
-      </button>
-      <button type="button" data-mode="text" class="mode-pill" role="tab" aria-selected="false">
-        ⌨ テキスト
-      </button>
-    </div>
+  {/*
+    音声 / テキストの切替は撤去 (発注者指示 2026-09-04)。
+    音声・選択肢タップ・自由入力は「別モード」ではなく、同じ質問に対する並列の回答手段。
+    音声は常時オンなので、選ぶものが無い。
+  */}
+  <div class="flex items-center justify-end px-5 pt-2 pb-1">
     <span id="chat-status" class="text-xs text-slate-500">未接続</span>
   </div>
 
@@ -124,13 +121,8 @@ const diagnosticUserId = viewer.uid;
           </svg>
           <span class="mic-label mt-1 text-xs font-semibold">問診を開始</span>
         </button>
-        <div class="mt-1 flex items-center gap-2 rounded-full bg-slate-50 px-3 py-1.5 text-xs text-slate-600">
-          <span><AppIcon name="mic" size={20} /> 話す</span>
-          <span class="text-slate-400">/</span>
-          <span><AppIcon name="point" size={20} /> 選んでタップ</span>
-          <span class="text-slate-400">—</span>
-          <span class="font-medium text-brand-700">どちらでも OK</span>
-        </div>
+        {/* 「どちらでも OK」の説明は廃止 (発注者指示)。回答手段の案内は
+            質問直下の常設ガイダンス (#voice-guide) に一本化する。 */}
       </div>
 
       <!-- ━━━ QA AREA（接続時のみ表示） ━━━ -->
@@ -182,14 +174,27 @@ const diagnosticUserId = viewer.uid;
         </div>
 
         <!-- 二刀流ヒント（widget 表示時のみ） -->
-        <div
-          id="dual-hint"
-          class="mb-2 flex items-center justify-center gap-2 rounded-full bg-brand-50 px-3 py-1 text-xs text-brand-700"
-          hidden
-        >
-          <span><AppIcon name="mic" size={20} /> 話してもOK</span>
-          <span class="text-brand-400">・</span>
-          <span><AppIcon name="point-down" size={20} /> タップでもOK</span>
+        {/*
+          音声で答えられることを示す常設ガイダンス。**質問文の直下・選択肢の直前**に置く。
+          アイコンは使わない (マイク/矢印/Lucide 等はすべて禁止・発注者指示)。
+          左右対称の波形 + 中央のパルスリングを SVG/CSS で自作している。
+          装飾なので aria-hidden、意味は下のテキストが持つ。
+        */}
+        <div id="voice-guide" class="vg" hidden>
+          <svg class="vg-wave" viewBox="0 0 240 40" preserveAspectRatio="none" aria-hidden="true">
+            <g class="vg-bars">
+              {[...Array(11)].map((_, i) => (
+                <rect x={6 + i * 9} width="3" rx="1.5" style={`--i:${i}`} />
+              ))}
+            </g>
+            <g class="vg-bars vg-bars-r">
+              {[...Array(11)].map((_, i) => (
+                <rect x={135 + i * 9} width="3" rx="1.5" style={`--i:${10 - i}`} />
+              ))}
+            </g>
+          </svg>
+          <span class="vg-core" aria-hidden="true"><span class="vg-ring"></span><span class="vg-dot"></span></span>
+          <p class="vg-label">そのまま話して回答できます</p>
         </div>
 
         <!-- 音声モード（質問なし時のループ待機） -->
@@ -271,6 +276,12 @@ const diagnosticUserId = viewer.uid;
             hidden
           >答えたくない</button>
         </div>
+
+        {/*
+          AI が何を喋るのかを明示する (発注者提示のモック 4 案すべてに入っている文言)。
+          復唱・確認の聞き返しは行わないので、「質問だけ」と言い切れる。
+        */}
+        <p class="mt-3 text-center text-sm text-slate-600">AIは質問だけを読み上げます</p>
       </div>
     </section>
 
@@ -312,14 +323,13 @@ const diagnosticUserId = viewer.uid;
       sectionLabel: $('section-label'),
       sectionDots: $('section-dots'),
 
-      modeToggle: $('mode-toggle'),
       micBtn: $<HTMLButtonElement>('mic-btn'),
       startBtn: $<HTMLButtonElement>('start-btn'),
       speakerBtn: $<HTMLButtonElement>('speaker-btn'),
 
       startHero: $('start-hero'),
       qaArea: $('qa-area'),
-      dualHint: $('dual-hint'),
+      voiceGuide: $('voice-guide'),
       answerPanel: $('answer-panel'),
       questionText: $('question-text'),
 

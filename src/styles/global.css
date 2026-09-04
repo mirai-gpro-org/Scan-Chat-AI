@@ -802,4 +802,66 @@
 .md-summary li:hover {
   @apply border-brand-400;
 }
-.md-summary strong { @apply font-bold text-slate-900; }
+.md-summary strong { @apply font-bold text-slate-900; 
+  /* ──────────────────────────────────────────────────────────────
+   * AI問診: 音声で答えられることを示す常設ガイダンス (#voice-guide)
+   *
+   * 発注者指示 2026-09-04:
+   *   ・音声 / テキストの切替は廃止。音声は常時オンなので「状態」ではなく「案内」
+   *   ・**既存アイコンは使わない** (マイク / カレンダー / Shield / Pencil / Help /
+   *     Chevron / Arrow / Lucide 等はすべて禁止)
+   *   ・左右対称の波形 + 中央のパルスリング / 発光ドット を **自作**する
+   *
+   * 色は Wellfort 系トークンのみ (Precision Teal / Warm Ivory / Executive Navy)。
+   * 影は最小。文字は 50〜60 代でも読める大きさを保つ (14px 未満にしない)。
+   * ──────────────────────────────────────────────────────────── */
+  .vg {
+    @apply relative mb-3 flex items-center justify-center gap-3 overflow-hidden rounded-2xl
+           border border-brand-100 bg-brand-50/60 px-4 py-3;
+  }
+  /* 波形。左右で 1 本ずつ鏡像になるよう、右側は --i を逆順で渡している。 */
+  .vg-wave {
+    @apply pointer-events-none absolute inset-x-3 top-1/2 h-10 -translate-y-1/2;
+  }
+  .vg-bars rect {
+    fill: theme('colors.brand.400');
+    /* 中央から外へ向かって低くなる山形。--i は 0..10。 */
+    height: calc(6px + (10px * (1 - (0.2 * (var(--i) - 5) * (var(--i) - 5) * 0.2))));
+    y: 20px;
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: vg-bar 1.8s ease-in-out infinite;
+    animation-delay: calc(var(--i) * 90ms);
+    opacity: 0.55;
+  }
+  @keyframes vg-bar {
+    0%, 100% { transform: scaleY(0.45); }
+    50%      { transform: scaleY(1); }
+  }
+  /* 中央のパルスリング + 発光ドット。 */
+  .vg-core {
+    @apply relative grid h-6 w-6 shrink-0 place-items-center;
+  }
+  .vg-ring {
+    @apply absolute inset-0 rounded-full;
+    border: 1.5px solid theme('colors.brand.400');
+    animation: vg-ring 2.4s ease-out infinite;
+  }
+  @keyframes vg-ring {
+    0%   { transform: scale(0.55); opacity: 0.9; }
+    70%  { transform: scale(1.15); opacity: 0; }
+    100% { transform: scale(1.15); opacity: 0; }
+  }
+  .vg-dot {
+    @apply h-2.5 w-2.5 rounded-full bg-brand-600;
+    box-shadow: 0 0 0 3px theme('colors.brand.100');
+  }
+  .vg-label {
+    @apply relative z-10 text-center text-sm font-semibold text-brand-700;
+  }
+  /* 動きを減らす設定の利用者には animation を止める (案内は文字で足りる)。 */
+  @media (prefers-reduced-motion: reduce) {
+    .vg-bars rect, .vg-ring { animation: none; }
+    .vg-ring { opacity: 0.5; transform: scale(1); }
+  }
+}

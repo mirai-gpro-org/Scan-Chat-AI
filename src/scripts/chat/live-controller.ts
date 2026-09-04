@@ -3,11 +3,12 @@
  *
  * 設計:
  *   - 問診票本体 (Q1-1〜Q5-2, 分岐, 進捗) はクライアントの InterviewEngine が制御
- *   - Live API (LLM) は「ユーザー回答の温かい復唱」「セクション切替の導線発話」だけを担当
+ *   - Live API (LLM) は「質問の読み上げ」と「セクション切替の導線発話」だけを担当
+ *     (2026-09-04: 回答の復唱は廃止。AI は質問だけを読み上げる)
  *   - LLM が問診順を決めないので、ループ・選択肢欠落・順序乱れが構造的にゼロ
  *
  * UI:
- *   - 音声 / テキスト切替トグル
+ *   - (音声 / テキスト切替トグルは 2026-09-04 に撤去。音声は常時オン)
  *   - 質問は engine が出す → 動的に widget を切替 (chip/multi/slider/stepper)
  *   - 補助テキスト入力 (音声モードでも常時利用可)
  *   - ストリーミング transcript で AI/ユーザー発話をライブ表示
@@ -56,14 +57,14 @@ export interface LiveRefs {
   /** セクション dot を動的生成するコンテナ */
   sectionDots: HTMLElement;
 
-  modeToggle: HTMLElement;
   micBtn: HTMLButtonElement;
   startBtn: HTMLButtonElement;
   speakerBtn: HTMLButtonElement;
 
   startHero: HTMLElement;
   qaArea: HTMLElement;
-  dualHint: HTMLElement;
+  /** 質問直下の常設ガイダンス「そのまま話して回答できます」。 */
+  voiceGuide: HTMLElement;
   answerPanel: HTMLElement;
   questionText: HTMLElement;
 
@@ -124,10 +125,11 @@ C. ツール呼び出しは一切不要 (廃止済)。
 D. 診断・処方は禁止。
 
 【ターン構成】
-ユーザー回答が届いたら、以下の順で 1〜3 文を発話:
-  ① 短く温かく復唱: 「『◯◯』ですね、ありがとうございます」
-  ② セクションが変わるときだけ「次は◯◯についてお伺いしますね」と一言
-  ③ 続けて、依頼された質問本文をそのまま自然に読み上げる: 「『xxx』」
+E. **ユーザーの回答を復唱しない。** 「『◯◯』ですね」等の言い直し・確認の聞き返しは一切しない。
+   回答内容は画面に表示されるので、音声で繰り返すと二重になる。
+ユーザー回答が届いたら、以下の順で 1〜2 文を発話:
+  ① セクションが変わるときだけ「次は◯◯についてお伺いしますね」と一言
+  ② 依頼された質問本文をそのまま自然に読み上げる: 「『xxx』」
 
 【セッション開始時】(1 ターン限り)
 最初の発話: 「こんにちは、ウェルフォートの AI 問診です。画面の質問に、タップでも音声でもお答えいただけます。」と前置きしてから、最初の質問文を読み上げる。
@@ -229,7 +231,6 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   let lastFinalizedAssistantAt = 0;
   let duplicateAssistantCount = 0;
 
-  let mode: 'voice' | 'text' = 'voice';
   let currentQ: QuestionDef | null = null;
   /** 回答受付〜次設問表示までの間は音声回答の二重取り込みを抑止する */
   let advancing = false;
@@ -395,15 +396,11 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     }
   }
 
-  refs.modeToggle.addEventListener('click', (e) => {
-    const target = e.target as HTMLElement;
-    const pill = target.closest<HTMLElement>('[data-mode]');
-    if (!pill) return;
-    const next = pill.dataset.mode as 'voice' | 'text';
-    if (next === mode) return;
-    mode = next;
-    applyModeUI();
-  });
+  /*
+   * 音声 / テキストの切替トグルは撤去した (発注者指示 2026-09-04)。
+   * 音声・選択肢タップ・自由入力は「別モード」ではなく並列の回答手段で、
+   * 音声は常時オン。よって切り替える対象が無い。
+   */
 
 
 
@@ -475,22 +472,9 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     refs.micBtn.setAttribute('aria-label', '問診を中止');
   }
 
+  /** 設問に応じたウィジェットを出す。モード概念は無い (音声は常時オン)。 */
   function applyModeUI(): void {
-    refs.modeToggle.querySelectorAll<HTMLElement>('[data-mode]').forEach((p) => {
-      p.classList.toggle('on', p.dataset.mode === mode);
-      p.setAttribute('aria-selected', String(p.dataset.mode === mode));
-    });
-    if (currentQ) {
-      showWidget(mapKind(currentQ.answer_kind));
-    } else {
-      // 質問待機中: モードに応じたプレースホルダ
-      if (mode === 'voice') {
-        showWidget('voice');
-      } else {
-        showWidget('text');
-        refs.textInput.placeholder = '右上の🎙開始を押すか、ここに入力して開始してください';
-      }
-    }
+    showWidget(currentQ ? mapKind(currentQ.answer_kind) : 'voice');
   }
 
   function mapKind(k?: string): WidgetKey {
@@ -523,10 +507,12 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     }
     // 自由記述 widget が出ているときは補助テキスト入力を非表示（重複防止）
     refs.fallbackZone.hidden = key === 'text';
-    // 「音声でも・タップでも」ヒント: 選択式 widget の時に表示
-    refs.dualHint.hidden = !(
-      key === 'list' || key === 'matrix' || key === 'slider' || key === 'stepper'
-    );
+    /*
+     * 音声ガイダンスは**常設** (発注者指示 2026-09-04)。設問が出ている間はいつでも
+     * 声で答えられるので、ウィジェットの種類で出し分けない。
+     * 隠すのは「質問がまだ無い待機中 (key==='voice')」のときだけ。
+     */
+    refs.voiceGuide.hidden = key === 'voice';
   }
 
   function stepStep(delta: number): void {
@@ -594,7 +580,7 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
   /**
    * ユーザー回答を受けて engine から次の Q を決定し、画面を即更新する。
-   * AI には「回答に対する温かい復唱 (+任意のセクション導線)」だけ依頼する。
+   * AI には「次の質問の読み上げ (+任意のセクション導線)」だけ依頼する。復唱はしない。
    * AI に「次の質問は何か」は伝えず、質問を発話させない。
    */
   function submitAnswer(rawAnswer: string, opts: { silent?: boolean } = {}): void {
@@ -635,66 +621,45 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
     const sectionChanged = cq.section_id !== next.section_id;
 
-    // ━━ フライング防止: 次の Q 表示を AI 復唱開始と同期させる ━━
-    //   engine 駆動で即座に applyQuestionToUI を呼ぶと、AI の音声復唱が
-    //   始まる前に次の選択肢が画面に出てしまい違和感が出る。
-    //   1) 即時: 受付確認の中間表示 + 選択肢を隠す
-    //   2) AI 依頼を送信
-    //   3) AI 音声の最初の chunk が来る or タイムアウト (1.6s) で次の Q 表示
-    refs.questionText.textContent = `✅ 「${rawAnswer}」で承りました…`;
-    showWidget('voice');
+    /*
+     * ━━ AI は質問だけを読み上げる (発注者指示 2026-09-04・仕様と設計原則 §4) ━━
+     *
+     * 復唱 (「『週3回』ですね、ありがとうございます」) は **音声・タップとも行わない**。
+     * 回答の確認は**この画面表示**が担う。確認の聞き返しも実装しない。
+     *
+     * これで 2 つの積年の問題が同時に消える:
+     *   ① **silent 分岐が消える** — 依頼文が音声・タップで同一になり、出し分けが無くなる
+     *      (§3 の禁止事項。過去 3 回 revert されている)
+     *   ② **先行表示が消える** — AI が喋るのは「次の質問」だけなので、画面を先に次の質問へ
+     *      切り替えれば**読み上げ対象と表示は必ず同一 Question ID**。
+     *      旧 `schedulePendingQuestion` は「AI 音声の最初の chunk」または「2 秒」で次の Q を
+     *      描画していた = **復唱の *開始* で画面を次の質問に変えていた**のが直接原因だった。
+     *      UI を音声に結合させない。状態機械も ID 照合も足さない。
+     */
+    refs.questionText.textContent = `✅ 「${rawAnswer}」で承りました`;
     refs.skipBtn.hidden = true;
 
-    // ━━ 音声回答 (silent) は発話を注入しない (§AI問診_仕様と設計原則 §4 案1) ━━
-    //   音声入力に対しては Live API が自発応答で復唱/次質問を喋る = 唯一の話者。
-    //   ここで sendToModel すると (a)自発応答 + (b)注入 の二重話者になり二重復唱する。
-    //   → silent では engine 前進 + 選択肢表示のみ行い、発話は LLM に完全に委ねる。
-    //   タップ回答 (非 silent) は音声が無い = 自発応答が無いため、AI に復唱/次質問を依頼する。
-    if (!opts.silent) {
-      // AI 依頼: 復唱 + (セクション切替時のみ導線) + 次の質問本文を読み上げ
-      // 選択肢は読み上げさせない (画面に出ているため重複になる)
-      const msg = sectionChanged
-        ? `ユーザーが「${rawAnswer}」と回答しました。次のセクション「${next.section_title}」に進みます。
-発話手順 (1〜3 文):
-  ① 短く温かく復唱: 「『${rawAnswer}』ですね、ありがとうございます」
-  ② 「次は${next.section_title}についてお伺いしますね」
-  ③ 続けて次の質問を自然に読み上げ: 「${next.question}」
-選択肢は読み上げないでください (画面に表示されています)。`
-        : `ユーザーが「${rawAnswer}」と回答しました。
+    // ① 先に画面を次の質問へ。これが「読み上げ対象」と一致する唯一の質問になる。
+    applyQuestionToUI(next);
+
+    // ② そのうえで、同じ質問を AI に読ませる。依頼は音声・タップで同一 (出し分けない)。
+    //    選択肢は読み上げさせない (画面に出ているため重複になる)。
+    const msg = sectionChanged
+      ? `次のセクション「${next.section_title}」に進みます。
 発話手順 (2 文):
-  ① 短く温かく復唱: 「『${rawAnswer}』ですね、ありがとうございます」
+  ① 「次は${next.section_title}についてお伺いしますね」
   ② 続けて次の質問を自然に読み上げ: 「${next.question}」
-選択肢は読み上げないでください (画面に表示されています)。`;
-      sendToModel(msg);
-    }
-
-    // AI 音声の最初の chunk が再生開始した瞬間 (≒ 復唱開始) に次の Q を表示。
-    // 公式 audio chunk が来るのを待つため、1 回限りのリスナーを登録。
-    // タイムアウト (2 秒) でも fall-through し、必ず表示する。
-    schedulePendingQuestion(next);
+ユーザーの回答を復唱しないでください。選択肢も読み上げないでください (画面に表示されています)。`
+      : `次の質問を自然に読み上げてください: 「${next.question}」
+ユーザーの回答を復唱しないでください。選択肢も読み上げないでください (画面に表示されています)。`;
+    sendToModel(msg);
   }
 
-  /** AI 音声開始 or タイムアウト で次の Q を画面に反映する */
-  let pendingNextQuestion: QuestionDef | null = null;
-  function schedulePendingQuestion(q: QuestionDef): void {
-    pendingNextQuestion = q;
-    const fallbackTimer = setTimeout(() => {
-      if (pendingNextQuestion === q) {
-        applyQuestionToUI(q);
-        pendingNextQuestion = null;
-      }
-    }, 2000);
-    // audioFirstChunkResolvers を介して、AI 音声 1st chunk 検出時に解決
-    audioFirstChunkResolvers.push(() => {
-      clearTimeout(fallbackTimer);
-      if (pendingNextQuestion === q) {
-        applyQuestionToUI(q);
-        pendingNextQuestion = null;
-      }
-    });
-  }
-  /** 次の AI 音声 chunk 受信時に発火するワンショットコールバック群 */
-  const audioFirstChunkResolvers: Array<() => void> = [];
+  /*
+   * `schedulePendingQuestion` / `audioFirstChunkResolvers` は撤去した
+   * (発注者指示 2026-09-04)。**UI を音声に結合させない。**
+   * 次の質問は回答確定と同時に描画する (submitAnswer 内)。
+   */
 
   /** UI に入る生文字列を engine が扱える型に変換 */
   function toAnswerValue(q: QuestionDef, raw: string): AnswerValue {
@@ -930,14 +895,9 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       const mime = p.inlineData?.mimeType ?? '';
       const data = p.inlineData?.data;
       if (data && mime.startsWith('audio/pcm') && !muted) {
+        // 音声は再生するだけ。**UI 遷移のトリガにしない** (2026-09-04)。
+        // 以前はここで「次の質問」を描画しており、復唱の開始で画面が先へ進んでいた。
         audio.playPcm(data);
-        // 最初の音声 chunk = AI 復唱開始 → pending な次の Q を表示
-        if (audioFirstChunkResolvers.length > 0) {
-          const cbs = audioFirstChunkResolvers.splice(0, audioFirstChunkResolvers.length);
-          for (const cb of cbs) {
-            try { cb(); } catch {}
-          }
-        }
       }
     }
 
