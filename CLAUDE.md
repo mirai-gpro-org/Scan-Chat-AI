@@ -399,10 +399,12 @@ Vercel の 4.5 MB は **関数を通るデータにだけ**かかる。**ファ�
     `scan-accuracy-test/` だけにすると **Elith 納品 JSON が消える**。
     バージョニング有効なら `Expiration` は削除マーカーを付けるだけなので
     `NoncurrentVersionExpiration` も要る (手順書 §2.2 で事前確認)。
-  - **本番の実 S3 への PUT は確認済み (2026-09-04)**: presigned URL へ 5,000,000 バイトの
-    PDF を実 PUT して **200**。署名 (Content-Type/ContentLength 固定) と
-    `requestChecksumCalculation` の罠も本番で問題ないことを確認した。
-    確認用の 5MB オブジェクトが 1 つ残っている (②を入れれば自動失効)。
+  - **経路全体を本番で確認済み (2026-09-04)**: チケット発行 200 / presigned PUT 200
+    (5,000,000 バイトの PDF・6,150 バイトの PNG) / **`/api/scan` が `imageKey` から
+    S3 を読んで Gemini へ渡し、表の値を正しく転記** (AST 22・ALT 18・HbA1c 5.4)。
+    署名 (Content-Type/ContentLength 固定) と `requestChecksumCalculation` の罠も問題なし。
+    **キー検証も本番で発火**: 納品 JSON・prefix 内の別領域・相対パス・非 UUID・`.json` 付与の
+    5 件とも `400 invalid_key`。確認用オブジェクトが 2 つ残っている (②を入れれば自動失効)。
   - **残るは ② ライフサイクルのみ** (AWS 権限が要るので当方からは確認できない)。
 - **#2〜#8 の他の口は手つかず** — `elith-report/upload`(40MB) / `lab-results/upload`(20MB) /
   `elith-output`(8MB) は名乗りが実際 (~4.5MB) を超えたまま、admin バッチスキャン
