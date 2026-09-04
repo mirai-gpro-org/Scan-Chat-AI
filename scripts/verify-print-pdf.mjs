@@ -56,6 +56,33 @@ if (!existsSync(pdf)) { console.log('✗ PDF を作れませんでした'); proc
 
 const fails = [];
 
+// ── ⓪ 書体 ────────────────────────────────────────────────
+/*
+ * **和文が中国語フォントで出ていないか** (発注者指摘 2026-09-03「漢字が中国語漢字のように見える」)。
+ *
+ * 実測でこうなっていた: `font-mono` の指定には和文フォントが 1 つも無く、
+ * 出典行や走りフッターの**和文だけがブラウザ既定のフォールバック**へ落ちていた。
+ * Windows では Yu Gothic UI (本文の BIZ UDGothic と別物)、Linux では
+ * **WenQuanYi Zen Hei = 中国語フォント**に当たり、漢字が中国字形で出る。
+ *
+ * ここでは PDF に**実際に埋め込まれた**フォント名を見る。中国語・韓国語向けの
+ * フォントが 1 つでも混ざっていたら、どこかの指定に和文の受け皿が無い。
+ * **どのフォントが在るかは環境で変わるが、「中国語フォントに落ちた」ことは環境に依らず異常。**
+ */
+const CJK_NOT_JA = /wenquanyi|zenhei|notosanssc|notosanstc|notosanskr|notosanshk|sourcehansans(cn|tw|hc|k)|pingfangsc|pingfangtc|heiti|simsun|simhei|msyahei|microsoftyahei|nsimsun|fangsong|kaiti|malgun|nanum|batang|gulim|dotum/i;
+{
+  const names = execSync(`pdffonts "${pdf}"`).toString().split('\n').slice(2)
+    .map((l) => (l.trim().split(/\s+/)[0] ?? '').replace(/^[A-Z]{6}\+/, ''))
+    .filter(Boolean);
+  const uniq = [...new Set(names)];
+  const bad = uniq.filter((n) => CJK_NOT_JA.test(n.replace(/[\s-]/g, '')));
+  console.log(`${bad.length === 0 ? '✓' : '✗'} 和文の書体 (埋め込み ${uniq.length} 種: ${uniq.join(' / ')})`);
+  if (bad.length) {
+    fails.push(`中国語・韓国語向けフォントが埋め込まれている: ${bad.join(' / ')}`
+      + ' — どこかの font-family に和文の受け皿が無い (font-mono を疑う)');
+  }
+}
+
 // ── ① ページ番号 ────────────────────────────────────────────
 const total = +execSync(`pdfinfo "${pdf}" 2>/dev/null | awk '/^Pages/{print $2}'`).toString().trim()
   || readdirSync(OUT).length;

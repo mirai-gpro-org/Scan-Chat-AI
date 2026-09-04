@@ -27,6 +27,7 @@ import type {
   LifestylePair, MeasurementRow, ReportAudit, ReportVM, TopicVM,
 } from './report-model';
 import { CHAPTER_REGISTRY, REPORT_AXES, anchorFor, chapterAnchor, resolveChapters } from './report-sections';
+import { paragraphizeJa } from './report-view';
 
 /** 紙面テンプレートの版 (spec §1.3.9)。紙面を変えたら上げ、紙面に印字する。 */
 export const SHEET_VERSION = 'v1.0';
@@ -593,7 +594,42 @@ export function buildReportVM(input: BuildInput): ReportVM {
       `ウェルネス年齢が当社 CABA と不一致: Elith ${parsed.wellnessAge} / 当社 ${input.ourWellnessAge}`);
   }
 
+  /*
+   * ── 冒頭のアブストラクト (見本 p1・発注者指示 2026-09-03) ──────────
+   *
+   * 見本は **2 連大数字のすぐ下に総括の散文**を置く。それに合わせ、アブストラクトを
+   * ウェルネス年齢の次に、**全文そのまま**出す (要点の抜き出しをしない = 「そのまま」)。
+   *
+   * - **見出しを付けない。** 見本 p1 にも見出しは無い (当社が見出しを作らない = 逐語ルール)。
+   * - **段落割りは表示の規則をそのまま使う** (`paragraphizeJa` = 2 文ごと)。
+   *   文字は 1 文字も増減しないので、各段落は受領本文の部分文字列のまま。
+   * - **全編からは外す** (下の章ループで飛ばす)。同じ文が紙面に 2 度出るのを避ける。
+   * - `report.sections.hidden` に `abstract` を入れた回は `specs` から消えるので、
+   *   ここも自動的に出なくなる。
+   */
+  const leadSpec = specs.find((x) => x.key === 'abstract') ?? null;
+  const leadSection = leadSpec ? sec(leadSpec.sourceKey) : null;
+  if (leadSpec && leadSection?.text.trim()) {
+    const paragraphs = paragraphizeJa(leadSection.text.trim())
+      .split(/\n{2,}/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    if (paragraphs.length) {
+      digest.push({
+        key: leadSpec.key,
+        title: '',                 // 見本 p1 に見出しは無い
+        axis: leadSpec.axis,
+        tone: 'normal',
+        blocks: [{ kind: 'paragraphs', items: paragraphs }],
+        source: leadSection.section_name,
+        detailAnchor: null,        // 全編から外したので飛び先が無い
+        lead: true,
+      });
+    }
+  }
+
   for (const spec of specs) {
+    if (spec.key === 'abstract') continue;   // 冒頭に出したので二重に置かない
     const section = sec(spec.sourceKey);
     const title = titleOf(spec.key, spec.label, section);
     let built: DigestCardVM | null = null;
@@ -700,6 +736,8 @@ export function buildReportVM(input: BuildInput): ReportVM {
   // ── 全編 ────────────────────────────────────────────
   const chapters: ChapterVM[] = [];
   for (const spec of specs) {
+    // アブストラクトは冒頭に全文を出したので全編には置かない (重複回避)。
+    if (spec.key === 'abstract' && digest.some((c) => c.key === 'abstract')) continue;
     const section = sec(spec.sourceKey);
     if (!section || !section.text.trim()) continue;
     const blocks = splitTopics(section.text);
