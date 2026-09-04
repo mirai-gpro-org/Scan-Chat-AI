@@ -204,7 +204,13 @@ const gAgePos = gAge != null ? gPos(gAge) : 0;
 const gBandLeft = Math.min(gWellPos, gAgePos);
 const gBandWidth = Math.abs(gAgePos - gWellPos);
 
-const digestByAxis = (axis: 'a' | 'b') => vm.digest.filter((c) => c.axis === axis);
+/** 軸の下に並べるカード。**冒頭に出すもの (lead) は除く** (見本 p1 の並び)。 */
+const digestByAxis = (axis: 'a' | 'b') => vm.digest.filter((c) => c.axis === axis && !c.lead);
+/**
+ * 冒頭 (ウェルネス年齢の次) に置く総括。見本 p1 は 2 連大数字のすぐ下に散文を流す。
+ * **カードの枠を付けず、見出しも付けない** — 見本のとおり本文がそのまま続く。
+ */
+const leadCard = vm.digest.find((c) => c.lead) ?? null;
 const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis === axis);
 ---
 
@@ -332,6 +338,23 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
           >実年齢 {gAge}</span>
         </div>
       </div>
+    )}
+
+    {/* ══════════ 冒頭の総括 (見本 p1) ══════════
+        見本は 2 連大数字のすぐ下に総括の散文を置く。アブストラクトを**全文そのまま**
+        ここに出す (発注者指示 2026-09-03)。**全編からは外してある**ので二重に出ない。
+        見出しも枠も付けない — 見本 p1 と同じく本文がそのまま流れる。 */}
+    {leadCard && (
+      <section class="flex flex-col gap-2.5">
+        {leadCard.blocks.map((block) => (
+          <>
+            {block.kind === 'paragraphs' && block.items.map((t) => (
+              <p class="report-prose text-base leading-relaxed text-slate-800">{t}</p>
+            ))}
+          </>
+        ))}
+        <p class="mt-0.5 font-mono text-[13px] text-slate-600">{leadCard.source}</p>
+      </section>
     )}
 
     {/* ══════════ 2 本柱 × ダイジェスト ══════════

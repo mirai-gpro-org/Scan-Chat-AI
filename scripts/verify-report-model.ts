@@ -109,7 +109,15 @@ check('全編は既定で畳む', vm.chapters.every((c) => c.collapsed),
 
 // ── 3) 実測値の固定 (spec の記載と一致すること) ─────────────────────────
 check('セクション 10 件', vm.audit.sections.length === 10, String(vm.audit.sections.length));
-check('トピック 39 件 (spec §5.4)', vm.audit.topicCount === 39, String(vm.audit.topicCount));
+/*
+ * **38 件。** 39 件だったのは、アブストラクトが全編に 1 章 (= 1 トピック) 在ったころの数。
+ * 2026-09-03 にアブストラクトを冒頭 (ウェルネス年齢の次) へ全文で出し、全編からは
+ * 外した (見本 p1 の並び・発注者指示) ので 1 件減っている。**文は 1 つも捨てていない。**
+ */
+check('トピック 38 件 (spec §5.4)', vm.audit.topicCount === 38, String(vm.audit.topicCount));
+check('アブストラクトは全編に置かない (冒頭へ移した)',
+  !vm.chapters.some((c) => c.key === 'abstract'),
+  vm.chapters.map((c) => c.key).join(','));
 check('基準値は 8 件のみ (spec §6 ④)', vm.audit.referenceCount === 8, String(vm.audit.referenceCount));
 check('ウェルネス年齢 46.6', vm.cover.wellnessAge === 46.6, String(vm.cover.wellnessAge));
 check('タイプ 2 と判定', vm.reportType === 2, String(vm.reportType));
@@ -419,9 +427,16 @@ check('タイプ1 でもダイジェストの段落は受領本文の逐語 (暫
 
 // ── 14) 詳細への導線 (発注者裁定 2026-09-01・案 03) ───────────────────
 {
-  const withLink = t1.digest.filter((c) => c.detailAnchor);
-  check('ダイジェストのカードに詳細への導線が付く', withLink.length === t1.digest.length,
-    `${withLink.length} / ${t1.digest.length} 枚`);
+  /*
+   * **冒頭の総括 (lead) には導線を付けない。** 全文をその場に出しており、
+   * 飛び先の章も無い (全編から外した) ため。押しても何も起きないリンクを置かない。
+   */
+  const linkable = t1.digest.filter((c) => !c.lead);
+  const withLink = linkable.filter((c) => c.detailAnchor);
+  check('ダイジェストのカードに詳細への導線が付く', withLink.length === linkable.length,
+    `${withLink.length} / ${linkable.length} 枚`);
+  check('冒頭の総括には導線を付けない',
+    t1.digest.filter((c) => c.lead).every((c) => !c.detailAnchor));
   const keys = new Set(t1.chapters.map((c) => c.key));
   check('導線の飛び先は実在する章', t1.digest.every((c) =>
     !c.detailAnchor || keys.has(c.detailAnchor.replace(/^ch-/, ''))));
