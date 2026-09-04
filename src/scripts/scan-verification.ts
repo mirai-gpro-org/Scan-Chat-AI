@@ -345,6 +345,20 @@ export class ScanVerificationController {
         </div>`;
       return;
     }
+    /*
+     * 複数ページをまとめて読み取った回は重ね描きをしない。
+     * bbox は**そのページの画像に対する相対座標**なので、別の紙の座標を
+     * 1 枚の上に描くことになる (scan-pages.ts の mergeResults を参照)。
+     * 黙って「画像がありません」と出すと不具合に見えるので、理由を書く。
+     */
+    if ((this.result.pageCount ?? 1) > 1) {
+      container.innerHTML = `
+        <div class="flex flex-col items-center justify-center gap-2 px-4 py-8 text-center">
+          <p class="text-sm font-medium text-slate-700">${this.result.pageCount} 枚を読み取りました</p>
+          <p class="text-xs text-slate-500">複数ページのときは、読み取り位置の重ね表示は行いません。下のブロックから内容をご確認ください。</p>
+        </div>`;
+      return;
+    }
     if (!full || this.regions.length === 0) {
       container.innerHTML =
         '<p class="px-4 py-6 text-center text-sm text-slate-500">画像がありません</p>';

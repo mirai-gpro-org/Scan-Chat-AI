@@ -263,8 +263,102 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
 
       <!-- プライマリ CTA -->
       <button id="scan-shot" class="btn-primary !py-4 text-lg">
-        <AppIcon name="camera" size={20} /> 撮影 & 解析
+        <AppIcon name="camera" size={20} /> 撮影
       </button>
+    </section>
+
+    <!-- ============================================================== -->
+    <!-- パネル: confirm（1 枚撮るごとの確認）                            -->
+    <!--                                                                -->
+    <!-- 【なぜ要るか】以前は撮影＝即解析で、ブレや画角のミスに気づくのが     -->
+    <!-- 結果画面まで行った後だった。複数ページを撮り重ねるには、1 枚ごとに   -->
+    <!-- 「これでよい / 撮り直す」を挟めないと積めない (発注者指示)。        -->
+    <!-- **前のページには戻らない。** 撮り直せるのはいま撮った 1 枚だけで、  -->
+    <!-- それ以前をやり直す手段は「最初からやり直す」だけ。                -->
+    <!-- ============================================================== -->
+    <section id="panel-confirm" class="flex flex-1 flex-col gap-4" hidden>
+      <div class="flex items-center justify-between gap-3">
+        <p class="text-base font-semibold text-navy-800">
+          <span id="confirm-page-label">1 枚目</span> — この写真でよろしいですか
+        </p>
+        <button id="confirm-restart" type="button"
+          class="inline-flex min-h-touch shrink-0 items-center gap-1.5 rounded-full border border-slate-500 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+          最初からやり直す
+        </button>
+      </div>
+
+      <p class="text-sm text-slate-700">
+        文字がはっきり読めるか、用紙の端まで写っているかをご確認ください。
+      </p>
+
+      <div class="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+        {/* 撮影画像。PDF は画像として表示できないので下の代替を出す。 */}
+        <img id="confirm-image" alt="撮影した用紙のプレビュー" class="max-h-[52vh] w-full object-contain" hidden />
+        <div id="confirm-nopreview" class="flex flex-col items-center gap-2 px-4 py-10 text-center" hidden>
+          <AppIcon name="attachment" size={32} class="text-slate-500" />
+          <p class="text-base font-medium text-slate-700">PDF を追加しました</p>
+          <p id="confirm-nopreview-name" class="text-sm text-slate-600"></p>
+          <p class="text-sm text-slate-600">PDF は画面でのプレビューができません。</p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <button id="confirm-retake" type="button" class="btn-pair btn-graph">
+          <AppIcon name="camera" size={18} />撮り直す
+        </button>
+        <button id="confirm-next" type="button" class="btn-pair btn-data">
+          <AppIcon name="next" size={18} />次の用紙
+        </button>
+      </div>
+      {/*
+        ここでは送信しない。**確定点は次の確認画面 1 か所だけ**にする
+        (発注者指示)。まとめ送信は後戻りできないので、1 枚ごとの画面から
+        いきなり始めない。
+      */}
+      <button id="confirm-done" class="btn-primary !py-4 text-lg">
+        <AppIcon name="check" size={20} /> これで全部（確認へ）
+      </button>
+    </section>
+
+    <!-- ============================================================== -->
+    <!-- パネル: review（全ページの最終確認 → まとめて送信）               -->
+    <!-- 唯一の確定点。ここを押すまで 1 枚も読み取らない。                  -->
+    <!-- **1 枚ずつの取り消しは置かない** (前のページへ戻らない方針)。      -->
+    <!-- ============================================================== -->
+    <section id="panel-review" class="flex flex-1 flex-col gap-4" hidden>
+      <div class="flex items-center justify-between gap-3">
+        <p class="text-base font-semibold text-navy-800">
+          <span id="review-count">0</span> 枚を送信します
+        </p>
+        <button id="review-restart" type="button"
+          class="inline-flex min-h-touch shrink-0 items-center gap-1.5 rounded-full border border-slate-500 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+          最初からやり直す
+        </button>
+      </div>
+
+      <p class="text-sm text-slate-700">
+        この内容で読み取ります。読み取りは全ページまとめて行うため、少し時間がかかります。
+      </p>
+
+      {/* 送るものを目で確かめるための一覧。押せる要素は置かない (1 枚だけの取り消しはしない)。 */}
+      <ul id="review-thumbs" class="flex flex-wrap gap-2"></ul>
+
+      <div class="mt-auto flex flex-col gap-2">
+        <button id="review-send" class="btn-primary !py-4 text-lg">
+          <AppIcon name="send" size={20} /> 全てを送信
+        </button>
+        <button id="review-add" type="button" class="btn-pair btn-data">
+          <AppIcon name="camera" size={18} />用紙を追加する
+        </button>
+      </div>
+
+      {/* 送信中の進捗。1 画像 = 1 リクエストなので順に進む。 */}
+      <div id="review-progress" class="rounded-xl border border-slate-200 bg-white p-4" hidden>
+        <p id="review-progress-text" class="text-base font-medium text-navy-800" aria-live="polite">読み取り中…</p>
+        <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+          <div id="review-progress-bar" class="h-full w-0 rounded-full bg-brand-600 transition-all"></div>
+        </div>
+      </div>
     </section>
 
     <!-- ============================================================== -->
@@ -372,6 +466,7 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
   import type { AnalyzeResult, ScanState } from '../scripts/camera-scan';
   import { ScanVerificationController } from '../scripts/scan-verification';
   import { prepareScanUpload, UploadTooLargeError } from '../scripts/scan-upload';
+  import { ScanPageList, mergeResults } from '../scripts/scan-pages';
   import { getOrCreateDiagnosticId } from '../lib/diagnostic-id';
 
   function $<T extends HTMLElement = HTMLElement>(id: string): T {
@@ -383,10 +478,12 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
   // 直近の読込元ファイル名 (アップロード経由のみ。書き出しファイル名に組み込む)
   let lastSourceFileName: string | null = null;
 
-  type Panel = 'ready' | 'active' | 'result' | 'error';
+  type Panel = 'ready' | 'active' | 'confirm' | 'review' | 'result' | 'error';
   const panels: Record<Panel, HTMLElement> = {
     ready: $('panel-ready'),
     active: $('panel-active'),
+    confirm: $('panel-confirm'),
+    review: $('panel-review'),
     result: $('panel-result'),
     error: $('panel-error'),
   };
@@ -395,6 +492,130 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
     (Object.keys(panels) as Panel[]).forEach((key) => {
       panels[key].hidden = key !== panel;
     });
+  }
+
+  /* ──────────────────────────────────────────────────────────────
+   * 複数ページのスキャン (発注者指示 2026-09-04)
+   *
+   *   撮影 / アップロード → **1 枚ごとに確認** → 撮り直す / 次の用紙 / これで全部
+   *                       → 最終確認 → **全てを送信** (ここで初めて読み取る)
+   *
+   * ・**確定点は「全てを送信」1 か所だけ。** それまで 1 枚も /api/scan へ送らない
+   * ・**前のページには戻らない。** 撮り直せるのは今の 1 枚だけで、
+   *   それ以前をやり直す手段は「最初からやり直す」のみ
+   * ・読み取りは 1 画像 = 1 リクエストで順に回す (Vercel 60 秒制限。CLAUDE.md)
+   * ────────────────────────────────────────────────────────────── */
+  const pages = new ScanPageList();
+  /**
+   * カメラ制御。DOMContentLoaded 後に入る。
+   * 上のページ操作から参照するので、ハンドラ内の const ではなくここに置く。
+   */
+  let camera: import('../scripts/camera-scan').CameraScanController | null = null;
+
+  /** 1 枚積んで確認画面へ。撮影・アップロードの共通の入口。 */
+  function pushPageAndConfirm(src: Parameters<typeof pages.add>[0], name: string | null): void {
+    pages.add(src, name);
+    const img = $<HTMLImageElement>('confirm-image');
+    const nop = $('confirm-nopreview');
+    const preview = src.previewDataUrl ?? (src.kind === 'pdf' ? null : src.dataUrl);
+
+    $('confirm-page-label').textContent = `${pages.length} 枚目`;
+    if (preview) {
+      img.src = preview;
+      img.hidden = false;
+      nop.hidden = true;
+    } else {
+      // PDF は画面で中身を見せられない。黙って空にせず理由を出す。
+      img.hidden = true;
+      img.removeAttribute('src');
+      nop.hidden = false;
+      $('confirm-nopreview-name').textContent = name ?? '';
+    }
+    camera?.stop();
+    show('confirm');
+  }
+
+  /** 最終確認画面。送るものを目で確かめてもらう。 */
+  function showReview(): void {
+    $('review-count').textContent = String(pages.length);
+    const list = $('review-thumbs');
+    list.innerHTML = '';
+    pages.all.forEach((pg, i) => {
+      const li = document.createElement('li');
+      li.className = 'flex w-20 flex-col items-center gap-1';
+      const thumb = pg.previewDataUrl ?? (pg.kind === 'pdf' ? null : pg.dataUrl);
+      if (thumb) {
+        const im = document.createElement('img');
+        im.src = thumb;
+        im.alt = '';
+        im.className = 'h-20 w-20 rounded-lg border border-slate-200 object-cover';
+        li.appendChild(im);
+      } else {
+        const box = document.createElement('span');
+        box.className = 'grid h-20 w-20 place-items-center rounded-lg border border-slate-200 bg-slate-50 text-sm text-slate-600';
+        box.textContent = 'PDF';
+        li.appendChild(box);
+      }
+      const cap = document.createElement('span');
+      cap.className = 'text-sm text-slate-600';
+      cap.textContent = `${i + 1} 枚目`;
+      li.appendChild(cap);
+      list.appendChild(li);
+    });
+    $('review-progress').hidden = true;
+    $<HTMLButtonElement>('review-send').disabled = pages.length === 0;
+    camera?.stop();
+    show('review');
+  }
+
+  /** 最初からやり直す。撮った分を全部捨てる (確認を挟む)。 */
+  function restartAll(): void {
+    if (pages.length > 0 && !confirm(`撮影した ${pages.length} 枚を破棄して、最初からやり直します。よろしいですか？`)) return;
+    pages.clear();
+    lastSourceFileName = null;
+    camera?.stop();
+    show('ready');
+  }
+
+  /** 全ページをまとめて読み取る。**ここが唯一の確定点**。 */
+  async function sendAll(): Promise<void> {
+    const total = pages.length;
+    if (total === 0) return;
+    const sendBtn = $<HTMLButtonElement>('review-send');
+    const addBtn = $<HTMLButtonElement>('review-add');
+    sendBtn.disabled = true;
+    addBtn.disabled = true;
+    $('review-progress').hidden = false;
+
+    const results = [];
+    for (let i = 0; i < total; i += 1) {
+      $('review-progress-text').textContent = `${i + 1} / ${total} 枚目を読み取り中…`;
+      $('review-progress-bar').style.width = `${Math.round((i / total) * 100)}%`;
+      const r = await camera!.analyzeToResult(pages.all[i], {
+        statusText: `${i + 1} / ${total} 枚目を読み取り中…`,
+      });
+      // 1 枚落ちても残りは続ける。落ちた枚数は後で伝える (黙って捨てない)。
+      if (r) results.push(r);
+    }
+    $('review-progress-bar').style.width = '100%';
+
+    if (results.length === 0) {
+      $('error-message').textContent = '読み取れませんでした。撮り直してお試しください。';
+      sendBtn.disabled = false;
+      addBtn.disabled = false;
+      show('error');
+      return;
+    }
+    if (results.length < total) {
+      // 全部は読めなかった。**成功分だけ進める**が、その事実は必ず出す。
+      alert(`${total} 枚のうち ${total - results.length} 枚が読み取れませんでした。読み取れた ${results.length} 枚分で続けます。`);
+    }
+
+    const merged = mergeResults(results);
+    pages.clear();
+    await renderResult(merged);
+    camera?.stop();
+    show('result');
   }
 
   async function renderResult(r: AnalyzeResult): Promise<void> {
@@ -492,7 +713,7 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
   }
 
   document.addEventListener('DOMContentLoaded', () => {
-    const controller = initCameraScan({
+    const controller = camera = initCameraScan({
       video: $<HTMLVideoElement>('scan-video'),
       canvas: $<HTMLCanvasElement>('scan-canvas'),
       shotBtn: $<HTMLButtonElement>('scan-shot'),
@@ -507,6 +728,14 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
         // カメラ撮影はファイル名なし。直前のアップロード名を引き継がない。
         lastSourceFileName = null;
       },
+      /*
+       * **撮影しても解析しない。** 1 枚ごとに確認画面へ送る (発注者指示)。
+       * これが無いとブレ・画角のミスに結果画面まで気づけず、複数ページも積めない。
+       */
+      onShot: (dataUrl) => {
+        lastSourceFileName = null;
+        pushPageAndConfirm({ dataUrl, kind: 'image' }, null);
+      },
       onAnalyze: (result) => {
         void renderResult(result);
         controller.stop();
@@ -517,6 +746,30 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
         show('error');
       },
     });
+
+    // ── 1 枚ごとの確認 ──
+    $('confirm-retake').addEventListener('click', async () => {
+      pages.dropLast();          // 撮り直すのは「いまの 1 枚」だけ
+      show('active');
+      $('scan-video').hidden = false;
+      await controller.start();
+    });
+    $('confirm-next').addEventListener('click', async () => {
+      show('active');
+      $('scan-video').hidden = false;
+      await controller.start();
+    });
+    $('confirm-done').addEventListener('click', () => showReview());
+    $('confirm-restart').addEventListener('click', () => restartAll());
+
+    // ── 最終確認 ──
+    $('review-add').addEventListener('click', async () => {
+      show('active');
+      $('scan-video').hidden = false;
+      await controller.start();
+    });
+    $('review-restart').addEventListener('click', () => restartAll());
+    $('review-send').addEventListener('click', () => void sendAll());
 
     $('scan-start').addEventListener('click', async () => {
       show('active');
@@ -538,11 +791,9 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
         show('active');
         $('scan-video').hidden = true;
         lastSourceFileName = file.name; // 書き出しファイル名に組み込む
-        const kindLabel = prepared.kind === 'pdf' ? 'PDF' : '画像';
-        const label = prepared.note
-          ? `${kindLabel} (${file.name}・${prepared.note})`
-          : `${kindLabel} (${file.name})`;
-        await controller.analyzeUpload(prepared, { sourceLabel: label });
+        // アップロードも撮影と同じページ列へ積む (発注者指示)。ここでは解析しない。
+        lastSourceFileName = file.name;
+        pushPageAndConfirm(prepared, prepared.note ? `${file.name}・${prepared.note}` : file.name);
       } catch (err) {
         $('error-message').textContent =
           err instanceof UploadTooLargeError ? err.message : String(err);

@@ -41,6 +41,8 @@ export interface AnalyzeResult {
   sourceKind?: 'pdf' | 'image';
   /** Gemini finishReason */
   finishReason?: string;
+  /** 束ねたページ数 (1 なら単票)。複数ページでは bbox 重ね描きを行わない。 */
+  pageCount?: number;
 }
 
 export type ScanState = 'idle' | 'running' | 'busy';
@@ -68,6 +70,12 @@ export interface CameraRefs {
   onStateChange?: (state: ScanState) => void;
   /** 撮影直後の画像 URL（objectURL）を結果ページに渡す用 */
   onCapture?: (objectUrl: string) => void;
+  /**
+   * **これを渡すと撮影が「確認待ち」になる** — シャッターを押しても解析せず、
+   * 撮れた 1 枚を呼び出し側へ返すだけにする (プレビューして撮り直せるようにするため)。
+   * 未指定なら従来どおり撮影 → 即解析。
+   */
+  onShot?: (dataUrl: string) => void;
   onAnalyze?: (result: AnalyzeResult) => void;
   onError?: (message: string) => void;
 }
@@ -83,6 +91,12 @@ export interface CameraScanController {
    * (S3 へ直接置いた大きいファイル) のどちらかを送る。
    */
   analyzeUpload: (src: AnalyzeSource, opts?: { sourceLabel?: string }) => Promise<void>;
+  /**
+   * 1 ページ解析して**結果を返す** (onAnalyze は呼ばない)。
+   * 完了時のバッチ処理で、呼び出し側がページを順に回すために使う。
+   * 失敗時は null (メッセージは onError へ流す)。
+   */
+  analyzeToResult: (src: AnalyzeSource, opts?: { statusText?: string }) => Promise<AnalyzeResult | null>;
   isRunning: () => boolean;
 }
 
@@ -128,6 +142,11 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
       setStatus('まだ映像が取得できていません');
       return;
     }
+    // onShot があれば「確認待ち」。撮っただけで解析しない (プレビューして撮り直せる)。
+    if (refs.onShot) {
+      refs.onShot(frame.dataUrl);
+      return;
+    }
     await analyzeDataUrl(frame.dataUrl);
   }
 
@@ -146,15 +165,32 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     src: AnalyzeSource,
     opts?: { sourceLabel?: string },
   ): Promise<void> {
+    const result = await runAnalyze(src, opts);
+    if (result) refs.onAnalyze?.(result);
+  }
+
+  /** 1 ページ解析して結果を返す。onAnalyze は呼ばない (バッチ処理用)。 */
+  async function analyzeToResult(
+    src: AnalyzeSource,
+    opts?: { statusText?: string },
+  ): Promise<AnalyzeResult | null> {
+    return runAnalyze(src, { sourceLabel: undefined, statusText: opts?.statusText });
+  }
+
+  async function runAnalyze(
+    src: AnalyzeSource,
+    opts?: { sourceLabel?: string; statusText?: string },
+  ): Promise<AnalyzeResult | null> {
     // 表示に使うのはプレビュー優先 (S3 経由では原本の data URL を持たない)。
     const display = src.previewDataUrl ?? src.dataUrl;
     if (display) refs.onCapture?.(display);
 
     setState('busy');
     setStatus(
-      opts?.sourceLabel
-        ? `${opts.sourceLabel} を解析中…`
-        : 'AI が紙面を精密読解中… (精度優先モード)',
+      opts?.statusText
+        ?? (opts?.sourceLabel
+          ? `${opts.sourceLabel} を解析中…`
+          : 'AI が紙面を精密読解中… (精度優先モード)'),
     );
 
     const userHint = refs.hint?.value?.trim() || '';
@@ -174,7 +210,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         setStatus(msg);
         refs.onError?.(msg);
         setState(stream ? 'running' : 'idle');
-        return;
+        return null;
       }
       const data = (await res.json()) as {
         markdown?: string;
@@ -187,7 +223,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         setStatus(msg);
         refs.onError?.(msg);
         setState(stream ? 'running' : 'idle');
-        return;
+        return null;
       }
 
       // 「推論値」は Gemini の自己チェック用 (備考列に【要確認】を立てるための内部材料)。
@@ -206,6 +242,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         fullImage: display,
         sourceKind: src.kind ?? (src.dataUrl?.startsWith('data:application/pdf') ? 'pdf' : 'image'),
         finishReason: data.finishReason,
+        pageCount: 1,
       };
       setState(stream ? 'running' : 'idle');
       setStatus(
@@ -213,12 +250,13 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
           ? `${regions.length} 領域 / ${totalRows} 行を読み取りました`
           : `${regions.length} 領域を読み取りました`,
       );
-      refs.onAnalyze?.(result);
+      return result;
     } catch (err) {
       const msg = `通信エラー: ${String(err)}`;
       setStatus(msg);
       refs.onError?.(msg);
       setState(stream ? 'running' : 'idle');
+      return null;
     }
   }
 
@@ -256,6 +294,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     capture,
     analyzeDataUrl,
     analyzeUpload,
+    analyzeToResult,
     isRunning: () => stream !== null,
   };
 }
