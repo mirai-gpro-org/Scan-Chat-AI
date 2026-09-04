@@ -131,15 +131,27 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
       ? `<button type="button" class="lp-abort" data-lp-abort>${iconSvg('blocked')}<span>中止</span></button>`
       : '';
 
-    // 直前の回答。チェック印は自作 SVG (アイコン部品を使わない)。
+    /*
+     * 直前の回答。チェック印は自作 SVG (アイコン部品を使わない)。
+     *
+     * **必ずタイトル (＝次の質問) より上に置く。**
+     * 下に置くと「次の質問 → 前の回答 → 次の質問の選択肢」の順になり、
+     * 前の回答が次の質問の中に挟まって読めなくなる (発注者指摘 2026-09-04)。
+     * 「前の回答」とラベルを付けて、次の質問の一部に見えないようにする。
+     */
     const lastHtml = lastAnswer
       ? `<div class="la">
-           <svg class="la-check" viewBox="0 0 16 16" aria-hidden="true">
-             <path d="M3 8.5l3.2 3.2L13 5" fill="none" stroke="currentColor" stroke-width="2"
-                   stroke-linecap="round" stroke-linejoin="round" />
-           </svg>
-           <span class="la-text">${escapeHtml(lastAnswer.text)}</span>
-           <button type="button" class="la-edit" data-lp-edit>訂正する</button>
+           <div class="la-row">
+             <span class="la-tag">前の回答</span>
+             <button type="button" class="la-edit" data-lp-edit>訂正する</button>
+           </div>
+           <div class="la-body">
+             <svg class="la-check" viewBox="0 0 16 16" aria-hidden="true">
+               <path d="M3 8.5l3.2 3.2L13 5" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round" />
+             </svg>
+             <span class="la-text">${escapeHtml(lastAnswer.text)}</span>
+           </div>
          </div>`
       : '';
 
@@ -147,6 +159,7 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
     // こうしておくと「入りきらないので全画面へ昇格」を data-layout の差し替えだけで行える。
     const headHtml = `
       <div class="sheet-handle"></div>
+      ${lastHtml}
       <div class="lp-bar">
         <button type="button" class="lp-back" data-lp-cancel aria-label="戻る">${iconSvg('prev')}</button>
         <h2 class="lp-title lp-title-bar">${escapeHtml(title)}</h2>
@@ -172,7 +185,6 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
         <div class="lp-head">
           ${headHtml}
           <p class="lp-sub">${escapeHtml(subtitle ?? (multi ? 'あてはまるものをすべて選んでください' : 'タップすると回答して次へ進みます'))}</p>
-          ${lastHtml}
           ${searchHtml}
         </div>
         <div class="lp-scroll" data-lp-scroll>

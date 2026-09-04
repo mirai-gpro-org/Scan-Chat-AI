@@ -238,11 +238,28 @@ const pick = await page.evaluate(async () => {
   const bar = document.querySelector('.lp-panel .la');
   const btn = document.querySelector('.lp-panel [data-lp-edit]');
   const rect = btn?.getBoundingClientRect();
+  /*
+   * **並び順が本体**: 前の回答 → 次の質問のタイトル → 選択肢。
+   * タイトルの下に置くと「次の質問 → 前の回答 → 次の質問の選択肢」になり、
+   * 前の回答が次の質問の中に挟まって読めない (発注者指摘 2026-09-04)。
+   */
+  // タイトルはシート用 / 全画面用の 2 つが描かれ、CSS で片方だけが出る。
+  // **見えている方**を測る (隠れている方は rect が 0 になり判定が壊れる)。
+  const titleEl = [...document.querySelectorAll('.lp-panel .lp-title')]
+    .find((el) => el.offsetParent !== null);
+  const firstItem = document.querySelector('.lp-panel .lp-item');
+  const before = (a, z) => !!a && !!z && !!(a.compareDocumentPosition(z) & Node.DOCUMENT_POSITION_FOLLOWING);
   const out = {
     inModal: !!bar,
     text: bar?.querySelector('.la-text')?.textContent ?? '',
+    tag: bar?.querySelector('.la-tag')?.textContent ?? '',
     ownSvg: !!bar?.querySelector('svg.la-check') && !/lucide/i.test(bar?.innerHTML ?? ''),
     visible: !!rect && rect.top >= 0 && rect.bottom <= window.innerHeight,
+    aboveTitle: before(bar, titleEl),
+    aboveItems: before(bar, firstItem),
+    // 実際の描画位置でも上にあること (DOM 順だけだと CSS の order/absolute で崩せる)
+    yBar: bar?.getBoundingClientRect().top ?? -1,
+    yTitle: titleEl?.getBoundingClientRect().top ?? -1,
   };
   btn?.click();
   out.resolvedNull = (await p) === null;
@@ -251,6 +268,13 @@ const pick = await page.evaluate(async () => {
   return out;
 });
 ok('⑨ 選択画面の中に確認バーが出る', pick.inModal && pick.text === '吸わない', pick.text);
+ok('⑨ 「前の回答」と明示している', pick.tag.includes('前の回答'), pick.tag);
+ok(
+  '⑨ 確認バーは次の質問のタイトルより上',
+  pick.aboveTitle && pick.yBar >= 0 && pick.yBar < pick.yTitle,
+  `bar=${Math.round(pick.yBar)} title=${Math.round(pick.yTitle)}`,
+);
+ok('⑨ 確認バーは選択肢より上', pick.aboveItems, '');
 ok('⑨ モーダル内でもチェック印は自作 SVG', pick.ownSvg, '');
 ok('⑨ 「訂正する」が画面内に見えている', pick.visible, '');
 ok('⑩ 訂正で選択画面が閉じる', pick.modalGone, '');

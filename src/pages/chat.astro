@@ -134,12 +134,17 @@ const diagnosticUserId = viewer.uid;
           チェック印は自作 SVG (絵文字もアイコン部品も使わない)。
         */}
         <div id="last-answer" class="la" hidden>
-          <svg class="la-check" viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M3 8.5l3.2 3.2L13 5" fill="none" stroke="currentColor" stroke-width="2"
-                  stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          <span class="la-text" id="last-answer-text"></span>
-          <button type="button" id="last-answer-edit" class="la-edit">訂正する</button>
+          <div class="la-row">
+            <span class="la-tag">前の回答</span>
+            <button type="button" id="last-answer-edit" class="la-edit">訂正する</button>
+          </div>
+          <div class="la-body">
+            <svg class="la-check" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M3 8.5l3.2 3.2L13 5" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span class="la-text" id="last-answer-text"></span>
+          </div>
         </div>
         <div class="mb-3 flex items-start gap-2">
           <div id="question-text" class="flex-1 text-sm font-medium leading-relaxed text-slate-800">
