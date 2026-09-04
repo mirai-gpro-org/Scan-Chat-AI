@@ -105,6 +105,7 @@ function selfReportFor(
       <AppIcon name="watch" size={32} class="text-status-action" />
       <h1 class="text-lg font-bold text-navy-800">進捗を読み込めませんでした</h1>
       <p class="text-base text-status-action">{(result as { error: string }).error}</p>
+      <BackToDashboard u={u} class="mt-3" />
     </main>
   )}
 
