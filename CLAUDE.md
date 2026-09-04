@@ -385,7 +385,8 @@ Vercel の 4.5 MB は **関数を通るデータにだけ**かかる。**ファ�
     冪等 / 適用後に自分で検証。スタブで 5 経路を動作確認済み。
   - **本番の実測 (2026-09-04)**: バケット `wellfort-ai-input` / `ap-northeast-1` /
     プレフィックス **`scan-accuracy-test/scan-uploads/`** / チケット発行は **200 で動作** /
-    **CORS は未設定** (`CORSResponse: CORS is not enabled for this bucket`)。
+    **CORS は設定済み** (同日 06:56 は `CORS is not enabled` → 07:27 に手順書どおりの
+    `Access-Control-Allow-Origin`/`Methods: PUT`/`Headers: content-type`/`Max-Age: 3000` を確認)。
     **推測せず `POST /api/scan/upload-ticket` の `key` でプレフィックスを確認する**
     (`AWS_S3_PREFIX` を変えると変わる。署名を出すだけでファイルは作られない)。
   - **CORS が無いと②が黙って失敗し③へ落ちる** = 画像は通るが **PDF は 3.2 MB のまま**。
@@ -398,8 +399,11 @@ Vercel の 4.5 MB は **関数を通るデータにだけ**かかる。**ファ�
     `scan-accuracy-test/` だけにすると **Elith 納品 JSON が消える**。
     バージョニング有効なら `Expiration` は削除マーカーを付けるだけなので
     `NoncurrentVersionExpiration` も要る (手順書 §2.2 で事前確認)。
-  - **本番の実 S3 での PUT は未確認** (CORS 未設定のため到達しない)。CORS 投入後、
-    **4MB 超の PDF を 1 回通す**のが完了条件 (画像は圧縮で通ってしまうので判定にならない)。
+  - **本番の実 S3 への PUT は確認済み (2026-09-04)**: presigned URL へ 5,000,000 バイトの
+    PDF を実 PUT して **200**。署名 (Content-Type/ContentLength 固定) と
+    `requestChecksumCalculation` の罠も本番で問題ないことを確認した。
+    確認用の 5MB オブジェクトが 1 つ残っている (②を入れれば自動失効)。
+  - **残るは ② ライフサイクルのみ** (AWS 権限が要るので当方からは確認できない)。
 - **#2〜#8 の他の口は手つかず** — `elith-report/upload`(40MB) / `lab-results/upload`(20MB) /
   `elith-output`(8MB) は名乗りが実際 (~4.5MB) を超えたまま、admin バッチスキャン
   (`elith-scan`/`elith-hc-merge`/`elith-genetic-merge`) は**上限の宣言もチェックも無い**。

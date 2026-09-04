@@ -178,9 +178,14 @@ fi
 # ─────────────────────────────────────────────
 head2 "3. 適用"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-# 失敗しても元へ戻せるように、直前の状態を残す。
-printf '%s' "$CORS_BEFORE" > "$TMP/cors-before.json"
-printf '%s' "$LC_BEFORE"   > "$TMP/lifecycle-before.json"
+
+# 失敗しても元へ戻せるように、直前の状態を**消えない場所**へ残す。
+# (作業用の $TMP は終了時に消えるので、退避先を分ける)
+BACKUP="$PWD/aws-scan-s3-backup-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$BACKUP"
+printf '%s' "$CORS_BEFORE" > "$BACKUP/cors-before.json"
+printf '%s' "$LC_BEFORE"   > "$BACKUP/lifecycle-before.json"
+say "  変更前の設定を退避: $BACKUP"
 
 if [ "$DO_CORS" = 1 ]; then
   printf '%s' "$CORS_AFTER" > "$TMP/cors.json"
@@ -228,6 +233,13 @@ if [ "$DO_LIFECYCLE" = 1 ]; then
 fi
 
 head2 "結果"
+say "  変更前の設定: $BACKUP"
+say "  元に戻すには:"
+say "    aws s3api put-bucket-cors --bucket $BUCKET --region $REGION \\"
+say "      --cors-configuration file://$BACKUP/cors-before.json"
+say "    aws s3api put-bucket-lifecycle-configuration --bucket $BUCKET --region $REGION \\"
+say "      --lifecycle-configuration file://$BACKUP/lifecycle-before.json"
+say ""
 if [ "$FAILED" = 0 ]; then
   say "  ✅ 設定できました。"
   say ""
@@ -235,7 +247,6 @@ if [ "$FAILED" = 0 ]; then
   say "  (画像は CORS が無くても圧縮経路で通ってしまうため、判定になりません)"
 else
   say "  ⚠ 適用はしましたが検証に失敗した項目があります。"
-  say "  直前の状態は $TMP に退避してあります (このシェルを閉じるまで)。"
   say "  切り分けは docs/operations/スキャンS3直アップロード_バケット設定手順書.md §4 へ。"
   exit 1
 fi
