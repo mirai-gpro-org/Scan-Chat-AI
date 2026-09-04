@@ -25,8 +25,13 @@ import { chromium, devices } from 'playwright';
 
 const BASE = process.env.VERIFY_URL ?? 'http://localhost:4321';
 const EXEC = process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium';
-/** 本文の行長上限。`global.css` の `.report-prose { max-width: 38em }` × 16px。 */
-const MAX_PROSE = 608;
+/**
+ * 本文は**紙面の本文幅にそろえる** (発注者指示 2026-09-03「画面表示サイズに合わせて」)。
+ * 以前は 38em (608px) で止めていたが、表や 2 連大数字が紙面いっぱいを使うため
+ * 本文だけが半分で折り返し、改行が不自然に見えていた。
+ * ここでは「本文の折り返し幅 == 紙面の本文欄の幅」を見る (`ALLOW` は角丸や罫線のぶれ)。
+ */
+const PROSE_TOLERANCE = 4;
 
 const SIZES = [
   [1440, 900, 'PC 1440'],
@@ -261,18 +266,29 @@ for (const [width, height, label] of SIZES) {
   const page = await ctx.newPage();
   const dash = await shellWidth(page, '/dashboard');
   const report = await shellWidth(page, '/report');
+  const column = await page.evaluate(() => {
+    const inner = document.querySelector('.rp-inner');
+    if (!inner) return null;
+    const cs = getComputedStyle(inner);
+    return Math.round(inner.getBoundingClientRect().width
+      - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
+  });
   const prose = await page.evaluate(() => {
     const els = [...document.querySelectorAll('.report-prose')];
     return els.length ? Math.max(...els.map((e) => Math.round(e.getBoundingClientRect().width))) : null;
   });
 
-  const ok = dash === report && (prose === null || prose <= MAX_PROSE);
-  console.log(`${ok ? '✓' : '✗'} ${label.padEnd(14)} dashboard=${dash}px report=${report}px 本文=${prose ?? '-'}px`);
+  const proseFits = prose === null || column === null
+    || Math.abs(prose - column) <= PROSE_TOLERANCE;
+  const ok = dash === report && proseFits;
+  console.log(`${ok ? '✓' : '✗'} ${label.padEnd(14)} dashboard=${dash}px report=${report}px `
+    + `本文=${prose ?? '-'}px / 本文欄=${column ?? '-'}px`);
   if (dash !== report) {
     fails.push(`${label}: 器の幅が違う (dashboard ${dash}px / report ${report}px)`);
   }
-  if (prose !== null && prose > MAX_PROSE) {
-    fails.push(`${label}: 本文の行長が ${prose}px で上限 ${MAX_PROSE}px を超えた`);
+  if (!proseFits) {
+    fails.push(`${label}: 本文の折り返しが ${prose}px で、紙面の本文欄 ${column}px と違う`
+      + ' — 表や大数字は紙面いっぱいを使うので、本文だけ狭いと改行が不自然に見える');
   }
   await ctx.close();
 }
