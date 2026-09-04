@@ -58,7 +58,7 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
         >
           <AppIcon name="attachment" size={32} />
           <span class="text-base">ファイルをアップロード</span>
-          <span class="text-xs font-normal text-white/85">PDF / JPEG / PNG / WebP / HEIC<span class="text-white/65"> (最大 4 MB)</span></span>
+          <span class="text-xs font-normal text-white/85">PDF / JPEG / PNG / WebP / HEIC<span class="text-white/65"> (最大 10 MB)</span></span>
         </label>
         <input
           id="scan-file"
@@ -364,6 +364,7 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
   import { initCameraScan } from '../scripts/camera-scan';
   import type { AnalyzeResult, ScanState } from '../scripts/camera-scan';
   import { ScanVerificationController } from '../scripts/scan-verification';
+  import { prepareScanUpload, UploadTooLargeError } from '../scripts/scan-upload';
   import { getOrCreateDiagnosticId } from '../lib/diagnostic-id';
 
   function $<T extends HTMLElement = HTMLElement>(id: string): T {
@@ -522,36 +523,25 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
       if (!file) return;
       target.value = ''; // 同じファイルの再選択を許可
 
-      const MAX_BYTES = 4 * 1024 * 1024;
-      if (file.size > MAX_BYTES) {
-        $('error-message').textContent =
-          `ファイルサイズが大きすぎます (${(file.size / 1024 / 1024).toFixed(1)} MB)。4 MB 以下にしてください。`;
-        show('error');
-        return;
-      }
-
+      // 上限 (10 MB) の判定と、Vercel のボディ上限に収めるための縮小は
+      // scan-upload.ts に集約してある (受け付ける上限と送れる上限は別物)。
       try {
-        const dataUrl = await readFileAsDataUrl(file);
+        const prepared = await prepareScanUpload(file);
         // ファイル経由はカメラ起動なしで panel-active を表示し、video エリアは非表示にする
         show('active');
         $('scan-video').hidden = true;
         lastSourceFileName = file.name; // 書き出しファイル名に組み込む
-        const label = file.type === 'application/pdf' ? `PDF (${file.name})` : `画像 (${file.name})`;
-        await controller.analyzeDataUrl(dataUrl, { sourceLabel: label });
+        const kind = file.type === 'application/pdf' ? 'PDF' : '画像';
+        const label = prepared.note
+          ? `${kind} (${file.name}・${prepared.note})`
+          : `${kind} (${file.name})`;
+        await controller.analyzeDataUrl(prepared.dataUrl, { sourceLabel: label });
       } catch (err) {
-        $('error-message').textContent = String(err);
+        $('error-message').textContent =
+          err instanceof UploadTooLargeError ? err.message : String(err);
         show('error');
       }
     });
-
-    function readFileAsDataUrl(file: File): Promise<string> {
-      return new Promise((resolve, reject) => {
-        const fr = new FileReader();
-        fr.onload = () => resolve(String(fr.result));
-        fr.onerror = () => reject(new Error('ファイルの読み込みに失敗しました'));
-        fr.readAsDataURL(file);
-      });
-    }
 
     $('scan-retake').addEventListener('click', async () => {
       show('active');

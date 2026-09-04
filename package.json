@@ -31,7 +31,8 @@
     "verify:demecal-final-setup": "node scripts/verify-demecal-final-setup.mjs",
     "verify:probe-bat-gate": "node scripts/verify-probe-bat-gate.mjs",
     "verify:ps1-order": "esbuild scripts/verify-ps1-order.ts --bundle --platform=node --format=esm --log-level=error | node --input-type=module",
-    "verify:print": "node scripts/verify-print-pdf.mjs"
+    "verify:print": "node scripts/verify-print-pdf.mjs",
+    "verify:scan-upload": "node scripts/verify-scan-upload.mjs"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.9",

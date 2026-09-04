@@ -70,6 +70,28 @@ function stageDates(s: (typeof shipments)[number]): (string | null)[] {
 }
 /** 連携未整備で本番では値が入らない段階 (完了に見せない)。 */
 const UNAVAILABLE_STEPS = new Set([5, 6]);
+
+/**
+ * 自己申告 (任意) をどの段階の下に出すか。
+ * 仕様のモック (`docs/lab/kit_progress_management.md` §4 の 83-86 行) が
+ * 「お受け取り」「検体採取・返送」の各ステップの直下にボタンを置いているので、それに合わせる。
+ * 表示条件はダッシュボードのサマリ (`KitProgressCard.astro`) と同一にしてある。
+ *   3 受取済 … 発送済でまだ受取申告が無いとき
+ *   4 返送済 … 受取申告済みでまだ返送申告が無いとき
+ * ダッシュボードは先頭 2 件しか描かないので、**全件が出るこのページが本来の置き場**。
+ */
+function selfReportFor(
+  s: (typeof shipments)[number],
+  step: number,
+): { action: 'received' | 'returned'; label: string; icon: 'kit' | 'send' } | null {
+  if (step === 3 && !s.user_received_at && s.shipped_at) {
+    return { action: 'received', label: '受け取りました', icon: 'kit' };
+  }
+  if (step === 4 && s.user_received_at && !s.user_returned_at) {
+    return { action: 'returned', label: '返送しました', icon: 'send' };
+  }
+  return null;
+}
 ---
 
 <BaseLayout title="検査キットの進捗 | Welltect" width="app">
@@ -159,6 +181,7 @@ const UNAVAILABLE_STEPS = new Set([5, 6]);
                           const isCurrent = st.step === status.step;
                           const unavailable = UNAVAILABLE_STEPS.has(st.step) && !reached;
                           const at = dates[i];
+                          const selfReport = selfReportFor(s, st.step);
                           return (
                             <li class="flex gap-3">
                               <div class="flex flex-col items-center">
@@ -187,6 +210,24 @@ const UNAVAILABLE_STEPS = new Set([5, 6]);
                                   <p class="mt-1 text-sm text-slate-600">
                                     未取得 — 検査会社との自動連携が未整備のため、この段階の日時はまだ受け取れていません。
                                   </p>
+                                )}
+                                {selfReport && data && (
+                                  <div class="mt-2">
+                                    <button
+                                      type="button"
+                                      data-self-report
+                                      data-shipment-id={s.id}
+                                      data-action={selfReport.action}
+                                      data-diagnostic-user-id={data.diagnosticUserId}
+                                      class="inline-flex min-h-touch items-center justify-center gap-2 rounded-xl border border-navy-400 bg-white px-3.5 text-base font-semibold text-slate-800 transition hover:bg-brand-50 disabled:cursor-wait disabled:opacity-60"
+                                    >
+                                      <AppIcon name={selfReport.icon} size={18} />{selfReport.label}
+                                    </button>
+                                    {/* 任意であることを明示する (押さなくても運用は回る)。 */}
+                                    <p class="mt-1 text-sm text-slate-600">
+                                      ご申告は任意です。押していただくと状況がここに反映されます。
+                                    </p>
+                                  </div>
                                 )}
                               </div>
                             </li>
@@ -247,3 +288,9 @@ const UNAVAILABLE_STEPS = new Set([5, 6]);
     </>
   )}
 </BaseLayout>
+
+<script>
+  /* 処理の実体はダッシュボードのサマリと共有 (src/scripts/kit-self-report.ts)。 */
+  import { initKitSelfReport } from '../scripts/kit-self-report';
+  initKitSelfReport();
+</script>
