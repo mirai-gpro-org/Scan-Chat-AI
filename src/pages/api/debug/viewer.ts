@@ -20,6 +20,7 @@
 
 import type { APIRoute } from 'astro';
 import { VIEWER_COOKIE, resolveViewer, uidEntryAllowed, verifyViewer } from '../../../lib/viewer';
+import { publicOrigin } from '../../../lib/public-url';
 import { isHpEdgeConfigured, resolveCustomerWithAdmin } from '../../../lib/hp-edge';
 import { demoFallbackEnabled } from '../../../lib/demo-data';
 import { demoAccountStats } from '../../../lib/demo-accounts';
@@ -95,11 +96,30 @@ export const GET: APIRoute = async (ctx) => {
    * 行の有無だけを見て「データは在る」と判断しない、が 2026-08-30 の教訓。
    */
   const report = await inspectReport(viewer.uid);
+  /*
+   * 「この検査だけ画面に出ない」の切り分け用。**カードは種別ごとに常に描かれる**
+   * (`TestResultsSection.astro`) ので、空に見えるのは行が無いときだけ。
+   * 種別と件数しか出さない (PII を載せない)。
+   */
+  const artifacts = await inspectArtifacts(viewer.uid);
 
   return json({
     ok: true,
     build: (env('VERCEL_GIT_COMMIT_SHA') ?? 'local').slice(0, 7),
+    /*
+     * QR がプロキシ内側の URL になっていないかの確認 (2026-09-04 の不具合)。
+     * request_origin と public_origin がずれるのが正常 (Vercel は転送ヘッダを付ける)。
+     * QR に使うのは public_origin のほう。
+     */
+    origin: {
+      request_origin: new URL(ctx.request.url).origin,
+      public_origin: publicOrigin(ctx.request),
+      x_forwarded_host: ctx.request.headers.get('x-forwarded-host') ?? '(なし)',
+      x_forwarded_proto: ctx.request.headers.get('x-forwarded-proto') ?? '(なし)',
+      host: ctx.request.headers.get('host') ?? '(なし)',
+    },
     report,
+    artifacts,
     cookie: {
       present: !!raw,
       valid: !!verified,
@@ -262,4 +282,41 @@ function json(data: unknown, status = 200): Response {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
   });
+}
+
+/**
+ * 検査アーティファクトの種別ごとの件数。**「カードが空」の原因切り分け専用**。
+ *
+ * ダッシュボードは 5 種類のカードを常に描き、その種別の行が 0 件だと中身だけ空になる。
+ * 画面を見ても「行が無い」のか「描画が壊れている」のか区別できないので、ここで数える。
+ * 出すのは **種別と件数と日付だけ** (PII を載せない)。
+ */
+async function inspectArtifacts(uid: string | null): Promise<Record<string, unknown>> {
+  const KINDS = ['health_checkup', 'blood', 'cancer_urine', 'ai_prediction', 'genetics'];
+  const sb = getServerSupabase();
+  if (!sb || !uid) return { note: sb ? 'uid なし' : '(Supabase 未設定)' };
+  try {
+    const { data, error } = await (sb.schema('diagnosis') as any)
+      .from('test_artifacts')
+      .select('test_type, test_date, status, source')
+      .eq('diagnostic_user_id', uid)
+      .order('test_date', { ascending: false });
+    if (error) return { error: error.message };
+    const rows = (data ?? []) as { test_type: string; test_date: string; status: string; source: string }[];
+    const byKind: Record<string, unknown> = {};
+    for (const k of KINDS) {
+      const mine = rows.filter((r) => r.test_type === k);
+      byKind[k] = mine.length === 0
+        ? '0 件 → カードは空になる'
+        : `${mine.length} 件 (最新 ${String(mine[0].test_date).slice(0, 10)} / ${mine[0].source} / ${mine[0].status})`;
+    }
+    const other = rows.filter((r) => !KINDS.includes(r.test_type)).map((r) => r.test_type);
+    return {
+      total: rows.length,
+      by_test_type: byKind,
+      ...(other.length ? { 画面に出ない種別: [...new Set(other)] } : {}),
+    };
+  } catch (err) {
+    return { error: String(err instanceof Error ? err.message : err) };
+  }
 }

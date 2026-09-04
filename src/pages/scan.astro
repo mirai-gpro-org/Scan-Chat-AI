@@ -1,10 +1,12 @@
 ---
 import AppIcon from '../components/AppIcon.astro';
+import BackToDashboard from '../components/BackToDashboard.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import ScanOverlay from '../components/ScanOverlay.astro';
 import { getUserUploads } from '../lib/scan-queries';
 import { testTypeLabel, formatJpDate } from '../lib/dashboard-queries';
 import { qrSvgPath } from '../lib/qr';
+import { publicUrl } from '../lib/public-url';
 import { resolveViewer } from '../lib/viewer';
 import { noStore } from '../lib/http-cache';
 
@@ -15,7 +17,12 @@ noStore(Astro.response);
 
 // PC ではカメラ撮影を提供しない (要件 F-A5) ため、同じページをスマートフォンで
 // 開いてもらうための QR を作る。?u= を含めるので端末を移しても同じユーザーで開く。
-const pageUrl = Astro.request.url;
+/*
+ * QR は **公開 URL** で作る。`Astro.request.url` はプロキシの内側の URL に
+ * なることがあり、実測 (2026-09-04) では 25 モジュール = 約 26 バイトの QR
+ * (= localhost 等) が出て読み取っても開けなかった。詳細は public-url.ts。
+ */
+const pageUrl = publicUrl(Astro.request);
 const qr = qrSvgPath(pageUrl, { cell: 4, margin: 4, ec: 'M' });
 
 const url = new URL(Astro.request.url);
@@ -28,7 +35,7 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
 
 <BaseLayout title="AI スキャン | Welltect" width="app">
   <header class="flex items-center justify-between px-5 pt-6 pb-3">
-    <a href={diagnosticUserId ? `/?u=${encodeURIComponent(diagnosticUserId)}` : '/'} class="-ml-2 inline-flex h-10 w-10 items-center justify-center text-2xl text-slate-500 hover:text-slate-700" aria-label="戻る">‹</a>
+    <BackToDashboard u={diagnosticUserId} class="!px-2.5 !text-sm" />
     <h1 class="text-base font-semibold">スキャン</h1>
     <span class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
       1 / 3

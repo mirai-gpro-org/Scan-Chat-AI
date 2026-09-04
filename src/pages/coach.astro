@@ -1,5 +1,6 @@
 ---
 import AppIcon from '../components/AppIcon.astro';
+import BackToDashboard from '../components/BackToDashboard.astro';
 /**
  * AI ヘルスコーチ ページ。
  *
@@ -51,10 +52,7 @@ const initialGreeting = urgentAlert
 <BaseLayout title="AI ヘルスコーチ | Welltect" width="flow">
   <header class="hero-gradient relative px-5 pt-5 pb-3">
     <div class="flex items-center justify-between">
-      <a
-        href={diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnosticUserId)}` : '/dashboard'}
-        class="text-sm text-slate-600 hover:text-slate-900"
-      >‹ ダッシュボード</a>
+      <BackToDashboard u={diagnosticUserId} class="!px-2.5 !text-sm" />
       <div class="flex items-center gap-2">
         <span class="relative flex h-2 w-2">
           <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>

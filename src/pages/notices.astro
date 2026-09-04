@@ -1,5 +1,6 @@
 ---
 import AppIcon from '../components/AppIcon.astro';
+import BackToDashboard from '../components/BackToDashboard.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import SignInPanel from '../components/SignInPanel.astro';
 import { loadNotices } from '../lib/notice-queries';
@@ -41,7 +42,6 @@ const result = !effectiveUid
 const hasError = result ? 'error' in result : false;
 const data = !result || hasError ? null : (result as Exclude<typeof result, { error: string }>);
 
-const dashHref = u ? `/dashboard?u=${encodeURIComponent(u)}` : '/dashboard';
 
 /** u を保持しつつ section パラメータをマージしたリンクを作る。 */
 function noticesHref(overrides: Record<string, string | null>): string {
@@ -64,9 +64,7 @@ const importantTitle = data ? `${data.userName}への重要なお知らせ` : '�
 <BaseLayout title="お知らせ | Welltect" width="app">
   <header class="hero-gradient px-5 pt-6 pb-4">
     <div class="flex items-center justify-between">
-      <a href={dashHref} class="text-sm text-slate-600 hover:text-slate-900">
-        ‹ マイページ
-      </a>
+      <BackToDashboard u={u} class="!px-2.5 !text-sm" />
       <h1 class="text-base font-semibold">お知らせ</h1>
       <span class="w-16"></span>
     </div>

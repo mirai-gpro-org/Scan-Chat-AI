@@ -1,0 +1,36 @@
+---
+import AppIcon from './AppIcon.astro';
+
+/**
+ * 「ダッシュボードへ戻る」ボタン。**ダッシュボード以外の全ページに置く**
+ * (発注者指示 2026-09-04)。
+ *
+ * 以前は各ページがばらばらの導線を持っていた —
+ *   `‹ メニュー` (chat) / `‹ ダッシュボード` (result) / `‹` だけ (scan) /
+ *   文字リンク (trend) / 何も無い (kit・notices・report・coach)。
+ * 押せる面が小さく、そもそも戻れないページがあったので、**1 つの部品に集約**する。
+ * 文言・見た目を変えるときはここだけを直す。
+ *
+ * - **`<a>` のまま**にしてある。動作は画面遷移なので、見た目だけボタンにする
+ *   (button 要素にすると右クリックや新しいタブで開けなくなる)。
+ * - **枠は navy-400**。`slate-300` は白地に 1.72:1 で非文字コントラスト
+ *   WCAG 1.4.11 (3:1) に届かない (CLAUDE.md の確定事項)。
+ * - **`?u=` を引き継ぐ**。admin の代理表示中に自分のダッシュボードへ飛ばさないため。
+ * - 高さは `min-h-touch` (44px 以上)。
+ */
+interface Props {
+  /** 代理表示中の uid。渡すと `?u=` を付けて戻る。 */
+  u?: string | null;
+  /** 追加クラス (配置の微調整用)。 */
+  class?: string;
+}
+const { u = null, class: extra = '' } = Astro.props as Props;
+const href = u ? `/dashboard?u=${encodeURIComponent(u)}` : '/dashboard';
+---
+
+<a
+  href={href}
+  class={`inline-flex min-h-touch shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-navy-400 bg-white px-3.5 text-base font-semibold text-brand-700 transition hover:bg-brand-50 ${extra}`}
+>
+  <AppIcon name="prev" size={18} />ダッシュボードへ戻る
+</a>

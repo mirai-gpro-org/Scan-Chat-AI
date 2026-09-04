@@ -1,5 +1,5 @@
 ---
-import AppIcon from '../components/AppIcon.astro';
+import BackToDashboard from '../components/BackToDashboard.astro';
 import AppNav from '../components/AppNav.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import MetricTrendChart from '../components/dashboard/MetricTrendChart.astro';
@@ -74,16 +74,13 @@ const unreadNotices = data ? await countUnreadImportant(data.diagnosticUserId) :
 const supportContact = cfg('ui.support_contact');
 
 const typeName = type ? testTypeLabel(type).name : null;
-const q = u ? `?u=${encodeURIComponent(u)}` : '';
 ---
 
 <BaseLayout title="検査値の推移 | Welltect" width="app">
   <AppNav u={u} current="/dashboard" unreadNotices={unreadNotices} supportContact={supportContact} />
 
   <header class="hero-gradient px-5 py-4">
-    <a href={`/dashboard${q}`} class="inline-flex min-h-touch items-center gap-1.5 text-base font-semibold text-brand-700 hover:underline">
-      <AppIcon name="prev" size={18} />ダッシュボードへ戻る
-    </a>
+    <BackToDashboard u={u} />
     <div class="mt-1 flex flex-wrap items-center justify-between gap-3">
       <h1 class="text-2xl font-bold tracking-tight text-navy-800">
         検査値の推移{typeName && <span class="ml-2 text-lg font-medium text-slate-700">{typeName}</span>}

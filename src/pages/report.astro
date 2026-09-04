@@ -1,5 +1,6 @@
 ---
 import AppIcon from '../components/AppIcon.astro';
+import BackToDashboard from '../components/BackToDashboard.astro';
 import AppNav from '../components/AppNav.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { loadReportVM, previewVM } from '../lib/elith-report-queries';
@@ -217,6 +218,13 @@ const chaptersByAxis = (axis: 'a' | 'b') => vm.chapters.filter((c) => c.axis ===
 <BaseLayout title={`${AI_PREVENTION_REPORT_LABEL} | Welltect`} width="app">
   {!isPrint && (
     <AppNav u={u} current="/report" unreadNotices={unreadNotices} supportContact={supportContact} />
+  )}
+
+  {/* 紙に押せないボタンを印字しないので `?print=1` では出さない (spec §4.9 と同じ扱い)。 */}
+  {!isPrint && (
+    <div class="px-5 pt-4">
+      <BackToDashboard u={u} />
+    </div>
   )}
 
   {/*
