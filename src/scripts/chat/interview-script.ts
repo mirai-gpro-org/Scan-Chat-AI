@@ -614,6 +614,23 @@ export class InterviewEngine {
     return { next: QUESTIONS[nextId], isComplete: false };
   }
 
+  /**
+   * **直前に答えた 1 問へ戻る (訂正)。** フロー制御なので engine の責務
+   * (`docs/interview/AI問診_仕様と設計原則.md` §2)。音声のターン制御ではない。
+   *
+   * その設問の回答を**消してから** currentId を戻す。分岐 (`when`) はこの回答に
+   * 依存し得るので、消すことで `visiblePath()` が正しく計算し直される。
+   *
+   * **1 問だけ戻す用**。それ以前へ遡る導線は作らない (発注者指示 2026-09-04)。
+   * seeded (申込情報から供給済で提示しない設問) は戻れない。
+   */
+  rewindTo(id: string): QuestionDef | null {
+    if (!QUESTIONS[id] || this.seeded.has(id)) return null;
+    this.answers.delete(id);
+    this.currentId = id;
+    return QUESTIONS[id];
+  }
+
   /** 現在の進捗 (0-100) — 表示中の設問が、表示対象列の何番目かで算出 */
   currentPercent(): number {
     if (!this.currentId) return 100;

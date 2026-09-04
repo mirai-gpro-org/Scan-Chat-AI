@@ -127,6 +127,20 @@ const diagnosticUserId = viewer.uid;
 
       <!-- ━━━ QA AREA（接続時のみ表示） ━━━ -->
       <div id="qa-area" hidden>
+        {/*
+          直前の回答の確認と訂正 (発注者指示 2026-09-04)。
+          **常設**にする理由: 選択画面はモーダルで画面を覆うので、回答直後に
+          一瞬だけ出す方式では見えない。時間ではなく「消えないこと」で解決する。
+          チェック印は自作 SVG (絵文字もアイコン部品も使わない)。
+        */}
+        <div id="last-answer" class="la" hidden>
+          <svg class="la-check" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M3 8.5l3.2 3.2L13 5" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span class="la-text" id="last-answer-text"></span>
+          <button type="button" id="last-answer-edit" class="la-edit">訂正する</button>
+        </div>
         <div class="mb-3 flex items-start gap-2">
           <div id="question-text" class="flex-1 text-sm font-medium leading-relaxed text-slate-800">
             …
@@ -332,6 +346,9 @@ const diagnosticUserId = viewer.uid;
       voiceGuide: $('voice-guide'),
       answerPanel: $('answer-panel'),
       questionText: $('question-text'),
+      lastAnswer: $('last-answer'),
+      lastAnswerText: $('last-answer-text'),
+      lastAnswerEdit: $<HTMLButtonElement>('last-answer-edit'),
 
       uiVoice: $('ui-voice'),
       uiList: $('ui-list'),

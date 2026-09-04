@@ -67,6 +67,10 @@ export interface LiveRefs {
   voiceGuide: HTMLElement;
   answerPanel: HTMLElement;
   questionText: HTMLElement;
+  /** 直前の回答の確認バー (常設)。選択画面が覆っても回答が見えるようにするため。 */
+  lastAnswer: HTMLElement;
+  lastAnswerText: HTMLElement;
+  lastAnswerEdit: HTMLButtonElement;
 
   uiVoice: HTMLElement;
   uiList: HTMLElement;
@@ -235,6 +239,12 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   /** 回答受付〜次設問表示までの間は音声回答の二重取り込みを抑止する */
   let advancing = false;
   let muted = false;
+  /**
+   * 直前に答えた設問 (確認バー「✓ ◯◯ ／ 訂正する」用)。
+   * **時間で消さない** — 選択画面がモーダルで画面を覆うので、一瞬だけ出す方式では
+   * そもそも見えない (発注者報告 2026-09-04)。次に答えるまで出しっぱなしにする。
+   */
+  let lastAnswered: { qid: string; text: string } | null = null;
   /** 内部で取得済の顧客プロフィール (氏名・生年月日・性別は問診で尋ねず結果へ付与) */
   let userProfile: { name: string | null; dateOfBirth: string | null; sex: string | null } | null = null;
   /** 申込情報から供給する EXAM-TYPE (今回実施検査)。空なら問診で通常設問として尋ねる。 */
@@ -281,6 +291,8 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     session = createEmptySession(SESSION_ID);
     currentQ = null;
     advancing = false;
+    lastAnswered = null;
+    renderLastAnswer();
     engine.reset();
     refs.resumeBanner && (refs.resumeBanner.hidden = true);
     renderHistory();
@@ -347,6 +359,8 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       session = createEmptySession(SESSION_ID);
       currentQ = null;
       advancing = false;
+      lastAnswered = null;
+      renderLastAnswer();
       engine.reset();
       refs.resumeBanner && (refs.resumeBanner.hidden = true);
       renderHistory();
@@ -457,6 +471,9 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   // skip
   refs.skipBtn.addEventListener('click', () => submitAnswer('スキップします'));
 
+  // 直前の回答を訂正する (確認バー)
+  refs.lastAnswerEdit.addEventListener('click', () => startCorrection());
+
   // ── ヘルパ ──────────────────────────────────────
 
   function setStatus(text: string): void {
@@ -554,6 +571,11 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
       initial,
       // 選択画面は画面を覆うため、上部の中止ボタンが隠れる。ここからも中止できるようにする。
       onAbort: () => void confirmAbort(),
+      // 同じ理由で、直前の回答の確認バーもモーダルの中へ持ち込む
+      // (これが無いと、回答した直後に選択画面が開いて確認バーごと隠れる)。
+      lastAnswer: lastAnswered
+        ? { text: lastAnswered.text, onEdit: () => startCorrection() }
+        : null,
     });
     if (result === null) return; // キャンセル
     if (multi) {
@@ -576,6 +598,41 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
     });
     if (result === null) return;
     submitAnswer(formatMatrix(result));
+  }
+
+  /** 確認バーの表示を `lastAnswered` に合わせる。 */
+  function renderLastAnswer(): void {
+    if (!lastAnswered) {
+      refs.lastAnswer.hidden = true;
+      refs.lastAnswerText.textContent = '';
+      return;
+    }
+    refs.lastAnswerText.textContent = lastAnswered.text;
+    refs.lastAnswer.hidden = false;
+  }
+
+  /**
+   * 直前の回答をやり直す (訂正)。
+   *
+   * **1 問だけ戻す**。engine が回答を消して `currentId` を戻すので、以降の分岐は
+   * 通常どおり engine が再計算する (画面側で分岐を持たない)。
+   * 戻したあとは通常の設問表示と同じ経路を通るので、**読み上げ対象と表示は
+   * 必ず同一 Question ID** のまま (状態機械も ID 照合も足していない)。
+   */
+  function startCorrection(): void {
+    const target = lastAnswered;
+    if (!target) return;
+    const q = engine.rewindTo(target.qid);
+    if (!q) return; // 供給済み設問など、戻せないものは何もしない
+    lastAnswered = null;
+    renderLastAnswer();
+    closeAllPickers();
+    persistProgress();
+    applyQuestionToUI(q);
+    sendToModel(
+      `ユーザーが直前の回答を訂正します。次の質問をもう一度自然に読み上げてください: 「${q.question}」
+ユーザーの回答を復唱しないでください。選択肢も読み上げないでください (画面に表示されています)。`,
+    );
   }
 
   /**
@@ -603,6 +660,9 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
 
     const answerValue = toAnswerValue(cq, rawAnswer);
     const { next, isComplete } = engine.recordAndAdvance(answerValue);
+    // 確認バーは**次に答えるまで消さない** (選択画面が覆っても回答が視界に残る)。
+    lastAnswered = { qid: cq.id, text: rawAnswer };
+    renderLastAnswer();
     // 1 問ごとに途中経過を退避しておく。中止ボタンを押さずに離脱 (タブを閉じる・
     // 通信断・リロード) しても続きから再開できるようにするため。
     persistProgress();
@@ -1077,6 +1137,9 @@ export async function initLiveController(refs: LiveRefs): Promise<void> {
   function showCompletion(): void {
     currentQ = null;
     advancing = false;
+    // 完走後は訂正できない (結果を書き出したあとなので、戻す先が無い)。
+    lastAnswered = null;
+    renderLastAnswer();
     renderProgress(100, '完了');
     renderSectionDots(SECTIONS.length);
 

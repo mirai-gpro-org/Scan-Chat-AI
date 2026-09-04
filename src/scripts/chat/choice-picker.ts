@@ -61,6 +61,11 @@ export interface ListPickerArgs {
    * (発注者指示 2026-08)。呼ばれた時点でこの選択画面は閉じている (キャンセル扱い)。
    */
   onAbort?: () => void;
+  /**
+   * 直前の回答の確認 + 訂正。**選択画面は画面を覆う**ので、ここにも出さないと
+   * 回答を目視できない (発注者指示 2026-09-04)。押されたら閉じて onEdit を呼ぶ。
+   */
+  lastAnswer?: { text: string; onEdit: () => void } | null;
 }
 
 /**
@@ -113,7 +118,7 @@ function normalize(s: string): string {
  * @returns 選択された label 配列。キャンセルは null。
  */
 export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
-  const { title, subtitle, options, multi = false, onAbort } = args;
+  const { title, subtitle, options, multi = false, onAbort, lastAnswer } = args;
   const layout = layoutFor(options.length);
   const selected = new Set(args.initial ?? []);
 
@@ -124,6 +129,18 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
 
     const abortBtn = onAbort
       ? `<button type="button" class="lp-abort" data-lp-abort>${iconSvg('blocked')}<span>中止</span></button>`
+      : '';
+
+    // 直前の回答。チェック印は自作 SVG (アイコン部品を使わない)。
+    const lastHtml = lastAnswer
+      ? `<div class="la">
+           <svg class="la-check" viewBox="0 0 16 16" aria-hidden="true">
+             <path d="M3 8.5l3.2 3.2L13 5" fill="none" stroke="currentColor" stroke-width="2"
+                   stroke-linecap="round" stroke-linejoin="round" />
+           </svg>
+           <span class="la-text">${escapeHtml(lastAnswer.text)}</span>
+           <button type="button" class="la-edit" data-lp-edit>訂正する</button>
+         </div>`
       : '';
 
     // ヘッダはシート用 / 全画面用の両方を描いておき、CSS が data-layout で出し分ける。
@@ -155,6 +172,7 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
         <div class="lp-head">
           ${headHtml}
           <p class="lp-sub">${escapeHtml(subtitle ?? (multi ? 'あてはまるものをすべて選んでください' : 'タップすると回答して次へ進みます'))}</p>
+          ${lastHtml}
           ${searchHtml}
         </div>
         <div class="lp-scroll" data-lp-scroll>
@@ -385,6 +403,12 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
         onAbort?.();
       }),
     );
+    root.querySelector('[data-lp-edit]')?.addEventListener('click', () => {
+      // 訂正はこの設問から離れる操作なので、先に閉じてから呼ぶ
+      // (裏に開いたままだと、戻った先の設問の上に前の選択肢が残る)。
+      close(null);
+      lastAnswer?.onEdit();
+    });
 
     // 1 フレーム目はまだレイアウトが落ち着いておらず、見切れの計算がずれる
     // (実測 2026-08: 高さ 588px に対し 626px を算出＝max-height が効かず切れない)。

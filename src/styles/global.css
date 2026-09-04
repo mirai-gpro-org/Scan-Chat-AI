@@ -802,7 +802,9 @@
 .md-summary li:hover {
   @apply border-brand-400;
 }
-.md-summary strong { @apply font-bold text-slate-900; 
+.md-summary strong { @apply font-bold text-slate-900; }
+
+@layer components {
   /* ──────────────────────────────────────────────────────────────
    * AI問診: 音声で答えられることを示す常設ガイダンス (#voice-guide)
    *
@@ -863,5 +865,31 @@
   @media (prefers-reduced-motion: reduce) {
     .vg-bars rect, .vg-ring { animation: none; }
     .vg-ring { opacity: 0.5; transform: scale(1); }
+  }
+
+  /* ──────────────────────────────────────────────────────────────
+   * AI問診: 直前の回答の確認 + 訂正 (#last-answer)
+   *
+   * 復唱を廃止したので、回答を確かめる手段は**画面表示だけ**になった。
+   * 選択画面はモーダルで画面を覆うため、回答直後に一瞬出す方式では見えない
+   * → **次に答えるまで消さない**。時間で解かない。
+   * アイコン部品は使わない (チェック印は自作 SVG)。
+   * ──────────────────────────────────────────────────────────── */
+  .la {
+    @apply mb-2 flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50/70 px-3 py-2;
+  }
+  .la-check {
+    @apply h-4 w-4 shrink-0 text-brand-600;
+  }
+  .la-text {
+    @apply min-w-0 flex-1 truncate text-sm font-semibold text-navy-800;
+  }
+  .la-edit {
+    @apply min-h-touch shrink-0 rounded-lg border border-navy-400 bg-white px-3 text-sm
+           font-semibold text-brand-700 transition hover:bg-brand-50;
+  }
+  /* 選択画面 (モーダル) の中に出すとき。ヘッダ直下に収める。 */
+  .lp-head .la {
+    @apply mb-0 mt-2;
   }
 }

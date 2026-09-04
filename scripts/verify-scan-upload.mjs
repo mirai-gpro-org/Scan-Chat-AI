@@ -84,6 +84,23 @@ async function upload({ name, type, w, h, bytes, quality = 1.0 }) {
     { name, type, w, h, bytes, quality },
   );
   await page.waitForTimeout(4000);
+  /*
+   * 複数ページ化 (2026-09-04) で、ファイルを選んだだけでは送信されなくなった。
+   * 「この写真でよろしいですか」→「これで読み取る」→「全てを送信」まで進めて初めて
+   * `/api/scan` へ POST する。**この検査が見たいのは「何が線に乗るか」**なので、
+   * 画面がそこまで来ていたら押し切る (来ていなければ何もしない = 送らない検査も生きる)。
+   */
+  const advance = async (id) => {
+    const el = await page.$(`#${id}`);
+    if (!el) return false;
+    const shown = await el.evaluate((n) => n.offsetParent !== null);
+    if (!shown) return false;
+    await el.click();
+    await page.waitForTimeout(1500);
+    return true;
+  };
+  if (await advance('confirm-done')) await advance('review-send');
+  await page.waitForTimeout(2500);
   return {
     size: await page.evaluate(() => window.__lastFileSize),
     err: await page.evaluate(() => {
