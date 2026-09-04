@@ -446,6 +446,24 @@ function suppressSalvage(el: Record<string, unknown>, ctx: { urineUnperformed: b
  *  3) 総合判定(A/B/C)欄 除外              4) 妥当性ガードで壊れた値を除外 (anomalies)
  *  ①捏造ゲート: G1 未実施salvage抑止 / G2 基準吸い上げ / G3 参考資料行 / G4 隣接漏れ (env で個別 on)
  */
+/**
+ * 確定 md から納品形の measurements を作る。
+ *
+ * **Elith 書き出しと同じ正規化を通す**のが要点 (`toMeasurements` →
+ * `sanitizeMeasurementsForDelivery`)。整形をここで書き足すと二重管理になり、
+ * 「納品と画面で値が違う」が起きる (CLAUDE.md「納品整形は決定論プログラムに集約」)。
+ *
+ * 画像を再解析しない点が `buildElithScanBundle` との違い。すでに人が確認した
+ * md をそのまま数値化するので、Gemini を呼ばない。
+ */
+export function measurementsFromMarkdown(markdownClean: string): {
+  kept: Record<string, unknown>[];
+  anomalies: MeasurementAnomaly[];
+} {
+  const regions = parseScanRegions(markdownClean);
+  return sanitizeMeasurementsForDelivery(toMeasurements(regions));
+}
+
 export function sanitizeMeasurementsForDelivery(list: unknown): {
   kept: Record<string, unknown>[];
   anomalies: MeasurementAnomaly[];

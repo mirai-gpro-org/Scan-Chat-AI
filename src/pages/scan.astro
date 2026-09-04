@@ -633,6 +633,29 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
 
     // 確定 Markdown を S3 (Elith 連携) へ書き出す共有関数。
     // 「確認して送信」(完了) 時の自動書き出しと、手動ボタンの両方から使う。
+    /**
+     * 確認済みのスキャン結果をアプリの DB へ保存する。
+     * これが入るまでスキャンは DB に何も残さず、検査結果ページに
+     * 「人間ドック / 健康診断」の中身を出せなかった (原本画像は保存しない方針)。
+     * **失敗しても S3 書き出しは続ける** — 片方が落ちてもう片方まで止めない。
+     */
+    async function saveScanToDb(markdownClean: string): Promise<void> {
+      try {
+        const res = await fetch('/api/scan/save', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ markdownClean, pageCount: r.pageCount ?? 1 }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+        if (!res.ok || !data.ok) {
+          // 黙って落とさない。書き出し状況の行に併記する。
+          exportStatus.textContent = `検査結果の保存に失敗しました (${data.error ?? res.status})`;
+        }
+      } catch (err) {
+        exportStatus.textContent = `検査結果の保存に失敗しました (${String(err)})`;
+      }
+    }
+
     async function exportScanToS3(): Promise<void> {
       // #scan-result は検証編集を反映した「下流送信用 Markdown」
       const markdownClean = ($('scan-result') as HTMLPreElement).textContent?.trim() || r.markdownClean;
@@ -641,6 +664,8 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
         return;
       }
       const diagnosticUserId = new URLSearchParams(location.search).get('u');
+      // 先にアプリの DB へ (画面に出すのはこちら)。落ちても S3 書き出しは続ける。
+      await saveScanToDb(markdownClean);
       exportStatus.textContent = ' S3へ書き出し中…';
       try {
         const res = await fetch('/api/scan/export', {

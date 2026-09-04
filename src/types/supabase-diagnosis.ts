@@ -57,6 +57,8 @@ export type Database = {
           imported_by: string;
           status: string;
           notes: string | null;
+          /** ユーザー検証後の確定 Markdown。アプリ内スキャン経路だけが書く (20260904000010)。 */
+          scan_md: string | null;
         };
         Insert: {
           id?: string;

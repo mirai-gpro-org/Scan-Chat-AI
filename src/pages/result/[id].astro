@@ -184,8 +184,27 @@ const pdfSrcWithPage = data?.samplePdfUrl
       </header>
 
       <main class="flex flex-1 flex-col gap-3 px-5 pb-8 pt-3">
-        {/* Elith JSON が無い + PDF も無い場合のみ「処理中」表示 */}
-        {data.sections.length === 0 && !data.samplePdfUrl && (
+        {/*
+          アプリ内スキャンで読み取った本文 (scan_md)。
+          **原本画像は保存していない** (発注者判断 2026-09-04: 元々ユーザーの手元に
+          あるもの) ので、人間ドック / 健康診断はここが中身になる。
+          admin 取込の行は scan_md が null なので、この節ごと出ない。
+        */}
+        {data.artifact.scan_md && (
+          <section class="card">
+            <h2 class="flex items-center gap-2 text-base font-bold text-navy-800">
+              <AppIcon name="result" size={20} class="text-brand-700" />
+              読み取り結果
+            </h2>
+            <p class="mt-1 text-sm text-slate-600">
+              アップロード / 撮影した用紙から読み取り、ご確認いただいた内容です。
+            </p>
+            <div class="md-region mt-3 text-sm leading-relaxed text-slate-800" set:html={md(data.artifact.scan_md)} />
+          </section>
+        )}
+
+        {/* Elith JSON が無い + PDF も無い + 読み取り結果も無い場合のみ「処理中」表示 */}
+        {data.sections.length === 0 && !data.samplePdfUrl && !data.artifact.scan_md && (
           <section class="card text-center">
             <p class="text-sm text-slate-600">
               {data.artifact.source === 'user_upload'
