@@ -1008,6 +1008,21 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
 - **ロゴは `src/lib/brand.ts` が解決**。`public/welltect_logo.svg` 等を置けば自動的に切り替わる。
   ブランド資産を目視トレースした代替 SVG は作らない。
 - **和文の組版 (2026-08 確定・長文が読めない指摘を受けて)**
+  - **【`font-mono` の和文が中国語フォントに落ちていた 2026-09-03・発注者指摘】正本 spec §4.12。**
+    「漢字が変 (中国語漢字のように見える)」。**本文は正しく BIZ UDGothic** で出ており、
+    落ちていたのは **`font-mono` を当てた和文** (出典行「アブストラクト」
+    「医療受診の目安 §1〜§4」・走りフッターの氏名)。
+    - **Tailwind 既定の `mono` には和文フォントが 1 つも無い** → 和文だけがブラウザ既定の
+      フォールバックへ。実測 (PDF に埋め込まれたフォント名): 発注者の Windows/Chrome =
+      Consolas + **YuGothicUI** + BIZ-UDGothic / この環境の Linux = **WenQuanYi Zen Hei (中国語)**。
+    - 対処 = `fontFamily.mono` に和文の受け皿を追加 (欧文・数字は等幅フェイスのまま=
+      Consolas 等は漢字を持たない・`tabular-nums` に影響なし)。`.rp-kbd` と
+      **`@page` の走りフッター**にも明示。`fontFamily.sans` 末尾にも `Yu Gothic UI`/`Yu Gothic`/
+      `Meiryo`/`Noto Sans CJK JP` を保険で追加 (**手前が先に当たるので既存環境の挙動は不変**)。
+    - **検証 `verify:print` の ⓪** = PDF に埋め込まれたフォント名を見て中国語・韓国語向けが
+      混ざったら落とす。**壊して落ちることを確認済み** (mono から和文を外すと WenQuanYiZenHei で落ちる)。
+    - **この作業環境には和文が IPAGothic しか無い** (既定 sans-serif = WenQuanYi Zen Hei) ので、
+      控えの PDF が中国字形になる。**BIZ UDGothic (Google Fonts・SIL OFL) を入れて確認**している。
   - **`font-feature-settings: 'palt'` は使わない**。和文を詰めるので句読点・カギカッコの
     アキまで削られ、長文で文の切れ目が見えなくなる (実機 Windows で顕在化)。詰め組みが
     要るのは大きな見出しだけで、本文には不要。`global.css` の body から撤去済み。
