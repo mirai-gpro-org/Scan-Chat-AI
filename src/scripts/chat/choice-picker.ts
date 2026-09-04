@@ -157,17 +157,25 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
 
     // ヘッダはシート用 / 全画面用の両方を描いておき、CSS が data-layout で出し分ける。
     // こうしておくと「入りきらないので全画面へ昇格」を data-layout の差し替えだけで行える。
+    const subText = subtitle ?? (multi ? 'あてはまるものをすべて選んでください' : 'タップすると回答して次へ進みます');
+    /*
+     * いま答えるところ (質問 + 案内) は本画面と同じく mist の面に乗せる (.qb)。
+     * 前の回答 (.la) はその**外・上**に置き、白のまま引く。
+     */
     const headHtml = `
       <div class="sheet-handle"></div>
       ${lastHtml}
-      <div class="lp-bar">
-        <button type="button" class="lp-back" data-lp-cancel aria-label="戻る">${iconSvg('prev')}</button>
-        <h2 class="lp-title lp-title-bar">${escapeHtml(title)}</h2>
-        ${abortBtn}
-      </div>
-      <div class="lp-sheet-head">
-        <h2 class="lp-title lp-title-sheet">${escapeHtml(title)}</h2>
-        ${abortBtn}
+      <div class="qb">
+        <div class="lp-bar">
+          <button type="button" class="lp-back" data-lp-cancel aria-label="戻る">${iconSvg('prev')}</button>
+          <h2 class="lp-title lp-title-bar">${escapeHtml(title)}</h2>
+          ${abortBtn}
+        </div>
+        <div class="lp-sheet-head">
+          <h2 class="lp-title lp-title-sheet">${escapeHtml(title)}</h2>
+          ${abortBtn}
+        </div>
+        <p class="lp-sub">${escapeHtml(subText)}</p>
       </div>`;
 
     const searchHtml =
@@ -184,7 +192,6 @@ export function openListPicker(args: ListPickerArgs): Promise<string[] | null> {
       <div class="lp-panel" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
         <div class="lp-head">
           ${headHtml}
-          <p class="lp-sub">${escapeHtml(subtitle ?? (multi ? 'あてはまるものをすべて選んでください' : 'タップすると回答して次へ進みます'))}</p>
           ${searchHtml}
         </div>
         <div class="lp-scroll" data-lp-scroll>

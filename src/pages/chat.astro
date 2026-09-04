@@ -146,8 +146,15 @@ const diagnosticUserId = viewer.uid;
             <span class="la-text" id="last-answer-text"></span>
           </div>
         </div>
-        <div class="mb-3 flex items-start gap-2">
-          <div id="question-text" class="flex-1 text-sm font-medium leading-relaxed text-slate-800">
+        {/*
+          いま答えるところ (次の質問 + 音声ガイダンス) は**問診ヘッダと同じ Medical Mist**
+          の面に乗せる (発注者指示 2026-09-04)。済んだこと (前の回答) は白で引く。
+          色の役割は 3 つだけ: mist=いま答えるところ / 白+薄い文字=済んだこと /
+          teal の文字=押せるもの。
+        */}
+        <div class="qb">
+        <div class="flex items-start gap-2">
+          <div id="question-text" class="flex-1 text-base font-bold leading-relaxed text-navy-800">
             …
           </div>
           <button
@@ -214,6 +221,7 @@ const diagnosticUserId = viewer.uid;
           </svg>
           <span class="vg-core" aria-hidden="true"><span class="vg-ring"></span><span class="vg-dot"></span></span>
           <p class="vg-label">そのまま話して回答できます</p>
+        </div>
         </div>
 
         <!-- 音声モード（質問なし時のループ待機） -->

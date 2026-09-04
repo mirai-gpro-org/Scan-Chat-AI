@@ -205,7 +205,10 @@ const applied = await page.evaluate(() => {
   const guide = document.getElementById('voice-guide');
   if (!bar || !guide) return null;
   const wasHidden = bar.hidden;
+  const guideWasHidden = guide.hidden;
+  // [hidden] は display:none !important なので、隠れたままだと display を測れない
   bar.hidden = false;
+  guide.hidden = false;
   // getComputedStyle は**生きたオブジェクト**なので、hidden を戻す前に値を取り出す
   // (戻したあとに読むと display が none に化ける)。
   const cs = getComputedStyle(bar);
@@ -213,14 +216,28 @@ const applied = await page.evaluate(() => {
     barFlex: cs.display === 'flex',
     barPainted: cs.backgroundColor !== 'rgba(0, 0, 0, 0)',
     btnTouch: parseFloat(getComputedStyle(document.getElementById('last-answer-edit')).minHeight) >= 44,
-    guidePainted: getComputedStyle(guide).backgroundColor !== 'rgba(0, 0, 0, 0)',
+    /*
+     * ガイダンスは mist の面 (.qb) の中では**地を敷かない** (二重になるため) ので、
+     * 背景色では見られない。CSS が当たっているかは display と枠で見る。
+     */
+    guideStyled: (() => {
+      const g2 = getComputedStyle(guide);
+      return g2.display === 'flex' && parseFloat(g2.borderTopWidth) > 0;
+    })(),
+    qbPainted: (() => {
+      const qb = document.querySelector('.qb');
+      return !!qb && getComputedStyle(qb).backgroundColor !== 'rgba(0, 0, 0, 0)';
+    })(),
   };
   bar.hidden = wasHidden;
+  guide.hidden = guideWasHidden;
   return out;
 });
 ok('⑪ 確認バーのスタイルが当たっている', !!applied?.barFlex && !!applied?.barPainted, JSON.stringify(applied));
 ok('⑪ 「訂正する」のタップ領域が 44px 以上', !!applied?.btnTouch, '');
-ok('⑪ ガイダンスのスタイルが当たっている', !!applied?.guidePainted, '');
+ok('⑪ ガイダンスのスタイルが当たっている', !!applied?.guideStyled, '');
+// いま答えるところ (質問) が mist の面に乗っていること (発注者指示 2026-09-04)
+ok('⑪ 質問が mist の面に乗っている', !!applied?.qbPainted, '');
 
 /*
  * ⑨ 選択画面の中に確認バーが出て、そこから訂正できること (実際に開いて押す)。
