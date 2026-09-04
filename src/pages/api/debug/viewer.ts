@@ -303,12 +303,35 @@ async function inspectArtifacts(viewerUid: string | null): Promise<Record<string
     if (!r || 'error' in r) return { error: r && 'error' in r ? r.error : '取得できず' };
 
     const rows = r.artifacts ?? [];
+    const sb = getServerSupabase();
     const byKind: Record<string, unknown> = {};
     for (const k of KINDS) {
       const mine = rows.filter((a) => a.test_type === k);
-      byKind[k] = mine.length === 0
-        ? '0 件 → カードは空になる'
-        : `${mine.length} 件 (最新 ${String(mine[0].test_date).slice(0, 10)} / ${mine[0].source} / ${mine[0].status})`;
+      if (mine.length === 0) { byKind[k] = '0 件 → カードは空になる'; continue; }
+      /*
+       * 「カードには出るのに結果ページが空」の切り分け。/result/[id] が見せるのは
+       * ①原本ファイル ②(無ければ)種別ごとのサンプル PDF の 2 つだけなので、
+       * **原本が何件あるか**が分かれば、空の原因が特定できる。
+       * 測定値は将来の表示候補として件数だけ見る。中身は出さない (PII を載せない)。
+       */
+      let files = '(未確認)';
+      let meas = '(未確認)';
+      if (sb) {
+        try {
+          const { count } = await (sb.schema('diagnosis') as any)
+            .from('test_artifact_files').select('*', { count: 'exact', head: true })
+            .eq('artifact_id', mine[0].id);
+          files = `${count ?? 0} 件`;
+        } catch { files = '(エラー)'; }
+        try {
+          const { count } = await (sb.schema('diagnosis') as any)
+            .from('measurement_values').select('*', { count: 'exact', head: true })
+            .eq('artifact_id', mine[0].id);
+          meas = `${count ?? 0} 件`;
+        } catch { meas = '(テーブル無し/エラー)'; }
+      }
+      byKind[k] = `${mine.length} 件 (最新 ${String(mine[0].test_date).slice(0, 10)} / ${mine[0].source} / ${mine[0].status})`
+        + ` — 最新の 原本ファイル ${files} / 測定値 ${meas}`;
     }
     const other = [...new Set(rows.filter((a) => !KINDS.includes(a.test_type)).map((a) => a.test_type))];
     return {
