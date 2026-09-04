@@ -934,6 +934,52 @@ Elith が A の所見を独立フィールドで出すようになれば自然�
 「冒頭の総括には導線を付けない」を追加。紙面契約はモックから再生成済み
 （タイプ2 7 → **8** カード / タイプ1 6 → **7** カード）。
 
+## 4.12 書体 — 和文が中国語フォントに落ちていた【確定・発注者指摘 2026-09-03】
+
+> 「フォント、漢字が変（中国語漢字のように見える）」
+
+**本文は正しく BIZ UDGothic で出ていた。落ちていたのは `font-mono` を当てた和文。**
+
+### 実測（PDF に埋め込まれたフォント名で確定）
+
+| PDF | 埋め込みフォント |
+|---|---|
+| 発注者が Windows/Chrome で印刷したもの | Consolas ／ **YuGothicUI**（Regular/Semibold/Bold）／ BIZ-UDGothic |
+| こちらが Linux/Chromium で作った控え | Liberation Mono ／ DejaVu Sans ／ **WenQuanYi Zen Hei**（＝中国語フォント） |
+
+`font-mono` は数値だけでなく**和文にも当たっている** — 出典行（「アブストラクト」
+「医療受診の目安 §1〜§4」）と走りフッター（「AI疾病予防報告書｜〇〇様」）。
+ところが Tailwind 既定の `mono` には**和文フォントが 1 つも無い**ので、
+和文だけが**ブラウザ既定のフォールバック**へ落ちていた。
+落ちた先が Windows では Yu Gothic UI（本文と別の書体）、Linux では**中国語フォント**。
+
+### 直し方
+
+- **`fontFamily.mono` に和文の受け皿を足す**（`tailwind.config.mjs`）。
+  欧文・数字は従来どおり等幅フェイス（Consolas 等は漢字を持たない）が担当し、
+  **和文だけが本文と同じ BIZ UDGothic に落ちる**。`tabular-nums` は影響を受けない。
+- `.rp-kbd`（`global.css`）と **`@page` の走りフッター**にも同じ受け皿を明示する。
+  マージンボックスは指定が無いと既定任せになる。
+- `fontFamily.sans` の末尾にも `Yu Gothic UI` / `Yu Gothic` / `Meiryo` /
+  `Noto Sans CJK JP` を足した。**手前の BIZ UDGothic 等が先に当たるので既存環境の挙動は変わらない** —
+  1 つも見つからない環境で `sans-serif` が中国語フォントに解決されるのを防ぐだけ。
+
+### 確かめ方 — `verify:print` の ⓪
+
+PDF に**実際に埋め込まれた**フォント名を見て、中国語・韓国語向けのフォント
+（WenQuanYi / Noto Sans SC・TC・KR / PingFang SC / SimSun / Microsoft YaHei / Malgun ほか）が
+混ざっていたら落とす。**どのフォントが在るかは環境で変わるが、「中国語フォントに落ちた」ことは
+環境に依らず異常**なので、これで指定の穴が検出できる。
+
+**壊して落ちることを確認済み**: `mono` から和文を外すと
+「中国語・韓国語向けフォントが埋め込まれている: WenQuanYiZenHei」で落ちる。
+
+### 検証環境について
+
+この作業環境には和文フォントが IPAGothic しか無く、既定の `sans-serif` が
+**WenQuanYi Zen Hei に解決される**。そのままだと控えの PDF が中国字形になるので、
+**BIZ UDGothic（Google Fonts・SIL OFL）を入れて Windows と同じ見え方で確認している**。
+
 ## 4.10 改ページ・余白・ページ番号【確定・発注者指摘 2026-09-03】
 
 > 印刷した PDF を見て「**改ページ、ヘッダー・フッターの余白が美しくない。ページ番号はあった方が良い**」。

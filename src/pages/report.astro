@@ -136,6 +136,9 @@ const vm = previewType != null
  *   作成日と版は表紙に印字してあるので (spec §4.4)、そこが欠けることもない。
  * - 氏名は**本人の紙面**にしか出ない (PII 分離は外部への受け渡しの話・spec §1.0.2)。
  */
+/** 走りフッターの書体。和文の受け皿を明示する (既定任せにしない)。 */
+const FOOT_FONT = 'font-family: system-ui, "BIZ UDGothic", "Hiragino Sans", "Noto Sans JP",'
+  + ' "Yu Gothic UI", sans-serif; font-size: 9pt; color: #55636A;';
 const footLeft = cssStr(`${AI_PREVENTION_REPORT_LABEL}｜${vm.cover.name}`);
 const footRight = cssStr(formatJpDate(vm.cover.issuedOn) || vm.cover.issuedOn);
 const pageCss = `
@@ -153,9 +156,11 @@ const pageCss = `
  * 上の余白指定は生き残る (帯が出ないだけで紙面は崩れない)。
  */
 @page {
-  @bottom-left   { content: ${footLeft};  font-size: 9pt; color: #55636A; margin-left: 8.1%; }
-  @bottom-center { content: counter(page) " / " counter(pages); font-size: 9pt; color: #55636A; }
-  @bottom-right  { content: ${footRight}; font-size: 9pt; color: #55636A; margin-right: 8.1%; }
+  /* 帯には氏名 (和文) が入る。**和文の受け皿を明示する** — 既定任せにすると
+     環境によって中国語フォントに落ちる (2026-09-03 の実測)。 */
+  @bottom-left   { content: ${footLeft};  ${FOOT_FONT} margin-left: 8.1%; }
+  @bottom-center { content: counter(page) " / " counter(pages); ${FOOT_FONT} }
+  @bottom-right  { content: ${footRight}; ${FOOT_FONT} margin-right: 8.1%; }
 }
 /* 表紙には番号も帯も振らない (見本 p1 も帯を持たない)。 */
 @page :first {

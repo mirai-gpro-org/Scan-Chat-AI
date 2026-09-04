@@ -173,7 +173,47 @@ export default {
           '"BIZ UDPGothic"',
           '"Hiragino Sans"',
           '"Noto Sans JP"',
+          /*
+           * **最後の保険 = 和文の受け皿を必ず 1 つ残す** (2026-09-03)。
+           * ここまで 1 つも見つからない環境では `sans-serif` に落ちるが、
+           * その解決先は OS の設定次第で、**中国語フォントに当たると漢字が
+           * 中国字形で出る** (実測: Linux の既定 sans-serif が WenQuanYi Zen Hei)。
+           * Windows/Android に必ず在る和文フォントを手前に挟んでおく。
+           * **既存の環境では手前の BIZ UDGothic 等が先に当たるので挙動は変わらない。**
+           */
+          '"Yu Gothic UI"',
+          '"Yu Gothic"',
+          '"Meiryo"',
+          '"Noto Sans CJK JP"',
           'sans-serif',
+        ],
+        /*
+         * **等幅にも和文の受け皿を置く** (2026-09-03・発注者指摘「漢字が中国語漢字のように見える」)。
+         *
+         * `font-mono` は数値や出典行に使っているが、**出典行や走りフッターには和文が入る**
+         * (「アブストラクト」「医療受診の目安 §1〜§4」「AI疾病予防報告書｜〇〇様」)。
+         * Tailwind 既定の mono には和文フォントが 1 つも無いため、和文だけが
+         * **ブラウザの既定フォールバック**に落ちていた。実測:
+         *   - 発注者の PDF (Windows/Chrome) … 本文=BIZ-UDGothic / **等幅の和文だけ YuGothicUI**
+         *   - この環境 (Linux) … 等幅の和文が **WenQuanYi Zen Hei (中国語フォント)**
+         * 欧文・数字は従来どおり等幅フェイスが担当し (Consolas 等は漢字を持たない)、
+         * **和文だけが本文と同じ BIZ UDGothic に落ちる**。tabular-nums は影響を受けない。
+         */
+        mono: [
+          'ui-monospace',
+          'SFMono-Regular',
+          'Menlo',
+          'Monaco',
+          'Consolas',
+          '"Liberation Mono"',
+          '"Courier New"',
+          '"BIZ UDGothic"',
+          '"BIZ UDゴシック"',
+          '"Hiragino Sans"',
+          '"Noto Sans JP"',
+          '"Yu Gothic UI"',
+          '"Noto Sans CJK JP"',
+          'monospace',
         ],
       },
       fontSize: {
