@@ -405,7 +405,12 @@ Vercel の 4.5 MB は **関数を通るデータにだけ**かかる。**ファ�
     署名 (Content-Type/ContentLength 固定) と `requestChecksumCalculation` の罠も問題なし。
     **キー検証も本番で発火**: 納品 JSON・prefix 内の別領域・相対パス・非 UUID・`.json` 付与の
     5 件とも `400 invalid_key`。確認用オブジェクトが 2 つ残っている (②を入れれば自動失効)。
-  - **残るは ② ライフサイクルのみ** (AWS 権限が要るので当方からは確認できない)。
+  - **① ② とも 2026-09-04 に適用完了** (発注者が実施・読み戻しで確認)。
+    **バケットはバージョニング有効**だったため、ライフサイクルは
+    `Expiration{Days:1}` + **`NoncurrentVersionExpiration{NoncurrentDays:1}`**
+    + `AbortIncompleteMultipartUpload{DaysAfterInitiation:1}` の形
+    (`Expiration` だけだと削除マーカーが付くだけで実データが残る)。適用前の既存ルールは 0 件。
+    → **AWS 側の作業は完了。残るはスマホ実機での通し確認だけ**。
 - **#2〜#8 の他の口は手つかず** — `elith-report/upload`(40MB) / `lab-results/upload`(20MB) /
   `elith-output`(8MB) は名乗りが実際 (~4.5MB) を超えたまま、admin バッチスキャン
   (`elith-scan`/`elith-hc-merge`/`elith-genetic-merge`) は**上限の宣言もチェックも無い**。
