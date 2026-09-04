@@ -340,10 +340,48 @@ env は「現在値が見えない」「変えるたびに再デプロイが要�
   透過 PNG は白で塗ってから JPEG 化する (透過部が黒くなるため)。
 - **PDF はブラウザで縮小できない**ので、予算超えは送らずに理由を出す (黙って 413 にしない)。
   HEIC はデコーダを持つブラウザ (Safari) でだけ縮小できる。
-- **検証 `npm run verify:scan-upload`** (要 `npm run dev`・11 件)。`/api/scan` を route で握り潰して
-  **POST body の実バイト数**を測る。**この失敗はアプリのログに出ない**ので目視では守れない。
-  退行 (縮小を無効化) を注入して落ちることも確認済み。
 - **サーバ側にサイズ検査は置かない** — Vercel が関数に到達する前に弾くので、置いても実行されない。
+
+**【S3 直アップロードで上限を外した 2026-09-04・発注者指示「案B を #1 だけ」】**
+Vercel の 4.5 MB は **関数を通るデータにだけ**かかる。**ファイル本体を関数に通さず
+ブラウザから S3 へ直接置けば上限は外れる** (LAiF ポータルが 50MB を通せているのはこの方式。
+`laif-portal.ts:5-6`)。同じ形をスキャンにも入れた。
+
+- `src/lib/scan-upload-ticket.ts` (presigned PUT 発行 + 読み出し) /
+  `POST /api/scan/upload-ticket` (数百バイトの JSON しか通らない) /
+  `/api/scan` が **`image` に加えて `imageKey`** を受ける (サーバ→S3 の取得は上限の対象外)。
+- **経路は 3 段のフォールバック**: ①予算内=従来どおり inline (往復が増えない・無劣化)
+  → ②予算超え=S3 直 PUT (**無劣化・PDF もここで通る**) → ③S3 が使えない=画像だけ圧縮
+  (`WIRE_BUDGET_BYTES` 以下へ)。**②が落ちても投げない** — S3 未設定・**バケットの CORS 未設定**・
+  回線断を判別できないので `null` を返して③へ譲る。**PDF は③が無いので S3 が要る**。
+- **【安全性・ここが本丸】`/api/scan` は受け取ったキーの中身を読んで Gemini に渡す**ので、
+  **キーを自由に指定できると同じバケットの Elith 納品 JSON (全利用者ぶん) を読み出せる**。
+  → ①キーは**サーバが採番** ②`isScanUploadKey` が
+  `{prefix}scan-uploads/YYYY/MM/DD/<UUID>.<ext>` に**完全一致**するものだけ通す (部分一致にしない)
+  ③UUID は推測不能 ④Content-Type と ContentLength を**署名に固定** ⑤期限 15 分。
+  **`.json` を許可拡張子に入れない**のも納品 JSON を読ませないため。
+- **`requestChecksumCalculation: 'WHEN_REQUIRED'` は必須** (`laif-portal.ts` で踏んだ罠)。
+  既定だと SDK が署名時に空ボディの CRC32 を URL に載せ、実ファイルを PUT した瞬間に S3 が拒否する。
+- **プレビューは別に作る**。S3 経由では原本の data URL を持たないので、画像は表示専用の縮小版
+  (`previewDataUrl`) を作り、**解析には使わない**。PDF はプレビューを作れないので
+  `AnalyzeResult.sourceKind` で分岐する (`fullImage` の文字列判定では S3 経由を拾えない)。
+  `renderTrimmedImage` では **PDF 判定を「画像がありません」より前に置く** (後ろだと PDF で誤表示)。
+- **検証** = `npm run verify:scan-upload` (`verify:scan-upload-key` 20 件 + ブラウザ 21 件)。
+  **この失敗はアプリのログに出ない**ので目視では守れない。
+  - key 側 = **納品 JSON・相対パス・二重拡張子・非 UUID を弾くこと**を固定 (サーバ不要)。
+  - ブラウザ側 = チケットと PUT を差し替え、**8 MB の PDF で Vercel を通る body が 98 バイト**・
+    8 MB の画像が**無劣化のまま** PUT される・S3 失敗時に圧縮へ落ちることを実測。
+  - 退行注入で落ちることを確認済み (キー検証を prefix 一致だけに緩める → 20→11 /
+    縮小を無効化 → body 10.26 MiB で FAIL)。
+- **【未対応・オペレーション側】**
+  - **バケットの CORS** (アプリのオリジンからの PUT を許可)。無いと②が黙って失敗し③へ落ちる
+    = 画像は通るが **PDF は 3.2 MB のまま**。**本番で PDF を通すにはこれが要る**。
+  - `scan-uploads/` は一時領域なので **ライフサイクルで自動失効**させる
+    (原本の保管は `originals-storage.ts` の役目で別物)。
+  - **本番の実 S3 での疎通は未確認** (キーは Vercel にしかないのでローカルで実行できない)。
+- **#2〜#8 の他の口は手つかず** — `elith-report/upload`(40MB) / `lab-results/upload`(20MB) /
+  `elith-output`(8MB) は名乗りが実際 (~4.5MB) を超えたまま、admin バッチスキャン
+  (`elith-scan`/`elith-hc-merge`/`elith-genetic-merge`) は**上限の宣言もチェックも無い**。
 
 ### 検査種別ごとの本番処理 (役割分担)
 根拠: `docs/elith/elith_batch_centralization_design.md`

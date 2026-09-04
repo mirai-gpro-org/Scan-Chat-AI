@@ -7,12 +7,22 @@ import {
   GeminiError,
   type GeminiContent,
 } from '../../lib/gemini';
+import { fetchScanUpload } from '../../lib/scan-upload-ticket';
 
 export const prerender = false;
 
 interface ScanRequestBody {
   /** data: URL もしくは生 base64 */
-  image: string;
+  image?: string;
+  /**
+   * 大きいファイル用。ブラウザが presigned PUT で S3 へ置いたキー。
+   * `image` の代わりに使う (両方あれば `imageKey` を優先)。
+   *
+   * Vercel の 4.5 MB は**関数を通るデータ**にだけかかるので、本体を S3 経由にすると
+   * 上限が外れる。サーバ → S3 の取得はこの制限の対象外。
+   * キーの検証は `fetchScanUpload` (形が完全一致するものだけ読む)。
+   */
+  imageKey?: string;
   /** 補足プロンプト（部位・状況など） */
   hint?: string;
 }
@@ -30,11 +40,19 @@ export const POST: APIRoute = async ({ request }) => {
   } catch {
     return json({ error: 'Invalid JSON body' }, 400);
   }
-  if (!body?.image) {
-    return json({ error: 'image is required (data URL or base64)' }, 400);
+  let mime: string;
+  let data: string;
+  if (typeof body?.imageKey === 'string' && body.imageKey) {
+    const fetched = await fetchScanUpload(body.imageKey);
+    if (!fetched.ok) return json({ error: fetched.error }, fetched.status);
+    mime = fetched.mime;
+    data = fetched.base64;
+  } else if (typeof body?.image === 'string' && body.image) {
+    ({ mime, data } = parseDataUrl(body.image));
+  } else {
+    return json({ error: 'image or imageKey is required' }, 400);
   }
 
-  const { mime, data } = parseDataUrl(body.image);
   const userParts: GeminiContent['parts'] = [
     { inline_data: { mime_type: mime, data } },
     {

@@ -140,6 +140,78 @@ async function upload({ name, type, w, h, bytes, quality = 1.0 }) {
   ok('10 MB 超は上限を伝える', /10\.0 MB 以下にしてください/.test(r.err), r.err);
 }
 
+// ─────────────────────────────────────────────────────────────
+// ⑥ S3 直アップロード経路 (presigned)。
+//    ここまでは S3 未設定の前提 = 圧縮フォールバックの検証だった。
+//    以降はチケット発行と PUT を差し替えて、S3 が使えるときの挙動を見る。
+// ─────────────────────────────────────────────────────────────
+const S3_KEY = 'scan-accuracy-test/scan-uploads/2026/09/04/0189d4c1-2b3a-4c5d-8e6f-a1b2c3d4e5f6.pdf';
+let putBytes = null;
+let putContentType = null;
+
+await page.route('**/api/scan/upload-ticket', async (route) => {
+  await route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      ok: true,
+      upload_url: 'https://s3.example.invalid/put-target',
+      key: S3_KEY,
+      headers: { 'content-type': JSON.parse(route.request().postData() ?? '{}').contentType },
+      expires_in: 900,
+      max_bytes: 10 * 1024 * 1024,
+    }),
+  });
+});
+await page.route('https://s3.example.invalid/**', async (route) => {
+  putBytes = (route.request().postDataBuffer() ?? Buffer.alloc(0)).length;
+  putContentType = route.request().headers()['content-type'] ?? null;
+  await route.fulfill({ status: 200, body: '' });
+});
+
+{
+  // PDF は縮小できないので、S3 が無いと送れなかったファイル。
+  const r = await upload({ name: 'big.pdf', type: 'application/pdf', bytes: 8 * 1024 * 1024 });
+  ok('予算超えの PDF が S3 経由で通る (エラーにならない)', !r.err, r.err);
+  ok('ファイル本体が S3 へ PUT された', putBytes === 8 * 1024 * 1024, `PUT ${putBytes} bytes`);
+  ok('PUT の Content-Type が署名と一致する', putContentType === 'application/pdf', String(putContentType));
+  if (r.body) {
+    const sent = JSON.parse(r.body);
+    ok('/api/scan には本体でなくキーだけを渡す', !sent.image && sent.imageKey === S3_KEY, sent.imageKey ?? '');
+    ok(
+      'Vercel を通る body が極小 (4.5 MB 制限を回避できている)',
+      r.body.length < 10_000,
+      `${r.body.length} bytes`,
+    );
+  } else {
+    ok('/api/scan が呼ばれる', false, 'POST なし');
+  }
+}
+
+{
+  // 大きな画像も、S3 が使えるなら**圧縮せず**原本を送る。
+  putBytes = null;
+  const r = await upload({ name: 'big2.jpg', type: 'image/jpeg', w: 4032, h: 3024, quality: 0.82 });
+  ok('大きな画像も S3 経由で原本のまま送る', putBytes === r.size, `PUT ${putBytes} / file ${r.size}`);
+  const sent = r.body ? JSON.parse(r.body) : {};
+  ok('画像も本体でなくキーを渡す', sent.imageKey === S3_KEY && !sent.image, '');
+}
+
+// ── ⑦ S3 が失敗したら圧縮へ落ちる (fail-safe) ──
+{
+  await page.unroute('**/api/scan/upload-ticket');
+  await page.route('**/api/scan/upload-ticket', (route) =>
+    route.fulfill({ status: 503, contentType: 'application/json', body: '{"ok":false}' }),
+  );
+  const r = await upload({ name: 'fallback.jpg', type: 'image/jpeg', w: 4032, h: 3024, quality: 0.82 });
+  ok('S3 が使えないとき画像は圧縮経路へ落ちる', !r.err && !!r.body, r.err);
+  if (r.body) {
+    const sent = JSON.parse(r.body);
+    ok('落ちた先では本体を inline で送る', !!sent.image && !sent.imageKey, '');
+    ok('落ちた先でも 4.5 MB 未満', r.body.length < VERCEL_LIMIT, `${r.body.length}`);
+  }
+}
+
 await browser.close();
 
 const failed = results.filter((r) => !r.pass).length;

@@ -531,11 +531,11 @@ const dashUrl = diagnosticUserId ? `/dashboard?u=${encodeURIComponent(diagnostic
         show('active');
         $('scan-video').hidden = true;
         lastSourceFileName = file.name; // 書き出しファイル名に組み込む
-        const kind = file.type === 'application/pdf' ? 'PDF' : '画像';
+        const kindLabel = prepared.kind === 'pdf' ? 'PDF' : '画像';
         const label = prepared.note
-          ? `${kind} (${file.name}・${prepared.note})`
-          : `${kind} (${file.name})`;
-        await controller.analyzeDataUrl(prepared.dataUrl, { sourceLabel: label });
+          ? `${kindLabel} (${file.name}・${prepared.note})`
+          : `${kindLabel} (${file.name})`;
+        await controller.analyzeUpload(prepared, { sourceLabel: label });
       } catch (err) {
         $('error-message').textContent =
           err instanceof UploadTooLargeError ? err.message : String(err);

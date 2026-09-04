@@ -31,13 +31,33 @@ export interface AnalyzeResult {
   markdownClean: string;
   /** 領域ごとに切り分けたメタデータ + 本文 (UI 表示用、markdownClean ベース) */
   regions: RegionResult[];
-  /** 表示用フル画像 URL (objectURL) */
+  /** 表示用フル画像 URL (objectURL)。S3 経由のときは縮小したプレビュー。 */
   fullImage?: string;
+  /**
+   * 元ファイルの種別。PDF はプレビューを描けないので表示側が分岐する。
+   * 以前は `fullImage` が `data:application/pdf` で始まるかで判定していたが、
+   * S3 経由では `fullImage` に PDF の data URL が入らないため明示的に持つ。
+   */
+  sourceKind?: 'pdf' | 'image';
   /** Gemini finishReason */
   finishReason?: string;
 }
 
 export type ScanState = 'idle' | 'running' | 'busy';
+
+/**
+ * 解析対象の指定。**本体を Vercel 関数に通すか通さないか**の 2 通り。
+ *   dataUrl  … 小さいファイル。従来どおり JSON body に載せる。
+ *   imageKey … 大きいファイル。ブラウザが S3 へ直接置いたキーだけを渡す
+ *              (Vercel の 4.5 MB 制限は関数を通るデータにしかかからない)。
+ */
+export interface AnalyzeSource {
+  dataUrl?: string;
+  imageKey?: string;
+  /** 画面表示用。imageKey のときはここに縮小版が入る。 */
+  previewDataUrl?: string;
+  kind?: 'pdf' | 'image';
+}
 
 export interface CameraRefs {
   video: HTMLVideoElement;
@@ -58,6 +78,11 @@ export interface CameraScanController {
   capture: () => Promise<void>;
   /** カメラ起動なしで dataURL (PDF / 画像) を /api/scan に投げて解析する */
   analyzeDataUrl: (dataUrl: string, opts?: { sourceLabel?: string }) => Promise<void>;
+  /**
+   * アップロード経路。`dataUrl` (小さいファイル) か `imageKey`
+   * (S3 へ直接置いた大きいファイル) のどちらかを送る。
+   */
+  analyzeUpload: (src: AnalyzeSource, opts?: { sourceLabel?: string }) => Promise<void>;
   isRunning: () => boolean;
 }
 
@@ -114,7 +139,16 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     dataUrl: string,
     opts?: { sourceLabel?: string },
   ): Promise<void> {
-    refs.onCapture?.(dataUrl);
+    return analyzeUpload({ dataUrl }, opts);
+  }
+
+  async function analyzeUpload(
+    src: AnalyzeSource,
+    opts?: { sourceLabel?: string },
+  ): Promise<void> {
+    // 表示に使うのはプレビュー優先 (S3 経由では原本の data URL を持たない)。
+    const display = src.previewDataUrl ?? src.dataUrl;
+    if (display) refs.onCapture?.(display);
 
     setState('busy');
     setStatus(
@@ -129,7 +163,11 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ image: dataUrl, hint: userHint || undefined }),
+        body: JSON.stringify(
+          src.imageKey
+            ? { imageKey: src.imageKey, hint: userHint || undefined }
+            : { image: src.dataUrl, hint: userHint || undefined },
+        ),
       });
       if (!res.ok) {
         const msg = await readErrorMessage(res);
@@ -165,7 +203,8 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
         markdown,
         markdownClean,
         regions,
-        fullImage: dataUrl,
+        fullImage: display,
+        sourceKind: src.kind ?? (src.dataUrl?.startsWith('data:application/pdf') ? 'pdf' : 'image'),
         finishReason: data.finishReason,
       };
       setState(stream ? 'running' : 'idle');
@@ -216,6 +255,7 @@ export function initCameraScan(refs: CameraRefs): CameraScanController {
     stop,
     capture,
     analyzeDataUrl,
+    analyzeUpload,
     isRunning: () => stream !== null,
   };
 }

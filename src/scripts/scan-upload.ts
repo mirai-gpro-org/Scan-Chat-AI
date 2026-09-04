@@ -56,7 +56,14 @@ const LADDER: readonly { maxEdge: number; quality: number }[] = [
 ];
 
 export interface PreparedUpload {
-  dataUrl: string;
+  /** Gemini へ渡す元データ。S3 経由のときは undefined。 */
+  dataUrl?: string;
+  /** S3 へ直接置いたときのキー。`/api/scan` にはこちらを渡す。 */
+  imageKey?: string;
+  /** 画面プレビュー専用 (S3 経由のときだけ)。**解析には使わない**。 */
+  previewDataUrl?: string;
+  /** PDF はプレビューを作れないので、表示側が分岐できるようにする。 */
+  kind: 'pdf' | 'image';
   /** 縮小・再エンコードしたときだけ入る。無変換なら undefined。 */
   note?: string;
 }
@@ -72,19 +79,29 @@ export class UploadTooLargeError extends Error {
 const mb = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
 export async function prepareScanUpload(file: File): Promise<PreparedUpload> {
+  const kind: 'pdf' | 'image' = file.type === 'application/pdf' ? 'pdf' : 'image';
+
   if (file.size > MAX_INPUT_BYTES) {
     throw new UploadTooLargeError(
       `ファイルサイズが大きすぎます (${mb(file.size)})。${mb(MAX_INPUT_BYTES)} 以下にしてください。`,
     );
   }
 
-  // 予算内ならそのまま送る = 従来どおり無劣化。PDF も HEIC もここを通る。
+  // 予算内ならそのまま送る = 従来どおり無劣化・往復も増えない。PDF も HEIC もここを通る。
   if (file.size <= WIRE_BUDGET_BYTES) {
-    return { dataUrl: await readFileAsDataUrl(file) };
+    return { dataUrl: await readFileAsDataUrl(file), kind };
   }
 
-  // ここから先は予算超え。PDF はブラウザで縮小できない。
-  if (file.type === 'application/pdf') {
+  // ── 予算超え。まず S3 直アップロードを試す (無劣化で送れる) ──
+  const key = await uploadViaS3(file);
+  if (key) {
+    // プレビュー (bbox 重ね表示) 用に縮小版だけ作る。解析には使わない。
+    const previewDataUrl = kind === 'image' ? await makePreview(file) : undefined;
+    return { imageKey: key, previewDataUrl, kind };
+  }
+
+  // ── S3 が使えなかった。画像なら縮小して従来経路で送る ──
+  if (kind === 'pdf') {
     throw new UploadTooLargeError(
       `PDF は ${mb(WIRE_BUDGET_BYTES)} までしか送信できません (このファイルは ${mb(file.size)})。` +
         `ページを分けて保存し直すか、紙面を写真 (JPEG) で撮ったものをお使いください。`,
@@ -103,7 +120,7 @@ export async function prepareScanUpload(file: File): Promise<PreparedUpload> {
     for (const step of LADDER) {
       const dataUrl = encodeJpeg(bitmap, step.maxEdge, step.quality);
       if (dataUrl && dataUrl.length <= MAX_DATA_URL_CHARS) {
-        return { dataUrl, note: `${mb(file.size)} の画像を送信用に圧縮しました` };
+        return { dataUrl, kind, note: `${mb(file.size)} の画像を送信用に圧縮しました` };
       }
     }
   } finally {
@@ -114,6 +131,43 @@ export async function prepareScanUpload(file: File): Promise<PreparedUpload> {
     `画像を縮小しても送信できる大きさ (${mb(WIRE_BUDGET_BYTES)} 相当) に収まりませんでした。` +
       `紙面を分けて撮影してください。`,
   );
+}
+
+/**
+ * presigned PUT でブラウザから S3 へ直接置く。成功でキー、駄目なら null。
+ *
+ * **失敗しても投げない** — S3 未設定・バケットの CORS 未設定・回線断など、
+ * こちらで判別しきれない理由で落ちうる。null を返して呼び出し側の圧縮経路へ譲る
+ * (画像は必ず送れる状態を保つ = fail-safe)。
+ */
+async function uploadViaS3(file: File): Promise<string | null> {
+  try {
+    const res = await fetch('/api/scan/upload-ticket', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ contentType: file.type, bytes: file.size }),
+    });
+    if (!res.ok) return null;
+    const t = (await res.json()) as { ok?: boolean; upload_url?: string; key?: string; headers?: Record<string, string> };
+    if (!t.ok || !t.upload_url || !t.key) return null;
+
+    // 署名は Content-Type と ContentLength を固定しているので、ここを変えると S3 が拒否する。
+    const put = await fetch(t.upload_url, { method: 'PUT', headers: t.headers ?? {}, body: file });
+    return put.ok ? t.key : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 表示専用の縮小版。解析には使わないので画質より確実さを優先する。 */
+async function makePreview(file: File): Promise<string | undefined> {
+  const bitmap = await decodeImage(file);
+  if (!bitmap) return undefined;
+  try {
+    return encodeJpeg(bitmap, 2000, 0.85) ?? undefined;
+  } finally {
+    bitmap.close();
+  }
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {

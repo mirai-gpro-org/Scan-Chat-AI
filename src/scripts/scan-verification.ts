@@ -333,19 +333,21 @@ export class ScanVerificationController {
     const container = this.refs.trimmedImage;
     container.innerHTML = '';
     const full = this.result.fullImage;
-    if (!full || this.regions.length === 0) {
-      container.innerHTML =
-        '<p class="px-4 py-6 text-center text-sm text-slate-500">画像がありません</p>';
-      return;
-    }
-    // PDF アップロードの場合、img タグでは表示できないのでプレースホルダ
-    if (full.startsWith('data:application/pdf')) {
+    // PDF アップロードの場合、img タグでは表示できないのでプレースホルダ。
+    // **「画像がありません」より先に見る** — S3 経由の PDF は `fullImage` を持たないので、
+    // 後ろに置くと PDF なのに「画像がありません」と出てしまう。
+    if (this.result.sourceKind === 'pdf' || full?.startsWith('data:application/pdf')) {
       container.innerHTML = `
         <div class="flex flex-col items-center justify-center gap-2 px-4 py-8 text-center">
           <span class="text-5xl"></span>
           <p class="text-sm font-medium text-slate-700">PDF を解析しました</p>
           <p class="text-xs text-slate-500">表領域のプレビュー画像はありません。下のブロックから内容を確認してください。</p>
         </div>`;
+      return;
+    }
+    if (!full || this.regions.length === 0) {
+      container.innerHTML =
+        '<p class="px-4 py-6 text-center text-sm text-slate-500">画像がありません</p>';
       return;
     }
     // 領域 bbox の union を計算 (表全体のおおまかな範囲)
