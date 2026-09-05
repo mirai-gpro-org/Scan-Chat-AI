@@ -472,15 +472,28 @@
 }
 
 /* Gemini が返す Markdown を marked で HTML 化した部分のスタイル */
+/*
+ * **`w-full` を当てない。** 幅 100% で固定すると、狭い端末で列が潰れて
+ * 和文が 1 文字ずつ縦に折れる (実測 390px: 「検/査/項/目」)。和文はどこでも折れるので、
+ * 列の多い表 (スキャンの読み取り結果 = 9 列) では必ずこうなる。
+ * → 表は**中身なりの幅**を取り、収まらないぶんは `.md-region` 側で横スクロールさせる。
+ * `min-w-full` は列が少ない表が痩せて見えないように。
+ */
 .md-region table {
-  @apply w-full border-collapse text-sm;
+  @apply w-max min-w-full border-collapse text-sm;
 }
 .md-region thead {
   @apply bg-slate-100;
 }
 .md-region th,
 .md-region td {
-  @apply border border-slate-200 px-2 py-1.5 text-left align-top;
+  @apply whitespace-nowrap border border-slate-200 px-2 py-1.5 text-left align-top;
+}
+/* 備考のような長い文だけは折り返す (nowrap のままだと表が際限なく伸びる)。 */
+.md-region th:last-child,
+.md-region td:last-child {
+  @apply whitespace-normal;
+  max-width: 16em;
 }
 .md-region th {
   @apply font-semibold;

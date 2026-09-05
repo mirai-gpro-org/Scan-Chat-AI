@@ -82,6 +82,82 @@ const DEMO_REPORT: ElithSection[] = [
   },
 ];
 
+/*
+ * デモの「人間ドック / 健康診断」の読み取り結果 (test_artifacts.scan_md)。
+ *
+ * **合成データ**。docs/scan/golden/ の人間ドック golden は**実名と患者 ID を含む**ので
+ * 使えない (デモ用アカウントは記者・パートナーへ渡る = 社外に出る)。
+ * `health_checkup_20260826.json` (合成検体) も基準値を持たず単位大小で 2 検査が混ざるため、
+ * 読み取り結果の表には起こせない。→ ここで作る。
+ *
+ * 形式は**本番のスキャンが書くものと同じ** (`markdownClean` = 推論値列を落とした 9 列)。
+ * デモだけ別形式にすると、表示の確認にならない。
+ *
+ * 値は既存の DEMO_REPORT と**突き合わせてある** (尿酸 7.8 / 最高血圧 128 / 最低血圧 82 /
+ * 空腹時血糖 108)。ここが食い違うと、AI 報告書が画面のどこにも無い値を語ることになる。
+ * 基準値を外れるのも報告書が名指ししている 2 項目 (尿酸・空腹時血糖) だけにしてある。
+ */
+const DEMO_SCAN_MD_LATEST = `## 身体計測・血圧
+
+| No | 検査項目 | 検査項目詳細 | 読み取った値 | 単位 | 下限値 | 上限値 | 判定 | 備考 |
+|----|----------|--------------|--------------|------|--------|--------|------|------|
+| 1 | 身長 | 身長 | 172.4 | cm | - | - | - | - |
+| 2 | 体重 | 体重 | 71.2 | kg | - | - | - | - |
+| 3 | BMI | BMI | 24.0 | - | 18.5 | 25.0 | - | - |
+| 4 | 腹囲 | 腹囲 | 86.5 | cm | - | 85.0 | - | - |
+| 5 | 血圧 | 最高血圧 | 128 | mmHg | - | 129 | - | - |
+| 6 | 血圧 | 最低血圧 | 82 | mmHg | - | 84 | - | - |
+
+## 尿検査
+
+| No | 検査項目 | 検査項目詳細 | 読み取った値 | 単位 | 下限値 | 上限値 | 判定 | 備考 |
+|----|----------|--------------|--------------|------|--------|--------|------|------|
+| 7 | 尿蛋白 | 尿蛋白 | (-) | - | - | - | - | - |
+| 8 | 尿潜血 | 尿潜血 | (-) | - | - | - | - | - |
+| 9 | 尿糖 | 尿糖 | (-) | - | - | - | - | - |
+
+## 血液検査
+
+| No | 検査項目 | 検査項目詳細 | 読み取った値 | 単位 | 下限値 | 上限値 | 判定 | 備考 |
+|----|----------|--------------|--------------|------|--------|--------|------|------|
+| 10 | 白血球数 | 白血球数 | 6.2 | 10^3/μL | 3.3 | 8.6 | - | - |
+| 11 | 赤血球数 | 赤血球数 | 482 | 10^4/μL | 435 | 555 | - | - |
+| 12 | ヘモグロビン | 血色素量 | 15.1 | g/dL | 13.7 | 16.8 | - | - |
+| 13 | ヘマトクリット | ヘマトクリット値 | 45.2 | % | 40.7 | 50.1 | - | - |
+| 14 | 血小板数 | 血小板数 | 24.5 | 10^4/μL | 15.8 | 34.8 | - | - |
+| 15 | AST | AST(GOT) | 24 | U/L | 13 | 30 | - | - |
+| 16 | ALT | ALT(GPT) | 31 | U/L | 10 | 42 | - | - |
+| 17 | γ-GT | γ-GT(γ-GTP) | 62 | U/L | 13 | 64 | - | - |
+| 18 | ALP | ALP | 78 | U/L | 38 | 113 | - | - |
+| 19 | 総ビリルビン | 総ビリルビン | 0.8 | mg/dL | 0.4 | 1.5 | - | - |
+| 20 | 総蛋白 | 総蛋白 | 7.3 | g/dL | 6.6 | 8.1 | - | - |
+| 21 | アルブミン | アルブミン | 4.4 | g/dL | 4.1 | 5.1 | - | - |
+| 22 | 総コレステロール | 総コレステロール | 214 | mg/dL | 142 | 219 | - | - |
+| 23 | HDLコレステロール | HDLコレステロール | 52 | mg/dL | 40 | - | - | - |
+| 24 | LDLコレステロール | LDLコレステロール | 138 | mg/dL | 65 | 139 | - | - |
+| 25 | 中性脂肪 | 中性脂肪 | 142 | mg/dL | 30 | 149 | - | - |
+| 26 | 空腹時血糖 | 空腹時血糖 | 108 | mg/dL | 73 | 99 | H | - |
+| 27 | HbA1c | HbA1c(NGSP) | 5.8 | % | 4.9 | 6.0 | - | - |
+| 28 | 尿素窒素 | 尿素窒素 | 15.2 | mg/dL | 8.0 | 20.0 | - | - |
+| 29 | クレアチニン | クレアチニン | 0.96 | mg/dL | 0.65 | 1.07 | - | - |
+| 30 | eGFR | eGFR | 64.6 | mL/min/1.73m2 | 60.0 | - | - | - |
+| 31 | 尿酸 | 尿酸 | 7.8 | mg/dL | 3.7 | 7.0 | H | - |
+`;
+
+/**
+ * 前回分。**同じ項目で値だけ動かす** — 「過去データ」の切替と推移が読めるように。
+ * 体重は減り (73.0→71.2)、尿酸と血糖は上がっている (7.2→7.8 / 101→108)。
+ */
+const DEMO_SCAN_MD_PREV = DEMO_SCAN_MD_LATEST
+  .replace('| 2 | 体重 | 体重 | 71.2 |', '| 2 | 体重 | 体重 | 73.0 |')
+  .replace('| 3 | BMI | BMI | 24.0 |', '| 3 | BMI | BMI | 24.6 |')
+  .replace('| 4 | 腹囲 | 腹囲 | 86.5 |', '| 4 | 腹囲 | 腹囲 | 88.0 |')
+  .replace('| 5 | 血圧 | 最高血圧 | 128 |', '| 5 | 血圧 | 最高血圧 | 132 |')
+  .replace('| 6 | 血圧 | 最低血圧 | 82 |', '| 6 | 血圧 | 最低血圧 | 86 |')
+  .replace('| 26 | 空腹時血糖 | 空腹時血糖 | 108 |', '| 26 | 空腹時血糖 | 空腹時血糖 | 101 |')
+  .replace('| 27 | HbA1c | HbA1c(NGSP) | 5.8 |', '| 27 | HbA1c | HbA1c(NGSP) | 5.6 |')
+  .replace('| 31 | 尿酸 | 尿酸 | 7.8 |', '| 31 | 尿酸 | 尿酸 | 7.2 |');
+
 /** ダミーの検査履歴。 */
 export function demoArtifacts(uid: string): TestArtifact[] {
   const base = {
@@ -92,6 +168,8 @@ export function demoArtifacts(uid: string): TestArtifact[] {
     imported_by: 'demo',
     notes: null,
     external_test_id: null,
+    // 読み取り結果を持つのはアプリ内スキャン経路 (人間ドック / 健康診断) だけ。
+    scan_md: null as string | null,
   };
   return [
     {
@@ -113,6 +191,7 @@ export function demoArtifacts(uid: string): TestArtifact[] {
       ...base, id: 'demo-art-0004', source: 'user_upload', test_type: 'health_checkup',
       test_date: daysAgo(160), lab_name: null, display_mode: 'standard',
       page_count: 4, imported_at: daysAgo(158), status: 'imported',
+      scan_md: DEMO_SCAN_MD_LATEST,
     },
     {
       ...base, id: 'demo-art-0005', source: 'wellfort_lab', test_type: 'ai_prediction',
@@ -138,6 +217,7 @@ export function demoArtifacts(uid: string): TestArtifact[] {
       ...base, id: 'demo-art-0014', source: 'user_upload', test_type: 'health_checkup',
       test_date: daysAgo(525), lab_name: null, display_mode: 'standard',
       page_count: 4, imported_at: daysAgo(523), status: 'imported',
+      scan_md: DEMO_SCAN_MD_PREV,
     },
     {
       ...base, id: 'demo-art-0015', source: 'wellfort_lab', test_type: 'ai_prediction',
