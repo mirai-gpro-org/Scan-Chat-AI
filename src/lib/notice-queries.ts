@@ -43,7 +43,17 @@ export async function loadNotices(
   diagnosticUserId: string,
   opts: LoadNoticesOptions = {},
 ): Promise<NoticesData | { error: string }> {
+  /*
+   * デモ用アカウントは DB を見ない (仕様書 §2)。Supabase 未設定・接続不可でも
+   * ダミーは出す — ダッシュボードは同じ救済を持っていたが (`dashboard-queries.ts`)
+   * ここだけ**エラー画面**になっていた。お披露目の最中に DB が引けなかった回に
+   * お知らせだけ落ちるのは、デモの目的 (§1) に反する。
+   * 氏名はダミーなので `お客様` 固定 (DB を引かない以上ここでは分からない)。
+   */
   const sb = getServerSupabase();
+  if (demoFallbackEnabled(diagnosticUserId) && !sb) {
+    return buildDemoNotices(diagnosticUserId, 'お客様');
+  }
   if (!sb) return { error: 'Supabase が未設定です。.env.local を確認してください。' };
 
   const dsb = sb.schema('diagnosis');
@@ -97,14 +107,14 @@ export async function loadNotices(
   // 敬称の付け方はダッシュボードと揃える (氏名のみで届く連携元があるため)。
   const userName = appUser?.display_name_cache ? withHonorific(appUser.display_name_cache) : 'お客様';
 
-  // テストフェーズ: お知らせテーブル未適用 (エラー) もしくは未投入 (空) の場合は
-  // 共通のダミーお知らせを表示する。実データが入れば自動で実データに切替。
-  const anyErr = importantErr || unreadErr || generalErr || newsErr;
-  const allEmpty =
-    (importantRaw?.length ?? 0) === 0 &&
-    (generalRaw?.length ?? 0) === 0 &&
-    (newsRaw?.length ?? 0) === 0;
-  if (demoFallbackEnabled(diagnosticUserId) && (anyErr || allEmpty)) {
+  /*
+   * デモ用アカウントは **DB の中身にかかわらず** ダミーのお知らせを出す。
+   * 正本 `docs/operations/デモ用アカウント_仕様書.md` §2 —「ダミー = 出す / 実データ = —」。
+   * 以前は「エラー もしくは 全部空のときだけ」だったが、それは仕様書より前の
+   * 「実データが空のときだけダミーへ」に沿った条件で、**実データが 1 件でもあると
+   * デモの画面が歯抜けになる** (ダッシュボード側と同じ誤り・2026-09-05 修正)。
+   */
+  if (demoFallbackEnabled(diagnosticUserId)) {
     return buildDemoNotices(diagnosticUserId, userName);
   }
 
@@ -129,6 +139,8 @@ export async function loadNotices(
  * Supabase 未設定や該当なしは 0 を返す (画面側でバッジ非表示)。
  */
 export async function countUnreadImportant(diagnosticUserId: string): Promise<number> {
+  // デモ用アカウントはバッジも DB を見ない (本文と件数が食い違わないように)。
+  if (demoFallbackEnabled(diagnosticUserId)) return demoUnreadImportant();
   const sb = getServerSupabase();
   if (!sb) return 0;
   const { count, error } = await sb
@@ -137,7 +149,6 @@ export async function countUnreadImportant(diagnosticUserId: string): Promise<nu
     .select('id', { count: 'exact', head: true })
     .eq('diagnostic_user_id', diagnosticUserId)
     .is('read_at', null);
-  if (error) return demoFallbackEnabled(diagnosticUserId) ? demoUnreadImportant() : 0;
-  if ((count ?? 0) === 0 && demoFallbackEnabled(diagnosticUserId)) return demoUnreadImportant();
+  if (error) return 0;
   return count ?? 0;
 }

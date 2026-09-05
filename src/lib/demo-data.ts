@@ -1,12 +1,21 @@
 /**
  * デモ / テストフェーズ用のダミーデータ。
  *
- * 目的: 正規の検査履歴がまだ無い顧客に対し、ダッシュボード / お知らせを
- *   「空」ではなく共通のサンプル内容で見せる。実データが入れば自動で実データに切替。
+ * 目的: **表示機能とデザインの確認・お披露目**。デモ用アカウントに対して、
+ *   材料が要る機能 (推移グラフ = 2 回目の検査から / 過去データの切替) まで含めて
+ *   **全部の表示機能を通す**。正本 `docs/operations/デモ用アカウント_仕様書.md` §1。
  *
- * 切替条件: 実データ (test_artifacts / diagnosis_results / user_notices …) が空のときだけ
- *   ダミーへフォールバックする (dashboard-queries / notice-queries 側で判定)。
+ * 切替条件: **表示中の uid がデモ用アカウントか。それだけ** (`demoFallbackEnabled`)。
+ *   仕様書 §2 の表 —「デモ用アカウント … ダミー=出す / 実データ=—」。
+ *   **実データの有無は条件ではない。**
  * 無効化: env `PUBLIC_DEMO_FALLBACK=false` で完全に切る。
+ *
+ * 【2026-09-05 修正】ここには以前「実データが空のときだけダミーへ落とす」と書いてあり、
+ *   `dashboard-queries` / `notice-queries` / `measurement-queries` がそれに沿って
+ *   **DB に 1 行でもあればダミーを引っ込める**実装になっていた (仕様書 2026-08-30 より前の
+ *   記述が残っていた)。結果、デモ用アカウントには借り物の歯抜けデータ
+ *   (scan_md 無し・測定値が 1 日ぶんだけ) が出て、**読み取り結果もグラフも空**になっていた。
+ *   仕様が正なのでこちらを直した。
  *
  * ※ これは表示用フォールバックであり DB には書き込まない。
  */
@@ -424,14 +433,89 @@ function demoHealthCheckupTrend(): MetricTrendSeries[] {
   return out;
 }
 
+/**
+ * 系列を 1 本作る小道具。`dates` と `vals` は**古い順**で同じ長さ。
+ * 判定の印は基準値から決める (実データ経路が検査機関の `flag` を出すのに合わせた見た目)。
+ */
+function demoSeries(
+  dates: readonly string[],
+  label: string,
+  unit: string,
+  ref: { low?: number; high?: number },
+  vals: readonly number[],
+): MetricTrendSeries {
+  return {
+    label,
+    unit,
+    referenceUpper: ref.high,
+    referenceLower: ref.low,
+    points: vals.map((value, i) => ({
+      date: dates[i],
+      value,
+      raw: String(value),
+      flag:
+        ref.high != null && value > ref.high
+          ? ('H' as const)
+          : ref.low != null && value < ref.low
+            ? ('L' as const)
+            : null,
+    })),
+  };
+}
+
+/*
+ * 血液 / がんリスク / AI疾病予測 の推移。
+ *
+ * **点は 2 つ**で、日付は `demoArtifacts` の 2 回分の `test_date` と揃える
+ * (ずれると「検査結果」の一覧とグラフで受診日が食い違う)。
+ * 人間ドックだけ md から機械で起こしている (`demoHealthCheckupTrend`) のは、
+ * **同じ画面に読み取り結果の表が出て突き合わせられる**ため。表を持たない種別は
+ * 食い違う相手がいないのでここに直接書く。
+ *
+ * **遺伝子検査は作らない** — 判定のみで経時変化する測定値を持たないので、
+ * ダッシュボードにもグラフのボタンを置いていない (仕様どおり)。
+ */
+function demoBloodTrend(): MetricTrendSeries[] {
+  const d = [daysAgo(205).slice(0, 10), daysAgo(20).slice(0, 10)]; // demo-art-0011 / -0001
+  return [
+    demoSeries(d, 'AST(GOT)', 'U/L', { low: 10, high: 40 }, [24, 29]),
+    demoSeries(d, 'ALT(GPT)', 'U/L', { low: 5, high: 45 }, [28, 36]),
+    demoSeries(d, 'γ-GTP', 'U/L', { low: 10, high: 79 }, [58, 71]),
+    demoSeries(d, '中性脂肪', 'mg/dL', { low: 30, high: 149 }, [142, 166]),
+    demoSeries(d, 'HDLコレステロール', 'mg/dL', { low: 40, high: 96 }, [54, 51]),
+    demoSeries(d, 'LDLコレステロール', 'mg/dL', { low: 70, high: 139 }, [131, 144]),
+    demoSeries(d, 'HbA1c(NGSP)', '%', { low: 4.6, high: 6.2 }, [5.7, 5.9]),
+  ];
+}
+
+function demoCancerTrend(): MetricTrendSeries[] {
+  const d = [daysAgo(230).slice(0, 10), daysAgo(48).slice(0, 10)]; // demo-art-0012 / -0002
+  return [
+    demoSeries(d, '尿中ポルフィリン量', 'μmol/mol・Cre', { high: 60 }, [38.4, 44.1]),
+    demoSeries(d, 'インデックス値', '', { high: 1.0 }, [0.72, 0.86]),
+  ];
+}
+
+function demoAiPredictionTrend(): MetricTrendSeries[] {
+  const d = [daysAgo(440).slice(0, 10), daysAgo(75).slice(0, 10)]; // demo-art-0015 / -0005
+  return [
+    // 発症予測は「基準値」を持たないので基準線を引かない (印も付かない)。
+    demoSeries(d, '糖尿病 発症率', '%', {}, [8.4, 9.6]),
+    demoSeries(d, '脳卒中 発症率', '%', {}, [4.1, 4.5]),
+    demoSeries(d, '心筋梗塞 発症率', '%', {}, [3.2, 3.0]),
+  ];
+}
+
 export function demoMetricTrend(testType?: string): MetricTrendSeries[] {
   /*
    * **種別を指定されたら、その種別の系列だけを返す。**
-   * `getMeasurementTrend` が testType 付きでデモへ落ちないようにしていたのは
-   * 「別種別のサンプルを『この検査の推移』として見せない」ため。デモ側を種別ごとに
-   * 分ければその心配が消えるので、**知らない種別は空**を返して同じ約束を守る。
+   * 「別種別のサンプルを『この検査の推移』として見せない」ためで、
+   * **知らない種別 (遺伝子ほか) は空**を返してその約束を守る。
    */
   if (testType === 'health_checkup') return demoHealthCheckupTrend();
+  if (testType === 'blood') return demoBloodTrend();
+  if (testType === 'cancer_urine') return demoCancerTrend();
+  if (testType === 'ai_prediction') return demoAiPredictionTrend();
   if (testType) return [];
   const dates = [daysAgo(160), daysAgo(110), daysAgo(60), daysAgo(18)].map((d) => d.slice(0, 10));
   const series = (

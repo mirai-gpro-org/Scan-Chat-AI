@@ -9,7 +9,7 @@
 import type { AppIconName } from '../components/AppIcon.astro';
 import { getServerSupabase, isBridgeConfigured } from './supabase';
 import { loadBridgeBundle, type CustomerBundle } from './bridge-queries';
-import { buildDemoDashboard, demoFallbackEnabled, demoMetricTrend, demoShipments } from './demo-data';
+import { buildDemoDashboard, demoFallbackEnabled, demoMetricTrend } from './demo-data';
 import type {
   AppUser,
   CustomerProfile,
@@ -121,32 +121,35 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
       return { error: `diagnosis_results: ${resErr!.message}` };
     }
 
-    let artifacts = artifactsRaw ?? [];
-    let results = resultsRaw ?? [];
-    let resultUid = uid;
-    let usingDemoData = false;
-
-    // フォールバック1: 当該ユーザーに結果が無ければ 真鍋(DEFAULT_USER) の実データを表示。
-    if (demoFallbackEnabled(uid) && results.length === 0 && uid !== DEFAULT_USER) {
-      const [
-        { data: demoArtifacts },
-        { data: demoResults },
-      ] = await Promise.all([
-        dsb.from('test_artifacts').select('*').eq('diagnostic_user_id', DEFAULT_USER).order('test_date', { ascending: false }),
-        dsb.from('diagnosis_results').select('*').eq('diagnostic_user_id', DEFAULT_USER).order('received_at', { ascending: false }),
-      ]);
-      if (demoResults && demoResults.length > 0) {
-        artifacts = demoArtifacts ?? [];
-        results = demoResults;
-        resultUid = DEFAULT_USER;
-        usingDemoData = true;
-      }
-    }
-
-    // フォールバック2: 真鍋にも実データが無ければ 組込みダミー(demo-data) で画面を成立させる。
-    if (demoFallbackEnabled(uid) && results.length === 0) {
+    /*
+     * ════════════════════════════════════════════════════════════════════════
+     * デモ用アカウントは **DB の中身にかかわらず** 組込みダミーを出す。
+     * ════════════════════════════════════════════════════════════════════════
+     * 正本 `docs/operations/デモ用アカウント_仕様書.md` §2 の表 —
+     * 「デモ用アカウント … ダミー = 出す / 実データ = —」。**実データの有無は条件ではない。**
+     * 目的が表示機能とデザインの確認・お披露目 (§1) なので、「材料が要る機能」
+     * (推移グラフ = 2 回目の検査から / 過去データの切替) まで通し切る必要がある。
+     *
+     * 【なぜ書き直したか — 2026-09-05 実測】ここには 2 段のフォールバックがあった:
+     *   ① 当該ユーザーに結果が無ければ 真鍋 (DEFAULT_USER) の DB 行を借りる
+     *   ② それも無ければ組込みダミー
+     * 仕様書より前の `demo-data.ts` 冒頭コメント「実データが空のときだけダミーへ」に
+     * 沿った実装で、仕様書 (2026-08-30) に追随していなかった。**①で必ず止まる**ため
+     * ②は本番で一度も使われず、そこに用意した人間ドックの読み取り結果・推移グラフが
+     * 画面に出なかった (`/api/debug/viewer` = `using_demo_data:false` / d0000001 に 13 行)。
+     * しかも借り物の行は歯抜け (scan_md 無し・測定値が 1 日ぶんだけ) なので、
+     * **デモの目的「全部の表示機能を見せる」を構造的に満たせない。**
+     *
+     * 一般顧客・未サインインには影響しない (`demoFallbackEnabled` の内側・仕様書 §2)。
+     */
+    if (demoFallbackEnabled(uid)) {
       return buildDemoDashboard(uid, appUser?.display_name_cache ?? null);
     }
+
+    const artifacts = artifactsRaw ?? [];
+    const results = resultsRaw ?? [];
+    const resultUid = uid;
+    const usingDemoData = false;
 
     const latestResult = results[0] ?? null;
     // report は jsonb 配列想定。配列以外 (null/オブジェクト/文字列) は空扱いにして throw を防ぐ。
@@ -166,20 +169,12 @@ export async function loadDashboard(diagnosticUserId?: string | null): Promise<D
       : bundle;
 
     /*
-     * キット進捗のフォールバック (テストフェーズ)。
-     *
-     * shipments が 0 件になる経路が複数ある:
-     *   - 本番構成 (app_bridge) では customer.kit_shipments を見ないので、
-     *     この DB に seed_kit_demo.sql を流しても出ない
-     *   - 表示中のユーザーに customer_profiles が無い / 別 customer_id
-     * どれであっても「進捗が何も出ない」画面はクライアントの UI 確認にならないため、
-     * 0 件のときだけダミーへ落とす。実データが 1 件でもあればそちらが優先。
+     * ここへ来るのは**非デモの閲覧者だけ** (デモ用アカウントは上で return 済み)。
+     * 以前はここで shipments が 0 件ならダミーへ落としていたが、それは
+     * デモのための処理なので `buildDemoDashboard` (= `demoShipments`) に一本化した。
+     * 一般顧客に他人名義のダミーのキット進捗を見せない。
      */
-    let shipmentSource: DashboardData['shipmentSource'] = usingBridge ? 'bridge' : 'customer';
-    if (demoFallbackEnabled(uid) && safeBundle.shipments.length === 0) {
-      safeBundle.shipments = demoShipments(resultUid);
-      shipmentSource = 'demo';
-    }
+    const shipmentSource: DashboardData['shipmentSource'] = usingBridge ? 'bridge' : 'customer';
 
     return {
       diagnosticUserId: uid,
@@ -259,8 +254,10 @@ export async function getMetricTrend(
   diagnosticUserId: string,
   limit = 6,
 ): Promise<MetricTrendSeries[]> {
+  // デモ用アカウントは DB を見ない (仕様書 §2)。
+  if (demoFallbackEnabled(diagnosticUserId)) return demoMetricTrend();
   const sb = getServerSupabase();
-  if (!sb) return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend() : [];
+  if (!sb) return [];
 
   try {
   const { data, error } = await sb
@@ -273,7 +270,7 @@ export async function getMetricTrend(
     .limit(limit);
 
   if (error || !data || data.length === 0) {
-    return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend() : [];
+    return [];
   }
 
   const uric: MetricTrendPoint[] = [];
@@ -301,10 +298,9 @@ export async function getMetricTrend(
   if (uric.length > 0)       out.push({ label: '尿酸',       unit: 'mg/dL', referenceUpper: 7.0,  points: uric });
   if (bpSystolic.length > 0) out.push({ label: '最高血圧',   unit: 'mmHg',  referenceUpper: 129,  points: bpSystolic });
   if (fpg.length > 0)        out.push({ label: '空腹時血糖', unit: 'mg/dL', referenceUpper: 99,   points: fpg });
-  if (out.length === 0 && demoFallbackEnabled(diagnosticUserId)) return demoMetricTrend();
   return out;
   } catch {
-    return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend() : [];
+    return [];
   }
 }
 

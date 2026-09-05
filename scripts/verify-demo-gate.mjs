@@ -137,6 +137,47 @@ const cases = [
   }
 
   /*
+   * ════════════════════════════════════════════════════════════════════
+   * **実データがあってもデモが勝つこと** (仕様書 §2 の表「実データ = —」)。
+   * ════════════════════════════════════════════════════════════════════
+   * 2026-09-05 の実障害: 入口が `demoFallbackEnabled(uid) && 行が 0 件` という
+   * **件数との AND** になっていて、DB に 1 行でもあるとデモが引っ込んでいた。
+   * 借り物の実データは歯抜けなので、デモの目的「全部の表示機能を見せる」
+   * (§1 = お披露目・機能確認) を構造的に満たせない。
+   *
+   * 見るのは **`demoFallbackEnabled(...)` と同じ if の中に件数の条件が並んでいないか**
+   * だけ。エラー時の救済 (`if (appUserErr || ...)`) や `!sb` は件数ではないので通る。
+   */
+  for (const f of ['src/lib/dashboard-queries.ts', 'src/lib/notice-queries.ts',
+                   'src/lib/measurement-queries.ts']) {
+    const body = code(f);
+    /*
+     * `if (…)` の条件を**括弧を数えて**取り出す。素朴な `[^)]*` だと
+     * `(importantRaw?.length ?? 0) === 0` のような入れ子で途中で切れ、
+     * **退行を注入しても検査が黙って通る** (実際に一度そうなった)。
+     */
+    for (const m of body.matchAll(/\bif\s*\(/g)) {
+      let depth = 1;
+      let i = m.index + m[0].length;
+      for (; i < body.length && depth > 0; i++) {
+        if (body[i] === '(') depth++;
+        else if (body[i] === ')') depth--;
+      }
+      const cond = body.slice(m.index + m[0].length, i - 1);
+      if (!cond.includes('demoFallbackEnabled')) continue;
+      if (/\.length|\bcount\b|rows\b/.test(cond)) {
+        fails.push(`${f}: デモの判定に件数が AND されている → if (${cond.trim()})`
+          + ' — 実データの有無は条件ではない (仕様書 §2)。'
+          + 'これを許すと DB に 1 行あるだけでデモが歯抜けになる');
+      }
+    }
+    // 三項でも同じこと (`rows.length === 0 ? demo... : ...` の形)
+    if (/length === 0\s*\?[^\n]*demo(MetricTrend|Latest|Notices|Dashboard)/.test(body)) {
+      fails.push(`${f}: 件数で三項分岐してデモを出している — 上と同じ (仕様書 §2)`);
+    }
+  }
+
+  /*
    * **資格は `demo-accounts.ts` が単独で持つこと。**
    * `demo-data.ts` は「何を見せるか」で、「誰に見せるか」を書く場所ではない。
    */

@@ -136,8 +136,10 @@ function demoLatest(): LatestMeasurements {
 export async function getLatestMeasurements(
   diagnosticUserId: string,
 ): Promise<LatestMeasurements | null> {
+  // デモ用アカウントは DB を見ない (仕様書 §2 — 実データの有無は条件ではない)。
+  if (demoFallbackEnabled(diagnosticUserId)) return demoLatest();
   const sb = getServerSupabase();
-  if (!sb) return demoFallbackEnabled(diagnosticUserId) ? demoLatest() : null;
+  if (!sb) return null;
   try {
     // 最新の test_date を持つ 1 検査分だけを取る。
     const { data, error } = await sb
@@ -152,7 +154,7 @@ export async function getLatestMeasurements(
       .limit(400);
 
     const rows = (data ?? []) as unknown as Row[];
-    if (error || rows.length === 0) return demoFallbackEnabled(diagnosticUserId) ? demoLatest() : null;
+    if (error || rows.length === 0) return null;
 
     const newest = rows[0];
     const same = rows.filter(
@@ -172,7 +174,7 @@ export async function getLatestMeasurements(
       flaggedCount: flagged.length,
     };
   } catch {
-    return demoFallbackEnabled(diagnosticUserId) ? demoLatest() : null;
+    return null;
   }
 }
 
@@ -216,7 +218,8 @@ export async function getTrendCandidates(
 ): Promise<string[]> {
   const sb = getServerSupabase();
   // 実データ層が無いテストフェーズでは、デモの系列名をそのまま候補にする。
-  if (!sb) return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend(testType).map((x) => x.label) : [];
+  if (demoFallbackEnabled(diagnosticUserId)) return demoMetricTrend(testType).map((x) => x.label);
+  if (!sb) return [];
   try {
     let q = sb
       .schema('diagnosis')
@@ -230,7 +233,7 @@ export async function getTrendCandidates(
     const rows = (data ?? []) as unknown as
       { canonical_name: string | null; item_name: string | null; test_date: string | null }[];
     if (error || rows.length === 0) {
-      return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend(testType).map((x) => x.label) : [];
+      return [];
     }
 
     const dates = new Map<string, Set<string>>();
@@ -247,7 +250,7 @@ export async function getTrendCandidates(
     const rest = drawable.filter((n) => !head.includes(n)).sort((a, b) => a.localeCompare(b, 'ja'));
     return [...head, ...rest];
   } catch {
-    return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend(testType).map((x) => x.label) : [];
+    return [];
   }
 }
 
@@ -275,9 +278,8 @@ export async function getMeasurementTrend(
   const sb = getServerSupabase();
   // 旧 getMetricTrend が持っていたデモフォールバックを踏襲する
   // (テストフェーズでクライアントに推移グラフを見てもらうために必要)。
-  if (!sb || canonicalNames.length === 0) {
-    return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend(testType) : [];
-  }
+  if (demoFallbackEnabled(diagnosticUserId)) return demoMetricTrend(testType);
+  if (!sb || canonicalNames.length === 0) return [];
   try {
     const { data, error } = await sb
       .schema('diagnosis')
@@ -300,9 +302,7 @@ export async function getMeasurementTrend(
       const key = seriesKey(r);
       return key != null && want.has(key);
     });
-    if (error || rows.length === 0) {
-      return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend(testType) : [];
-    }
+    if (error || rows.length === 0) return [];
 
     const byName = new Map<string, Row[]>();
     for (const r of rows) {
@@ -343,9 +343,8 @@ export async function getMeasurementTrend(
         points,
       });
     }
-    if (out.length === 0 && demoFallbackEnabled(diagnosticUserId)) return demoMetricTrend(testType);
     return out;
   } catch {
-    return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend(testType) : [];
+    return [];
   }
 }
