@@ -216,7 +216,7 @@ export async function getTrendCandidates(
 ): Promise<string[]> {
   const sb = getServerSupabase();
   // 実データ層が無いテストフェーズでは、デモの系列名をそのまま候補にする。
-  if (!sb) return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend().map((x) => x.label) : [];
+  if (!sb) return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend(testType).map((x) => x.label) : [];
   try {
     let q = sb
       .schema('diagnosis')
@@ -230,8 +230,7 @@ export async function getTrendCandidates(
     const rows = (data ?? []) as unknown as
       { canonical_name: string | null; item_name: string | null; test_date: string | null }[];
     if (error || rows.length === 0) {
-      if (testType) return [];
-      return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend().map((x) => x.label) : [];
+      return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend(testType).map((x) => x.label) : [];
     }
 
     const dates = new Map<string, Set<string>>();
@@ -248,8 +247,7 @@ export async function getTrendCandidates(
     const rest = drawable.filter((n) => !head.includes(n)).sort((a, b) => a.localeCompare(b, 'ja'));
     return [...head, ...rest];
   } catch {
-    if (testType) return [];
-    return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend().map((x) => x.label) : [];
+    return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend(testType).map((x) => x.label) : [];
   }
 }
 
@@ -262,8 +260,11 @@ export async function getTrendCandidates(
  *
  * `testType` を渡すと、その検査種別 (health_checkup / blood / …) の測定値だけに絞る。
  * 検査結果セクションの「グラフ」は 1 種別ずつ開くので、その絞り込みに使う。
- * 絞り込んだ結果が空になったときは**デモへフォールバックしない** — 別種別のサンプルが
- * 出ると「この検査の推移」を誤って見せることになるため。
+ *
+ * 絞り込んだ結果が空のときのデモは **`demoMetricTrend(testType)` に委ねる**。
+ * 以前はここで一律 `[]` を返していた — 「別種別のサンプルを『この検査の推移』として
+ * 見せない」ためで、理由は正しいが**デモの人間ドックのグラフが常に空**になっていた。
+ * デモ側を種別ごとに分けたので、知らない種別は demo 側が `[]` を返す = 約束は同じまま。
  */
 export async function getMeasurementTrend(
   diagnosticUserId: string,
@@ -274,7 +275,9 @@ export async function getMeasurementTrend(
   const sb = getServerSupabase();
   // 旧 getMetricTrend が持っていたデモフォールバックを踏襲する
   // (テストフェーズでクライアントに推移グラフを見てもらうために必要)。
-  if (!sb || canonicalNames.length === 0) return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend() : [];
+  if (!sb || canonicalNames.length === 0) {
+    return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend(testType) : [];
+  }
   try {
     const { data, error } = await sb
       .schema('diagnosis')
@@ -298,8 +301,7 @@ export async function getMeasurementTrend(
       return key != null && want.has(key);
     });
     if (error || rows.length === 0) {
-      if (testType) return [];
-      return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend() : [];
+      return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend(testType) : [];
     }
 
     const byName = new Map<string, Row[]>();
@@ -341,10 +343,9 @@ export async function getMeasurementTrend(
         points,
       });
     }
-    if (out.length === 0 && !testType && demoFallbackEnabled(diagnosticUserId)) return demoMetricTrend();
+    if (out.length === 0 && demoFallbackEnabled(diagnosticUserId)) return demoMetricTrend(testType);
     return out;
   } catch {
-    if (testType) return [];
-    return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend() : [];
+    return demoFallbackEnabled(diagnosticUserId) ? demoMetricTrend(testType) : [];
   }
 }

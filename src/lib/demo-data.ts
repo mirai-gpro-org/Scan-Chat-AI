@@ -61,6 +61,16 @@ export function demoFallbackEnabled(uid?: string | null): boolean {
 
 const now = () => new Date();
 const daysAgo = (d: number) => new Date(Date.now() - d * 86400_000).toISOString();
+
+/*
+ * 人間ドックの受診日は**ここだけ**に置く。artifacts (test_date) と推移グラフの
+ * 点の日付が同じ定数から出るようにするため (別々に書くとズレる)。
+ *
+ * **ちょうど 365 日差にしない** — 1 年ちょうどだと軸のラベルが両方 "3/29" になり、
+ * 2 点が同じ日に見える (実測)。人間ドックは毎年ぴったり同じ日には受けない。
+ */
+const HC_DAYS_PREV = 505;
+const HC_DAYS_LATEST = 160;
 const daysAhead = (d: number) => new Date(Date.now() + d * 86400_000).toISOString();
 
 /** メトリクス抽出 (検査値フィードバック) が効くサンプル Elith レポート。 */
@@ -127,7 +137,7 @@ const DEMO_SCAN_MD_LATEST = `## 身体計測・血圧
 | 14 | 血小板数 | 血小板数 | 24.5 | 10^4/μL | 15.8 | 34.8 | - | - |
 | 15 | AST | AST(GOT) | 24 | U/L | 13 | 30 | - | - |
 | 16 | ALT | ALT(GPT) | 31 | U/L | 10 | 42 | - | - |
-| 17 | γ-GT | γ-GT(γ-GTP) | 62 | U/L | 13 | 64 | - | - |
+| 17 | γ-GT | γ-GTP | 62 | U/L | 13 | 64 | - | - |
 | 18 | ALP | ALP | 78 | U/L | 38 | 113 | - | - |
 | 19 | 総ビリルビン | 総ビリルビン | 0.8 | mg/dL | 0.4 | 1.5 | - | - |
 | 20 | 総蛋白 | 総蛋白 | 7.3 | g/dL | 6.6 | 8.1 | - | - |
@@ -156,7 +166,15 @@ const DEMO_SCAN_MD_PREV = DEMO_SCAN_MD_LATEST
   .replace('| 6 | 血圧 | 最低血圧 | 82 |', '| 6 | 血圧 | 最低血圧 | 86 |')
   .replace('| 26 | 空腹時血糖 | 空腹時血糖 | 108 |', '| 26 | 空腹時血糖 | 空腹時血糖 | 101 |')
   .replace('| 27 | HbA1c | HbA1c(NGSP) | 5.8 |', '| 27 | HbA1c | HbA1c(NGSP) | 5.6 |')
-  .replace('| 31 | 尿酸 | 尿酸 | 7.8 |', '| 31 | 尿酸 | 尿酸 | 7.2 |');
+  .replace('| 31 | 尿酸 | 尿酸 | 7.8 |', '| 31 | 尿酸 | 尿酸 | 7.2 |')
+  /*
+   * 既定でグラフに出る 6 項目 (`DEFAULT_TREND_ITEMS`) は**全部動かす**。
+   * 前回と同値だと横一直線 +「前回比 0」になり、推移を見せるデモにならない (実測)。
+   * どれも基準内→基準内の動きなので、md の「判定」列 (=`-`) と矛盾しない。
+   */
+  .replace('| 17 | γ-GT | γ-GTP | 62 |', '| 17 | γ-GT | γ-GTP | 48 |')
+  .replace('| 24 | LDLコレステロール | LDLコレステロール | 138 |', '| 24 | LDLコレステロール | LDLコレステロール | 126 |')
+  .replace('| 30 | eGFR | eGFR | 64.6 |', '| 30 | eGFR | eGFR | 68.2 |');
 
 /** ダミーの検査履歴。 */
 export function demoArtifacts(uid: string): TestArtifact[] {
@@ -189,8 +207,8 @@ export function demoArtifacts(uid: string): TestArtifact[] {
     },
     {
       ...base, id: 'demo-art-0004', source: 'user_upload', test_type: 'health_checkup',
-      test_date: daysAgo(160), lab_name: null, display_mode: 'standard',
-      page_count: 4, imported_at: daysAgo(158), status: 'imported',
+      test_date: daysAgo(HC_DAYS_LATEST), lab_name: null, display_mode: 'standard',
+      page_count: 4, imported_at: daysAgo(HC_DAYS_LATEST - 2), status: 'imported',
       scan_md: DEMO_SCAN_MD_LATEST,
     },
     {
@@ -215,8 +233,8 @@ export function demoArtifacts(uid: string): TestArtifact[] {
     },
     {
       ...base, id: 'demo-art-0014', source: 'user_upload', test_type: 'health_checkup',
-      test_date: daysAgo(525), lab_name: null, display_mode: 'standard',
-      page_count: 4, imported_at: daysAgo(523), status: 'imported',
+      test_date: daysAgo(HC_DAYS_PREV), lab_name: null, display_mode: 'standard',
+      page_count: 4, imported_at: daysAgo(HC_DAYS_PREV - 2), status: 'imported',
       scan_md: DEMO_SCAN_MD_PREV,
     },
     {
@@ -339,7 +357,82 @@ export function buildDemoDashboard(uid: string, displayName: string | null): Das
 }
 
 /** メトリクス推移グラフのダミー系列。 */
-export function demoMetricTrend(): MetricTrendSeries[] {
+/**
+ * デモの読み取り結果 (上の md) を系列に起こす。
+ *
+ * **md を正にして機械で起こす**のが要点。ここで数値を手で書き写すと、
+ * 「読み取り結果の表」と「グラフ」が食い違う — AI 報告書で一度踏んだのと同じ罠。
+ * 形式は自分で書いた固定の 9 列なので、専用の小さなパーサで足りる
+ * (本番の `measurementsFromMarkdown` は canonicalize / app-config を引き込むので使わない)。
+ */
+function parseDemoScanMd(md: string): Map<string, {
+  value: number; unit: string; refLow: number | null; refHigh: number | null;
+}> {
+  const out = new Map<string, { value: number; unit: string; refLow: number | null; refHigh: number | null }>();
+  const numOrNull = (t: string): number | null => {
+    const n = Number(t);
+    return t === '-' || t === '' || Number.isNaN(n) ? null : n;
+  };
+  for (const line of md.split('\n')) {
+    if (!line.startsWith('|')) continue;
+    const c = line.split('|').slice(1, -1).map((x) => x.trim());
+    // | No | 検査項目 | 検査項目詳細 | 読み取った値 | 単位 | 下限値 | 上限値 | 判定 | 備考 |
+    if (c.length < 9 || c[0] === 'No' || /^-+$/.test(c[0])) continue;
+    const value = numOrNull(c[3]);
+    if (value == null) continue; // 定性 ((-) 等) はグラフにしない
+    out.set(c[2], { value, unit: c[4] === '-' ? '' : c[4], refLow: numOrNull(c[5]), refHigh: numOrNull(c[6]) });
+  }
+  return out;
+}
+
+/**
+ * 人間ドック / 健康診断のデモ推移。
+ *
+ * **点は 2 つ** (前回 = demo-art-0014 / 今回 = demo-art-0004)。日付は
+ * それぞれの `test_date` と揃えてある — ここがずれると「検査結果」の一覧と
+ * グラフで受診日が食い違う。
+ *
+ * 出すのは**両方の回に数値がある項目だけ** = 実データ経路の
+ * `getTrendCandidates` の条件 (日付違いの点が 2 つ以上) と同じ。
+ */
+function demoHealthCheckupTrend(): MetricTrendSeries[] {
+  const prev = parseDemoScanMd(DEMO_SCAN_MD_PREV);
+  const latest = parseDemoScanMd(DEMO_SCAN_MD_LATEST);
+  const dPrev = daysAgo(HC_DAYS_PREV).slice(0, 10);
+  const dLatest = daysAgo(HC_DAYS_LATEST).slice(0, 10);
+  const out: MetricTrendSeries[] = [];
+  for (const [label, now] of latest) {
+    const before = prev.get(label);
+    if (!before) continue;
+    const point = (date: string, v: number) => ({
+      date, value: v, raw: String(v),
+      // 判定の印は md の 上限値/下限値 から決める (表の「判定」列と同じ根拠)。
+      flag: now.refHigh != null && v > now.refHigh
+        ? ('H' as const)
+        : now.refLow != null && v < now.refLow
+          ? ('L' as const)
+          : null,
+    });
+    out.push({
+      label,
+      unit: now.unit,
+      referenceUpper: now.refHigh ?? undefined,
+      referenceLower: now.refLow ?? undefined,
+      points: [point(dPrev, before.value), point(dLatest, now.value)],
+    });
+  }
+  return out;
+}
+
+export function demoMetricTrend(testType?: string): MetricTrendSeries[] {
+  /*
+   * **種別を指定されたら、その種別の系列だけを返す。**
+   * `getMeasurementTrend` が testType 付きでデモへ落ちないようにしていたのは
+   * 「別種別のサンプルを『この検査の推移』として見せない」ため。デモ側を種別ごとに
+   * 分ければその心配が消えるので、**知らない種別は空**を返して同じ約束を守る。
+   */
+  if (testType === 'health_checkup') return demoHealthCheckupTrend();
+  if (testType) return [];
   const dates = [daysAgo(160), daysAgo(110), daysAgo(60), daysAgo(18)].map((d) => d.slice(0, 10));
   const series = (
     label: string, unit: string, ref: number, vals: number[],
