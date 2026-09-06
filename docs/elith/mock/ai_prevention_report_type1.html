@@ -180,16 +180,25 @@
   .sheet,.banner{width:100%;max-width:28rem}
   @media (min-width:640px) {.sheet,.banner{max-width:42rem}}
   @media (min-width:768px) {.sheet,.banner{max-width:48rem}}
-  @media (min-width:1024px){.sheet,.banner{max-width:64rem}}
-  @media (min-width:1280px){.sheet,.banner{max-width:80rem}}
-  @media (min-width:1536px){.sheet,.banner{max-width:88rem}}
+  /*
+    **紙面は 1000px で止まる** (裁定 2026-09-05・実装 `.rp-sheet` の max-width:62.5rem と同じ)。
+    lg 以上は器 (64/80/88rem) でなく紙面の上限が効くので、段はここで打ち止め。
+    器そのもの (ダッシュボードと同じ幅) は実装側の BaseLayout が持っていて、
+    モックには器を描く要素が無いため写していない。
+  */
+  @media (min-width:1024px){.sheet,.banner{max-width:62.5rem}}
 
   /*
-    本文の行長。器を広げたので、**行長は本文側で止める** (実装 `.report-prose` と同じ 38em)。
-    無いと 1 行が和文 90 字を超えて目線が戻れない (仕様書 §4.3.5 / CLAUDE.md 和文の組版)。
+    本文の行長。**45em = 和文 45 字前後** (裁定 2026-09-05・実装 `.report-prose` と同じ)。
+    紙面 1000px と**セット**で決めた値 — 紙面だけ広げて 38em のままだと本文が紙面の 61% しか
+    使わず「白い紙が大きくなっただけ」になる (実測)。無いと 1 行が和文 90 字を超えて
+    目線が戻れない (仕様書 §4.3.5 / CLAUDE.md 和文の組版)。
+    **中央寄せにしない** — 実装側は縦 flex なので auto マージンだと短い段落だけ縮んで
+    中央へ寄り、見出しと頭が揃わなくなる (実測 2026-09-05)。左揃えが正。
     表・数直線・解説ブロックは対象外 (実装と同じ扱い)。
+    紙 (A4) は 38em に据え置き = 画面と紙で行長が違う (同裁定)。
   */
-  .card > p, .card > ul, .card > ol, .lsrow > div, .wk > div{max-width:38em}
+  .card > p, .card > ul, .card > ol, .lsrow > div, .wk > div{max-width:45em}
 </style>
 
 <div class="banner">

@@ -9,7 +9,10 @@
  *   ① 契約の文が**実際に画面に出ている**こと (レンダラの描き落としの検知)
  *   ② `/report` の器の幅が `/dashboard` と**全ブレークポイントで一致**すること
  *      — 幅は実際に 1 度壊れた (`/report` だけ `width="flow"` で 672px 止まり・spec §9.3.2)
- *   ③ ダイジェスト本文の行長が 38em (=608px) を超えないこと
+ *   ③ **紙面が 1000px を超えない**こと・ダイジェスト本文の行長が 45em (=720px) を超えないこと
+ *      — 裁定 2026-09-05 (spec §4.3.5)。器はダッシュボードと同じまま、紙面だけ 1000px で止める。
+ *        **紙面と行長はセットで見る** — 紙面だけ広げて行長を据え置くと本文が紙面の 61% しか
+ *        使わず「白い紙が大きくなっただけ」になる (実測)。片方だけ直すと静かにそうなる。
  *   ④ **紙面 (白いシート) が地の上に在る**こと (仕様書 §4.3.5)
  *      — ここが**実際に抜けていた**。色や見出しや表の型は入っていたのに、
  *        それを載せる紙が無く「アプリの画面に要素が並んでいるだけ」で、
@@ -26,7 +29,12 @@ import { chromium, devices } from 'playwright';
 const BASE = process.env.VERIFY_URL ?? 'http://localhost:4321';
 const EXEC = process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium';
 /** 本文の行長上限。`global.css` の `.report-prose { max-width: 38em }` × 16px。 */
-const MAX_PROSE = 608;
+// 行長の上限 = 45em (16px * 45)。印刷 (`?print=1`) だけは 38em = 608px に据え置き。
+const MAX_PROSE = 720;
+// 紙面の上限 = 62.5rem。器がこれより狭い端末では発火しない (スマホ・タブレット)。
+const MAX_SHEET = 1000;
+// 印刷の行長。ここが動くと紙面のページ割りが変わる (verify:print の前提) ので別に見張る。
+const PRINT_PROSE = 608;
 
 const SIZES = [
   [1440, 900, 'PC 1440'],
@@ -226,8 +234,8 @@ const shellWidth = async (page, path) => {
 }
 
 // ── ④ 紙面が在るか ────────────────────────────────────────────
-// 「白い紙が地の上に在る」ことだけを見る。**紙の幅は見ない** —
-// 幅はダッシュボードに合わせる裁定 (2026-08-30) なので器の幅と一致するのが正。
+// 「白い紙が地の上に在る」ことだけを見る。**幅は下の ②③ が見る**
+// (裁定 2026-09-05 で紙面は器と一致しなくなった = 器 1280px / 紙面 1000px)。
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
@@ -261,19 +269,62 @@ for (const [width, height, label] of SIZES) {
   const page = await ctx.newPage();
   const dash = await shellWidth(page, '/dashboard');
   const report = await shellWidth(page, '/report');
-  const prose = await page.evaluate(() => {
+  const m = await page.evaluate(() => {
+    const els = [...document.querySelectorAll('.report-prose')];
+    const sh = document.querySelector('main.rp-sheet');
+    return {
+      prose: els.length ? Math.max(...els.map((e) => Math.round(e.getBoundingClientRect().width))) : null,
+      sheet: sh ? Math.round(sh.getBoundingClientRect().width) : null,
+    };
+  });
+  const prose = m.prose;
+  // 紙面は「器」と「1000px」の小さいほう。器が 1000px より狭い端末では器がそのまま紙面。
+  const wantSheet = Math.min(report, MAX_SHEET);
+
+  const okShell = dash === report;
+  const okSheet = m.sheet === wantSheet;
+  const okProse = prose === null || prose <= MAX_PROSE;
+  /*
+   * **紙面が上限に達している幅では、本文もちょうど 45em であること。**
+   * 上限だけ見ていると「紙面 1000px / 行長 38em」への逆戻り (本文が紙面の 61%) を
+   * 見逃す。紙面と行長はセットで決めた裁定なので、片方だけ戻ったら落とす。
+   */
+  const okPair = m.sheet !== MAX_SHEET || prose === MAX_PROSE;
+  const ok = okShell && okSheet && okProse && okPair;
+  console.log(`${ok ? '✓' : '✗'} ${label.padEnd(14)} 器 dash=${dash} report=${report} / 紙面=${m.sheet ?? '-'} (期待 ${wantSheet}) / 本文=${prose ?? '-'}px`);
+  if (!okShell) {
+    fails.push(`${label}: 器の幅が違う (dashboard ${dash}px / report ${report}px)`);
+  }
+  if (!okSheet) {
+    fails.push(`${label}: 紙面が ${m.sheet}px (期待 ${wantSheet}px) — 紙面は器と 1000px の小さいほう`);
+  }
+  if (!okProse) {
+    fails.push(`${label}: 本文の行長が ${prose}px で上限 ${MAX_PROSE}px を超えた`);
+  }
+  if (!okPair) {
+    fails.push(`${label}: 紙面が上限 ${MAX_SHEET}px なのに本文が ${prose}px `
+      + `(期待 ${MAX_PROSE}px = 45em) — 紙面だけ広げて行長を戻すと本文が紙面の 61% しか使わない`);
+  }
+  await ctx.close();
+}
+
+// ── ③′ 印刷の行長は 38em に据え置き ───────────────────────────
+/*
+ * 画面は 45em にしたが、**紙 (`?print=1`) は 38em のまま**にしてある (裁定 2026-09-05)。
+ * ここが一緒に動くと A4 のページ割りが変わり、`verify:print` が測った
+ * 「30 ページ / 使用率 96.5%」の前提が黙って崩れる。だから別に見張る。
+ */
+{
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/report?print=1`, { waitUntil: 'networkidle' });
+  const w = await page.evaluate(() => {
     const els = [...document.querySelectorAll('.report-prose')];
     return els.length ? Math.max(...els.map((e) => Math.round(e.getBoundingClientRect().width))) : null;
   });
-
-  const ok = dash === report && (prose === null || prose <= MAX_PROSE);
-  console.log(`${ok ? '✓' : '✗'} ${label.padEnd(14)} dashboard=${dash}px report=${report}px 本文=${prose ?? '-'}px`);
-  if (dash !== report) {
-    fails.push(`${label}: 器の幅が違う (dashboard ${dash}px / report ${report}px)`);
-  }
-  if (prose !== null && prose > MAX_PROSE) {
-    fails.push(`${label}: 本文の行長が ${prose}px で上限 ${MAX_PROSE}px を超えた`);
-  }
+  const ok = w === PRINT_PROSE;
+  console.log(`${ok ? '✓' : '✗'} 印刷の行長      ?print=1 の本文=${w ?? '-'}px (期待 ${PRINT_PROSE}px = 38em)`);
+  if (!ok) fails.push(`?print=1 の行長が ${w}px — 紙は 38em (${PRINT_PROSE}px) に据え置く裁定`);
   await ctx.close();
 }
 
@@ -334,4 +385,4 @@ if (fails.length) {
   for (const f of fails) console.log(`  - ${f}`);
   process.exit(1);
 }
-console.log('\n✓ 紙面が在り、幅はダッシュボードと一致し、行長も上限内です。');
+console.log('\n✓ 紙面が在り、器はダッシュボードと一致、紙面は 1000px 以内、行長も上限内です。');

@@ -524,11 +524,32 @@
 /*
  * AI疾病予防報告書のダイジェスト本文。
  *
- * 器はダッシュボードと同じ `app` 幅 (PC で 1408px まで) にしてあるので、
- * **行長は本文側で止める**。`.md-region p` と同じ 38em (和文 38 字前後)。
+ * **画面は 紙面 1000px 上限 + 行長 45em (和文 45 字前後)** — 発注者裁定 2026-09-05 (spec §4.3.5)。
+ * 器 (BaseLayout の `app` 幅) はダッシュボードと同じまま。紙面だけ `.rp-sheet` で 1000px に
+ * 止めてある。**紙面を広げても行長を変えなければ「白い紙が大きくなるだけ」**なので、
+ * 2 つはセットで決めた (実測: 紙面 1000 + 38em = 本文が紙面の 61% しか使わない)。
+ *
  * 表 (検査値) にはこのクラスを付けない — 表は広い幅を使えたほうが読みやすい。
+ *
+ * **中央寄せ (`margin-inline:auto`) にしないこと。** `.rp-inner` は縦の flex なので、
+ * auto マージンを付けると**短い段落だけが content 幅まで縮んで中央へ寄り**、
+ * 見出しと本文の頭が揃わなくなる (実測 2026-09-05・モックで発覚)。左揃えが正。
  */
-.report-prose { max-width: 38em; }
+.report-prose { max-width: 45em; }
+/*
+ * 「全編」(`details` の中) も同じ行長に揃える。`.md-region p/li` の既定 38em は
+ * `/result` など他のページのものなので、**紙面の中だけ**上書きする。
+ */
+.rp-sheet .md-region p,
+.rp-sheet .md-region li { max-width: 45em; }
+/*
+ * `?print=1` は A4 = 紙面 768px なので、行長は 38em のままにする。
+ * (画面 1000px / 紙 768px で紙面幅が違う = 裁定 2026-09-05 で受け入れた差。)
+ * **`@media print` に載せない** — iOS の 共有→PDF は印刷 CSS を通らない (spec §4.4)。
+ */
+.rp-plain .report-prose,
+.rp-plain .md-region p,
+.rp-plain .md-region li { max-width: 38em; }
 
 /*
  * ══════════════════════════════════════════════════════════════════
@@ -594,6 +615,15 @@
  */
 .rp-sheet {
   width: 100%;
+  /*
+   * **紙面の上限 1000px** (発注者裁定 2026-09-05・spec §4.3.5)。
+   * 器はダッシュボードと同じ (PC で 1280〜1408px) のままで、紙面だけここで止める。
+   * 実測の根拠: 器いっぱい (1280px) だと本文 608px が紙面の 48% しか使わず、
+   * 表 1079px と食い違って「改行が枠に合っていない」と読めた。1000px + 行長 45em で 72%。
+   * **A4 相当の 768px は PC で狭すぎるという判断** (同裁定)。
+   * 〜834px の端末はここより器が狭いので発火しない (= スマホ・タブレットは挙動不変)。
+   */
+  max-width: 62.5rem;
   margin: 2.5rem auto;
   background: var(--rp-paper);
   border: 1px solid var(--rp-rule);
@@ -610,8 +640,11 @@
   .rp-sheet { margin: 0 auto; border-left: 0; border-right: 0; }
   .rp-inner { padding: 1.5rem 5.5% 2.5rem; }
 }
-/* `?print=1` は紙が主役なので、地から浮かせる枠と余白を外す */
-.rp-sheet.rp-plain { margin-top: 0; border: 0; }
+/*
+ * `?print=1` は紙が主役なので、地から浮かせる枠と余白を外す。
+ * **紙面の上限も外す** — 紙の幅は `@page` (A4) が決めるので、画面用の 1000px を持ち込まない。
+ */
+.rp-sheet.rp-plain { margin-top: 0; border: 0; max-width: none; }
 
 /* ① 表紙 (見本 p1) */
 .rp-cover {
